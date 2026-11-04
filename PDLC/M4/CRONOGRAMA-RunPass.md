@@ -15,7 +15,7 @@ S00 a S08: autenticação, catálogo, rascunho, imagem, conclusão com avaliaç�
 | 1 | **Concluído em 04/11/2026:** Environments `dev`, `hom` e `prod` no repositório `Runpass/RunPass-Projeto-X`, com aprovadores e restrição de branch | dono da conta `Runpass` ou administrador | 0,5 dia | concluído |
 | 2 | Primeiro login e MFA do Rafael; segundo MFA do root; e-mail do root compartilhado | acesso ao root, os dois online | 0,5 a 1 dia | semana de 03/11 |
 | 3 | Alertas operacionais (destinatário, assinatura, teste) | conta AWS | 1 dia | semana de 03/11 |
-| 4 | Orçamento: itens excluídos, cotação, revisão do teto | premissas suas | 1 a 2 dias | semana de 03/11 |
+| 4 | **Concluído em 04/11/2026:** orçamento do DEV com itens excluídos e câmbio (`ORCAMENTO-RunPass-DEV.md`) | premissas suas | 1 a 2 dias | concluído |
 | 5 | Artefatos, chaves no SSM, change sets (identidade, dados, app) revisados | 1 a 4 | 2 a 3 dias | semana de 10/11 |
 | 6 | Papel OIDC de deploy e workflow de deploy | 1 e 5 | 1 dia | semana de 10/11 |
 | 7 | **Autorização explícita de provisionamento** | 4 a 6 | 0,5 dia | semana de 10/11 |
