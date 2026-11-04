@@ -114,7 +114,7 @@ Revisar (erros de permissão `AccessDenied` inesperados contam como falha) e exe
 
 ## 9. Validação
 
-1. Carga do catálogo sintético (idempotente).
+1. Carga do catálogo sintético (idempotente), pelo caminho do operador com MFA: `scripts/operator_tool.py` (`enroll`, `grant`, `load-catalog`), ver `docs/operadores.md`.
 2. Usuário sintético no pool de corredores, token por `aws cognito-idp initiate-auth`, **sem imprimir o token**.
 3. `RUNPASS_ACCESS_TOKEN=... python3 scripts/smoke_journey.py --base-url "$APIURL" --max-image-seconds 5`.
 4. Testes transversais, carga, restore e relatório: `PDLC/M4/S09-roteiro-e-relatorio.md`.

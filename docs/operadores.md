@@ -53,3 +53,12 @@ python3 scripts/operator_tool.py load-catalog --username <email-do-operador>
 
 A carga usa a origem `https://runpass.invalid/fixture-sintetica` (domínio `.invalid` reservado, nunca resolve) e a fixture já traz "Sintética" no nome e a descrição "não representa uma prova real". É repetível: executar de novo não duplica. O acesso vale por 1 hora de sessão e a revogação (`state` diferente de `active`) bloqueia a carga. A prova com MFA real em DEV é evidência do S09; não substitui o ensaio completo de operadores exigido antes de PROD.
 
+### Lições do primeiro ensaio (04/11/2026)
+
+- **Sessão de console sem MFA bloqueia tudo.** A política de operador nega qualquer ação sem MFA (`DenyEverythingElseWithoutMfa`). Depois de cadastrar o MFA do usuário IAM, é preciso sair e entrar de novo; só então o `aws login` e o CLI funcionam.
+- **Dependência local.** O `.venv` precisa de `botocore[crt]` para o boto3 ler a sessão do `aws login` (`.venv/bin/python -m pip install "botocore[crt]"`).
+- **Usuário incompleto.** Se o `enroll` parar no meio, o usuário fica no pool sem MFA e o comando falha com `UsernameExistsException`; apagar com `aws cognito-idp admin-delete-user` e repetir.
+- **Código TOTP.** Cada execução do `enroll` gera um segredo novo; usar a entrada nova do autenticador e esperar o código trocar. Não é o MFA do usuário IAM.
+- **Nomes IAM.** `runpass-dev-operator` (perfil `runpass-dev-sa`) e `runpass-dev-thiago` (perfil `runpass-dev-thiago`); no ensaio, o `grant` foi feito por um e a identidade registrada em `--operator-iam-user` é o outro. Ambos são da mesma pessoa, então isso não substitui a separação entre pessoas.
+- **Raiz.** Nunca usar o root pelo CLI para isso. O renome do usuário IAM exigiu uma sessão administrativa e foi o único uso do root.
+

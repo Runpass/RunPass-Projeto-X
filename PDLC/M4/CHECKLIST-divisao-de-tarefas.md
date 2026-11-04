@@ -190,3 +190,15 @@ Observação: o GitHub exige que o dono da conta `Runpass` ou um administrador d
 ## Caminho crítico
 
 Bloco 1 + 2 + 3 + 4 → 5 → 6 → 7 → 8 → 9 → 10 e 11 → 13. O bloco 12 corre em paralelo e deve terminar antes do 13.
+
+## Atualização de 04/11/2026 (noite)
+
+- [x] Stacks `runpass-dev-identity`, `runpass-dev-data` e `runpass-dev-app` criadas (dados na segunda tentativa, depois do bloco KMS na política dos operadores).
+- [x] Catálogo sintético carregado pelo importador real, com operador MFA e acesso ativado por outro usuário IAM (ensaio com duas identidades da mesma pessoa).
+- [x] Smoke test da jornada na API real: 12 aprovados, 0 falhas; exclusão de conta validada em rodada própria.
+- [ ] Ensaio de operadores com duas pessoas (Thiago e Rafael) antes de PROD.
+- [ ] Os quatro destinatários confirmarem a assinatura SNS e alarme de teste recebido por todos.
+- [ ] Conferir **Taxes** no orçamento `runpass-dev-mensal`.
+- [ ] Verificar os itens `WORK#event#pending` antigos e a remoção de dados em S3/DynamoDB em escala maior que a amostra.
+- [ ] Papel OIDC de deploy (precisa de ações de KMS), testes transversais, carga, restore e aparelhos reais.
+

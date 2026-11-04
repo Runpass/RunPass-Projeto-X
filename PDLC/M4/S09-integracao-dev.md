@@ -182,3 +182,15 @@ Política dos operadores corrigida com o bloco KMS (`docs/operadores.md`). A sta
 
 Verificação feita: chamadas sem credencial a `/me/participations` e `/editions` responderam 401 `INVALID_TOKEN`; rota inexistente responde 404. **Isso não prova a jornada**: carga do catálogo sintético, usuário sintético, smoke test, medição de tempo de imagem e demais testes reais da S09 seguem **não executados**. A confirmação das assinaturas SNS pelos quatro destinatários também está pendente.
 
+### Catálogo, ensaio de operador e jornada em DEV — 04/11/2026
+
+**Operador e carga do catálogo.** Pelo caminho exigido em PROD (`scripts/operator_tool.py`): operador criado no pool exclusivo com TOTP, acesso `catalog_admin` ativado por **outro usuário IAM** e carga das 5 edições sintéticas pelo `CatalogImporter` com sessão MFA, origem `https://runpass.invalid/fixture-sintetica`. A carga é repetível.
+
+**Limitação deste ensaio.** Os dois usuários IAM (`runpass-dev-operator` e `runpass-dev-thiago`, este recriado depois do renome) pertencem à **mesma pessoa**. O ensaio prova o funcionamento técnico, não a separação de responsabilidades entre duas pessoas; o ensaio com Thiago e Rafael continua pendente antes de PROD. Não foram ensaiados refresh, token alheio, revogação nem recuperação.
+
+**Smoke test contra a API real** (`scripts/smoke_journey.py`, dados sintéticos): **12 aprovados, 0 falhas, 1 não executado** (exclusão de conta). Em uma rodada separada com `--delete-account`: 13 aprovados. Imagem validada em cerca de 1 s (meta de 5 s). O passo 08 foi apertado: o segundo usuário precisa ter perfil e admissão, e só 404 conta como negado (uma rodada anterior aceitou um 403 causado por admissão ausente, que não provava separação entre donos).
+
+**Exclusão de conta.** A API respondeu 202; o usuário sumiu do Cognito pouco depois (processada pela manutenção, a cada 5 minutos). Por leitura, não restaram linhas de `USER#` nem objetos no S3 do usuário apagado; restou o registro de controle de exclusão, esperado. Amostra de um caso sintético, sem teste de volume, de falha no meio da exclusão ou de reprocessamento.
+
+**Ainda não provado:** HEIC e fotos reais em aparelhos, carga, restore com RPO/RTO, permissões negativas além do rascunho, DLQ e replay, alarmes (com e-mail recebido pelos quatro destinatários), limites de Lambda, privacidade em outras rotas. Há 4 itens `WORK#event#pending#...` na OperationsTable com mais de 3 horas na leitura; não foi verificado se são fila normal ou eventos parados.
+
