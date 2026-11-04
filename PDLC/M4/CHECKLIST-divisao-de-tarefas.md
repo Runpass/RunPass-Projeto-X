@@ -18,7 +18,7 @@ Concluído desde 03/11/2026: aceite local de S02 a S08; usuário do Thiago (`run
 
 1. ~~GitHub Environments~~ **Concluído em 04/11/2026:** `dev`, `hom` e `prod` criados com aprovadores (`thicost` e `Moura7`) e restrição de branch, verificados por `gh api`. Falta só conferir que os rulesets exigem a verificação "Verificações locais". O próximo bloqueio é o acesso AWS (item 2).
 2. ~~Acesso AWS~~ **Informado como ok pelo usuário em 04/11/2026:** primeiro login e MFA do Rafael e segundo MFA do root. Restam o e-mail do root compartilhado e confirmar `aws sts get-caller-identity` com o ARN de cada pessoa.
-3. **Alertas e orçamento:** destinatários definidos (04/11/2026) e template corrigido (chave KMS própria); escalonamento definido (Thiago primeiro, Rafael segundo); falta provar o recebimento no deploy; incorporar os itens excluídos ao orçamento e revisar o teto com a cotação do dia.
+3. **Alertas e orçamento:** destinatários definidos (04/11/2026), template corrigido (chave KMS própria) e escalonamento definido (Thiago primeiro, Rafael segundo); falta provar o recebimento no deploy. **Orçamento do DEV concluído em 04/11/2026** (`ORCAMENTO-RunPass-DEV.md`): US$ 9,95/mês, 25% do teto com reserva e contingência. Resta definir quem recebe os alertas de custo.
 4. **Artefatos e change sets:** bucket, chaves no SSM, `make lambda-package`, change sets de identidade, dados e app para revisão. Atualizar `GitHubOrg=Runpass` ao aplicar o papel OIDC.
 5. **Autorização de provisionamento** dos dois responsáveis, depois deploy em DEV e jornada com `scripts/smoke_journey.py`.
 6. **Mobile em aparelhos reais** (Android e iPhone), começando pela demo, que não depende da AWS; depois apontar para DEV com `--dart-define`.
@@ -54,10 +54,12 @@ Resp.: ______ · Destrava: blocos 4, 5, 6
 
 Resp.: ______ · Destrava: autorização de provisionamento
 
-- [ ] Incorporar ao orçamento os itens ainda excluídos de `ORCAMENTO-RunPass-preliminar.md`
-- [ ] Revisar o orçamento `runpass-dev-mensal` (US$ 150/mês) com a cotação do dia frente ao teto de R$ 1.000/mês
-- [ ] Rodar `calcular_orcamento_runpass.py` com os preços atualizados e registrar o resultado
-- [ ] Definir quem recebe os alertas de custo (50%, 80% real, 100% previsto) e confirmar o recebimento
+- [x] Itens antes excluídos incorporados em `ORCAMENTO-RunPass-DEV.md` (04/11/2026): DEV em US$ 9,95/mês, US$ 45,44 com reserva e contingência
+- [x] `runpass-dev-mensal` revisado com a PTAX de 03/11/2026 (R$ 5,4935): teto de R$ 1.000 = US$ 182,03
+- [ ] Aplicar como root o `infra/cost.template.yaml` (limite de 30% do teto, R$ 300 = US$ 54,61, e os quatro e-mails nos três alertas); excluir antes o orçamento `runpass-dev-mensal` atual. `runpass-dev-thiago` não tem `budgets:ModifyBudget`. Passo a passo em `ORCAMENTO-RunPass-DEV.md`
+- [x] Preços atualizados e cálculo registrado (`calcular_orcamento_dev_exclusoes.py`, `AWS-PRECOS-EXCLUSOES-SA-EAST-1.json`)
+- [x] Destinatários dos alertas de custo definidos em 04/11/2026: os mesmos quatro e-mails dos alertas operacionais
+- [ ] Confirmar o recebimento dos alertas de custo nos quatro e-mails depois de aplicar o template
 
 ## Bloco 4 — Alertas operacionais
 
