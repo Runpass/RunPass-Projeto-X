@@ -19,7 +19,7 @@ Concluído desde 03/11/2026: aceite local de S02 a S08; usuário do Thiago (`run
 1. ~~GitHub Environments~~ **Concluído em 04/11/2026:** `dev`, `hom` e `prod` criados com aprovadores (`thicost` e `Moura7`) e restrição de branch, verificados por `gh api`. Falta só conferir que os rulesets exigem a verificação "Verificações locais". O próximo bloqueio é o acesso AWS (item 2).
 2. ~~Acesso AWS~~ **Informado como ok pelo usuário em 04/11/2026:** primeiro login e MFA do Rafael e segundo MFA do root. Restam o e-mail do root compartilhado e confirmar `aws sts get-caller-identity` com o ARN de cada pessoa.
 3. **Alertas e orçamento:** destinatários definidos (04/11/2026), template corrigido (chave KMS própria) e escalonamento definido (Thiago primeiro, Rafael segundo); falta provar o recebimento no deploy. **Orçamento do DEV concluído em 04/11/2026** (`ORCAMENTO-RunPass-DEV.md`): US$ 9,95/mês, 25% do teto com reserva e contingência. Resta definir quem recebe os alertas de custo.
-4. **Artefatos e change sets:** bucket, chaves no SSM, `make lambda-package`, change sets de identidade, dados e app para revisão. Atualizar `GitHubOrg=Runpass` ao aplicar o papel OIDC.
+4. **Artefatos e change sets:** pacote da Lambda gerado e roteiro de deploy com comandos exatos pronto (`docs/deploy-dev.md`, 04/11/2026). Criar o bucket, as chaves no SSM, enviar o artefato e criar os change sets são ações que **criam recurso** e dependem da autorização explícita dos dois responsáveis (item 5). Atualizar `GitHubOrg=Runpass` ao aplicar o papel OIDC.
 5. **Autorização de provisionamento** dos dois responsáveis, depois deploy em DEV e jornada com `scripts/smoke_journey.py`.
 6. **Mobile em aparelhos reais** (Android e iPhone), começando pela demo, que não depende da AWS; depois apontar para DEV com `--dart-define`.
 7. **Decisões de produto abertas:** passaporte, conquistas e stories do mockup (fora do MVP no PRD); arquivos de imagem e arte das medalhas; prazo de retenção da lista de espera, dos rascunhos e das solicitações; dono do catálogo real (Thiago).
@@ -78,9 +78,10 @@ Resp.: ______ · → blocos 2 e 3
 - [ ] Rodar `make check` e `make mobile-check` no commit que será implantado e registrar os resultados
 - [ ] Criar o bucket de artefatos em `sa-east-1` (privado, versionado, fora do CloudFormation)
 - [ ] Criar no SSM Parameter Store dois SecureString com valores aleatórios: chave HMAC de exclusões (32 bytes) e chave Fernet de cursores (32 bytes em base64url). Os valores não passam por templates, Git nem chat
-- [ ] `make lambda-package`, enviar o zip e anotar a versão do objeto
+- [x] `make lambda-package` gerado localmente em 04/11/2026 (14,6 MB; SHA-256 em `S09-integracao-dev.md`); `make check` passou no mesmo dia
+- [ ] Enviar o zip ao bucket com chave imutável por SHA-256 (CRIA recurso; depende da autorização de provisionamento). Comandos em `docs/deploy-dev.md`
 - [ ] Definir a assinatura/integridade dos artefatos
-- [ ] Gerar os change sets `CREATE` de `runpass-dev-identity` e `runpass-dev-data` (somente leitura) e anexar a revisão
+- [ ] Gerar os change sets `CREATE` de `runpass-dev-identity` e `runpass-dev-data` e anexar a revisão. Atenção: criar o change set cria a stack vazia em `REVIEW_IN_PROGRESS`, então depende da autorização de provisionamento; `validate-template` das três stacks já passou (somente leitura)
 
 ## Bloco 6 — Papel OIDC de deploy
 
