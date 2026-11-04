@@ -20,7 +20,7 @@ Concluído desde 03/11/2026: aceite local de S02 a S08; usuário do Thiago (`run
 2. ~~Acesso AWS~~ **Informado como ok pelo usuário em 04/11/2026:** primeiro login e MFA do Rafael e segundo MFA do root. Restam o e-mail do root compartilhado e confirmar `aws sts get-caller-identity` com o ARN de cada pessoa.
 3. **Alertas e orçamento:** destinatários definidos (04/11/2026), template corrigido (chave KMS própria) e escalonamento definido (Thiago primeiro, Rafael segundo); falta provar o recebimento no deploy. **Orçamento do DEV concluído em 04/11/2026** (`ORCAMENTO-RunPass-DEV.md`): US$ 9,95/mês, 25% do teto com reserva e contingência. Resta definir quem recebe os alertas de custo.
 4. **Artefatos e change sets:** pacote da Lambda gerado e roteiro de deploy com comandos exatos pronto (`docs/deploy-dev.md`, 04/11/2026). Criar o bucket, as chaves no SSM, enviar o artefato e criar os change sets são ações que **criam recurso** e dependem da autorização explícita dos dois responsáveis (item 5). Atualizar `GitHubOrg=Runpass` ao aplicar o papel OIDC.
-5. **Revisar e executar os change sets** de identidade (4 recursos) e dados (23 recursos). A autorização de provisionamento foi dada em 04/11/2026; bucket, chaves e artefato já foram criados. Depois: change set e deploy da stack da aplicação, e a jornada com `scripts/smoke_journey.py`.
+5. **Change sets executados em 04/11/2026** (identidade, dados e aplicação, os três `CREATE_COMPLETE`; a de dados na segunda tentativa, depois do bloco KMS na política dos operadores). Falta: carga do catálogo sintético, usuário sintético e a jornada com `scripts/smoke_journey.py`, confirmação das assinaturas SNS pelos quatro e-mails e o papel OIDC.
 6. **Mobile em aparelhos reais** (Android e iPhone), começando pela demo, que não depende da AWS; depois apontar para DEV com `--dart-define`.
 7. **Decisões de produto abertas:** passaporte, conquistas e stories do mockup (fora do MVP no PRD); arquivos de imagem e arte das medalhas; prazo de retenção da lista de espera, dos rascunhos e das solicitações; dono do catálogo real (Thiago).
 
@@ -97,7 +97,7 @@ Resp.: ______ · → blocos 1 e 2 e autorização explícita
 
 Resp.: os dois responsáveis · → blocos 3, 4, 5 e 6
 
-- [ ] Revisar os change sets (identidade, dados, app) e a estimativa atualizada
+- [x] Revisar os change sets (identidade, dados, app) e a estimativa atualizada
 - [ ] Registrar a autorização explícita dos dois responsáveis (data e escopo)
 - [ ] Confirmar que o teto de R$ 1.000/mês vale e definir a regra de parar se a previsão ultrapassar
 

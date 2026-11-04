@@ -170,3 +170,15 @@ Thiago e Rafael revisaram os change sets e autorizaram a execução de identidad
 | `runpass-dev-data` | **Falhou e reverteu** (`ROLLBACK_COMPLETE`). Evento do CloudFormation: `AlertsKey` com `UnauthorizedTaggingOperation`. A política IAM de operador não tinha nenhuma ação `kms:*`. Verificado por leitura que não restou tabela, fila ou bucket de dados na conta; o bucket de artefatos permanece |
 
 Correção: acrescentar o bloco KMS de `docs/operadores.md` à política dos operadores. Depois disso, excluir a stack vazia, criar novo change set e pedir nova confirmação antes de executar.
+
+### Segunda tentativa e aplicação — 04/11/2026
+
+Política dos operadores corrigida com o bloco KMS (`docs/operadores.md`). A stack de dados vazia foi excluída, um novo change set `inicial` foi criado (23 recursos, todos `Add`) e, com nova confirmação de Thiago e Rafael, executado. O change set da aplicação (28 recursos `Add`, capacidade `CAPABILITY_IAM`) foi revisado por Thiago e Rafael e executado.
+
+| Stack | Resultado |
+| --- | --- |
+| `runpass-dev-data` | `CREATE_COMPLETE`, sem eventos de falha. 14 exports |
+| `runpass-dev-app` | `CREATE_COMPLETE`, sem eventos de falha. A `ApiUrl` está nas saídas da stack (não registrada no Git) |
+
+Verificação feita: chamadas sem credencial a `/me/participations` e `/editions` responderam 401 `INVALID_TOKEN`; rota inexistente responde 404. **Isso não prova a jornada**: carga do catálogo sintético, usuário sintético, smoke test, medição de tempo de imagem e demais testes reais da S09 seguem **não executados**. A confirmação das assinaturas SNS pelos quatro destinatários também está pendente.
+
