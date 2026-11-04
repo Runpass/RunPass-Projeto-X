@@ -17,8 +17,8 @@ Legenda de dependência: **→** só começa depois do bloco indicado. Blocos se
 Concluído desde 03/11/2026: aceite local de S02 a S08; usuário do Thiago (`runpass-dev-thiago`) e do Rafael criados; repositório oficial definido; PR #2 mesclado na `dev`; visual do mockup, smoke test e cronograma publicados.
 
 1. ~~GitHub Environments~~ **Concluído em 04/11/2026:** `dev`, `hom` e `prod` criados com aprovadores (`thicost` e `Moura7`) e restrição de branch, verificados por `gh api`. Falta só conferir que os rulesets exigem a verificação "Verificações locais". O próximo bloqueio é o acesso AWS (item 2).
-2. **Acesso AWS:** primeiro login e MFA do Rafael; segundo MFA do root para cada um; e-mail do root compartilhado; confirmar `aws sts get-caller-identity` com o ARN de cada pessoa.
-3. **Alertas e orçamento:** destinatário e teste dos alertas; incorporar os itens excluídos ao orçamento e revisar o teto com a cotação do dia.
+2. ~~Acesso AWS~~ **Informado como ok pelo usuário em 04/11/2026:** primeiro login e MFA do Rafael e segundo MFA do root. Restam o e-mail do root compartilhado e confirmar `aws sts get-caller-identity` com o ARN de cada pessoa.
+3. **Alertas e orçamento:** destinatários definidos (04/11/2026) e template corrigido (chave KMS própria); falta o escalonamento e provar o recebimento no deploy; incorporar os itens excluídos ao orçamento e revisar o teto com a cotação do dia.
 4. **Artefatos e change sets:** bucket, chaves no SSM, `make lambda-package`, change sets de identidade, dados e app para revisão. Atualizar `GitHubOrg=Runpass` ao aplicar o papel OIDC.
 5. **Autorização de provisionamento** dos dois responsáveis, depois deploy em DEV e jornada com `scripts/smoke_journey.py`.
 6. **Mobile em aparelhos reais** (Android e iPhone), começando pela demo, que não depende da AWS; depois apontar para DEV com `--dart-define`.
@@ -45,7 +45,7 @@ Resp.: ______ · Destrava: blocos 4, 5, 6
 - [X] Confirmar o MFA do usuário raiz (pendente)
 - [ ] Os dois responsáveis fazem `aws login` no perfil `runpass-dev-sa` e confirmam `aws sts get-caller-identity` (conta e região `sa-east-1` corretas)
 - [x] Usuário do Thiago: `runpass-dev-operator` renomeado para `runpass-dev-thiago` em 03/11/2026 (login confirmado por `sts get-caller-identity`)
-- [ ] Usuário do Rafael: criado em 03/11/2026; falta trocar a senha temporária, cadastrar o MFA e confirmar `aws login --profile runpass-dev-sa` com o ARN dele (senhas só em gerenciador de senhas, nunca em Git, chat ou issue)
+- [x] Usuário do Rafael: criado em 03/11/2026; primeiro login, MFA e `aws login` informados como ok pelo usuário em 04/11/2026 (não verificado pelo assistente)
 - [ ] Garantir backup/sincronização do app autenticador do MFA (hoje está em um único celular)
 - [x] Decisão: um usuário IAM por pessoa (03/11/2026), no lugar do usuário compartilhado
 - [ ] Confirmar o formato das ações `aws-mcp:*` no primeiro uso do usuário IAM
@@ -63,8 +63,9 @@ Resp.: ______ · Destrava: autorização de provisionamento
 
 Resp.: ______ · → bloco 2
 
-- [ ] Definir destinatário dos alertas (fora do Git) e regra de escalonamento
-- [ ] Criar a assinatura do tópico SNS de alertas e confirmar o e-mail
+- [x] Destinatários dos alertas definidos em 04/11/2026 (quatro e-mails, fora do Git; entram como `AlertEmail1` a `AlertEmail4` no deploy)
+- [ ] Definir o escalonamento: quem age primeiro e o substituto
+- [ ] No deploy da stack de dados, passar `AlertEmail1` a `AlertEmail4` e cada destinatário confirmar o e-mail de assinatura
 - [ ] Planejar o teste de disparo e recebimento (DLQ e alarmes de erro da API e da manutenção)
 
 ## Bloco 5 — Artefatos, segredos e pré-deploy

@@ -27,7 +27,7 @@ Estados permitidos: `APROVADO`, `FALHA`, `NÃO EXECUTADO`, `BLOQUEADO`. Ausênci
 | Permissões IAM | change set e execução sem `AccessDenied` inesperado; negações esperadas ocorrem | NÃO EXECUTADO |
 | Idempotência | repetir admissão, conclusão e exclusão não duplica efeitos | NÃO EXECUTADO |
 | DLQ e replay | mensagem forçada vai à DLQ após 5 recepções; replay conclui; alarme recebido | NÃO EXECUTADO |
-| Alarmes | disparo e recebimento no destinatário definido | BLOQUEADO (destinatário não definido) |
+| Alarmes | disparo e recebimento nos quatro destinatários definidos (assinatura confirmada por cada um; alarme de teste via `aws cloudwatch set-alarm-state`) | NÃO EXECUTADO (depende do deploy da stack de dados) |
 | Carga | perfil aprovado em `PREMISSAS-USO-RunPass-MVP.md`; p50/p95/p99 e erros | NÃO EXECUTADO |
 | Manutenção agendada | reconciliação, expiração e exclusões retomáveis a cada 5 min | NÃO EXECUTADO |
 | Restore | tráfego fechado, `dispatchEpoch` incrementado, exclusões reaplicadas; RPO/RTO medidos | NÃO EXECUTADO |
