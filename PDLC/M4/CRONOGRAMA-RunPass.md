@@ -12,7 +12,7 @@ S00 a S08: autenticação, catálogo, rascunho, imagem, conclusão com avaliaç�
 
 | # | Item | Depende de | Estimativa | Previsão (se começar em 04/11) |
 | --- | --- | --- | --- | --- |
-| 1 | Environments `dev` (depois `hom` e `prod`) no repositório `Runpass/RunPass-Projeto-X`, com aprovadores; rulesets de PR já ativos | dono da conta `Runpass` ou administrador (a conta `thicost` não tem `admin`) | 0,5 dia | semana de 03/11 |
+| 1 | **Concluído em 04/11/2026:** Environments `dev`, `hom` e `prod` no repositório `Runpass/RunPass-Projeto-X`, com aprovadores e restrição de branch | dono da conta `Runpass` ou administrador | 0,5 dia | concluído |
 | 2 | Primeiro login e MFA do Rafael; segundo MFA do root; e-mail do root compartilhado | acesso ao root, os dois online | 0,5 a 1 dia | semana de 03/11 |
 | 3 | Alertas operacionais (destinatário, assinatura, teste) | conta AWS | 1 dia | semana de 03/11 |
 | 4 | Orçamento: itens excluídos, cotação, revisão do teto | premissas suas | 1 a 2 dias | semana de 03/11 |

@@ -16,7 +16,7 @@ Legenda de dependência: **→** só começa depois do bloco indicado. Blocos se
 
 Concluído desde 03/11/2026: aceite local de S02 a S08; usuário do Thiago (`runpass-dev-thiago`) e do Rafael criados; repositório oficial definido; PR #2 mesclado na `dev`; visual do mockup, smoke test e cronograma publicados.
 
-1. **Dono da conta `Runpass` (ou administrador) cria os GitHub Environments** `dev` (depois `hom` e `prod`) com aprovadores e restrição ao branch correspondente. Bloqueia o papel OIDC e o deploy. A conta `thicost` não tem `admin`.
+1. ~~GitHub Environments~~ **Concluído em 04/11/2026:** `dev`, `hom` e `prod` criados com aprovadores (`thicost` e `Moura7`) e restrição de branch, verificados por `gh api`. Falta só conferir que os rulesets exigem a verificação "Verificações locais". O próximo bloqueio é o acesso AWS (item 2).
 2. **Acesso AWS:** primeiro login e MFA do Rafael; segundo MFA do root para cada um; e-mail do root compartilhado; confirmar `aws sts get-caller-identity` com o ARN de cada pessoa.
 3. **Alertas e orçamento:** destinatário e teste dos alertas; incorporar os itens excluídos ao orçamento e revisar o teto com a cotação do dia.
 4. **Artefatos e change sets:** bucket, chaves no SSM, `make lambda-package`, change sets de identidade, dados e app para revisão. Atualizar `GitHubOrg=Runpass` ao aplicar o papel OIDC.
@@ -29,13 +29,13 @@ Concluído desde 03/11/2026: aceite local de S02 a S08; usuário do Thiago (`run
 Resp.: ______ · Destrava: bloco 6 (papel OIDC)
 
 - [x] Repositório oficial: `Runpass/RunPass-Projeto-X` (conta de usuário), publicação por pull request para `dev` (decisão de 03/11/2026); o antigo `Moura7/RunPass-Projeto-X` deixou de ser o destino
-- [ ] Criar o Environment `dev` em `Settings → Environments` (nome exato, minúsculas); depois `hom` e `prod`
-- [ ] Adicionar os dois responsáveis como **Required reviewers** (decidir "Prevent self-review" e registrar)
-- [ ] Restringir cada Environment ao seu branch (`dev`→`dev`, `hom`→`hom`, `prod`→`main`) em Selected branches and tags
-- [ ] Não colocar segredos no Environment (o papel é assumido por OIDC)
+- [x] Criar o Environment `dev` em `Settings → Environments` (nome exato, minúsculas); depois `hom` e `prod` (04/11/2026)
+- [x] Adicionar os dois responsáveis como **Required reviewers** (decidir "Prevent self-review" e registrar) (04/11/2026)
+- [x] Restringir cada Environment ao seu branch (`dev`→`dev`, `hom`→`hom`, `prod`→`main`) em Selected branches and tags (04/11/2026)
+- [x] Não colocar segredos no Environment (o papel é assumido por OIDC) (04/11/2026)
 - [ ] Rulesets de `dev`, `hom` e `main` já exigem pull request; conferir que a verificação "Verificações locais" também é exigida
-- [ ] Rodar `gh api repos/Runpass/RunPass-Projeto-X/environments/dev --jq '{name, rules: [.protection_rules[] | {type}], branches: .deployment_branch_policy}'` e confirmar `required_reviewers` + política de branches
-- [ ] Registrar em `S09-integracao-dev.md`: data, quem aprovou, resultado do comando
+- [x] Rodar `gh api repos/Runpass/RunPass-Projeto-X/environments/dev --jq '{name, rules: [.protection_rules[] | {type}], branches: .deployment_branch_policy}'` e confirmar `required_reviewers` + política de branches (04/11/2026)
+- [x] Registrar em `S09-integracao-dev.md`: data, quem aprovou, resultado do comando (04/11/2026)
 - [ ] Conferir que o workflow `check.yml` passa em Python 3.11 e 3.12
 
 ## Bloco 2 — Conta AWS DEV e acesso
