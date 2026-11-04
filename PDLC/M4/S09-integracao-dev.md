@@ -13,7 +13,7 @@ Data: 02/11/2026. Estado: **preparação local**. Nenhum recurso foi provisionad
 | Orçamento de custo | Aplicado em 04/11/2026 | `runpass-dev-mensal` com limite de US$ 54,61/mês (30% do teto, R$ 300 com a PTAX de R$ 5,4935) e alertas em 50%, 80% (real) e 100% (previsto), cada um com os quatro e-mails definidos (verificado por leitura na AWS). Alteração feita pelo console; `infra/cost.template.yaml` segue como referência, não aplicado. Conferir no console que impostos continuam incluídos (o campo deixou de aparecer na API) |
 | GitHub Environment `dev` | Criado em 04/11/2026 (verificado por `gh api`): `dev`, `hom` e `prod` com `required_reviewers` (`thicost` e `Moura7`) e restrição de branch (`dev`→`dev`, `hom`→`hom`, `prod`→`main`); sem variáveis | Bloqueio liberado para o papel OIDC. O deploy continua dependendo da autorização explícita de provisionamento. Registro abaixo |
 | Alertas operacionais | Preparado, não aplicado | Quatro destinatários definidos pelo usuário em 04/11/2026; os endereços ficam fora do Git e entram como parâmetros `AlertEmail1` a `AlertEmail4` da stack de dados. O tópico passou a usar chave KMS própria, porque alarmes do CloudWatch não publicam em tópico cifrado com `alias/aws/sns`. Escalonamento definido em 04/11/2026: Thiago primeiro, Rafael segundo (prazo de resposta ainda não definido). Falta provar o recebimento no deploy: cada destinatário confirma a assinatura e um alarme de teste deve chegar |
-| Autorização de provisionamento | Não concedida | aprovação explícita após orçamento e revisão do change set |
+| Autorização de provisionamento | Concedida em 04/11/2026 (parcial) | O usuário confirmou em conversa que Thiago e Rafael autorizam: bucket de artefatos, chaves no SSM, envio do artefato e criação dos change sets. **A execução de cada change set exige revisão e aprovação antes.** PROD e beta seguem sem autorização. Registro abaixo |
 
 Enquanto qualquer item obrigatório estiver bloqueado, comandos de criação de stack, upload de artefato ou deploy não devem ser executados.
 
@@ -143,3 +143,19 @@ Thiago e Rafael usariam o mesmo usuário IAM, `runpass-dev-operator`, por decis�
 - **Troca de pessoa.** Se alguém deixar o projeto, trocar a senha e refazer o MFA do usuário.
 - **Segredos.** A senha nunca vai para Git, chat ou issue; só por gerenciador de senhas ou canal fechado.
 - **Alternativa recomendada, não adotada.** Um usuário por pessoa, no mesmo grupo, devolve o rastreio individual sem custo. Reavaliar antes de PROD.
+
+## Registro de provisionamento — 04/11/2026
+
+Autorização informada pelo usuário em conversa (Thiago e Rafael), com o roteiro de `docs/deploy-dev.md`. Executado com o usuário `runpass-dev-thiago`, conta `263097734277`, `sa-east-1`.
+
+| Recurso | Resultado |
+| --- | --- |
+| Bucket de artefatos `runpass-dev-artifacts-263097734277` | Criado. Versionamento ativo, acesso público bloqueado, criptografia `AES256` por padrão e política que nega transporte sem TLS (verificado por leitura) |
+| SSM `/runpass/dev/erasure-hmac` e `/runpass/dev/cursor-key` | Criados como `SecureString`, versão 1. Valores gerados e enviados por pipe, sem aparecer em tela, arquivo ou Git. Formato conferido sem exibir o valor: HMAC com 64 caracteres (mínimo de 32 bytes) e chave Fernet válida de 44 caracteres |
+| Artefato `lambda/runpass-4cc03e9d4ca9ce3e.zip` | Enviado (14.656.220 bytes). O checksum SHA-256 do objeto no S3 coincide com o do pacote local (`4cc03e9d4ca9ce3e999c0b4a589dc708fb144660175d07c00f667b48c202da4f`) |
+| Change set `inicial` de `runpass-dev-identity` | Criado, `CREATE_COMPLETE`, **não executado**. 4 recursos novos: 2 pools Cognito (corredores e operadores) e 2 clientes. Sem capacidades extras |
+| Change set `inicial` de `runpass-dev-data` | Criado, `CREATE_COMPLETE`, **não executado**. 23 recursos novos: 6 tabelas DynamoDB, 2 buckets S3 e 2 políticas, 4 filas SQS (2 DLQs), 1 tópico SNS com 4 assinaturas, 1 chave KMS e seu alias, 2 alarmes. Sem capacidades extras |
+
+As duas stacks de revisão estão em `REVIEW_IN_PROGRESS`, sem recursos. Os e-mails de alerta foram passados como parâmetros e não estão no Git.
+
+**Pendente:** revisão dos change sets por Thiago e Rafael e aprovação para executar; depois, change set da stack `runpass-dev-app`, que depende dos exports da stack de dados e das saídas da identidade. Nada além disso foi criado.
