@@ -56,10 +56,11 @@ Resp.: ______ · Destrava: autorização de provisionamento
 
 - [x] Itens antes excluídos incorporados em `ORCAMENTO-RunPass-DEV.md` (04/11/2026): DEV em US$ 9,95/mês, US$ 45,44 com reserva e contingência
 - [x] `runpass-dev-mensal` revisado com a PTAX de 03/11/2026 (R$ 5,4935): teto de R$ 1.000 = US$ 182,03
-- [ ] Aplicar como root o `infra/cost.template.yaml` (limite de 30% do teto, R$ 300 = US$ 54,61, e os quatro e-mails nos três alertas); excluir antes o orçamento `runpass-dev-mensal` atual. `runpass-dev-thiago` não tem `budgets:ModifyBudget`. Passo a passo em `ORCAMENTO-RunPass-DEV.md`
+- [x] Limite de 30% do teto (US$ 54,61) e os quatro e-mails nos três alertas aplicados em 04/11/2026, pelo console (verificado por leitura na AWS). O `infra/cost.template.yaml` ficou como referência, não aplicado
+- [ ] Conferir no console que o orçamento `runpass-dev-mensal` ainda inclui impostos (Taxes) nas opções avançadas
 - [x] Preços atualizados e cálculo registrado (`calcular_orcamento_dev_exclusoes.py`, `AWS-PRECOS-EXCLUSOES-SA-EAST-1.json`)
 - [x] Destinatários dos alertas de custo definidos em 04/11/2026: os mesmos quatro e-mails dos alertas operacionais
-- [ ] Confirmar o recebimento dos alertas de custo nos quatro e-mails depois de aplicar o template
+- [ ] Confirmar o recebimento dos alertas de custo nos quatro e-mails (só se prova quando um limiar for atingido ou se a AWS enviar aviso de assinatura)
 
 ## Bloco 4 — Alertas operacionais
 

@@ -10,15 +10,11 @@ Câmbio: PTAX de venda do Banco Central de 03/11/2026, **R$ 5,4935 por US$** (co
 
 **Decisão de 04/11/2026:** o orçamento `runpass-dev-mensal` (AWS Budgets) passa a ter como limite **30% do teto**, ou seja, **R$ 300, equivalentes a US$ 54,61** com a PTAX acima. Os alertas continuam em 50% e 80% (gasto real) e 100% (previsão), o que dá US$ 27,31, US$ 43,69 e US$ 54,61. O orçamento já inclui impostos no cálculo (`IncludeTax`), o que cobre parte da dúvida sobre tributos.
 
-**Destinatários:** todos os alertas de custo vão para os **quatro e-mails** definidos em 04/11/2026 (endereços fora do Git). Hoje, na AWS, cada um dos três alertas tem **um único assinante**; faltam os outros três.
+**Aplicado em 04/11/2026 e verificado na AWS (leitura, conta `thicost`/`runpass-dev-thiago`):** o orçamento `runpass-dev-mensal` está com limite de **US$ 54,61/mês** e os três alertas (50% e 80% do gasto real, 100% da previsão) têm **quatro assinantes cada um**, todos os quatro e-mails definidos (endereços fora do Git). Pela data de início do orçamento, que continua a original (31/10/2026), a mudança foi feita **editando o orçamento no console**, e não pela stack do `infra/cost.template.yaml`.
 
-**Estado na AWS:** ainda em **US$ 150/mês**, com um assinante por alerta (verificado em 04/11/2026). A tentativa de aplicar o novo limite e de incluir assinantes foi recusada: `runpass-dev-thiago` não tem `budgets:ModifyBudget`. Para aplicar as duas mudanças de uma vez e de forma versionada, existe `infra/cost.template.yaml` (limite `MonthlyLimitUsd` padrão 54,61, alertas em 50%, 80% real e 100% previsto, até quatro e-mails por parâmetro `AlertEmail1` a `AlertEmail4`, impostos incluídos). Foi validado com `cfn-lint` e `validate-template`, e **não foi aplicado**.
+**Ponto a conferir:** na leitura anterior à edição, o orçamento tinha `IncludeTax: true`. Depois da edição, o campo de tipos de custo não aparece mais na API. Não consegui confirmar se os impostos continuam entrando no cálculo. No console: Budgets → `runpass-dev-mensal` → Edit → opções avançadas, e conferir que **Taxes** (e Support charges) estão marcados.
 
-**Como aplicar (root ou administrador, console):**
-1. Billing → Budgets: excluir o orçamento `runpass-dev-mensal` atual, para liberar o nome. O template o recria com os mesmos alertas.
-2. CloudFormation: criar a stack `runpass-dev-cost` com `infra/cost.template.yaml`, `Environment=dev`, `MonthlyLimitUsd=54.61` e os quatro e-mails em `AlertEmail1` a `AlertEmail4`.
-3. Conferir que cada um recebe o e-mail de teste ou de confirmação, se a AWS enviar, e que o orçamento mostra US$ 54,61 e quatro assinantes por alerta.
-4. Alternativa sem template: editar o orçamento no console (Edit, valor 54,61) e adicionar os três e-mails que faltam a cada um dos três alertas.
+**Template:** `infra/cost.template.yaml` continua válido e **não aplicado**. Serve como referência versionada e para recriar o orçamento por IaC (excluir o atual antes, para liberar o nome). Enquanto isso, o orçamento é gerenciado manualmente, e qualquer mudança futura deve ser registrada aqui.
 
 **Leitura dos números:** o gasto esperado do DEV (US$ 9,95) usa cerca de 18% do novo limite, e o envelope com reserva e contingência (US$ 45,44) usa cerca de 83%. O alerta de 80% só deve disparar se o consumo chegar perto desse envelope conservador, o que é o propósito dele. O teto de R$ 1.000 continua sendo o limite duro; o orçamento de R$ 300 é o aviso antecipado.
 
