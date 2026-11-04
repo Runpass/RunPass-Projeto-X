@@ -36,3 +36,20 @@ A política dos usuários de operador (`runpass-dev-thiago`, `runpass-dev-rafael
 ```
 
 `kms:CreateKey` não aceita ARN de chave, por isso a restrição é a região. A política completa vive no IAM; este documento registra só a mudança. O papel de deploy OIDC (`infra/deploy-role.template.yaml`) precisará de permissões equivalentes antes de o workflow criar a stack de dados.
+
+## Ensaio em DEV: criar o operador e carregar o catálogo
+
+Ferramenta: `scripts/operator_tool.py` (uso interno, nunca por HTTP). Rodar cada passo **no terminal da própria pessoa**, não em sessão de assistente, porque o comando `enroll` imprime o segredo do TOTP. Em macOS, se o Python acusar `CERTIFICATE_VERIFY_FAILED`, usar `SSL_CERT_FILE=/etc/ssl/cert.pem`.
+
+```sh
+export AWS_PROFILE=runpass-dev-sa PYTHONPATH=backend
+# 1. Pessoa que será operadora: cria o usuário no pool de operadores e cadastra o TOTP.
+python3 scripts/operator_tool.py enroll --username <email-do-operador>
+# 2. OUTRA pessoa, com o perfil AWS dela, ativa o acesso com permissão mínima.
+python3 scripts/operator_tool.py grant --subject <sub> --permission catalog_admin --operator-iam-user <usuario-iam-do-operador>
+# 3. Operadora: login com MFA e carga da fixture pelo importador real.
+python3 scripts/operator_tool.py load-catalog --username <email-do-operador>
+```
+
+A carga usa a origem `https://runpass.invalid/fixture-sintetica` (domínio `.invalid` reservado, nunca resolve) e a fixture já traz "Sintética" no nome e a descrição "não representa uma prova real". É repetível: executar de novo não duplica. O acesso vale por 1 hora de sessão e a revogação (`state` diferente de `active`) bloqueia a carga. A prova com MFA real em DEV é evidência do S09; não substitui o ensaio completo de operadores exigido antes de PROD.
+
