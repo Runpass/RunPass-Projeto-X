@@ -159,3 +159,14 @@ Autorização informada pelo usuário em conversa (Thiago e Rafael), com o rotei
 As duas stacks de revisão estão em `REVIEW_IN_PROGRESS`, sem recursos. Os e-mails de alerta foram passados como parâmetros e não estão no Git.
 
 **Pendente:** revisão dos change sets por Thiago e Rafael e aprovação para executar; depois, change set da stack `runpass-dev-app`, que depende dos exports da stack de dados e das saídas da identidade. Nada além disso foi criado.
+
+### Execução dos change sets — 04/11/2026
+
+Thiago e Rafael revisaram os change sets e autorizaram a execução de identidade e dados.
+
+| Stack | Resultado |
+| --- | --- |
+| `runpass-dev-identity` | Executada, `CREATE_COMPLETE`. 2 pools Cognito e 2 clientes |
+| `runpass-dev-data` | **Falhou e reverteu** (`ROLLBACK_COMPLETE`). Evento do CloudFormation: `AlertsKey` com `UnauthorizedTaggingOperation`. A política IAM de operador não tinha nenhuma ação `kms:*`. Verificado por leitura que não restou tabela, fila ou bucket de dados na conta; o bucket de artefatos permanece |
+
+Correção: acrescentar o bloco KMS de `docs/operadores.md` à política dos operadores. Depois disso, excluir a stack vazia, criar novo change set e pedir nova confirmação antes de executar.

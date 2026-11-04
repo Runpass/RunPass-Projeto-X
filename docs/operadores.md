@@ -14,3 +14,25 @@ Antes de DEV: criar políticas IAM por recurso para identidade/sessões, definir
 ## Alertas críticos (escalonamento)
 
 Definido em 04/11/2026: **Thiago é o primeiro responsável e Rafael o segundo.** Os alertas do tópico SNS `CriticalAlerts` (mensagens nas DLQs de eventos e auditoria, erros 5xx da API e falhas da manutenção agendada) chegam por e-mail aos quatro endereços cadastrados, que ficam fora do Git e entram como parâmetros `AlertEmail1` a `AlertEmail4` no deploy. O primeiro responsável confirma o recebimento e investiga; o segundo assume se o primeiro não puder. O prazo de resposta ainda não foi definido e deve ser acordado antes de DEV receber tráfego de teste de carga. O recebimento só é provado no deploy: cada destinatário confirma o e-mail de assinatura e um alarme de teste (`aws cloudwatch set-alarm-state`) deve chegar a todos.
+
+## Política IAM dos operadores: bloco KMS
+
+A política dos usuários de operador (`runpass-dev-thiago`, `runpass-dev-rafael` e equivalentes) cobre CloudFormation, Lambda, DynamoDB, S3, SQS, SNS, CloudWatch e demais serviços em `sa-east-1`, mas **não tinha ações de KMS**. A chave de alertas da stack de dados (`AlertsKey`, necessária porque alarmes do CloudWatch não publicam em tópico cifrado com `alias/aws/sns`) falhou na primeira execução em 04/11/2026 com `UnauthorizedTaggingOperation`. Acrescentar este bloco ao array `Statement`:
+
+```json
+{
+    "Sid": "ManageRunPassAlertsKeyInSaoPaulo",
+    "Effect": "Allow",
+    "Action": [
+        "kms:CreateKey", "kms:DescribeKey", "kms:TagResource", "kms:UntagResource",
+        "kms:ListResourceTags", "kms:PutKeyPolicy", "kms:GetKeyPolicy",
+        "kms:EnableKeyRotation", "kms:GetKeyRotationStatus", "kms:CreateAlias",
+        "kms:UpdateAlias", "kms:DeleteAlias", "kms:ListAliases", "kms:ListKeys",
+        "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion"
+    ],
+    "Resource": "*",
+    "Condition": {"StringEquals": {"aws:RequestedRegion": "sa-east-1"}}
+}
+```
+
+`kms:CreateKey` não aceita ARN de chave, por isso a restrição é a região. A política completa vive no IAM; este documento registra só a mudança. O papel de deploy OIDC (`infra/deploy-role.template.yaml`) precisará de permissões equivalentes antes de o workflow criar a stack de dados.
