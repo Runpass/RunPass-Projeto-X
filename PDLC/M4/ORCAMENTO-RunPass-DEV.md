@@ -8,7 +8,11 @@ Data: 04/11/2026. Complementa `ORCAMENTO-RunPass-preliminar.md`, que modelava DE
 
 Câmbio: PTAX de venda do Banco Central de 03/11/2026, **R$ 5,4935 por US$** (consulta à API oficial; a PTAX de 04/11/2026 ainda não estava publicada). Com ele, o teto de R$ 1.000 equivale a **US$ 182,03**. Se o dólar subir 20%, equivale a US$ 151,69.
 
-O orçamento `runpass-dev-mensal` (AWS Budgets) está em **US$ 150/mês** (verificado em 04/11/2026), o que corresponde a cerca de R$ 824 com a PTAX. Fica abaixo do teto, então os alertas de 50%, 80% e 100% disparam antes de o teto ser alcançado. Mantido; a premissa antiga de que seria "conservador só com o dólar acima de R$ 6,67" deixou de ser necessária.
+**Decisão de 04/11/2026:** o orçamento `runpass-dev-mensal` (AWS Budgets) passa a ter como limite **30% do teto**, ou seja, **R$ 300, equivalentes a US$ 54,61** com a PTAX acima. Os alertas continuam em 50% e 80% (gasto real) e 100% (previsão), o que dá US$ 27,31, US$ 43,69 e US$ 54,61. O orçamento já inclui impostos no cálculo (`IncludeTax`), o que cobre parte da dúvida sobre tributos.
+
+**Estado na AWS:** ainda em **US$ 150/mês** (verificado em 04/11/2026). A tentativa de aplicar o novo limite foi recusada: `runpass-dev-thiago` não tem `budgets:ModifyBudget`. Aplicar pelo console (Billing → Budgets → `runpass-dev-mensal` → Edit, valor 54,61) ou com o root, ou incluir essa ação na política `RunPassDevOperator` se quiserem que o operador a tenha.
+
+**Leitura dos números:** o gasto esperado do DEV (US$ 9,95) usa cerca de 18% do novo limite, e o envelope com reserva e contingência (US$ 45,44) usa cerca de 83%. O alerta de 80% só deve disparar se o consumo chegar perto desse envelope conservador, o que é o propósito dele. O teto de R$ 1.000 continua sendo o limite duro; o orçamento de R$ 300 é o aviso antecipado.
 
 ## Linhas mensais de DEV
 

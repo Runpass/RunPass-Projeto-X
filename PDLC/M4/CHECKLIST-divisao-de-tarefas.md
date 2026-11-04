@@ -55,7 +55,8 @@ Resp.: ______ · Destrava: blocos 4, 5, 6
 Resp.: ______ · Destrava: autorização de provisionamento
 
 - [x] Itens antes excluídos incorporados em `ORCAMENTO-RunPass-DEV.md` (04/11/2026): DEV em US$ 9,95/mês, US$ 45,44 com reserva e contingência
-- [x] `runpass-dev-mensal` (US$ 150/mês) revisado com a PTAX de 03/11/2026 (R$ 5,4935): teto de R$ 1.000 = US$ 182,03; orçamento mantido
+- [x] `runpass-dev-mensal` revisado com a PTAX de 03/11/2026 (R$ 5,4935): teto de R$ 1.000 = US$ 182,03
+- [ ] Aplicar o novo limite do `runpass-dev-mensal`: 30% do teto = R$ 300 = US$ 54,61 (decisão de 04/11/2026; hoje está em US$ 150). `runpass-dev-thiago` não tem `budgets:ModifyBudget`: aplicar no console (Billing → Budgets → Edit) ou com o root
 - [x] Preços atualizados e cálculo registrado (`calcular_orcamento_dev_exclusoes.py`, `AWS-PRECOS-EXCLUSOES-SA-EAST-1.json`)
 - [ ] Definir quem recebe os alertas de custo (50%, 80% real, 100% previsto) e confirmar o recebimento
 
