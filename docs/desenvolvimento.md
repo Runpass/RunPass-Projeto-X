@@ -56,6 +56,10 @@ Os endereços acima são exemplos, não serviços disponíveis. Backend: consult
 
 Se o ambiente virtual sob Documents apresentar lentidão ao ler dependências, crie outro fora dessa pasta com os mesmos requisitos: `make setup VENV=~/.cache/runpass/venv` e `make check VENV=~/.cache/runpass/venv`. Registrar caminho e resultados; não confundir troca de diretório com mudança de versões.
 
+## Publicação e branches
+
+O repositório oficial é `Runpass/RunPass-Projeto-X`, com os branches `dev`, `hom` e `main`. Todo envio vai para `dev`, por pull request: os rulesets recusam push direto (`GH013`, "Changes must be made through a pull request"). Fluxo: branch de funcionalidade a partir de `runpass/dev`, push para o remoto `runpass` e `gh pr create --repo Runpass/RunPass-Projeto-X --base dev`. Promoção para `hom` e `main` é decisão separada, também por PR. O remoto `origin` aponta para o repositório antigo (`Moura7/RunPass-Projeto-X`) e não recebe mais envios. O workflow `check.yml` roda em pull requests e em pushes para `dev`, `hom` e `main`. Não há workflow de deploy; ele só entra depois dos GitHub Environments com aprovadores (ver `PDLC/M4/S09-integracao-dev.md`).
+
 ## Smoke test da jornada
 
 `scripts/smoke_journey.py` percorre a jornada principal por HTTP (status, perfil, admissão, catálogo, rascunho, versão antiga rejeitada, acesso alheio negado, imagem, conclusão com oito notas, avaliação e exclusão) e imprime `APROVADO`, `FALHA` ou `NAO EXECUTADO` por passo, com o tempo. Usa só a biblioteca padrão e dados sintéticos. Os tokens vêm apenas do ambiente (`RUNPASS_ACCESS_TOKEN`; opcionalmente `RUNPASS_ACCESS_TOKEN_OTHER` para o passo do usuário alheio) e nunca são impressos, assim como os corpos das respostas. Exclusão de conta é destrutiva e só roda com `--delete-account`.

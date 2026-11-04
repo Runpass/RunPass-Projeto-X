@@ -1,8 +1,10 @@
 # RunPass — Checklist de tarefas para dividir entre pessoas
 
-Data: 03/11/2026. Fonte: `implementation-slices.md`, `S09-integracao-dev.md` e `S09-roteiro-e-relatorio.md`.
+Data: 04/11/2026 (criado em 03/11/2026). Fonte: `implementation-slices.md`, `S09-integracao-dev.md` e `S09-roteiro-e-relatorio.md`.
 
-Estado: S00 a S08 implementadas localmente, em revisão. O que resta é fechar os gates de entrada, o aceite humano e a integração real em DEV (S09). Nada foi provisionado.
+Estado: S00 a S08 implementadas e aceitas localmente (03/11/2026). O que resta é fechar os gates de entrada e a integração real em DEV (S09). Nada foi provisionado.
+
+Publicação: repositório `Runpass/RunPass-Projeto-X`, sempre para o branch `dev`, por pull request (os rulesets exigem). O PR #2 (visual do mockup, smoke test, cronograma) foi mesclado na `dev` em 04/11/2026.
 
 Como usar: escreva o nome em **Resp.** e marque `[x]` ao concluir, com a evidência (data, ID de execução ou link). Não registre tokens, senhas, e-mails ou dados pessoais. Dados sempre sintéticos.
 
@@ -10,17 +12,29 @@ Legenda de dependência: **→** só começa depois do bloco indicado. Blocos se
 
 ---
 
+## Próximos passos (04/11/2026), em ordem
+
+Concluído desde 03/11/2026: aceite local de S02 a S08; usuário do Thiago (`runpass-dev-thiago`) e do Rafael criados; repositório oficial definido; PR #2 mesclado na `dev`; visual do mockup, smoke test e cronograma publicados.
+
+1. **Dono da conta `Runpass` (ou administrador) cria os GitHub Environments** `dev` (depois `hom` e `prod`) com aprovadores e restrição ao branch correspondente. Bloqueia o papel OIDC e o deploy. A conta `thicost` não tem `admin`.
+2. **Acesso AWS:** primeiro login e MFA do Rafael; segundo MFA do root para cada um; e-mail do root compartilhado; confirmar `aws sts get-caller-identity` com o ARN de cada pessoa.
+3. **Alertas e orçamento:** destinatário e teste dos alertas; incorporar os itens excluídos ao orçamento e revisar o teto com a cotação do dia.
+4. **Artefatos e change sets:** bucket, chaves no SSM, `make lambda-package`, change sets de identidade, dados e app para revisão. Atualizar `GitHubOrg=Runpass` ao aplicar o papel OIDC.
+5. **Autorização de provisionamento** dos dois responsáveis, depois deploy em DEV e jornada com `scripts/smoke_journey.py`.
+6. **Mobile em aparelhos reais** (Android e iPhone), começando pela demo, que não depende da AWS; depois apontar para DEV com `--dart-define`.
+7. **Decisões de produto abertas:** passaporte, conquistas e stories do mockup (fora do MVP no PRD); arquivos de imagem e arte das medalhas; prazo de retenção da lista de espera, dos rascunhos e das solicitações; dono do catálogo real (Thiago).
+
 ## Bloco 1 — GitHub e CI (dono ou administrador do repositório)
 
 Resp.: ______ · Destrava: bloco 6 (papel OIDC)
 
-- [ ] Confirmar organização/repositório oficial (hoje o `origin` aponta para `Moura7/RunPass-Projeto-X`, a confirmar)
-- [ ] Criar o Environment `dev` em `Settings → Environments` (nome exato, minúsculas)
+- [x] Repositório oficial: `Runpass/RunPass-Projeto-X` (conta de usuário), publicação por pull request para `dev` (decisão de 03/11/2026); o antigo `Moura7/RunPass-Projeto-X` deixou de ser o destino
+- [ ] Criar o Environment `dev` em `Settings → Environments` (nome exato, minúsculas); depois `hom` e `prod`
 - [ ] Adicionar os dois responsáveis como **Required reviewers** (decidir "Prevent self-review" e registrar)
-- [ ] Restringir deploy à branch `main` (Selected branches and tags)
+- [ ] Restringir cada Environment ao seu branch (`dev`→`dev`, `hom`→`hom`, `prod`→`main`) em Selected branches and tags
 - [ ] Não colocar segredos no Environment (o papel é assumido por OIDC)
-- [ ] Proteger a `main`: exigir pull request e a verificação "Verificações locais"
-- [ ] Rodar `gh api repos/<org>/<repo>/environments/dev --jq '{name, rules: [.protection_rules[] | {type}], branches: .deployment_branch_policy}'` e confirmar `required_reviewers` + política de branches
+- [ ] Rulesets de `dev`, `hom` e `main` já exigem pull request; conferir que a verificação "Verificações locais" também é exigida
+- [ ] Rodar `gh api repos/Runpass/RunPass-Projeto-X/environments/dev --jq '{name, rules: [.protection_rules[] | {type}], branches: .deployment_branch_policy}'` e confirmar `required_reviewers` + política de branches
 - [ ] Registrar em `S09-integracao-dev.md`: data, quem aprovou, resultado do comando
 - [ ] Conferir que o workflow `check.yml` passa em Python 3.11 e 3.12
 
@@ -165,7 +179,7 @@ Resp.: ______ · → blocos 9, 10, 11
 | Bloco 10 (permissões, idempotência, DLQ, restore) | Bloco 10 (carga, custo, limites de Lambda) |
 | Bloco 13 (relatório), em conjunto | Bloco 7 (autorização), em conjunto |
 
-Observação: o GitHub exige que o dono (`Moura7`) ou um administrador crie o Environment `dev`; a conta `thicost` tem apenas `WRITE`. Se a pessoa A não tiver esse papel, a tarefa vai para quem tiver, ou ele concede permissão de administrador.
+Observação: o GitHub exige que o dono da conta `Runpass` ou um administrador do repositório crie os Environments; a conta `thicost` tem `push`, sem `admin`. Se a pessoa A não tiver esse papel, a tarefa vai para quem tiver, ou ele concede permissão de administrador.
 
 ## Caminho crítico
 

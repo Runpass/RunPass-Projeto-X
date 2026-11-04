@@ -206,3 +206,9 @@ Aceite local não é aceite de integração real. Nada disso autoriza provisiona
 ## Aceite humano da S07 — 03/11/2026
 
 Aceita pelo usuário como aceite local. Ressalvas para a S09: SQS, DLQ e S3 reais, IAM/MFA, p95 de dez segundos do RunScore, carga, alarmes e replay após restauração. Com isso, S02 a S08 estão aceitas localmente; falta a integração real (S09), que continua bloqueada pelo gate de entrada.
+
+## Atualização — 04/11/2026
+
+- Publicação: repositório `Runpass/RunPass-Projeto-X`, sempre por pull request para a `dev`; PR #2 mesclado em 04/11/2026 (visual do mockup no app, smoke test da jornada, cronograma). O aceite de S02 a S08 continua local.
+- App: o Início é um feed e mostra as corridas concluídas do próprio corredor; o detalhe da prova ganhou abas Sobre, Avaliações, Fotos e Participantes; Meu Medalheiro e Perfil seguem o mockup. A demo serve feed, avaliações, wishlist e curtidas fictícios pelas rotas do contrato; no backend real essas rotas ainda não existem e as telas mostram "em breve". Conquistas e "recomendariam" são derivadas dos dados no app, sem backend, e stories e conquistas por marcos seguem fora do MVP no PRD.
+- Próximos passos e bloqueios: `CHECKLIST-divisao-de-tarefas.md` (seção "Próximos passos") e `S09-integracao-dev.md`. O bloqueio atual é a criação dos GitHub Environments por quem tem `admin`.

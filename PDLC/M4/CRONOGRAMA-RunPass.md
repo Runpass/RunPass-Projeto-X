@@ -1,18 +1,18 @@
 # RunPass — Cronograma: priorizado, restante do MVP e fora do MVP
 
-Data-base: 03/11/2026. Fontes: `PRD_RunPass_MVP_v2.md` (seções 19 e 20), `implementation-slices.md`, `S09-integracao-dev.md` e `CHECKLIST-divisao-de-tarefas.md`.
+Data-base: 03/11/2026 (atualizado em 04/11/2026). Fontes: `PRD_RunPass_MVP_v2.md` (seções 19 e 20), `implementation-slices.md`, `S09-integracao-dev.md` e `CHECKLIST-divisao-de-tarefas.md`.
 
 **Aviso sobre as datas.** Nem o PRD nem a SPEC trazem datas de calendário, exceto a janela do beta (60 dias a partir do 50º usuário admitido). Todas as durações abaixo são **estimativas do assistente**, sem base em histórico de velocidade da equipe, e não são compromisso. Premissa: duas pessoas (Thiago e Rafael) com dedicação alta e contínua. Com dedicação parcial, multiplique as durações. As faixas de calendário só valem se o início for a data-base. Revisar quando a capacidade for confirmada.
 
 ## 1. Já pronto (aceite local em 03/11/2026)
 
-S00 a S08: autenticação, catálogo, rascunho, imagem, conclusão com avaliação e medalha, eventos e RunScore, edição, exclusão e privacidade. Falta provar tudo em serviços reais (S09). Telas do mockup (Início, Corridas/detalhe, Meu Medalheiro, Perfil) aplicadas com dados reais; a demo web está disponível.
+S00 a S08: autenticação, catálogo, rascunho, imagem, conclusão com avaliação e medalha, eventos e RunScore, edição, exclusão e privacidade. Falta provar tudo em serviços reais (S09). Telas do mockup (Início como feed, Corridas/detalhe com abas, Meu Medalheiro, Perfil) aplicadas; a demo web está disponível. O PR #2 (app, smoke test e este cronograma) foi mesclado na `dev` de `Runpass/RunPass-Projeto-X` em 04/11/2026, e a publicação passa a ser sempre por PR para a `dev`.
 
 ## 2. Priorizado agora: S09, integração real em DEV (primeira entrega)
 
 | # | Item | Depende de | Estimativa | Previsão (se começar em 04/11) |
 | --- | --- | --- | --- | --- |
-| 1 | Environment `dev` no GitHub com aprovadores, proteção da `main` | dono ou administrador do repositório | 0,5 dia | semana de 03/11 |
+| 1 | Environments `dev` (depois `hom` e `prod`) no repositório `Runpass/RunPass-Projeto-X`, com aprovadores; rulesets de PR já ativos | dono da conta `Runpass` ou administrador (a conta `thicost` não tem `admin`) | 0,5 dia | semana de 03/11 |
 | 2 | Primeiro login e MFA do Rafael; segundo MFA do root; e-mail do root compartilhado | acesso ao root, os dois online | 0,5 a 1 dia | semana de 03/11 |
 | 3 | Alertas operacionais (destinatário, assinatura, teste) | conta AWS | 1 dia | semana de 03/11 |
 | 4 | Orçamento: itens excluídos, cotação, revisão do teto | premissas suas | 1 a 2 dias | semana de 03/11 |
