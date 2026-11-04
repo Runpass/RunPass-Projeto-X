@@ -27,7 +27,7 @@ test:
 	PYTHONPATH=backend $(PYTHON) -m unittest discover -s backend/tests -v
 
 infra-check:
-	$(CFN_LINT) -t infra/identity.template.json infra/data.template.yaml infra/app.template.yaml infra/deploy-role.template.yaml -r sa-east-1
+	$(CFN_LINT) -t infra/identity.template.json infra/data.template.yaml infra/app.template.yaml infra/deploy-role.template.yaml infra/cost.template.yaml -r sa-east-1
 
 lambda-package:
 	PYTHON=$(PYTHON) scripts/package-lambda.sh
