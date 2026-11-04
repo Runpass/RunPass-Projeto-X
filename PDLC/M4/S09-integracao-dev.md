@@ -12,7 +12,7 @@ Data: 02/11/2026. Estado: **preparação local**. Nenhum recurso foi provisionad
 | GitHub OIDC | Template preparado, não aplicado | `infra/deploy-role.template.yaml` (cfn-lint aprovado). Repositório oficial: `Runpass/RunPass-Projeto-X` (conta de usuário `Runpass`, parâmetro `GitHubOrg=Runpass`), decidido em 03/11/2026. O Environment `dev` já existe (04/11/2026); falta aplicar o papel após autorização; o `aud` e o `sub` do token estão presos ao repositório e ao Environment |
 | Orçamento de custo | Criado | `runpass-dev-mensal`: US$ 150/mês com alertas em 50%, 80% (real) e 100% (previsto) para o e-mail do responsável. O valor em dólar é conservador para o teto de R$ 1.000, que valeria menos de US$ 150 com o dólar acima de R$ 6,67; revisar com a cotação do dia |
 | GitHub Environment `dev` | Criado em 04/11/2026 (verificado por `gh api`): `dev`, `hom` e `prod` com `required_reviewers` (`thicost` e `Moura7`) e restrição de branch (`dev`→`dev`, `hom`→`hom`, `prod`→`main`); sem variáveis | Bloqueio liberado para o papel OIDC. O deploy continua dependendo da autorização explícita de provisionamento. Registro abaixo |
-| Alertas operacionais | Não configurado | tópico, destinatário fora do Git e teste de recebimento/escalonamento |
+| Alertas operacionais | Preparado, não aplicado | Quatro destinatários definidos pelo usuário em 04/11/2026; os endereços ficam fora do Git e entram como parâmetros `AlertEmail1` a `AlertEmail4` da stack de dados. O tópico passou a usar chave KMS própria, porque alarmes do CloudWatch não publicam em tópico cifrado com `alias/aws/sns`. Falta definir o escalonamento (quem age primeiro e o substituto) e provar o recebimento no deploy: cada destinatário confirma a assinatura e um alarme de teste deve chegar |
 | Autorização de provisionamento | Não concedida | aprovação explícita após orçamento e revisão do change set |
 
 Enquanto qualquer item obrigatório estiver bloqueado, comandos de criação de stack, upload de artefato ou deploy não devem ser executados.
@@ -28,7 +28,7 @@ O teto aprovado é limite financeiro para DEV, não estimativa convertida para U
 - buckets privados/versionados separados para medalhas e auditoria;
 - lifecycle complementar para temporários e auditoria, sem substituir remoção ativa;
 - duas filas standard e respectivas DLQs, retenção de um dia, visibility de 60 segundos e redrive após cinco recepções;
-- tópico de alertas e alarmes para mensagens visíveis nas DLQs.
+- tópico de alertas cifrado com chave KMS própria (a chave `alias/aws/sns` impede o CloudWatch de publicar), assinaturas por e-mail opcionais (`AlertEmail1` a `AlertEmail4`) e alarmes para mensagens visíveis nas DLQs.
 
 `make infra-check` valida os três templates em `sa-east-1`. Os templates não contêm nomes globais fixos, destinatários, IDs de conta, credenciais ou dados reais.
 
@@ -112,6 +112,7 @@ Liberado somente quando o comando do passo 8 mostrar `required_reviewers` e rest
 - **Data:** 04/11/2026. Environments criados por quem administra a conta `Runpass`; o desenho (aprovadores, restrição de branch, sem segredos) foi aprovado pelo usuário em 03/11/2026.
 - **Resultado do passo 8** (`gh api .../environments/dev`, sem tokens): regras `required_reviewers` e `branch_policy`, `custom_branch_policies: true`.
 - **Verificação independente** (conta `thicost`, 04/11/2026): `dev`, `hom` e `prod` existem; aprovadores `thicost` e `Moura7` nos três, com `prevent_self_review: false`; restrições de branch `dev`, `hom` e `main`, respectivamente; `dev` sem variáveis.
+- **Acesso AWS (04/11/2026):** o usuário informou que o primeiro login e o MFA do Rafael e o segundo MFA do root estão ok; o assistente não verificou.
 - **Pendente:** conferir em Settings → Rules que a verificação "Verificações locais" é exigida pelos rulesets (só a exigência de pull request foi verificada).
 
 Isso libera apenas a criação do papel OIDC. Ele ainda exige a autorização explícita de provisionamento descrita no gate de entrada, e os pré-requisitos de AWS (acesso do Rafael, alertas, orçamento, change sets) seguem abertos.
@@ -123,7 +124,7 @@ Nada abaixo foi executado, e criar stack ou enviar artefato continua dependendo 
 1. Criar o bucket de artefatos em `sa-east-1`, privado e versionado, fora do CloudFormation.
 2. Criar no SSM dois SecureString com valores aleatórios: a chave HMAC de exclusões (32 bytes) e a chave Fernet de cursores (32 bytes em base64url). Os valores não passam por templates, Git nem chat.
 3. `make lambda-package`, enviar o zip ao bucket e anotar a versão do objeto.
-4. Gerar change set `CREATE` de `runpass-dev-identity` e de `runpass-dev-data` e revisar. Criar o change set cria uma stack vazia em `REVIEW_IN_PROGRESS`, sem recursos.
+4. Gerar change set `CREATE` de `runpass-dev-identity` e de `runpass-dev-data` e revisar. Passar os endereços de alerta como parâmetros `AlertEmail1` a `AlertEmail4` na linha de comando, sem gravá-los em arquivo versionado. Criar o change set cria uma stack vazia em `REVIEW_IN_PROGRESS`, sem recursos.
 5. Aplicar identidade e dados somente após aprovação; depois gerar e revisar o change set de `runpass-dev-app`, que depende dos exports da stack de dados.
 6. Rodar a jornada da seção "Ainda necessário antes da integração", com carga mínima e dados sintéticos.
 
