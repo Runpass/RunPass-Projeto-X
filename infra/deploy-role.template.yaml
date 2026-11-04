@@ -4,7 +4,7 @@ Description: RunPass GitHub Actions OIDC deploy role and CloudFormation executio
 Parameters:
   Environment:
     Type: String
-    AllowedValues: [dev, prod]
+    AllowedValues: [dev, hom, prod]
   GitHubOrg:
     Type: String
     AllowedPattern: '^[A-Za-z0-9-]+$'
