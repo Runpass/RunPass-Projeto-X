@@ -166,8 +166,21 @@ def run(journey, delete_account, max_image_seconds):
         other = os.environ.get("RUNPASS_ACCESS_TOKEN_OTHER", "")
         if not other:
             return "NAO EXECUTADO", "defina RUNPASS_ACCESS_TOKEN_OTHER (segundo usuario sintetico)"
+        # O segundo usuario precisa ter perfil e admissao: sem isso a API responde 403 por
+        # admissao ausente, o que nao prova separacao entre donos. Alheio deve dar 404.
+        for method, path, body in (
+            (
+                "PUT",
+                "/me",
+                {"displayName": "Corredor Outro", "username": "outro_" + uuid.uuid4().hex[:8]},
+            ),
+            ("POST", "/beta/admissions", {"birthDate": "1990-01-01", "declaresAdult": True}),
+        ):
+            code, _, _, _ = j.call(method, path, body, token=other)
+            if code not in (200, 201):
+                return "FALHA", f"preparar segundo usuario {path} HTTP {code}"
         code, _, t, _ = j.call("GET", "/participations/" + j.ctx["pid"], token=other)
-        return j.expect("rascunho alheio negado", code, (403, 404), t)
+        return j.expect("rascunho alheio nao encontrado (404)", code, 404, t)
 
     def image():
         png = synthetic_png()
