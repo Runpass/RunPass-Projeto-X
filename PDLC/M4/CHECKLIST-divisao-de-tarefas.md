@@ -18,7 +18,7 @@ Concluído desde 03/11/2026: aceite local de S02 a S08; usuário do Thiago (`run
 
 1. ~~GitHub Environments~~ **Concluído em 04/11/2026:** `dev`, `hom` e `prod` criados com aprovadores (`thicost` e `Moura7`) e restrição de branch, verificados por `gh api`. Falta só conferir que os rulesets exigem a verificação "Verificações locais". O próximo bloqueio é o acesso AWS (item 2).
 2. ~~Acesso AWS~~ **Informado como ok pelo usuário em 04/11/2026:** primeiro login e MFA do Rafael e segundo MFA do root. Restam o e-mail do root compartilhado e confirmar `aws sts get-caller-identity` com o ARN de cada pessoa.
-3. **Alertas e orçamento:** destinatários definidos (04/11/2026) e template corrigido (chave KMS própria); falta o escalonamento e provar o recebimento no deploy; incorporar os itens excluídos ao orçamento e revisar o teto com a cotação do dia.
+3. **Alertas e orçamento:** destinatários definidos (04/11/2026) e template corrigido (chave KMS própria); escalonamento definido (Thiago primeiro, Rafael segundo); falta provar o recebimento no deploy; incorporar os itens excluídos ao orçamento e revisar o teto com a cotação do dia.
 4. **Artefatos e change sets:** bucket, chaves no SSM, `make lambda-package`, change sets de identidade, dados e app para revisão. Atualizar `GitHubOrg=Runpass` ao aplicar o papel OIDC.
 5. **Autorização de provisionamento** dos dois responsáveis, depois deploy em DEV e jornada com `scripts/smoke_journey.py`.
 6. **Mobile em aparelhos reais** (Android e iPhone), começando pela demo, que não depende da AWS; depois apontar para DEV com `--dart-define`.
@@ -64,7 +64,7 @@ Resp.: ______ · Destrava: autorização de provisionamento
 Resp.: ______ · → bloco 2
 
 - [x] Destinatários dos alertas definidos em 04/11/2026 (quatro e-mails, fora do Git; entram como `AlertEmail1` a `AlertEmail4` no deploy)
-- [ ] Definir o escalonamento: quem age primeiro e o substituto
+- [x] Escalonamento definido em 04/11/2026: Thiago primeiro, Rafael segundo (prazo de resposta a definir)
 - [ ] No deploy da stack de dados, passar `AlertEmail1` a `AlertEmail4` e cada destinatário confirmar o e-mail de assinatura
 - [ ] Planejar o teste de disparo e recebimento (DLQ e alarmes de erro da API e da manutenção)
 
