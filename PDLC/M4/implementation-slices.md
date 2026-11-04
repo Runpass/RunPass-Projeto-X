@@ -2,7 +2,7 @@
 
 Data: 29/10/2026. Fonte única: SPEC_RunPass_MVP_v1.md. Escopo aprovado: autenticação → catálogo → rascunho → imagem → conclusão → avaliação e medalha.
 
-Estado do plano: S00 preparada/verificada e sequência S01 autorizada pelo usuário. S01 aceita pelo usuário após revisão dos três blocos conforme S01-desenho-e-contratos.md; S02, S03 e S04 implementadas localmente em revisão. S05 está em execução, S06, S07 e S08 estão em revisão local e S09 entrou em preparação local sem provisionamento. Cada slice possui dependências e saída verificável. Propostas técnicas são resolvidas dentro dos slices de desenho; não exigem reaprovação de nomes de atributos. Escolhas que alterem produto, custo ou privacidade voltam ao usuário.
+Estado do plano: S00 preparada/verificada e sequência S01 autorizada pelo usuário. S01 aceita pelo usuário após revisão dos três blocos conforme S01-desenho-e-contratos.md; S02, S03 e S04 aceitas pelo usuário em 03/11/2026 (aceite local, prova real na S09). S02 a S08 foram aceitas em 03/11/2026 (aceite local) e S09 está em preparação local sem provisionamento. Cada slice possui dependências e saída verificável. Propostas técnicas são resolvidas dentro dos slices de desenho; não exigem reaprovação de nomes de atributos. Escolhas que alterem produto, custo ou privacidade voltam ao usuário.
 
 ## Regras de execução
 
@@ -18,13 +18,13 @@ Estado do plano: S00 preparada/verificada e sequência S01 autorizada pelo usuá
 | --- | --- | --- | --- |
 | S00 | Contexto, estrutura e verificações locais | SPEC prioritária aprovada | Verificada; usuário autorizou sequência S01 |
 | S01 | Desenho físico do fluxo inicial e contratos fechados | S00 | Aceito pelo usuário em 28/10/2026 — revisão dos três blocos |
-| S02 | Identidade, admissão e autorização | S01 | Em revisão — implementação local e evidências em S02-identidade-admissao.md |
-| S03 | Catálogo consultável e carga controlada | S01, S02 | Em revisão — S03-catalogo.md |
-| S04 | Participação em rascunho | S03 | Em revisão — S04-rascunho-participacao.md |
-| S05 | Upload e imagem validada | S02, S04 | Em execução — backend/mobile locais validados; iPhone real e S3 pendentes |
-| S06 | Conclusão atômica, avaliação e medalha | S04, S05 | Em revisão — backend e jornada mobile locais validados |
-| S07 | Entrega de eventos, RunScore e histórico restrito | S06 | Em revisão local — consumidores, recuperação e expiração validados |
-| S08 | Edição, exclusão e proteção de dados | S06, S07 | Em revisão local — backend/mobile de edição, exclusão e limpeza retomável validados |
+| S02 | Identidade, admissão e autorização | S01 | Aceito em 03/11/2026 — aceite local; Cognito, e-mail, MFA e concorrência real em S09. Evidências em S02-identidade-admissao.md |
+| S03 | Catálogo consultável e carga controlada | S01, S02 | Aceito em 03/11/2026 — aceite local; catálogo real e cobertura de 90% pendentes para o beta. S03-catalogo.md |
+| S04 | Participação em rascunho | S03 | Aceito em 03/11/2026 — aceite local; DynamoDB real e persistência entre processos em S09. S04-rascunho-participacao.md |
+| S05 | Upload e imagem validada | S02, S04 | Aceito em 03/11/2026 — aceite local; HEIC no iPhone real, S3 real e p95 de 5 s em S09 |
+| S06 | Conclusão atômica, avaliação e medalha | S04, S05 | Aceito em 03/11/2026 — aceite local; teste humano no simulador em 29/10; integração real em S09 |
+| S07 | Entrega de eventos, RunScore e histórico restrito | S06 | Aceito em 03/11/2026 — aceite local; SQS/DLQ/S3, IAM/MFA, p95 de 10 s, carga, alarmes e replay após restauração em S09 |
+| S08 | Edição, exclusão e proteção de dados | S06, S07 | Aceito em 03/11/2026 — aceite local; restauração, prazo real de 7 dias, IAM/MFA e descarte do controle de 15 dias em S09 |
 | S09 | Integração real em DEV e aceite da entrega | S02–S08, orçamento/autorização | Preparação local; teto DEV de R$ 1.000/mês aprovado, provisionamento ainda bloqueado pelos demais gates |
 
 Não é uma decomposição de todo o MVP. Feed completo, interações sociais, wishlist, painel completo e pós-beta terão slices próprios depois; não foram removidos do escopo do produto.
@@ -180,3 +180,29 @@ Uma migração para `us-east-2` foi feita e desfeita no mesmo dia: a conta de pr
 ## Reverificação do mobile — 03/11/2026
 
 `make mobile-check` aprovado: análise estática sem problemas, formatação sem alterações (9 arquivos) e 18 testes Flutter aprovados (demo local, catálogo, rascunho, foto com oito avaliações, edição e exclusão de participação). É teste local com adaptadores; não substitui Android/iPhone reais nem integração com serviços AWS. Nenhum código foi alterado.
+
+## Aceite humano de S02, S03 e S04 — 03/11/2026
+
+Decisão do usuário em rodada de perguntas, com suíte local verde no dia (`make check`: 135 testes backend, contrato e cfn-lint; `make mobile-check`: 19 testes Flutter).
+
+- **S02 aceita.** Ressalvas: Cognito, envio de e-mail, MFA e concorrência real no DynamoDB só serão provados na S09. Sem sessão persistente nem refresh automático nesta entrega (aceito; persistência segura em slice posterior). Bootstrap e recuperação de operadores estão documentados em `docs/operadores.md`.
+- **S03 aceita.** Os seis filtros e a paginação por cursor ficam como propostos. Ressalva: a fixture de cinco edições fictícias não comprova cobertura; catálogo real (capital, dois anos iniciais, origem e revisão registradas) e cobertura de 90% são pendência do beta. Responsável pelo levantamento: Thiago.
+- **S04 aceita.** Ressalvas: DynamoDB real e persistência entre processos na S09; solicitação de edição ausente segue desabilitada até o slice administrativo.
+- **Pendência de política antes do beta:** prazo de retenção da lista de espera, dos rascunhos e das solicitações de catálogo (não herdam os 60 dias do beta). Decisão do usuário.
+
+Aceite local não é aceite de integração real. Nada disso autoriza provisionamento, PROD ou beta.
+
+## Aceite humano de S05, S06 e S08, e política de auditoria da S07 — 03/11/2026
+
+Decisão do usuário em rodada de perguntas.
+
+- **S05 aceita.** Ressalvas para a S09: conversão HEIC no iPhone real, adaptador S3 real (existe no código, não provado) e medição de p95 em cinco segundos.
+- **S06 aceita.** Ressalva: integração real na S09. O teste humano no simulador de 29/10 confirmou o fluxo e levou à correção da tela final.
+- **S08 aceita.** Ressalvas para a S09: ensaio de restauração, prazo real de sete dias, IAM/MFA e prova do descarte do controle de 15 dias.
+- **Política de descarte da auditoria vencida (S07) aprovada.** Se a auditoria ainda estiver pendente no vencimento, o score é reconciliado de forma independente, o payload é descartado e fica somente o registro mínimo de expiração ou falha, sem nova tentativa. Resolve a pendência que a S07 carregava.
+
+Aceite local não é aceite de integração real. Nada disso autoriza provisionamento, PROD ou beta.
+
+## Aceite humano da S07 — 03/11/2026
+
+Aceita pelo usuário como aceite local. Ressalvas para a S09: SQS, DLQ e S3 reais, IAM/MFA, p95 de dez segundos do RunScore, carga, alarmes e replay após restauração. Com isso, S02 a S08 estão aceitas localmente; falta a integração real (S09), que continua bloqueada pelo gate de entrada.

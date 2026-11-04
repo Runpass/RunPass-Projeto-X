@@ -64,3 +64,8 @@ Instalação/abertura no dispositivo são registradas separadamente após retorn
 No iPhone Duo/iOS 27.1, instalação e launch do app debug foram aceitos pelo simctl, mas capturas do app e dos Ajustes ficaram pretas; o usuário confirmou o comportamento. A compatibilidade desse runtime se limita ao Duo. Foi então instalado iOS 27.0 arm64 e criado `RunPass iPhone 17 Pro`. Nesse dispositivo, capturas renderizam o boot e a SpringBoard corretamente, eliminando o defeito de display preto. O app foi instalado e o launch retorna PID, mas permanece em tela branca em paisagem e o comando de launch demora anormalmente. Portanto o runtime/dispositivo foi recuperado, mas a interface nativa do RunPass ainda não foi aceita; a próxima investigação deve coletar logs do processo/Flutter durante essa inicialização. Testes de widget e build concluído não substituem essa confirmação.
 
 Revisão adicional do importador detectou que uma versão esperada futura poderia reservar um slot órfão antes de retornar conflito. A verificação passou a ocorrer antes da reserva; regressão demonstra ausência de mutação. Total atualizado: 50 testes backend aprovados.
+
+
+## Aceite humano — 03/11/2026
+
+Aceita pelo usuário como aceite local, com as ressalvas e pendências registradas em `implementation-slices.md` (seção "Aceite humano de S02, S03 e S04"). Integração real permanece na S09.

@@ -55,6 +55,46 @@ ThemeData runPassTheme() {
   );
 }
 
+/// Dark variant used by the medal collection screen.
+ThemeData runPassDarkTheme() {
+  const surface = Color(0xff1a1a1d);
+  final scheme = ColorScheme.fromSeed(
+    seedColor: runPassOrange,
+    brightness: Brightness.dark,
+    surface: surface,
+  );
+  return ThemeData(
+    useMaterial3: true,
+    colorScheme: scheme.copyWith(primary: runPassOrange),
+    scaffoldBackgroundColor: const Color(0xff0e0e10),
+    appBarTheme: const AppBarTheme(
+      backgroundColor: Color(0xff0e0e10),
+      foregroundColor: Colors.white,
+      centerTitle: false,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+    ),
+    cardTheme: CardThemeData(
+      color: surface,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: surface,
+      selectedColor: runPassOrange,
+      labelStyle: const TextStyle(color: Colors.white),
+      side: BorderSide.none,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    navigationBarTheme: const NavigationBarThemeData(
+      backgroundColor: Color(0xff0e0e10),
+      indicatorColor: Color(0xff3a2a22),
+      labelTextStyle: WidgetStatePropertyAll(TextStyle(fontSize: 11)),
+    ),
+  );
+}
+
 class RunPassWordmark extends StatelessWidget {
   final bool compact;
   const RunPassWordmark({super.key, this.compact = false});

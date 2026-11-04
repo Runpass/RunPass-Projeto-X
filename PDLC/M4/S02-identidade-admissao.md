@@ -41,3 +41,8 @@ Sem provisionamento, custo AWS, deploy, commit, push ou publicação. Próximo s
 ## Registro de execução
 
 Ambiente Python isolado já utilizado na S01, `/private/tmp/runpass-s01-validation-venv`, atualizado pelas dependências fixadas em requirements-dev.lock. Comandos: `make check PYTHON=/private/tmp/runpass-s01-validation-venv/bin/python RUFF=/private/tmp/runpass-s01-validation-venv/bin/ruff CFN_LINT=/private/tmp/runpass-s01-validation-venv/bin/cfn-lint` e `make mobile-check`. Execuções locais concluídas sem credenciais reais. Instalador/SDK precisaram de acesso à rede/cache do ambiente, sem alteração de versão Flutter e sem serviços pagos. `pip check` e `git diff --check` integram a conferência final.
+
+
+## Aceite humano — 03/11/2026
+
+Aceita pelo usuário como aceite local, com as ressalvas e pendências registradas em `implementation-slices.md` (seção "Aceite humano de S02, S03 e S04"). Integração real permanece na S09.

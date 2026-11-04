@@ -29,3 +29,8 @@ Revalidação em 29/10/2026: 28 testes focados de catálogo/participação passa
 Não há DynamoDB/Cognito reais, ensaio de falha AWS, benchmark, aceite humano ou persistência entre processos. A composição aceita a tabela lógica `history`, mas nenhum recurso foi provisionado. O simulador nativo continua com diagnóstico visual separado em S03; testes Flutter não substituem aparelho.
 
 Próximo slice técnico: S05, upload e processamento de foto. Ele deve preservar este rascunho em falha/timeout e não aceitar imagem pendente ou inválida.
+
+
+## Aceite humano — 03/11/2026
+
+Aceita pelo usuário como aceite local, com as ressalvas e pendências registradas em `implementation-slices.md` (seção "Aceite humano de S02, S03 e S04"). Integração real permanece na S09.

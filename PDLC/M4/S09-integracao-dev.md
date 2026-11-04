@@ -8,7 +8,7 @@ Data: 02/11/2026. Estado: **preparação local**. Nenhum recurso foi provisionad
 | --- | --- | --- |
 | S02–S08 disponíveis | Parcial | S02–S04, S06–S07 em revisão; S05 e S08 ainda têm pendências de dispositivo/objetos/mobile |
 | Orçamento completo e teto autorizado | Parcial | teto DEV de **R$ 1.000/mês** autorizado pelo usuário em 01/11/2026; preços de São Paulo confirmados vigentes em 02/11/2026; o orçamento ainda precisa incorporar os itens excluídos antes do change set |
-| Conta AWS DEV isolada | Parcial | Conta padrão `<ID da conta DEV>` criada pelo usuário, região `sa-east-1`, perfil `runpass-dev-sa`; usuário IAM `runpass-dev-operator` com MFA por app autenticador; o perfil `runpass-dev-sa` usa esse usuário desde 02/11/2026; responsáveis: dois, nomeados pelo usuário em 02/11/2026, com nomes fora do Git; os dois são responsáveis principais e substitutos um do outro; Rafael usará o mesmo usuário `runpass-dev-operator` (decisão de 02/11/2026, risco abaixo); falta confirmar o MFA do raiz |
+| Conta AWS DEV isolada | Parcial | Conta padrão `<ID da conta DEV>` criada pelo usuário, região `sa-east-1`, perfil `runpass-dev-sa`; usuário IAM `runpass-dev-thiago` (renomeado de `runpass-dev-operator` em 03/11/2026, mesmo `UserId` e MFA) com MFA por app autenticador; o perfil `runpass-dev-sa` usa esse usuário, confirmado por `sts get-caller-identity` em 03/11/2026; responsáveis: dois, nomeados pelo usuário em 02/11/2026, com nomes fora do Git; os dois são responsáveis principais e substitutos um do outro; Rafael tem usuário IAM próprio, criado pelo usuário em 03/11/2026 (substitui a decisão de usuário compartilhado de 02/11/2026, ver seção abaixo); falta confirmar o MFA do raiz |
 | GitHub OIDC | Template preparado, não aplicado | `infra/deploy-role.template.yaml` (cfn-lint aprovado). Falta confirmar organização/repositório (o `origin` local aponta para `Moura7/RunPass-Projeto-X`, a confirmar), criar o GitHub Environment `dev` com aprovadores e aplicar após autorização; o `aud` e o `sub` do token estão presos ao repositório e ao Environment |
 | Orçamento de custo | Criado | `runpass-dev-mensal`: US$ 150/mês com alertas em 50%, 80% (real) e 100% (previsto) para o e-mail do responsável. O valor em dólar é conservador para o teto de R$ 1.000, que valeria menos de US$ 150 com o dólar acima de R$ 6,67; revisar com a cotação do dia |
 | GitHub Environment `dev` | Não existe (verificado em 03/11/2026: `total_count: 0`) | Environment criado com aprovadores obrigatórios e restrição à branch `main`. **Enquanto não existir, o deploy está bloqueado.** Passo a passo abaixo |
@@ -120,9 +120,11 @@ Nada abaixo foi executado, e criar stack ou enviar artefato continua dependendo 
 
 Ainda bloqueiam o provisionamento: papel OIDC do GitHub (organização e repositório não registrados), destinatário e teste dos alertas operacionais, MFA do raiz confirmado e a autorização explícita dos dois responsáveis.
 
-## Usuário compartilhado — decisão de 02/11/2026
+## Usuário compartilhado — decisão de 02/11/2026 (substituída em 03/11/2026)
 
-Thiago e Rafael usarão o mesmo usuário IAM, `runpass-dev-operator`, por decisão do usuário. Riscos aceitos e mitigações:
+**Substituída:** em 03/11/2026 o usuário `runpass-dev-operator` foi renomeado para `runpass-dev-thiago` e foi criado um usuário IAM próprio para o Rafael, no grupo `runpass-dev-operators`. Cada pessoa tem agora o seu MFA e o seu rastro no CloudTrail, e os riscos abaixo deixam de valer para o acesso diário. Pendente: confirmar o MFA e o primeiro login do Rafael, e o segundo MFA do raiz. O texto abaixo fica como histórico.
+
+Thiago e Rafael usariam o mesmo usuário IAM, `runpass-dev-operator`, por decisão do usuário. Riscos aceitos e mitigações:
 
 - **Sem rastreio por pessoa.** Os registros da AWS (CloudTrail) mostram o usuário, não quem agiu. Para distinguir, o nome da sessão não ajuda no console; combinar horários ou registrar no chamado quem fez a mudança.
 - **MFA em um único aparelho.** O dispositivo cadastrado está no celular de uma pessoa. Perdê-lo trancaria os dois, como ocorreu com o raiz. Mitigação: o raiz, que tem o seu MFA, redefine o do operador (`deactivate-mfa-device`), e o app deve ter backup ou sincronização ativa.

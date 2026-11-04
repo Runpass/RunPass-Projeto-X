@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'home_screen.dart';
 import 'identity_gateway.dart';
+import 'my_races.dart';
 import 'runpass_theme.dart';
+
+export 'home_screen.dart';
+export 'my_races.dart';
 
 typedef PhotoSelector = Future<List<int>?> Function();
 
@@ -144,6 +149,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
     }
   }
 
+  void clearSearch() {
+    if (loading) return;
+    for (final controller in fields.values) {
+      controller.clear();
+    }
+    form.currentState?.reset();
+    load();
+  }
+
   Widget filter(
     String key,
     String label, {
@@ -247,6 +261,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       onPressed: loading ? null : () => load(),
                       child: const Text('Buscar'),
                     ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: loading ? null : clearSearch,
+                      child: const Text('Limpar busca'),
+                    ),
                   ],
                 ),
               ),
@@ -325,7 +344,19 @@ class EditionScreen extends StatefulWidget {
 class _EditionScreenState extends State<EditionScreen> {
   Map<String, dynamic>? edition;
   String? selectedDistance, error;
-  bool loading = true, saving = false;
+  bool loading = true, saving = false, loadingReviews = false;
+  List<Map<String, dynamic>>? reviews;
+
+  static const criteria = [
+    ('organization', 'Organização', Icons.groups_outlined),
+    ('course', 'Percurso', Icons.alt_route),
+    ('kit', 'Kit', Icons.card_giftcard),
+    ('medal', 'Medalha', Icons.workspace_premium_outlined),
+    ('hydration', 'Hidratação', Icons.water_drop_outlined),
+    ('facilities', 'Estrutura', Icons.wc_outlined),
+    ('safety', 'Segurança', Icons.health_and_safety_outlined),
+    ('valueForMoney', 'Custo-benefício', Icons.savings_outlined),
+  ];
 
   @override
   void initState() {
@@ -350,138 +381,567 @@ class _EditionScreenState extends State<EditionScreen> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
+    if (mounted && edition != null) loadReviews();
+  }
+
+  /// Public reviews for the selected distance. Unavailable reviews leave the
+  /// tab with the score only; they never block the rest of the screen.
+  Future<void> loadReviews() async {
+    setState(() => loadingReviews = true);
+    try {
+      final page = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/reviews',
+        query: {'limit': '50', 'distanceId': ?selectedDistance},
+      );
+      if (mounted) {
+        reviews = (page['items'] as List? ?? const [])
+            .cast<Map<String, dynamic>>();
+      }
+    } on Exception {
+      if (mounted) reviews = null;
+    } finally {
+      if (mounted) setState(() => loadingReviews = false);
+    }
+  }
+
+  void soon(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+
+  double? average(String key) {
+    final values = [
+      for (final review in reviews ?? const <Map<String, dynamic>>[])
+        (review['ratings'] as Map?)?[key] as num?,
+    ].whereType<num>().toList();
+    return values.isEmpty
+        ? null
+        : values.reduce((a, b) => a + b) / values.length;
+  }
+
+  double reviewAverage(Map<String, dynamic> review) {
+    final ratings = ((review['ratings'] as Map?) ?? const {}).values
+        .whereType<num>();
+    return ratings.isEmpty
+        ? 0
+        : ratings.reduce((a, b) => a + b) / ratings.length;
+  }
+
+  String thousands(int value) => value.toString().replaceAllMapped(
+    RegExp(r'\B(?=(\d{3})+(?!\d))'),
+    (_) => '.',
+  );
+
+  Widget hero(Map<String, dynamic> body) => Container(
+    height: 200,
+    width: double.infinity,
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+      ),
+    ),
+    child: SafeArea(
+      bottom: false,
+      child: Stack(
+        children: [
+          Positioned(
+            left: 8,
+            top: 4,
+            child: IconButton(
+              tooltip: 'Voltar',
+              color: Colors.white,
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
+          ),
+          Positioned(
+            right: 8,
+            top: 4,
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: 'Quero correr',
+                  color: Colors.white,
+                  icon: const Icon(Icons.favorite_border),
+                  onPressed: () => soon('Lista Quero correr em breve.'),
+                ),
+                IconButton(
+                  tooltip: 'Compartilhar',
+                  color: Colors.white,
+                  icon: const Icon(Icons.ios_share),
+                  onPressed: () => soon('Compartilhamento em breve.'),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            left: 20,
+            right: 20,
+            bottom: 20,
+            child: Text(
+              (body['name'] as String).toUpperCase(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 24,
+                letterSpacing: 1,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget distanceSelector(Map<String, dynamic> body) {
+    final archived = body['status'] == 'archived';
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xffe9ecf1),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          for (final distance in body['distances'] as List)
+            Expanded(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(11),
+                onTap: archived
+                    ? null
+                    : () {
+                        setState(
+                          () => selectedDistance = distance['id'] as String,
+                        );
+                        loadReviews();
+                      },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: selectedDistance == distance['id']
+                        ? runPassOrange
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    distanceLabel((distance['kilometers'] as num).toDouble()),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: selectedDistance == distance['id']
+                          ? Colors.white
+                          : Colors.black87,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget header(Map<String, dynamic> body) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        body['name'] as String,
+        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          const Icon(Icons.calendar_today_outlined, size: 16),
+          const SizedBox(width: 6),
+          Text(displayDate(body['date'] as String)),
+          const SizedBox(width: 16),
+          const Icon(Icons.place_outlined, size: 16),
+          const SizedBox(width: 4),
+          Expanded(child: Text('${body['city']}/${body['state']}')),
+        ],
+      ),
+      const SizedBox(height: 14),
+      distanceSelector(body),
+      const SizedBox(height: 16),
+    ],
+  );
+
+  Widget aboutTab(Map<String, dynamic> body) => ListView(
+    padding: const EdgeInsets.all(20),
+    children: [
+      header(body),
+      if (body['description'] != null) Text(body['description'] as String),
+      if (body['organizerName'] != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Text('Organização: ${body['organizerName']}'),
+        ),
+      if (body['status'] == 'archived')
+        const Padding(
+          padding: EdgeInsets.only(top: 12),
+          child: Text(
+            'Edição arquivada: o histórico está preservado e novos registros não estão disponíveis.',
+          ),
+        ),
+      if ((body['distances'] as List).any(
+        (d) =>
+            d['medalImageReference'] != null ||
+            body['medalImageReference'] != null,
+      ))
+        const Padding(
+          padding: EdgeInsets.only(top: 12),
+          child: Text('Imagem oficial da medalha disponível'),
+        ),
+      if (selectedDistance != null)
+        const Padding(
+          padding: EdgeInsets.only(top: 12),
+          child: Text('Distância selecionada.'),
+        ),
+      if (selectedDistance != null) ...[
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: saving ? null : createDraft,
+          child: Text(saving ? 'Salvando...' : 'Criar rascunho'),
+        ),
+      ],
+    ],
+  );
+
+  Future<void> createDraft() async {
+    setState(() {
+      saving = true;
+      error = null;
+    });
+    try {
+      final draft = await widget.gateway.request(
+        '/participations',
+        method: 'POST',
+        body: {'editionId': widget.editionId, 'distanceId': selectedDistance},
+      );
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              ParticipationDraftScreen(gateway: widget.gateway, initial: draft),
+        ),
+      );
+    } on IdentityIssue catch (issue) {
+      if (mounted) error = catalogError(issue);
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Widget bar(String label, IconData icon, double? value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 7),
+    child: Row(
+      children: [
+        Icon(icon, size: 20),
+        const SizedBox(width: 10),
+        SizedBox(width: 118, child: Text(label)),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: (value ?? 0) / 5,
+              minHeight: 7,
+              color: runPassOrange,
+              backgroundColor: const Color(0xffeceff3),
+            ),
+          ),
+        ),
+        SizedBox(
+          width: 42,
+          child: Text(
+            value == null ? '-' : decimalPt(value),
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget scoreCard(Map<String, dynamic> body) {
+    final score = body['runScore'] as Map<String, dynamic>?;
+    final loaded = reviews ?? const <Map<String, dynamic>>[];
+    final value =
+        (score?['value'] as num?) ??
+        (loaded.isEmpty
+            ? null
+            : loaded.map(reviewAverage).reduce((a, b) => a + b) /
+                  loaded.length);
+    if (value == null) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('Esta prova ainda não tem avaliações.'),
+        ),
+      );
+    }
+    final count = (score?['reviewCount'] as num?)?.toInt() ?? loaded.length;
+    final recommend = loaded.isEmpty
+        ? null
+        : (100 *
+                  loaded.where((r) => reviewAverage(r) >= 4).length /
+                  loaded.length)
+              .round();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: 6,
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Text(
+                    decimalPt(value),
+                    style: const TextStyle(
+                      fontSize: 38,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Stars(value, size: 17),
+                        Text(
+                          '${thousands(count)} avaliações',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (recommend != null) ...[
+          const SizedBox(width: 10),
+          Expanded(
+            flex: 4,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xffe6f6ec),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.check_circle,
+                        color: Color(0xff2f9e5e),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$recommend%',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Text(
+                    'recomendariam\nesta prova',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget reviewTile(Map<String, dynamic> review) {
+    final created = DateTime.tryParse(review['createdAt'] as String? ?? '');
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const CircleAvatar(
+                  radius: 20,
+                  backgroundColor: Color(0xffffe4dc),
+                  child: Icon(Icons.person, color: runPassOrange),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        review['authorName'] as String? ?? 'Corredor RunPass',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      Row(
+                        children: [
+                          Stars(reviewAverage(review), size: 14),
+                          if (created != null) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              timeAgo(created),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.more_horiz),
+              ],
+            ),
+            if (review['comment'] != null) ...[
+              const SizedBox(height: 10),
+              Text(review['comment'] as String),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget reviewsTab(Map<String, dynamic> body) {
+    final loaded = reviews;
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        header(body),
+        scoreCard(body),
+        const SizedBox(height: 14),
+        if (loadingReviews)
+          const Center(child: CircularProgressIndicator())
+        else if (loaded == null)
+          const Text('As avaliações detalhadas ainda não estão disponíveis.')
+        else if (loaded.isNotEmpty) ...[
+          for (final (key, label, icon) in criteria)
+            bar(label, icon, average(key)),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'O que os corredores estão dizendo',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                ),
+              ),
+              TextButton(
+                onPressed: () => soon('Lista completa em breve.'),
+                child: const Text('Ver todas'),
+              ),
+            ],
+          ),
+          for (final review in loaded.take(3)) ...[
+            reviewTile(review),
+            const SizedBox(height: 10),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget emptyTab(IconData icon, String text) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 48, color: Colors.black26),
+          const SizedBox(height: 12),
+          Text(text, textAlign: TextAlign.center),
+        ],
+      ),
+    ),
+  );
+
+  Widget participantsTab(Map<String, dynamic> body) {
+    final count = (body['participantCount'] as num?)?.toInt();
+    return emptyTab(
+      Icons.groups_outlined,
+      count == null
+          ? 'A lista de participantes estará disponível em breve.'
+          : '${thousands(count)} corredores já concluíram esta prova.\nA lista de participantes estará disponível em breve.',
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final body = edition;
     return Scaffold(
-      appBar: AppBar(title: const Text('Detalhes da corrida')),
+      appBar: loading || error != null || body == null
+          ? AppBar(title: const Text('Detalhes da corrida'))
+          : null,
       bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
-      body: SafeArea(
-        child: loading
-            ? const Center(child: CircularProgressIndicator())
-            : error != null
-            ? Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(error!),
-                    TextButton(
-                      onPressed: load,
-                      child: const Text('Tentar novamente'),
-                    ),
-                  ],
-                ),
-              )
-            : body == null
-            ? const SizedBox.shrink()
-            : ListView(
-                padding: const EdgeInsets.all(24),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : error != null
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Card(
-                    color: runPassNavy,
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(
-                            Icons.emoji_events,
-                            color: Color(0xffffc144),
-                          ),
-                          const SizedBox(height: 18),
-                          Text(
-                            body['name'] as String,
-                            style: Theme.of(context).textTheme.headlineSmall
-                                ?.copyWith(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                          ),
-                        ],
-                      ),
-                    ),
+                  Text(error!),
+                  TextButton(
+                    onPressed: load,
+                    child: const Text('Tentar novamente'),
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '${displayDate(body['date'] as String)} · ${body['city']}/${body['state']}',
-                  ),
-                  if (body['description'] != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: Text(body['description'] as String),
-                    ),
-                  if (body['organizerName'] != null)
-                    Text('Organização: ${body['organizerName']}'),
-                  if (body['status'] == 'archived')
-                    const Text(
-                      'Edição arquivada: o histórico está preservado e novos registros não estão disponíveis.',
-                    ),
-                  const SizedBox(height: 16),
-                  const Text('Distâncias'),
-                  for (final distance in body['distances'] as List)
-                    ListTile(
-                      title: Text('${distance['kilometers']} km'),
-                      leading: Icon(
-                        selectedDistance == distance['id']
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_unchecked,
-                      ),
-                      selected: selectedDistance == distance['id'],
-                      subtitle:
-                          distance['medalImageReference'] != null ||
-                              body['medalImageReference'] != null
-                          ? const Text('Imagem oficial da medalha disponível')
-                          : null,
-                      onTap: body['status'] == 'archived'
-                          ? null
-                          : () => setState(
-                              () => selectedDistance = distance['id'] as String,
-                            ),
-                    ),
-                  if (selectedDistance != null)
-                    const Text('Distância selecionada.'),
-                  if (selectedDistance != null) ...[
-                    const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: saving
-                          ? null
-                          : () async {
-                              setState(() {
-                                saving = true;
-                                error = null;
-                              });
-                              try {
-                                final draft = await widget.gateway.request(
-                                  '/participations',
-                                  method: 'POST',
-                                  body: {
-                                    'editionId': widget.editionId,
-                                    'distanceId': selectedDistance,
-                                  },
-                                );
-                                if (!context.mounted) return;
-                                await Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => ParticipationDraftScreen(
-                                      gateway: widget.gateway,
-                                      initial: draft,
-                                    ),
-                                  ),
-                                );
-                              } on IdentityIssue catch (issue) {
-                                if (mounted) error = catalogError(issue);
-                              } finally {
-                                if (mounted) setState(() => saving = false);
-                              }
-                            },
-                      child: Text(saving ? 'Salvando...' : 'Criar rascunho'),
-                    ),
-                  ],
                 ],
               ),
-      ),
+            )
+          : body == null
+          ? const SizedBox.shrink()
+          : DefaultTabController(
+              length: 4,
+              child: Column(
+                children: [
+                  hero(body),
+                  const Material(
+                    color: Colors.white,
+                    child: TabBar(
+                      labelColor: runPassOrange,
+                      indicatorColor: runPassOrange,
+                      unselectedLabelColor: Colors.black87,
+                      tabs: [
+                        Tab(text: 'Sobre'),
+                        Tab(text: 'Avaliações'),
+                        Tab(text: 'Fotos'),
+                        Tab(text: 'Participantes'),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        aboutTab(body),
+                        reviewsTab(body),
+                        emptyTab(
+                          Icons.photo_library_outlined,
+                          'As fotos desta prova aparecerão aqui.',
+                        ),
+                        participantsTab(body),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
@@ -1069,235 +1529,6 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
               ),
               if (message != null)
                 Text(message!, key: const Key('review-message')),
-            ],
-          ),
-  );
-}
-
-class RunPassHomeScreen extends StatelessWidget {
-  final IdentityGateway gateway;
-  const RunPassHomeScreen({super.key, required this.gateway});
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const RunPassWordmark(compact: true)),
-    bottomNavigationBar: runPassNavigation(context, gateway, 0),
-    body: ListView(
-      padding: const EdgeInsets.all(24),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: runPassNavy,
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.directions_run_rounded,
-                color: runPassOrange,
-                size: 42,
-              ),
-              SizedBox(height: 18),
-              Text(
-                'Sua próxima história começa na linha de largada.',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 24,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        FilledButton.icon(
-          onPressed: () => Navigator.of(context).pushReplacement(
-            MaterialPageRoute<void>(
-              builder: (_) => CatalogScreen(gateway: gateway),
-            ),
-          ),
-          icon: const Icon(Icons.search_rounded),
-          label: const Text('Encontrar corridas'),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: () => Navigator.of(context).pushReplacement(
-            MaterialPageRoute<void>(
-              builder: (_) => MedalCollectionScreen(gateway: gateway),
-            ),
-          ),
-          icon: const Icon(Icons.emoji_events_outlined),
-          label: const Text('Ver minhas medalhas'),
-        ),
-      ],
-    ),
-  );
-}
-
-class MedalCollectionScreen extends StatefulWidget {
-  final IdentityGateway gateway;
-  const MedalCollectionScreen({super.key, required this.gateway});
-
-  @override
-  State<MedalCollectionScreen> createState() => _MedalCollectionScreenState();
-}
-
-class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
-  List<Map<String, dynamic>> medals = [];
-  String? message;
-  bool loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    load();
-  }
-
-  Future<void> load() async {
-    try {
-      final result = await widget.gateway.request('/me/participations');
-      medals = (result['items'] as List? ?? const [])
-          .cast<Map<String, dynamic>>()
-          .where((item) => item['state'] == 'completed')
-          .toList();
-    } on IdentityIssue catch (issue) {
-      message = catalogError(issue);
-    } on Exception {
-      message = 'Não foi possível carregar suas medalhas.';
-    } finally {
-      if (mounted) setState(() => loading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Minhas medalhas')),
-    bottomNavigationBar: runPassNavigation(context, widget.gateway, 2),
-    body: loading
-        ? const Center(child: CircularProgressIndicator())
-        : message != null
-        ? Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text(message!),
-            ),
-          )
-        : medals.isEmpty
-        ? const Center(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Text(
-                'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
-                textAlign: TextAlign.center,
-              ),
-            ),
-          )
-        : ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: medals.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final medal = medals[index];
-              return Card(
-                child: ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: Color(0xffffe4dc),
-                    child: Icon(Icons.emoji_events, color: runPassOrange),
-                  ),
-                  title: const Text('Medalha conquistada'),
-                  subtitle: Text('Corrida ${medal['editionId']}'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => ParticipationDraftScreen(
-                        gateway: widget.gateway,
-                        initial: medal,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-  );
-}
-
-class RunnerProfileScreen extends StatefulWidget {
-  final IdentityGateway gateway;
-  const RunnerProfileScreen({super.key, required this.gateway});
-
-  @override
-  State<RunnerProfileScreen> createState() => _RunnerProfileScreenState();
-}
-
-class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
-  Map<String, dynamic>? profile;
-  String? message;
-
-  @override
-  void initState() {
-    super.initState();
-    load();
-  }
-
-  Future<void> load() async {
-    try {
-      profile = await widget.gateway.request('/me');
-    } on IdentityIssue catch (issue) {
-      message = catalogError(issue);
-    } on Exception {
-      message = 'Não foi possível carregar seu perfil.';
-    } finally {
-      if (mounted) setState(() {});
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Meu perfil')),
-    bottomNavigationBar: runPassNavigation(context, widget.gateway, 3),
-    body: profile == null && message == null
-        ? const Center(child: CircularProgressIndicator())
-        : message != null
-        ? Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text(message!),
-            ),
-          )
-        : ListView(
-            padding: const EdgeInsets.all(24),
-            children: [
-              const CircleAvatar(
-                radius: 42,
-                backgroundColor: Color(0xffffe4dc),
-                child: Icon(Icons.person, size: 48, color: runPassOrange),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                profile!['displayName'] as String? ?? 'Corredor',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '@${profile!['username'] ?? ''}',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-              const SizedBox(height: 24),
-              const Card(
-                child: ListTile(
-                  leading: Icon(Icons.lock_outline),
-                  title: Text('Perfil protegido'),
-                  subtitle: Text(
-                    'Seus dados locais de demonstração não são enviados à AWS.',
-                  ),
-                ),
-              ),
             ],
           ),
   );

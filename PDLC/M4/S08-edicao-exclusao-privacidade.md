@@ -23,3 +23,8 @@ A exclusão de conta já bloqueava tokens imediatamente e preservava controle ps
 - Pendente: ensaio de falha/restauração, prazo real de sete dias, IAM/MFA e prova do descarte do controle de 15 dias em S09.
 
 Nenhum recurso AWS foi criado e nenhum dado real foi utilizado.
+
+
+## Aceite humano — 03/11/2026
+
+Aceita pelo usuário como aceite local, com as ressalvas registradas em `implementation-slices.md` (seção "Aceite humano de S05, S06 e S08"). Integração real permanece na S09.

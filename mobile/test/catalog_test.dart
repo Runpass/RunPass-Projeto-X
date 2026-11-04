@@ -121,12 +121,57 @@ void main() {
       await tester.pumpAndSettle();
       expect(calls.last['city'], 'Santos');
       expect(calls.last.containsKey('cursor'), false);
+      await reveal(
+        tester,
+        find.text('Nenhuma corrida encontrada com esses filtros.'),
+      );
       expect(
         find.text('Nenhuma corrida encontrada com esses filtros.'),
         findsOneWidget,
       );
     },
   );
+
+  testWidgets('clear search empties filters and reloads without them', (
+    tester,
+  ) async {
+    final calls = <Map<String, String>>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      calls.add(uri.queryParameters);
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Cidade'),
+      'Santos',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Estado (UF)'),
+      'S',
+    );
+    await reveal(tester, find.text('Buscar'));
+    await tester.tap(find.text('Buscar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Informe a UF.'), findsOneWidget);
+    await reveal(tester, find.text('Limpar busca'));
+    await tester.tap(find.text('Limpar busca'));
+    await tester.pumpAndSettle();
+    expect(find.text('Informe a UF.'), findsNothing);
+    expect(calls.last.containsKey('city'), false);
+    expect(calls.last.containsKey('state'), false);
+    for (final label in ['Cidade', 'Estado (UF)']) {
+      await reveal(
+        tester,
+        find.widgetWithText(TextFormField, label),
+        backwards: true,
+      );
+      final field = tester.widget<TextFormField>(
+        find.widgetWithText(TextFormField, label),
+      );
+      expect(field.controller!.text, '');
+    }
+  });
 
   testWidgets(
     'list opens current detail and selects distance without creating a record',
@@ -148,11 +193,16 @@ void main() {
       await reveal(tester, find.text('Corrida A'));
       await tester.tap(find.text('Corrida A'));
       await tester.pumpAndSettle();
-      expect(find.text('Detalhes da corrida'), findsOneWidget);
-      await tester.tap(find.text('10 km'));
+      expect(find.text('Corrida A'), findsOneWidget);
+      await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
       expect(find.text('Distância selecionada.'), findsOneWidget);
-      expect(paths, ['/editions', '/editions/A']);
+      expect(paths, [
+        '/editions',
+        '/editions/A',
+        '/editions/A/reviews',
+        '/editions/A/reviews',
+      ]);
     },
   );
 
@@ -170,7 +220,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.textContaining('Edição arquivada:'), findsOneWidget);
-    await tester.tap(find.text('10 km'));
+    await tester.tap(find.text('10K'));
     await tester.pumpAndSettle();
     expect(find.text('Distância selecionada.'), findsNothing);
   });
@@ -210,7 +260,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('10 km'));
+    await tester.tap(find.text('10K'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Criar rascunho'));
     await tester.pumpAndSettle();
@@ -225,6 +275,8 @@ void main() {
     expect(find.text('Rascunho salvo. Nada foi publicado.'), findsOneWidget);
     expect(calls, [
       'GET /editions/A',
+      'GET /editions/A/reviews',
+      'GET /editions/A/reviews',
       'POST /participations',
       'PATCH /participations/draft-1',
     ]);

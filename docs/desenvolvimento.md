@@ -56,6 +56,17 @@ Os endereços acima são exemplos, não serviços disponíveis. Backend: consult
 
 Se o ambiente virtual sob Documents apresentar lentidão ao ler dependências, crie outro fora dessa pasta com os mesmos requisitos: `make setup VENV=~/.cache/runpass/venv` e `make check VENV=~/.cache/runpass/venv`. Registrar caminho e resultados; não confundir troca de diretório com mudança de versões.
 
+## Smoke test da jornada
+
+`scripts/smoke_journey.py` percorre a jornada principal por HTTP (status, perfil, admissão, catálogo, rascunho, versão antiga rejeitada, acesso alheio negado, imagem, conclusão com oito notas, avaliação e exclusão) e imprime `APROVADO`, `FALHA` ou `NAO EXECUTADO` por passo, com o tempo. Usa só a biblioteca padrão e dados sintéticos. Os tokens vêm apenas do ambiente (`RUNPASS_ACCESS_TOKEN`; opcionalmente `RUNPASS_ACCESS_TOKEN_OTHER` para o passo do usuário alheio) e nunca são impressos, assim como os corpos das respostas. Exclusão de conta é destrutiva e só roda com `--delete-account`.
+
+```sh
+make api-local   # outro terminal; escreve tokens sintéticos em api/bruno/environments/Local.bru
+RUNPASS_ACCESS_TOKEN=... .venv/bin/python scripts/smoke_journey.py --base-url http://127.0.0.1:8000
+```
+
+Contra o harness local, os passos de imagem e conclusão ficam `NAO EXECUTADO`, porque o armazenamento local não oferece URL de upload HTTPS. Eles só rodam contra DEV autorizado, com URL assinada do S3 e meta de cinco segundos (`--max-image-seconds`). O script não substitui a suíte de testes nem cobre carga, DLQ, restore ou permissões IAM; é o roteiro 1 do `S09-roteiro-e-relatorio.md` em forma executável. Resultados contra DEV entram no relatório da S09 com ID de execução e horário, sem tokens.
+
 ## Catálogo S03
 
 `make catalog-seed` cria catálogo e usuário sintéticos somente em MemoryStore, carrega a fixture duas vezes e lista cinco IDs. Não é importação para AWS nem comprovação de cobertura de catálogo. A carga interna não sintética exige catalog_admin + sessão MFA, origem/revisão e versão esperada; não há endpoint público de carga nesta entrega. `CatalogImporter.retire_indexes` retira apenas índices de versão substituída, mantendo a versão imutável e imagens referenciadas. Templates/rotas administrativas integrais continuam para entregas próprias.
@@ -64,7 +75,7 @@ A composição AWS pode receber `catalog_table` e `cursor_encryption_key` (chave
 
 ## Demonstração visual no simulador
 
-Entrada debug separada, sem rede: `mobile/lib/main_demo.dart`. Banner visível, dados fictícios, estado apenas em memória. E-mail inicial `demo@runpass.test`, senha `RunpassDemo123!`; cadastro fictício `.test`, confirmação/recuperação `123456`. Não testa Cognito ou backend real, não inserir dados pessoais reais. `lib/main.dart` continua a entrada do app real, sem fallback de autenticação falsa.
+Entrada debug separada, sem rede: `mobile/lib/main_demo.dart`. Banner visível, dados fictícios, estado apenas em memória. E-mail inicial `demo@runpass.test`, senha `RunpassDemo123!` (conta vazia, para o fluxo de cadastro e primeira corrida); `medalhas@runpass.test`, mesma senha, já admitida e com seis corridas concluídas fictícias, para ver Início, Meu Medalheiro e Perfil preenchidos; cadastro fictício `.test`, confirmação/recuperação `123456`. Não testa Cognito ou backend real, não inserir dados pessoais reais. `lib/main.dart` continua a entrada do app real, sem fallback de autenticação falsa.
 
 ```sh
 cd mobile

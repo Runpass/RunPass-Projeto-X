@@ -30,9 +30,10 @@ Resp.: ______ · Destrava: blocos 4, 5, 6
 
 - [X] Confirmar o MFA do usuário raiz (pendente)
 - [ ] Os dois responsáveis fazem `aws login` no perfil `runpass-dev-sa` e confirmam `aws sts get-caller-identity` (conta e região `sa-east-1` corretas)
-- [ ] Trocar a senha temporária do `runpass-dev-operator` e guardar em gerenciador de senhas (nunca em Git, chat ou issue)
+- [x] Usuário do Thiago: `runpass-dev-operator` renomeado para `runpass-dev-thiago` em 03/11/2026 (login confirmado por `sts get-caller-identity`)
+- [ ] Usuário do Rafael: criado em 03/11/2026; falta trocar a senha temporária, cadastrar o MFA e confirmar `aws login --profile runpass-dev-sa` com o ARN dele (senhas só em gerenciador de senhas, nunca em Git, chat ou issue)
 - [ ] Garantir backup/sincronização do app autenticador do MFA (hoje está em um único celular)
-- [ ] Decidir: manter usuário compartilhado ou criar um usuário IAM por pessoa (recomendado antes de PROD; registrar a decisão)
+- [x] Decisão: um usuário IAM por pessoa (03/11/2026), no lugar do usuário compartilhado
 - [ ] Confirmar o formato das ações `aws-mcp:*` no primeiro uso do usuário IAM
 
 ## Bloco 3 — Orçamento e custo
@@ -132,14 +133,14 @@ Resp.: ______ · Pode começar o preparo antes do bloco 8; o teste completo → 
 
 Resp.: ______ · Cada pessoa revisa slices diferentes; registrar a decisão no relatório do slice
 
-- [ ] S02 identidade e admissão: revisão e decisão
-- [ ] S03 catálogo: revisão e decisão (origem e revisão do catálogo real registradas; fixture não comprova cobertura)
-- [ ] S04 rascunho: revisão e decisão
-- [ ] S05 upload: revisão e decisão (pendente: adaptador S3 real e medição de 5 s)
-- [ ] S06 conclusão, avaliação e medalha: revisão e decisão
-- [ ] S07 eventos, RunScore e auditoria: revisão e decisão (resolver antes a política de descarte do payload de auditoria vencido)
-- [ ] S08 edição, exclusão e privacidade: revisão e decisão
-- [ ] Atualizar o estado de cada slice em `implementation-slices.md` (em revisão → aceito)
+- [x] S02 identidade e admissão: revisão e decisão
+- [x] S03 catálogo: aceito em 03/11/2026 (catálogo real e cobertura de 90% pendentes para o beta; responsável: Thiago)
+- [x] S04 rascunho: revisão e decisão
+- [x] S05 upload: revisão e decisão (pendente: adaptador S3 real e medição de 5 s)
+- [x] S06 conclusão, avaliação e medalha: revisão e decisão
+- [x] S07 eventos, RunScore e auditoria: aceito em 03/11/2026 (política de descarte aprovada)
+- [x] S08 edição, exclusão e privacidade: revisão e decisão
+- [x] Atualizar o estado de cada slice em `implementation-slices.md` (em revisão → aceito)
 
 ## Bloco 13 — Encerramento da S09
 
