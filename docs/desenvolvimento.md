@@ -94,3 +94,19 @@ Execute `make api-local`. O servidor escuta somente em `http://127.0.0.1:8000`, 
 
 Esse fluxo não exige simulador nem AWS. O processo reinicia os dados e as chaves ao ser encerrado; os arquivos com tokens são privados, ignorados pelo Git e expiram em uma hora.
 
+## Teste em iPhone real contra o DEV
+
+Pré-requisitos, feitos uma vez pela pessoa dona do aparelho: iPhone com **Modo Desenvolvedor** ligado (Ajustes → Privacidade e Segurança), cabo ao Mac, **Xcode** com o Apple ID em Xcode → Settings → Accounts (conta gratuita basta, mas a instalação vale 7 dias) e, em `mobile/ios/Runner.xcworkspace`, o **Team** escolhido em Signing & Capabilities (o identificador `br.com.runpass.runpass` pode precisar ser trocado por um único se o Xcode recusar; não commitar essa troca).
+
+```sh
+cd mobile && flutter devices                         # copie o id do iPhone
+export AWS_PROFILE=runpass-dev-sa SSL_CERT_FILE=/etc/ssl/cert.pem
+scripts/run-device-dev.sh <id-do-iphone>
+```
+
+O script lê a URL da API e o client de corredores das saídas das stacks `runpass-dev-app` e `runpass-dev-identity` e roda o app em release com `--dart-define`. Na primeira vez, confie no desenvolvedor em Ajustes → Geral → VPN e Gerenciamento de Dispositivo.
+
+**Conta do corredor:** o app usa o cadastro do Cognito com o e-mail real da pessoa, que recebe um código de confirmação. Use um e-mail seu; a conta é de teste e pode ser apagada pelo app (exclusão de conta).
+
+**O que anotar:** cada passo da jornada (cadastro, login, catálogo, rascunho, foto, conclusão, medalha, exclusão), o tempo da foto (meta de 5 s) e qualquer mensagem de erro. **HEIC:** o app escolhe a foto pela galeria com `imageQuality` definido, e o seletor do iOS deve devolver JPEG; isso **não foi verificado em aparelho**. O backend só aceita JPEG, MPO e PNG, então um HEIC que chegasse sem conversão seria recusado (`IMAGE_FORMAT_INVALID`). O resultado do teste decide se precisamos converter HEIC. Foto de câmera não é testável ainda: o app só abre a galeria.
+
