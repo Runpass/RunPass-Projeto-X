@@ -119,6 +119,8 @@ Isso libera apenas a criação do papel OIDC. Ele ainda exige a autorização ex
 
 ## Sequência de implantação proposta (não executada)
 
+Comandos exatos, parâmetros e a ordem das stacks: `docs/deploy-dev.md` (roteiro preparado em 04/11/2026, nada executado). Pacote da Lambda gerado localmente em 04/11/2026: 14,6 MB (46 MB descompactado), sem o harness local, SHA-256 `4cc03e9d4ca9ce3e999c0b4a589dc708fb144660175d07c00f667b48c202da4f` (artefato local, ainda não enviado).
+
 Nada abaixo foi executado, e criar stack ou enviar artefato continua dependendo de autorização explícita. Nomes de stack começam com `runpass-` para casar com a política do operador.
 
 1. Criar o bucket de artefatos em `sa-east-1`, privado e versionado, fora do CloudFormation.
