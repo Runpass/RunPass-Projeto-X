@@ -9,9 +9,9 @@ Data: 02/11/2026. Estado: **preparação local**. Nenhum recurso foi provisionad
 | S02–S08 disponíveis | Parcial | S02–S04, S06–S07 em revisão; S05 e S08 ainda têm pendências de dispositivo/objetos/mobile |
 | Orçamento completo e teto autorizado | Parcial | teto DEV de **R$ 1.000/mês** autorizado pelo usuário em 01/11/2026; preços de São Paulo confirmados vigentes em 02/11/2026; o orçamento ainda precisa incorporar os itens excluídos antes do change set |
 | Conta AWS DEV isolada | Parcial | Conta padrão `<ID da conta DEV>` criada pelo usuário, região `sa-east-1`, perfil `runpass-dev-sa`; usuário IAM `runpass-dev-thiago` (renomeado de `runpass-dev-operator` em 03/11/2026, mesmo `UserId` e MFA) com MFA por app autenticador; o perfil `runpass-dev-sa` usa esse usuário, confirmado por `sts get-caller-identity` em 03/11/2026; responsáveis: dois, nomeados pelo usuário em 02/11/2026, com nomes fora do Git; os dois são responsáveis principais e substitutos um do outro; Rafael tem usuário IAM próprio, criado pelo usuário em 03/11/2026 (substitui a decisão de usuário compartilhado de 02/11/2026, ver seção abaixo); falta confirmar o MFA do raiz |
-| GitHub OIDC | Template preparado, não aplicado | `infra/deploy-role.template.yaml` (cfn-lint aprovado). Repositório oficial: `Runpass/RunPass-Projeto-X` (conta de usuário `Runpass`, parâmetro `GitHubOrg=Runpass`), decidido em 03/11/2026. Falta criar o GitHub Environment `dev` com aprovadores e aplicar após autorização; o `aud` e o `sub` do token estão presos ao repositório e ao Environment |
+| GitHub OIDC | Template preparado, não aplicado | `infra/deploy-role.template.yaml` (cfn-lint aprovado). Repositório oficial: `Runpass/RunPass-Projeto-X` (conta de usuário `Runpass`, parâmetro `GitHubOrg=Runpass`), decidido em 03/11/2026. O Environment `dev` já existe (04/11/2026); falta aplicar o papel após autorização; o `aud` e o `sub` do token estão presos ao repositório e ao Environment |
 | Orçamento de custo | Criado | `runpass-dev-mensal`: US$ 150/mês com alertas em 50%, 80% (real) e 100% (previsto) para o e-mail do responsável. O valor em dólar é conservador para o teto de R$ 1.000, que valeria menos de US$ 150 com o dólar acima de R$ 6,67; revisar com a cotação do dia |
-| GitHub Environment `dev` | Não existe em `Runpass/RunPass-Projeto-X` (verificado em 04/11/2026: `total_count: 0`) | Environment `dev` criado com aprovadores obrigatórios e restrição ao branch `dev`. **Enquanto não existir, o deploy está bloqueado.** Passo a passo abaixo |
+| GitHub Environment `dev` | Criado em 04/11/2026 (verificado por `gh api`): `dev`, `hom` e `prod` com `required_reviewers` (`thicost` e `Moura7`) e restrição de branch (`dev`→`dev`, `hom`→`hom`, `prod`→`main`); sem variáveis | Bloqueio liberado para o papel OIDC. O deploy continua dependendo da autorização explícita de provisionamento. Registro abaixo |
 | Alertas operacionais | Não configurado | tópico, destinatário fora do Git e teste de recebimento/escalonamento |
 | Autorização de provisionamento | Não concedida | aprovação explícita após orçamento e revisão do change set |
 
@@ -77,7 +77,7 @@ A política recebeu também a política gerenciada `SignInLocalDevelopmentAccess
 - **Templates no CloudFormation real:** `validate-template` em `sa-east-1`, com o usuário `runpass-dev-operator`, aceitou os três templates sem criar recursos. `app.template.yaml` exige apenas `CAPABILITY_IAM` e tem 11 parâmetros. Isso valida sintaxe e capacidades; não prova que as permissões bastam nem que o deploy funciona.
 - **Tarifas:** das oito listas de preço, sete têm a mesma data de publicação da coleta de 26/10. A do Lambda foi republicada em 30/10; comparadas as 12 linhas coletadas, nenhuma tarifa mudou. Os preços de São Paulo seguem vigentes. O cálculo usa a tarifa x86 do Lambda e o desenho usa arm64, que é mais barata, então a estimativa não subestima por esse motivo. Os itens excluídos de `ORCAMENTO-RunPass-preliminar.md` continuam sem estimativa.
 
-## Bloqueio: GitHub Environment `dev` com aprovadores
+## Bloqueio: GitHub Environment `dev` com aprovadores (liberado em 04/11/2026)
 
 **O deploy fica bloqueado até o Environment `dev` do repositório existir com aprovadores obrigatórios.** O papel `runpass-dev-gha-deploy` só aceita tokens com `sub` igual a `repo:<org>/<repo>:environment:dev`. Sem o Environment nenhum workflow consegue assumir o papel (falha fechada). Um Environment criado sem aprovadores não pode ser aceito: o repositório é público e qualquer pessoa com escrita poderia disparar um deploy sem revisão. Nenhum workflow de deploy deve ser adicionado antes disso.
 
@@ -107,6 +107,15 @@ O resultado deve mostrar uma regra `required_reviewers` e uma política de branc
 
 Liberado somente quando o comando do passo 8 mostrar `required_reviewers` e restrição ao branch `dev`, e o resultado estiver registrado aqui. Isso libera apenas a criação do papel OIDC, que ainda exige a autorização explícita de provisionamento descrita no gate de entrada.
 
+### Registro da liberação (passo 9)
+
+- **Data:** 04/11/2026. Environments criados por quem administra a conta `Runpass`; o desenho (aprovadores, restrição de branch, sem segredos) foi aprovado pelo usuário em 03/11/2026.
+- **Resultado do passo 8** (`gh api .../environments/dev`, sem tokens): regras `required_reviewers` e `branch_policy`, `custom_branch_policies: true`.
+- **Verificação independente** (conta `thicost`, 04/11/2026): `dev`, `hom` e `prod` existem; aprovadores `thicost` e `Moura7` nos três, com `prevent_self_review: false`; restrições de branch `dev`, `hom` e `main`, respectivamente; `dev` sem variáveis.
+- **Pendente:** conferir em Settings → Rules que a verificação "Verificações locais" é exigida pelos rulesets (só a exigência de pull request foi verificada).
+
+Isso libera apenas a criação do papel OIDC. Ele ainda exige a autorização explícita de provisionamento descrita no gate de entrada, e os pré-requisitos de AWS (acesso do Rafael, alertas, orçamento, change sets) seguem abertos.
+
 ## Sequência de implantação proposta (não executada)
 
 Nada abaixo foi executado, e criar stack ou enviar artefato continua dependendo de autorização explícita. Nomes de stack começam com `runpass-` para casar com a política do operador.
@@ -118,7 +127,7 @@ Nada abaixo foi executado, e criar stack ou enviar artefato continua dependendo 
 5. Aplicar identidade e dados somente após aprovação; depois gerar e revisar o change set de `runpass-dev-app`, que depende dos exports da stack de dados.
 6. Rodar a jornada da seção "Ainda necessário antes da integração", com carga mínima e dados sintéticos.
 
-Ainda bloqueiam o provisionamento: papel OIDC do GitHub (organização e repositório não registrados), destinatário e teste dos alertas operacionais, MFA do raiz confirmado e a autorização explícita dos dois responsáveis.
+Ainda bloqueiam o provisionamento: papel OIDC do GitHub (repositório registrado e Environment criado; falta aplicar o papel após autorização), destinatário e teste dos alertas operacionais, MFA do raiz confirmado e a autorização explícita dos dois responsáveis.
 
 ## Usuário compartilhado — decisão de 02/11/2026 (substituída em 03/11/2026)
 
