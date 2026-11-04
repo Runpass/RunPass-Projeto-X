@@ -193,11 +193,16 @@ void main() {
       await reveal(tester, find.text('Corrida A'));
       await tester.tap(find.text('Corrida A'));
       await tester.pumpAndSettle();
-      expect(find.text('Detalhes da corrida'), findsOneWidget);
-      await tester.tap(find.text('10 km'));
+      expect(find.text('Corrida A'), findsOneWidget);
+      await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
       expect(find.text('Distância selecionada.'), findsOneWidget);
-      expect(paths, ['/editions', '/editions/A']);
+      expect(paths, [
+        '/editions',
+        '/editions/A',
+        '/editions/A/reviews',
+        '/editions/A/reviews',
+      ]);
     },
   );
 
@@ -215,7 +220,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.textContaining('Edição arquivada:'), findsOneWidget);
-    await tester.tap(find.text('10 km'));
+    await tester.tap(find.text('10K'));
     await tester.pumpAndSettle();
     expect(find.text('Distância selecionada.'), findsNothing);
   });
@@ -255,7 +260,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('10 km'));
+    await tester.tap(find.text('10K'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Criar rascunho'));
     await tester.pumpAndSettle();
@@ -270,6 +275,8 @@ void main() {
     expect(find.text('Rascunho salvo. Nada foi publicado.'), findsOneWidget);
     expect(calls, [
       'GET /editions/A',
+      'GET /editions/A/reviews',
+      'GET /editions/A/reviews',
       'POST /participations',
       'PATCH /participations/draft-1',
     ]);

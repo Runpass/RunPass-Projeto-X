@@ -52,8 +52,14 @@ void main() {
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Explorar corridas'));
-      await tester.tap(find.text('Explorar corridas'));
+      await tester.ensureVisible(find.text('Entrar no RunPass'));
+      await tester.tap(find.text('Entrar no RunPass'));
+      await tester.pumpAndSettle();
+      // After admission the runner lands on Início, not on the catalog.
+      // The demo feed carries fictional posts by other runners.
+      expect(find.text('Mariana Lopes'), findsOneWidget);
+      expect(find.text('Encontre sua próxima conquista'), findsNothing);
+      await tester.tap(find.text('Corridas'));
       await tester.pumpAndSettle();
       expect(find.text('Encontre sua próxima conquista'), findsOneWidget);
       await tester.scrollUntilVisible(
@@ -69,13 +75,11 @@ void main() {
       expect(find.text('Carregar mais'), findsOneWidget);
       await tester.tap(find.text('Início'));
       await tester.pumpAndSettle();
-      expect(
-        find.text('Sua próxima história começa na linha de largada.'),
-        findsOneWidget,
-      );
+      // The demo feed carries fictional posts by other runners.
+      expect(find.text('Mariana Lopes'), findsOneWidget);
       await tester.tap(find.text('Medalhas'));
       await tester.pumpAndSettle();
-      expect(find.text('Minhas medalhas'), findsOneWidget);
+      expect(find.text('Meu Medalheiro'), findsOneWidget);
       await tester.tap(find.text('Perfil'));
       await tester.pumpAndSettle();
       expect(find.text('Corredor Demo'), findsOneWidget);

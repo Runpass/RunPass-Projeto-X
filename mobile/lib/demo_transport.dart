@@ -33,6 +33,201 @@ class DemoTransport {
         ],
       });
     }
+    _seedMedalCollection();
+  }
+
+  /// Fictional completed races so the medal collection, home and profile
+  /// screens can be seen populated by signing in as medalhas@runpass.test.
+  void _seedMedalCollection() {
+    const email = 'medalhas@runpass.test';
+    accounts[email] = {
+      'password': 'RunpassDemo123!',
+      'confirmed': true,
+      'admitted': true,
+      'profile': {
+        'id': 'demo-profile-seed',
+        'displayName': 'Corredor Medalhista',
+        'username': 'medalhista',
+        'city': 'São Paulo - SP',
+        'bio':
+            'Cada prova é uma nova aventura. Dados fictícios de demonstração.',
+        'version': 1,
+      },
+    };
+    const races = [
+      (2, '5k', 5, 1560),
+      (3, '10k', 10, 3490),
+      (5, '10k', 10, 3315),
+      (6, '5k', 5, 1480),
+      (8, '10k', 10, 3600),
+      (9, '5k', 5, 1620),
+    ];
+    for (final (number, distance, km, seconds) in races) {
+      final id = 'demo-seed-$number';
+      participations[id] = {
+        'id': id,
+        'owner': email,
+        'editionId': 'demo-$number',
+        'distanceId': distance,
+        'state': 'completed',
+        'version': 2,
+        'timeSeconds': seconds,
+        'paceSecondsPerKm': seconds ~/ km,
+        'medalImageReference': 'img_seed',
+        'showTime': true,
+        'showPlacement': true,
+      };
+      editions[number - 1]['runScore'] = {
+        'value': 4.0 + (number % 5) * 0.2,
+        'reviewCount': 120 + number * 37,
+      };
+      editions[number - 1]['participantCount'] = 300 + number * 41;
+    }
+  }
+
+  final likes = <String, Set<String>>{};
+
+  /// Fictional posts by other runners, plus the signed-in runner's own
+  /// published races. Demonstration data only.
+  List<Map<String, dynamic>> demoFeed(String email) {
+    final now = DateTime.now().toUtc();
+    const people = [
+      (
+        'demo-author-1',
+        'Mariana Lopes',
+        'marianalopes',
+        'demo-4',
+        '10k',
+        3503,
+        350,
+        142,
+        18,
+      ),
+      (
+        'demo-author-2',
+        'Juliana Martins',
+        'jumartins',
+        'demo-7',
+        '5k',
+        1488,
+        297,
+        87,
+        9,
+      ),
+      (
+        'demo-author-3',
+        'Carlos Menezes',
+        'carlosmenezes',
+        'demo-10',
+        '10k',
+        3120,
+        312,
+        56,
+        4,
+      ),
+    ];
+    const comments = [
+      'Prova incrível! Percurso bem sinalizado, clima perfeito e energia em cima.',
+      'Organização impecável e percurso lindo pelo parque. Medalha show!',
+      'Mais uma para a coleção. Valeu a madrugada!',
+    ];
+    final posts = <Map<String, dynamic>>[
+      for (var i = 0; i < people.length; i++)
+        {
+          'id': 'demo-post-${i + 1}',
+          'author': {
+            'id': people[i].$1,
+            'displayName': people[i].$2,
+            'username': people[i].$3,
+            'version': 1,
+          },
+          'participation': {
+            'id': 'demo-feed-${i + 1}',
+            'editionId': people[i].$4,
+            'distanceId': people[i].$5,
+            'state': 'completed',
+            'version': 2,
+            'timeSeconds': people[i].$6,
+            'paceSecondsPerKm': people[i].$7,
+          },
+          'comment': comments[i],
+          'publishedAt': now
+              .subtract(Duration(hours: 2 + i * 3))
+              .toIso8601String(),
+          'version': 1,
+          'likeCount':
+              people[i].$8 + (likes['demo-post-${i + 1}']?.length ?? 0),
+          'commentCount': people[i].$9,
+          'likedByMe': likes['demo-post-${i + 1}']?.contains(email) ?? false,
+        },
+    ];
+    final profile = accounts[email]?['profile'] as Map?;
+    for (final p in participations.values) {
+      if (p['owner'] != email || p['state'] != 'completed') continue;
+      if (p['publishToFeed'] == false || profile == null) continue;
+      posts.insert(0, {
+        'id': 'demo-post-${p['id']}',
+        'author': {
+          'id': profile['id'],
+          'displayName': profile['displayName'],
+          'username': profile['username'],
+          'version': 1,
+        },
+        'participation': publicDraft(p),
+        'publishedAt': now.toIso8601String(),
+        'version': 1,
+        'likeCount': likes['demo-post-${p['id']}']?.length ?? 0,
+        'commentCount': 0,
+        'likedByMe': likes['demo-post-${p['id']}']?.contains(email) ?? false,
+      });
+    }
+    return posts;
+  }
+
+  /// Fictional public reviews. The contract's Review has no author, so the
+  /// demonstration adds `authorName` and `createdAt` only for presentation.
+  List<Map<String, dynamic>> demoReviews(String editionId) {
+    final seed = int.tryParse(editionId.replaceAll(RegExp(r'\D'), '')) ?? 1;
+    const names = [
+      'Juliana Martins',
+      'Rafael Souza',
+      'Camila Ribeiro',
+      'Bruno Alves',
+      'Patrícia Lima',
+      'Thiago Rocha',
+    ];
+    const texts = [
+      'Prova sensacional! Organização impecável, percurso lindo pelo Ibirapuera. A medalha está uma das mais bonitas da série!',
+      'Ótima estrutura e hidratação bem distribuída. Voltarei no próximo ano.',
+      'Percurso plano e rápido. Kit simples, mas a prova compensa.',
+      'Muita gente e largada um pouco apertada, mas o astral é incrível.',
+      'Medalha linda e custo-benefício justo.',
+      'Segurança reforçada e ótimo atendimento na chegada.',
+    ];
+    return [
+      for (var i = 0; i < names.length; i++)
+        {
+          'participationId': 'demo-review-$editionId-$i',
+          'version': 1,
+          'moderationState': 'valid',
+          'authorName': names[i],
+          'createdAt': DateTime.now()
+              .toUtc()
+              .subtract(Duration(days: 4 + i * 6))
+              .toIso8601String(),
+          'comment': texts[i],
+          'ratings': {
+            'organization': 4 + (seed + i) % 2,
+            'course': 4 + (seed + i + 1) % 2,
+            'kit': 3 + (seed + i) % 3,
+            'medal': 4 + (seed + i + 2) % 2,
+            'hydration': 4 + (seed + i + 1) % 2,
+            'facilities': 3 + (seed + i + 1) % 3,
+            'safety': 4 + (seed + i) % 2,
+            'valueForMoney': 3 + (seed + i + 2) % 3,
+          },
+        },
+    ];
   }
 
   JsonReply failure(String code, [int status = 400]) =>
@@ -407,6 +602,34 @@ class DemoTransport {
         draft['version'] = (draft['version'] as int) + 1;
         return JsonReply(200, publicDraft(draft));
       }
+    }
+    if (uri.path == '/feed' && method == 'GET') {
+      return JsonReply(200, {'items': demoFeed(email)});
+    }
+    final like = RegExp(r'^/posts/([^/]+)/like$').firstMatch(uri.path);
+    if (like != null && (method == 'PUT' || method == 'DELETE')) {
+      final postId = like.group(1)!;
+      final likers = likes.putIfAbsent(postId, () => <String>{});
+      method == 'PUT' ? likers.add(email) : likers.remove(email);
+      return JsonReply(200, {'postId': postId, 'likedByMe': method == 'PUT'});
+    }
+    if (uri.path == '/me/wishlist' && method == 'GET') {
+      return JsonReply(200, {
+        'items': [
+          for (final id in ['demo-13', 'demo-15', 'demo-18'])
+            {
+              'edition': editions.firstWhere((e) => e['id'] == id),
+              'savedAt': DateTime.now().toUtc().toIso8601String(),
+            },
+        ],
+      });
+    }
+    final reviews = RegExp(r'^/editions/([^/]+)/reviews$').firstMatch(uri.path);
+    if (reviews != null && method == 'GET') {
+      final known = editions.any((e) => e['id'] == reviews.group(1));
+      return known
+          ? JsonReply(200, {'items': demoReviews(reviews.group(1)!)})
+          : failure('EDITION_NOT_FOUND', 404);
     }
     final matches = editions.where((e) => uri.path == '/editions/${e['id']}');
     return matches.isEmpty

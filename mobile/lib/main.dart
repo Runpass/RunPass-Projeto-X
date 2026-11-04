@@ -417,13 +417,13 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             FilledButton(
                               onPressed: busy
                                   ? null
-                                  : () => Navigator.of(context).push(
+                                  : () => Navigator.of(context).pushReplacement(
                                       MaterialPageRoute<void>(
                                         builder: (_) =>
-                                            CatalogScreen(gateway: gateway),
+                                            RunPassHomeScreen(gateway: gateway),
                                       ),
                                     ),
-                              child: const Text('Explorar corridas'),
+                              child: const Text('Entrar no RunPass'),
                             ),
                           if (message != null)
                             Padding(
