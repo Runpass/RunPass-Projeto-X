@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'identity_gateway.dart';
 import 'catalog_screen.dart';
+import 'home_screen.dart';
 import 'runpass_theme.dart';
 
 void main() {
@@ -31,6 +32,7 @@ class MainApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'RunPass',
+    navigatorObservers: [runPassRouteObserver],
     // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
     builder: (context, shell) {
       final child = GestureDetector(

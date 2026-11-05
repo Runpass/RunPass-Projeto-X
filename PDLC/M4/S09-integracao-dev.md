@@ -207,3 +207,16 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 
 **HEIC:** o seletor do iOS entregou JPEG (os uploads do aparelho foram `image/jpeg`); o backend continua aceitando só JPEG, MPO e PNG. **Foto de câmera:** não testável, o app só abre a galeria. Os uploads `pending` do teste permanecem no DEV.
 
+**Segunda rodada em iPhone (05/11/2026), correções feitas e ainda sem novo teste em aparelho:**
+
+| Achado | Causa | Correção |
+| --- | --- | --- |
+| "Esta corrida ainda não pode ser concluída" sem explicação | Regra do servidor correta: a data da prova (08/11/2026 na edição de SP 2026) é futura; o app oferecia o botão e mostrava a mensagem no fim da tela | Aviso com a data, botão desabilitado e mensagem clara; rascunho continua salvo |
+| Avaliação em lista suspensa | Pedido de usar ícones e até 5 estrelas, como no mockup | Estrelas por critério, também na edição da avaliação |
+| Perda da foto e das notas ao voltar | Estado só em memória da tela | Foto validada e avaliação preservadas ao reabrir o mesmo rascunho (em memória do app; não sobrevive a fechar o app) |
+| Sem opção de excluir rascunho | Só havia exclusão de participação concluída | "Excluir rascunho" na tela do rascunho e no cartão do Início, com confirmação |
+| Rascunhos só apareciam ao rolar | Início não recarregava ao voltar de outra tela (causa provável, não confirmada em aparelho) | Recarrega ao voltar e ao reabrir o app |
+| Mensagens de erro fora da tela | Ficavam no fim da lista | Mensagem logo abaixo do título |
+
+**Não corrigido (lacuna do produto):** a foto enviada **não aparece** em Início nem em Medalhas. O contrato da API só expõe `medalImageReference` (um identificador) e não tem rota para ler a imagem; o app mostra uma arte desenhada. É o item "imagem da medalha exibível" do S12 e exige rota nova com URL assinada de leitura, só para o dono, mais a decisão de privacidade correspondente. "Salvar visibilidade" funciona: a tela permanece e mostra a mensagem de confirmação.
+

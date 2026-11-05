@@ -44,7 +44,7 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   'PROCESSING_TIMEOUT' || 'UPLOAD_UNAVAILABLE' =>
     'A foto não foi processada. Tente novamente; o rascunho foi preservado.',
   'IMAGE_NOT_VALID' => 'A imagem não está válida. O rascunho foi preservado.',
-  'EDITION_NOT_COMPLETABLE' => 'Esta corrida ainda não pode ser concluída.',
+  'EDITION_NOT_COMPLETABLE' => 'Esta corrida ainda não aconteceu. Só é possível concluir a participação depois da data da prova.',
   'PARTICIPATION_NOT_DRAFT' =>
     'Esta participação já foi concluída ou alterada.',
   _ => 'Não foi possível carregar as corridas. Tente novamente.',
@@ -984,6 +984,47 @@ class _EditionScreenState extends State<EditionScreen> {
   }
 }
 
+/// Nota de 1 a 5 estrelas para um critério, com o ícone do critério (como no mockup).
+class RatingInput extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final int value;
+  final ValueChanged<int>? onChanged;
+  const RatingInput({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      children: [
+        Icon(icon, size: 20),
+        const SizedBox(width: 10),
+        Expanded(child: Text(label)),
+        for (var star = 1; star <= 5; star++)
+          IconButton(
+            key: Key('rating-$label-$star'),
+            tooltip: '$label: $star de 5',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 40),
+            icon: Icon(
+              star <= value ? Icons.star_rounded : Icons.star_border_rounded,
+              color: runPassOrange,
+              size: 28,
+            ),
+            onPressed: onChanged == null ? null : () => onChanged!(star),
+          ),
+      ],
+    ),
+  );
+}
+
 class ParticipationDraftScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> initial;
@@ -1009,6 +1050,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   String? imageReference, pendingUploadId;
   bool declaredCompleted = false, publishToFeed = false;
   bool deleted = false;
+  DateTime? editionDate;
+  // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
+  static final Map<String, Map<String, dynamic>> formCache = {};
   final ratings = {
     'organization': 5,
     'course': 5,
@@ -1018,16 +1062,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     'facilities': 5,
     'safety': 5,
     'valueForMoney': 5,
-  };
-  static const ratingLabels = {
-    'organization': 'Organização',
-    'course': 'Percurso',
-    'kit': 'Kit',
-    'medal': 'Medalha',
-    'hydration': 'Hidratação',
-    'facilities': 'Estrutura',
-    'safety': 'Segurança',
-    'valueForMoney': 'Custo-benefício',
   };
 
   @override
@@ -1040,10 +1074,51 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     );
     bib = TextEditingController(text: draft['bibNumber'] as String? ?? '');
     comment = TextEditingController();
+    final saved = formCache[draft['id']];
+    if (saved != null && draft['state'] == 'draft') {
+      imageReference = saved['imageReference'] as String?;
+      declaredCompleted = saved['declaredCompleted'] == true;
+      publishToFeed = saved['publishToFeed'] == true;
+      comment.text = saved['comment'] as String? ?? '';
+      ratings.addAll(Map<String, int>.from(saved['ratings'] as Map));
+    }
+    loadEditionDate();
+  }
+
+  Future<void> loadEditionDate() async {
+    final id = draft['editionId'];
+    if (draft['state'] != 'draft' || id is! String) return;
+    try {
+      final edition = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(id)}',
+      );
+      final parsed = DateTime.tryParse(edition['date'] as String? ?? '');
+      if (mounted && parsed != null) setState(() => editionDate = parsed);
+    } on Exception {
+      // Sem a data, o servidor continua validando a conclusao.
+    }
+  }
+
+  bool get upcoming {
+    final date = editionDate;
+    if (date == null) return false;
+    final now = DateTime.now();
+    return date.isAfter(DateTime(now.year, now.month, now.day));
   }
 
   @override
   void dispose() {
+    if (draft['state'] == 'draft' && !deleted) {
+      formCache[draft['id'] as String] = {
+        'imageReference': imageReference,
+        'declaredCompleted': declaredCompleted,
+        'publishToFeed': publishToFeed,
+        'comment': comment.text,
+        'ratings': Map<String, int>.from(ratings),
+      };
+    } else {
+      formCache.remove(draft['id']);
+    }
     time.dispose();
     placement.dispose();
     bib.dispose();
@@ -1233,9 +1308,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Excluir participação?'),
-        content: const Text(
-          'A participação será ocultada imediatamente e o RunScore será recomposto.',
+        title: Text(
+          draft['state'] == 'draft'
+              ? 'Excluir rascunho?'
+              : 'Excluir participação?',
+        ),
+        content: Text(
+          draft['state'] == 'draft'
+              ? 'O rascunho privado será excluído. Você poderá criar outro nesta edição.'
+              : 'A participação será ocultada imediatamente e o RunScore será recomposto.',
         ),
         actions: [
           TextButton(
@@ -1244,7 +1325,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Excluir participação'),
+            child: Text(
+              draft['state'] == 'draft'
+                  ? 'Excluir rascunho'
+                  : 'Excluir participação',
+            ),
           ),
         ],
       ),
@@ -1368,6 +1453,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           const Text(
             'Rascunho criado. Preencha o que quiser e toque em Salvar rascunho.',
           ),
+          if (message != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                message!,
+                key: const Key('draft-message'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
           TextField(
             controller: time,
             keyboardType: TextInputType.number,
@@ -1409,20 +1503,32 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             ),
           if (imageReference != null && draft['state'] == 'draft') ...[
             const Divider(height: 32),
-            const Text('Avaliação obrigatória'),
-            for (final entry in ratingLabels.entries)
-              DropdownButtonFormField<int>(
-                initialValue: ratings[entry.key],
-                decoration: InputDecoration(labelText: entry.value),
-                items: [1, 2, 3, 4, 5]
-                    .map(
-                      (value) =>
-                          DropdownMenuItem(value: value, child: Text('$value')),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  if (value != null) ratings[entry.key] = value;
-                },
+            if (upcoming)
+              Container(
+                key: const Key('upcoming-notice'),
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xfffff3e0),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Esta corrida acontece em ${displayDate(editionDate!.toIso8601String().substring(0, 10))}. '
+                  'Você poderá concluir a participação depois dessa data; o rascunho fica salvo.',
+                ),
+              ),
+            const Text(
+              'Avaliação obrigatória',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            for (final (key, label, icon) in _EditionScreenState.criteria)
+              RatingInput(
+                label: label,
+                icon: icon,
+                value: ratings[key] ?? 5,
+                onChanged: saving
+                    ? null
+                    : (value) => setState(() => ratings[key] = value),
               ),
             TextField(
               controller: comment,
@@ -1446,11 +1552,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               ),
             ),
             FilledButton(
-              onPressed: saving ? null : complete,
+              onPressed: saving || upcoming ? null : complete,
               child: Text(saving ? 'Concluindo...' : 'Concluir participação'),
             ),
           ],
-          if (message != null) Text(message!, key: const Key('draft-message')),
+          if (draft['state'] == 'draft')
+            TextButton(
+              onPressed: saving ? null : deleteParticipation,
+              child: const Text('Excluir rascunho'),
+            ),
         ],
       ),
     );
@@ -1539,26 +1649,16 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
         : ListView(
             padding: const EdgeInsets.all(24),
             children: [
-              for (final entry
-                  in _ParticipationDraftScreenState.ratingLabels.entries)
-                DropdownButtonFormField<int>(
-                  initialValue: (review!['ratings'] as Map)[entry.key] as int,
-                  decoration: InputDecoration(labelText: entry.value),
-                  items: [1, 2, 3, 4, 5]
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text('$value'),
-                        ),
-                      )
-                      .toList(),
+              for (final (key, label, icon) in _EditionScreenState.criteria)
+                RatingInput(
+                  label: label,
+                  icon: icon,
+                  value: (review!['ratings'] as Map)[key] as int,
                   onChanged: saving
                       ? null
-                      : (value) {
-                          if (value != null) {
-                            (review!['ratings'] as Map)[entry.key] = value;
-                          }
-                        },
+                      : (value) => setState(
+                          () => (review!['ratings'] as Map)[key] = value,
+                        ),
                 ),
               TextField(
                 controller: comment,

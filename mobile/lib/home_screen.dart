@@ -32,6 +32,10 @@ class FeedEntry {
   });
 }
 
+/// Avisa a tela Início quando ela volta a ser a tela visível (por exemplo, ao voltar de um rascunho).
+final RouteObserver<ModalRoute<void>> runPassRouteObserver =
+    RouteObserver<ModalRoute<void>>();
+
 /// A private draft of the signed-in runner. Drafts are not published, so they never appear
 /// in the feed; they are listed on Início so they can be found and continued.
 class DraftEntry {
@@ -173,10 +177,47 @@ class RunPassHomeScreen extends StatefulWidget {
   State<RunPassHomeScreen> createState() => _RunPassHomeScreenState();
 }
 
-class _RunPassHomeScreenState extends State<RunPassHomeScreen> {
+class _RunPassHomeScreenState extends State<RunPassHomeScreen>
+    with RouteAware, WidgetsBindingObserver {
   late Future<List<FeedEntry>> feed = loadFeed(widget.gateway);
   late Future<List<DraftEntry>> drafts = loadDrafts(widget.gateway);
   FeedFilter filter = FeedFilter.all;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is ModalRoute<void>) runPassRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    runPassRouteObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  void reload() {
+    if (!mounted) return;
+    setState(() {
+      feed = loadFeed(widget.gateway);
+      drafts = loadDrafts(widget.gateway);
+    });
+  }
+
+  @override
+  void didPopNext() => reload();
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) reload();
+  }
 
   void go(Widget screen) =>
       Navigator.of(context)
@@ -217,11 +258,40 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen> {
         ),
       ),
     );
-    if (!mounted) return;
-    setState(() {
-      feed = loadFeed(widget.gateway);
-      drafts = loadDrafts(widget.gateway);
-    });
+    reload();
+  }
+
+  Future<void> deleteDraft(DraftEntry entry) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Excluir rascunho?'),
+        content: Text(
+          '${entry.title}: o rascunho privado será excluído. Você poderá criar outro nesta edição.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Excluir rascunho'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(entry.participation['id'] as String)}',
+        method: 'DELETE',
+        query: {'expectedVersion': '${entry.participation['version']}'},
+      );
+    } on Exception {
+      soon('Não foi possível excluir o rascunho. Tente novamente.');
+    }
+    reload();
   }
 
   Widget draftsSection() => FutureBuilder<List<DraftEntry>>(
@@ -253,7 +323,12 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen> {
                       entry.participation['distanceId'] as String? ?? '',
                     ].where((part) => part.isNotEmpty).join(' · '),
                   ),
-                  trailing: const Icon(Icons.chevron_right_rounded),
+                  trailing: IconButton(
+                    key: Key('delete-draft-${entry.participation['id']}'),
+                    tooltip: 'Excluir rascunho',
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    onPressed: () => deleteDraft(entry),
+                  ),
                   onTap: () => openDraft(entry),
                 ),
             ],

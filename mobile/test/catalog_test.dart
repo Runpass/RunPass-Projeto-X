@@ -21,11 +21,13 @@ Map<String, dynamic> entry(String id, {bool archived = false}) => {
 Future<IdentityGateway> signed(
   JsonTransport handler, {
   String api = 'https://api.example',
+  ByteTransport byteTransport = sendBytes,
 }) async {
   final gateway = IdentityGateway(
     cognito: Uri.parse('https://cognito.example'),
     api: Uri.parse(api),
     clientId: 'synthetic',
+    byteTransport: byteTransport,
     transport: (uri, method, headers, body) async {
       if (uri.host == 'cognito.example') {
         return const JsonReply(200, {
@@ -323,6 +325,7 @@ void main() {
       'GET /editions/A/reviews',
       'GET /editions/A/reviews',
       'POST /participations',
+      'GET /editions/A',
       'PATCH /participations/draft-1',
     ]);
   });
@@ -397,13 +400,12 @@ void main() {
       );
 
       final declaration = find.text('Declaro que concluí esta corrida');
-      await tester.drag(find.byType(ListView), const Offset(0, -1800));
-      await tester.pumpAndSettle();
+      final list = find.byType(Scrollable).first;
+      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
       await tester.tap(declaration);
       await tester.pumpAndSettle();
       final finish = find.text('Concluir participação');
-      await tester.drag(find.byType(ListView), const Offset(0, -600));
-      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tester.tap(finish);
       await tester.pumpAndSettle();
 
@@ -415,6 +417,7 @@ void main() {
       expect(find.text('Selecionar foto'), findsNothing);
       expect(find.textContaining('Privado · não gera medalha'), findsNothing);
       expect(calls, [
+        'GET /editions/A',
         'POST /uploads',
         'PUT signed-object',
         'POST /uploads/upload-1/finalize',
@@ -513,6 +516,11 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.enterText(find.byType(TextField), '');
+    await tester.scrollUntilVisible(
+      find.text('Salvar avaliação'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Salvar avaliação'));
     await tester.pumpAndSettle();
     expect(find.text('Avaliação atualizada.'), findsOneWidget);
@@ -529,4 +537,115 @@ void main() {
       'DELETE /participations/done-1',
     ]);
   });
+
+  Future<IdentityGateway> draftGateway(
+    String editionDate,
+    void Function(Map<String, dynamic>? body) onComplete,
+  ) => signed(byteTransport: (uri, method, headers, bytes) async => 200, (
+    uri,
+    method,
+    headers,
+    body,
+  ) async {
+    if (uri.path == '/editions/A') {
+      return JsonReply(200, {...entry('A'), 'date': editionDate});
+    }
+    if (uri.path == '/uploads') {
+      return const JsonReply(201, {
+        'uploadId': 'u1',
+        'uploadUrl': 'https://private.example/u1',
+        'uploadMethod': 'PUT',
+        'uploadHeaders': {'Content-Type': 'image/jpeg'},
+      });
+    }
+    if (uri.path.endsWith('/finalize')) {
+      return const JsonReply(200, {
+        'uploadId': 'u1',
+        'state': 'valid',
+        'imageReference': 'img-valid',
+      });
+    }
+    onComplete(body);
+    return const JsonReply(200, {
+      'id': 'd1',
+      'editionId': 'A',
+      'distanceId': '10k',
+      'state': 'completed',
+      'version': 2,
+    });
+  });
+
+  Future<void> openDraftWithPhoto(
+    WidgetTester tester,
+    IdentityGateway gateway,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ParticipationDraftScreen(
+          gateway: gateway,
+          initial: const {
+            'id': 'd1',
+            'editionId': 'A',
+            'distanceId': '10k',
+            'state': 'draft',
+            'version': 1,
+          },
+          photoSelector: () async => [0xff, 0xd8, 0xff, 0xd9],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Selecionar foto'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'star ratings per criterion are sent when the race already happened',
+    (tester) async {
+      Map<String, dynamic>? completion;
+      final gateway = await draftGateway(
+        '2000-01-01',
+        (body) => completion = body,
+      );
+      await openDraftWithPhoto(tester, gateway);
+      final list = find.byType(Scrollable).first;
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('rating-Kit-2')),
+        200,
+        scrollable: list,
+      );
+      await tester.tap(find.byKey(const Key('rating-Kit-2')));
+      await tester.pump();
+      final declaration = find.text('Declaro que concluí esta corrida');
+      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
+      await tester.tap(declaration);
+      await tester.pump();
+      final finish = find.text('Concluir participação');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await tester.tap(finish);
+      await tester.pumpAndSettle();
+      expect((completion?['ratings'] as Map)['kit'], 2);
+      expect((completion?['ratings'] as Map)['course'], 5);
+    },
+  );
+
+  testWidgets(
+    'a race that has not happened yet explains and blocks completion',
+    (tester) async {
+      var completed = false;
+      final gateway = await draftGateway('2999-01-01', (_) => completed = true);
+      await openDraftWithPhoto(tester, gateway);
+      final list = find.byType(Scrollable).first;
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('upcoming-notice')),
+        200,
+        scrollable: list,
+      );
+      expect(find.textContaining('Esta corrida acontece em'), findsOneWidget);
+      final finish = find.widgetWithText(FilledButton, 'Concluir participação');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      expect(tester.widget<FilledButton>(finish).onPressed, isNull);
+      expect(completed, isFalse);
+    },
+  );
 }
