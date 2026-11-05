@@ -16,58 +16,107 @@ String displayDate(String value) {
   return parts.length == 3 ? '${parts[2]}/${parts[1]}/${parts[0]}' : value;
 }
 
-String catalogError(IdentityIssue issue) => switch (issue.code) {
-  'INVALID_TOKEN' || 'ACCOUNT_UNAVAILABLE' =>
-    'Sua sessão não está disponível. Volte e entre novamente.',
-  'BETA_ADMISSION_REQUIRED' =>
-    'É necessário participar do beta para consultar as corridas.',
-  'INVALID_CURSOR' =>
-    'A busca expirou. Toque em Buscar para começar novamente.',
-  'INVALID_INPUT' ||
-  'INVALID_FILTERS' => 'Confira os filtros, as datas e a distância informada.',
-  'EDITION_NOT_FOUND' => 'Esta edição não está disponível.',
-  'EDITION_ARCHIVED' ||
-  'EDITION_CHANGED' => 'Esta edição mudou e não aceita um novo rascunho.',
-  'DISTANCE_NOT_IN_EDITION' => 'A distância não pertence mais a esta edição.',
-  'PARTICIPATION_EXISTS' => 'Você já possui um registro para esta edição.',
-  'VERSION_CONFLICT' =>
-    'O registro mudou em outro lugar. Reabra-o antes de editar.',
-  'REVIEW_NOT_FOUND' => 'A avaliação atual não está disponível.',
-  'PARTICIPATION_NOT_FOUND' => 'Esta participação não está mais disponível.',
-  'DELETION_OPERATION_NOT_FOUND' =>
-    'A operação de exclusão não foi encontrada.',
-  'IMAGE_SIZE_INVALID' => 'A foto deve ter no máximo 10 MB.',
-  'IMAGE_FORMAT_INVALID' =>
-    'Escolha uma foto JPEG ou PNG. Não foi possível converter esta imagem.',
-  'INVALID_IMAGE' || 'FORMAT_MISMATCH' || 'PIXEL_LIMIT_EXCEEDED' =>
-    'A foto não pôde ser validada. O rascunho foi preservado.',
-  'PROCESSING_TIMEOUT' || 'UPLOAD_UNAVAILABLE' =>
-    'A foto não foi processada. Tente novamente; o rascunho foi preservado.',
-  'IMAGE_NOT_VALID' => 'A imagem não está válida. O rascunho foi preservado.',
-  'EDITION_NOT_COMPLETABLE' => 'Esta corrida ainda não pode ser concluída.',
-  'PARTICIPATION_NOT_DRAFT' =>
-    'Esta participação já foi concluída ou alterada.',
-  _ => 'Não foi possível carregar as corridas. Tente novamente.',
+/// Motivo curto pelo qual uma edição saiu de circulação (campo `archivedReason` da API).
+String? archivedReasonLabel(String? reason) => switch (reason) {
+  'cancelled' => 'corrida cancelada pela organização',
+  'unavailable' => 'corrida indisponível para inscrição ou compra',
+  'duplicate' => 'cadastro duplicado, substituído por outro no catálogo',
+  'ended' => 'edição encerrada',
+  _ => null,
 };
 
+/// Texto completo para a tela da corrida arquivada.
+String archivedNotice(String? reason) {
+  final label = archivedReasonLabel(reason);
+  return label == null
+      ? 'Edição arquivada: o histórico está preservado e novos registros não estão disponíveis.'
+      : 'Edição arquivada: $label. O histórico está preservado e novos registros não estão disponíveis.';
+}
+
+/// Toda mensagem diz o motivo e o que fazer em seguida.
+String catalogError(IdentityIssue issue) => switch (issue.code) {
+  'INVALID_TOKEN' || 'ACCOUNT_UNAVAILABLE' => 'Sua sessão expirou ou a conta está indisponível. Volte à tela inicial e entre novamente.',
+  'BETA_ADMISSION_REQUIRED' =>
+    'É necessário participar do beta para consultar as corridas.',
+  'INVALID_CURSOR' => 'A busca ficou aberta por muito tempo e expirou. Toque em Buscar para começar de novo.',
+  'INVALID_INPUT' || 'INVALID_FILTERS' => 'Algum campo está inválido (data, distância ou texto fora do limite). Confira os filtros e tente de novo.',
+  'EDITION_NOT_FOUND' =>
+    'Esta corrida não está mais no catálogo. Volte à lista e escolha outra.',
+  'EDITION_ARCHIVED' => 'Esta edição está arquivada e não aceita novos registros. Escolha outra corrida.',
+  'EDITION_CHANGED' => 'O cadastro desta corrida foi atualizado depois que você abriu a tela. Volte à lista e abra a corrida de novo.',
+  'DISTANCE_NOT_IN_EDITION' => 'Esta distância foi removida da corrida. Volte e escolha uma das distâncias atuais.',
+  'PARTICIPATION_EXISTS' => 'Você já tem um registro nesta corrida (só é permitido um por edição). Abra o registro existente para continuar.',
+  'VERSION_CONFLICT' => 'Este registro foi alterado em outro lugar (outro aparelho ou outra tela). Feche e abra de novo antes de editar.',
+  'REVIEW_NOT_FOUND' => 'A avaliação desta participação não foi encontrada. Ela só existe depois que a participação é concluída.',
+  'PARTICIPATION_NOT_FOUND' =>
+    'Este registro não existe mais (pode ter sido excluído). Volte à lista.',
+  'DELETION_OPERATION_NOT_FOUND' =>
+    'Não encontramos o pedido de exclusão. Ele pode já ter terminado.',
+  'IMAGE_SIZE_INVALID' => 'A foto é maior que 10 MB. Escolha uma foto menor.',
+  'IMAGE_FORMAT_INVALID' => 'O formato desta foto não é aceito (use JPEG ou PNG) e não foi possível converter. Escolha outra foto.',
+  'INVALID_IMAGE' || 'FORMAT_MISMATCH' || 'PIXEL_LIMIT_EXCEEDED' => 'A foto não passou na validação (arquivo corrompido, formato diferente do informado ou imagem grande demais). Escolha outra foto; o rascunho foi preservado.',
+  'PROCESSING_TIMEOUT' || 'UPLOAD_UNAVAILABLE' => 'Não foi possível enviar ou processar a foto agora (conexão ou serviço). Tente de novo; o rascunho foi preservado.',
+  'IMAGE_NOT_VALID' => 'A foto escolhida ainda não foi validada. Envie a foto de novo; o rascunho foi preservado.',
+  'EDITION_NOT_COMPLETABLE' => 'Esta corrida ainda não aconteceu. Só dá para concluir a participação depois da data da prova.',
+  'PARTICIPATION_NOT_DRAFT' => 'Esta participação já foi concluída ou excluída, então não pode mais ser alterada como rascunho.',
+  _ => 'Não foi possível concluir agora. Pode ser falta de conexão ou instabilidade do serviço. Tente novamente em instantes.',
+};
+
+/// [subScreen]: tela interna (detalhe, rascunho). Tocar na aba já destacada leva à tela principal
+/// da aba, em vez de não fazer nada.
 Widget runPassNavigation(
   BuildContext context,
   IdentityGateway gateway,
-  int selectedIndex,
-) => RunPassBottomNav(
+  int selectedIndex, {
+  bool subScreen = false,
+}) => RunPassBottomNav(
   selectedIndex: selectedIndex,
   onDestinationSelected: (index) {
-    if (index == selectedIndex) return;
+    if (index == selectedIndex && !subScreen) return;
     final screen = switch (index) {
       0 => RunPassHomeScreen(gateway: gateway),
       1 => CatalogScreen(gateway: gateway),
       2 => MedalCollectionScreen(gateway: gateway),
       _ => RunnerProfileScreen(gateway: gateway),
     };
-    Navigator.of(context)
-        .pushReplacement(MaterialPageRoute<void>(builder: (_) => screen));
+    final route = MaterialPageRoute<void>(builder: (_) => screen);
+    if (subScreen) {
+      Navigator.of(context).pushAndRemoveUntil(route, (r) => r.isFirst);
+    } else {
+      Navigator.of(context).pushReplacement(route);
+    }
   },
 );
+
+/// Participações (rascunho ou concluída) da pessoa por edição, para marcar "já está na sua lista".
+/// Falhas deixam o mapa vazio: a marca é só uma ajuda e nunca bloqueia a tela.
+Future<Map<String, Map<String, dynamic>>> loadMyEditions(
+  IdentityGateway gateway,
+) async {
+  final mine = <String, Map<String, dynamic>>{};
+  try {
+    String? cursor;
+    var pages = 0;
+    do {
+      final page = await gateway.request(
+        '/me/participations',
+        query: {'limit': '100', 'cursor': ?cursor},
+      );
+      for (final item in (page['items'] as List? ?? const [])) {
+        final map = Map<String, dynamic>.from(item as Map);
+        final id = map['editionId'];
+        if (id is String &&
+            (map['state'] == 'draft' || map['state'] == 'completed')) {
+          mine[id] = map;
+        }
+      }
+      cursor = page['nextCursor'] as String?;
+    } while (cursor != null && ++pages < 5);
+  } on Exception {
+    return mine;
+  }
+  return mine;
+}
 
 class CatalogScreen extends StatefulWidget {
   final IdentityGateway gateway;
@@ -90,6 +139,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   };
   final form = GlobalKey<FormState>();
   final items = <Map<String, dynamic>>[];
+  Map<String, Map<String, dynamic>> mine = {};
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
   bool loading = false;
@@ -98,6 +148,48 @@ class _CatalogScreenState extends State<CatalogScreen> {
   void initState() {
     super.initState();
     load();
+    loadMine();
+  }
+
+  Future<void> loadMine() async {
+    final result = await loadMyEditions(widget.gateway);
+    if (mounted) setState(() => mine = result);
+  }
+
+  /// Corrida que já está na timeline: só oferece editar. "Não" volta para a lista.
+  Future<void> editExisting(
+    Map<String, dynamic> edition,
+    Map<String, dynamic> existing,
+  ) async {
+    final edit = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Corrida já cadastrada'),
+        content: Text(
+          '${edition['name']} já está na sua timeline. Deseja editar?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Não'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sim'),
+          ),
+        ],
+      ),
+    );
+    if (edit != true || !mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: existing,
+        ),
+      ),
+    );
+    loadMine();
   }
 
   @override
@@ -143,7 +235,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
     } on IdentityIssue catch (issue) {
       if (mounted) error = catalogError(issue);
     } on Exception {
-      if (mounted) error = 'Não foi possível conectar. Tente novamente.';
+      if (mounted) error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.';
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -288,34 +380,65 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           for (final edition in items)
             Card(
+              color: edition['status'] == 'archived'
+                  ? const Color(0xffe6e8eb)
+                  : null,
               child: ListTile(
+                textColor: edition['status'] == 'archived'
+                    ? const Color(0xff7a808a)
+                    : null,
                 contentPadding: const EdgeInsets.all(16),
                 leading: Container(
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: runPassOrange.withValues(alpha: .12),
+                    color: edition['status'] == 'archived'
+                        ? const Color(0xffcdd1d6)
+                        : runPassOrange.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(Icons.directions_run, color: runPassOrange),
+                  child: Icon(
+                    edition['status'] == 'archived'
+                        ? Icons.inventory_2_outlined
+                        : Icons.directions_run,
+                    color: edition['status'] == 'archived'
+                        ? const Color(0xff7a808a)
+                        : runPassOrange,
+                  ),
                 ),
                 title: Text(edition['name'] as String),
                 subtitle: Text(
                   '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}\n'
                   '${(edition['distances'] as List).map((d) => '${d['kilometers']} km').join(' · ')}'
-                  '${edition['status'] == 'archived' ? '\nEdição arquivada' : ''}',
+                  '${edition['status'] == 'archived' ? '\nArquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}' : ''}'
+                  '${mine.containsKey(edition['id']) ? '\nJá está na sua lista' : ''}',
                 ),
                 isThreeLine: true,
+                trailing: mine.containsKey(edition['id'])
+                    ? const Icon(
+                        Icons.check_circle_rounded,
+                        color: runPassOrange,
+                        semanticLabel: 'Já está na sua lista',
+                      )
+                    : null,
                 onTap: loading
                     ? null
-                    : () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => EditionScreen(
-                            gateway: widget.gateway,
-                            editionId: edition['id'] as String,
+                    : () async {
+                        final existing = mine[edition['id']];
+                        if (existing != null) {
+                          await editExisting(edition, existing);
+                          return;
+                        }
+                        await Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => EditionScreen(
+                              gateway: widget.gateway,
+                              editionId: edition['id'] as String,
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                        loadMine();
+                      },
               ),
             ),
           if (nextCursor != null)
@@ -346,6 +469,7 @@ class _EditionScreenState extends State<EditionScreen> {
   String? selectedDistance, error;
   bool loading = true, saving = false, loadingReviews = false;
   List<Map<String, dynamic>>? reviews;
+  Map<String, dynamic>? mine;
 
   static const criteria = [
     ('organization', 'Organização', Icons.groups_outlined),
@@ -377,11 +501,39 @@ class _EditionScreenState extends State<EditionScreen> {
     } on IdentityIssue catch (issue) {
       if (mounted) error = catalogError(issue);
     } on Exception {
-      if (mounted) error = 'Não foi possível conectar. Tente novamente.';
+      if (mounted) error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.';
     } finally {
       if (mounted) setState(() => loading = false);
     }
-    if (mounted && edition != null) loadReviews();
+    if (mounted && edition != null) {
+      loadReviews();
+      loadMyParticipation();
+    }
+  }
+
+  /// Participação desta pessoa nesta edição, se já existir (rascunho ou concluída).
+  Future<void> loadMyParticipation() async {
+    final all = await loadMyEditions(widget.gateway);
+    final found = all[widget.editionId];
+    if (!mounted || found == null) return;
+    setState(() {
+      mine = found;
+      selectedDistance ??= found['distanceId'] as String?;
+    });
+  }
+
+  Future<void> openMine() async {
+    final existing = mine;
+    if (existing == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: existing,
+        ),
+      ),
+    );
+    if (mounted) loadMyParticipation();
   }
 
   /// Public reviews for the selected distance. Unavailable reviews leave the
@@ -498,7 +650,7 @@ class _EditionScreenState extends State<EditionScreen> {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0xffe9ecf1),
+        color: archived ? const Color(0xffd5d8dd) : const Color(0xffe9ecf1),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -528,7 +680,9 @@ class _EditionScreenState extends State<EditionScreen> {
                     distanceLabel((distance['kilometers'] as num).toDouble()),
                     style: TextStyle(
                       fontWeight: FontWeight.w700,
-                      color: selectedDistance == distance['id']
+                      color: archived
+                          ? const Color(0xff7a808a)
+                          : selectedDistance == distance['id']
                           ? Colors.white
                           : Colors.black87,
                     ),
@@ -563,11 +717,9 @@ class _EditionScreenState extends State<EditionScreen> {
       const SizedBox(height: 14),
       distanceSelector(body),
       if (body['status'] == 'archived')
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text(
-            'Edição arquivada: o histórico está preservado e novos registros não estão disponíveis.',
-          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(archivedNotice(body['archivedReason'] as String?)),
         ),
       const SizedBox(height: 16),
     ],
@@ -597,7 +749,31 @@ class _EditionScreenState extends State<EditionScreen> {
           padding: EdgeInsets.only(top: 12),
           child: Text('Distância selecionada.'),
         ),
-      if (selectedDistance != null) ...[
+      if (mine != null) ...[
+        const SizedBox(height: 16),
+        Row(
+          key: const Key('already-mine'),
+          children: const [
+            Icon(Icons.check_circle_rounded, color: runPassOrange),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Esta corrida já está na sua lista.',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: openMine,
+          child: Text(
+            mine!['state'] == 'completed'
+                ? 'Ver minha participação'
+                : 'Continuar rascunho',
+          ),
+        ),
+      ] else if (selectedDistance != null) ...[
         const SizedBox(height: 16),
         FilledButton(
           onPressed: saving ? null : createDraft,
@@ -626,10 +802,48 @@ class _EditionScreenState extends State<EditionScreen> {
         ),
       );
     } on IdentityIssue catch (issue) {
-      if (mounted) error = catalogError(issue);
+      if (issue.code == 'PARTICIPATION_EXISTS') {
+        await openExistingDraft();
+      } else if (mounted) {
+        error = catalogError(issue);
+      }
     } finally {
       if (mounted) setState(() => saving = false);
     }
+  }
+
+  /// Já existe um registro desta edição: se for um rascunho, abre-o para continuar.
+  Future<void> openExistingDraft() async {
+    Map<String, dynamic>? existing;
+    try {
+      final page = await widget.gateway.request(
+        '/me/participations',
+        query: {'state': 'draft', 'limit': '100'},
+      );
+      for (final item in (page['items'] as List? ?? const [])) {
+        if ((item as Map)['editionId'] == widget.editionId) {
+          existing = Map<String, dynamic>.from(item);
+          break;
+        }
+      }
+    } on IdentityIssue {
+      existing = null;
+    }
+    if (!mounted) return;
+    if (existing == null) {
+      setState(
+        () => error = catalogError(const IdentityIssue('PARTICIPATION_EXISTS')),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: existing!,
+        ),
+      ),
+    );
   }
 
   Widget bar(String label, IconData icon, double? value) => Padding(
@@ -889,7 +1103,12 @@ class _EditionScreenState extends State<EditionScreen> {
       appBar: loading || error != null || body == null
           ? AppBar(title: const Text('Detalhes da corrida'))
           : null,
-      bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+      bottomNavigationBar: runPassNavigation(
+        context,
+        widget.gateway,
+        1,
+        subScreen: true,
+      ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : error != null
@@ -946,6 +1165,47 @@ class _EditionScreenState extends State<EditionScreen> {
   }
 }
 
+/// Nota de 1 a 5 estrelas para um critério, com o ícone do critério (como no mockup).
+class RatingInput extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final int value;
+  final ValueChanged<int>? onChanged;
+  const RatingInput({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      children: [
+        Icon(icon, size: 20),
+        const SizedBox(width: 10),
+        Expanded(child: Text(label)),
+        for (var star = 1; star <= 5; star++)
+          IconButton(
+            key: Key('rating-$label-$star'),
+            tooltip: '$label: $star de 5',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 40),
+            icon: Icon(
+              star <= value ? Icons.star_rounded : Icons.star_border_rounded,
+              color: runPassOrange,
+              size: 28,
+            ),
+            onPressed: onChanged == null ? null : () => onChanged!(star),
+          ),
+      ],
+    ),
+  );
+}
+
 class ParticipationDraftScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> initial;
@@ -971,6 +1231,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   String? imageReference, pendingUploadId;
   bool declaredCompleted = false, publishToFeed = false;
   bool deleted = false;
+  DateTime? editionDate;
+  // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
+  static final Map<String, Map<String, dynamic>> formCache = {};
   final ratings = {
     'organization': 5,
     'course': 5,
@@ -980,16 +1243,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     'facilities': 5,
     'safety': 5,
     'valueForMoney': 5,
-  };
-  static const ratingLabels = {
-    'organization': 'Organização',
-    'course': 'Percurso',
-    'kit': 'Kit',
-    'medal': 'Medalha',
-    'hydration': 'Hidratação',
-    'facilities': 'Estrutura',
-    'safety': 'Segurança',
-    'valueForMoney': 'Custo-benefício',
   };
 
   @override
@@ -1002,10 +1255,51 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     );
     bib = TextEditingController(text: draft['bibNumber'] as String? ?? '');
     comment = TextEditingController();
+    final saved = formCache[draft['id']];
+    if (saved != null && draft['state'] == 'draft') {
+      imageReference = saved['imageReference'] as String?;
+      declaredCompleted = saved['declaredCompleted'] == true;
+      publishToFeed = saved['publishToFeed'] == true;
+      comment.text = saved['comment'] as String? ?? '';
+      ratings.addAll(Map<String, int>.from(saved['ratings'] as Map));
+    }
+    loadEditionDate();
+  }
+
+  Future<void> loadEditionDate() async {
+    final id = draft['editionId'];
+    if (draft['state'] != 'draft' || id is! String) return;
+    try {
+      final edition = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(id)}',
+      );
+      final parsed = DateTime.tryParse(edition['date'] as String? ?? '');
+      if (mounted && parsed != null) setState(() => editionDate = parsed);
+    } on Exception {
+      // Sem a data, o servidor continua validando a conclusao.
+    }
+  }
+
+  bool get upcoming {
+    final date = editionDate;
+    if (date == null) return false;
+    final now = DateTime.now();
+    return date.isAfter(DateTime(now.year, now.month, now.day));
   }
 
   @override
   void dispose() {
+    if (draft['state'] == 'draft' && !deleted) {
+      formCache[draft['id'] as String] = {
+        'imageReference': imageReference,
+        'declaredCompleted': declaredCompleted,
+        'publishToFeed': publishToFeed,
+        'comment': comment.text,
+        'ratings': Map<String, int>.from(ratings),
+      };
+    } else {
+      formCache.remove(draft['id']);
+    }
     time.dispose();
     placement.dispose();
     bib.dispose();
@@ -1022,7 +1316,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   Future<void> save() async {
     final seconds = positive(time.text), place = positive(placement.text);
     if (seconds == -1 || place == -1 || bib.text.length > 40) {
-      setState(() => message = 'Confira tempo, colocação e número de peito.');
+      setState(
+        () => message = 'Tempo e colocação precisam ser números inteiros maiores que zero, e o número de peito pode ter no máximo 40 caracteres.',
+      );
       return;
     }
     setState(() {
@@ -1099,8 +1395,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       if (mounted) message = catalogError(issue);
     } on Exception {
       if (mounted) {
-        message =
-            'Não foi possível selecionar a foto. O rascunho foi preservado.';
+        message = 'O app não conseguiu abrir ou ler a foto escolhida. Tente de novo ou escolha outra; o rascunho foi preservado.';
       }
     } finally {
       if (mounted) setState(() => uploading = false);
@@ -1137,7 +1432,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   Future<void> complete() async {
     if (imageReference == null || !declaredCompleted) {
       setState(
-        () => message = 'Confirme a conclusão e use uma imagem validada.',
+        () => message = 'Para concluir, anexe uma foto validada e marque "Declaro que concluí esta corrida".',
       );
       return;
     }
@@ -1160,6 +1455,20 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       );
       if (mounted) {
         message = 'Participação concluída. Avaliação e medalha foram salvas.';
+        // Ao concluir, leva a pessoa para a coleção de medalhas, onde a conquista aparece.
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Participação concluída. Avaliação e medalha foram salvas.',
+            ),
+          ),
+        );
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute<void>(
+            builder: (_) => MedalCollectionScreen(gateway: widget.gateway),
+          ),
+          (route) => route.isFirst,
+        );
       }
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
@@ -1195,9 +1504,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Excluir participação?'),
-        content: const Text(
-          'A participação será ocultada imediatamente e o RunScore será recomposto.',
+        title: Text(
+          draft['state'] == 'draft'
+              ? 'Excluir rascunho?'
+              : 'Excluir participação?',
+        ),
+        content: Text(
+          draft['state'] == 'draft'
+              ? 'O rascunho privado será excluído. Você poderá criar outro nesta edição.'
+              : 'A participação será ocultada imediatamente e o RunScore será recomposto.',
         ),
         actions: [
           TextButton(
@@ -1206,7 +1521,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Excluir participação'),
+            child: Text(
+              draft['state'] == 'draft'
+                  ? 'Excluir rascunho'
+                  : 'Excluir participação',
+            ),
           ),
         ],
       ),
@@ -1235,7 +1554,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     if (deleted) {
       return Scaffold(
         appBar: AppBar(title: const Text('Participação excluída')),
-        bottomNavigationBar: runPassNavigation(context, widget.gateway, 3),
+        bottomNavigationBar: runPassNavigation(
+          context,
+          widget.gateway,
+          3,
+          subScreen: true,
+        ),
         body: const Padding(
           padding: EdgeInsets.all(24),
           child: Text(
@@ -1247,7 +1571,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     if (draft['state'] == 'completed') {
       return Scaffold(
         appBar: AppBar(title: const RunPassWordmark(compact: true)),
-        bottomNavigationBar: runPassNavigation(context, widget.gateway, 2),
+        bottomNavigationBar: runPassNavigation(
+          context,
+          widget.gateway,
+          2,
+          subScreen: true,
+        ),
         body: ListView(
           padding: const EdgeInsets.all(24),
           children: [
@@ -1315,7 +1644,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
     return Scaffold(
       appBar: AppBar(title: const RunPassWordmark(compact: true)),
-      bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+      bottomNavigationBar: runPassNavigation(
+        context,
+        widget.gateway,
+        1,
+        subScreen: true,
+      ),
       body: ListView(
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(24),
@@ -1330,6 +1664,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           const Text(
             'Rascunho criado. Preencha o que quiser e toque em Salvar rascunho.',
           ),
+          if (message != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                message!,
+                key: const Key('draft-message'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
           TextField(
             controller: time,
             keyboardType: TextInputType.number,
@@ -1371,20 +1714,32 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             ),
           if (imageReference != null && draft['state'] == 'draft') ...[
             const Divider(height: 32),
-            const Text('Avaliação obrigatória'),
-            for (final entry in ratingLabels.entries)
-              DropdownButtonFormField<int>(
-                initialValue: ratings[entry.key],
-                decoration: InputDecoration(labelText: entry.value),
-                items: [1, 2, 3, 4, 5]
-                    .map(
-                      (value) =>
-                          DropdownMenuItem(value: value, child: Text('$value')),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  if (value != null) ratings[entry.key] = value;
-                },
+            if (upcoming)
+              Container(
+                key: const Key('upcoming-notice'),
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xfffff3e0),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Esta corrida acontece em ${displayDate(editionDate!.toIso8601String().substring(0, 10))}. '
+                  'Você poderá concluir a participação depois dessa data; o rascunho fica salvo.',
+                ),
+              ),
+            const Text(
+              'Avaliação obrigatória',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            for (final (key, label, icon) in _EditionScreenState.criteria)
+              RatingInput(
+                label: label,
+                icon: icon,
+                value: ratings[key] ?? 5,
+                onChanged: saving
+                    ? null
+                    : (value) => setState(() => ratings[key] = value),
               ),
             TextField(
               controller: comment,
@@ -1408,11 +1763,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               ),
             ),
             FilledButton(
-              onPressed: saving ? null : complete,
+              onPressed: saving || upcoming ? null : complete,
               child: Text(saving ? 'Concluindo...' : 'Concluir participação'),
             ),
           ],
-          if (message != null) Text(message!, key: const Key('draft-message')),
+          if (draft['state'] == 'draft')
+            TextButton(
+              onPressed: saving ? null : deleteParticipation,
+              child: const Text('Excluir rascunho'),
+            ),
         ],
       ),
     );
@@ -1493,7 +1852,12 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Editar avaliação')),
-    bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+    bottomNavigationBar: runPassNavigation(
+      context,
+      widget.gateway,
+      1,
+      subScreen: true,
+    ),
     body: loading
         ? const Center(child: CircularProgressIndicator())
         : review == null
@@ -1501,26 +1865,16 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
         : ListView(
             padding: const EdgeInsets.all(24),
             children: [
-              for (final entry
-                  in _ParticipationDraftScreenState.ratingLabels.entries)
-                DropdownButtonFormField<int>(
-                  initialValue: (review!['ratings'] as Map)[entry.key] as int,
-                  decoration: InputDecoration(labelText: entry.value),
-                  items: [1, 2, 3, 4, 5]
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text('$value'),
-                        ),
-                      )
-                      .toList(),
+              for (final (key, label, icon) in _EditionScreenState.criteria)
+                RatingInput(
+                  label: label,
+                  icon: icon,
+                  value: (review!['ratings'] as Map)[key] as int,
                   onChanged: saving
                       ? null
-                      : (value) {
-                          if (value != null) {
-                            (review!['ratings'] as Map)[entry.key] = value;
-                          }
-                        },
+                      : (value) => setState(
+                          () => (review!['ratings'] as Map)[key] = value,
+                        ),
                 ),
               TextField(
                 controller: comment,

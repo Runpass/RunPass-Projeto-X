@@ -21,11 +21,13 @@ Map<String, dynamic> entry(String id, {bool archived = false}) => {
 Future<IdentityGateway> signed(
   JsonTransport handler, {
   String api = 'https://api.example',
+  ByteTransport byteTransport = sendBytes,
 }) async {
   final gateway = IdentityGateway(
     cognito: Uri.parse('https://cognito.example'),
     api: Uri.parse(api),
     clientId: 'synthetic',
+    byteTransport: byteTransport,
     transport: (uri, method, headers, body) async {
       if (uri.host == 'cognito.example') {
         return const JsonReply(200, {
@@ -197,7 +199,7 @@ void main() {
       await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
       expect(find.text('Distância selecionada.'), findsOneWidget);
-      expect(paths, [
+      expect(paths.where((c) => c != '/me/participations'), [
         '/editions',
         '/editions/A',
         '/editions/A/reviews',
@@ -205,6 +207,51 @@ void main() {
       ]);
     },
   );
+
+  testWidgets('existing draft in the edition is reopened instead of an error', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      calls.add('$method ${uri.path}');
+      if (method == 'GET' && uri.path == '/me/participations') {
+        expect(uri.queryParameters['state'], 'draft');
+        return const JsonReply(200, {
+          'items': [
+            {
+              'id': 'other',
+              'editionId': 'B',
+              'distanceId': '5k',
+              'state': 'draft',
+              'version': 1,
+            },
+            {
+              'id': 'draft-9',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'draft',
+              'version': 2,
+            },
+          ],
+        });
+      }
+      if (method == 'GET') return JsonReply(200, entry('A'));
+      return const JsonReply(409, {'code': 'PARTICIPATION_EXISTS'});
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'A'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('10K'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Criar rascunho'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rascunho da participação'), findsOneWidget);
+    expect(find.textContaining('Você já possui'), findsNothing);
+    expect(calls, contains('GET /me/participations'));
+  });
 
   testWidgets('archived edition remains visible without new selection', (
     tester,
@@ -273,11 +320,12 @@ void main() {
     await tester.tap(find.text('Salvar rascunho'));
     await tester.pumpAndSettle();
     expect(find.text('Rascunho salvo. Nada foi publicado.'), findsOneWidget);
-    expect(calls, [
+    expect(calls.where((c) => !c.contains('/me/participations')), [
       'GET /editions/A',
       'GET /editions/A/reviews',
       'GET /editions/A/reviews',
       'POST /participations',
+      'GET /editions/A',
       'PATCH /participations/draft-1',
     ]);
   });
@@ -312,6 +360,9 @@ void main() {
               'state': 'valid',
               'imageReference': 'img-valid',
             });
+          }
+          if (!uri.path.endsWith('/complete')) {
+            return const JsonReply(200, {'items': []});
           }
           completion = body;
           return const JsonReply(200, {
@@ -352,13 +403,12 @@ void main() {
       );
 
       final declaration = find.text('Declaro que concluí esta corrida');
-      await tester.drag(find.byType(ListView), const Offset(0, -1800));
-      await tester.pumpAndSettle();
+      final list = find.byType(Scrollable).first;
+      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
       await tester.tap(declaration);
       await tester.pumpAndSettle();
       final finish = find.text('Concluir participação');
-      await tester.drag(find.byType(ListView), const Offset(0, -600));
-      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tester.tap(finish);
       await tester.pumpAndSettle();
 
@@ -369,7 +419,9 @@ void main() {
       expect(find.text('Salvar rascunho'), findsNothing);
       expect(find.text('Selecionar foto'), findsNothing);
       expect(find.textContaining('Privado · não gera medalha'), findsNothing);
-      expect(calls, [
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
+      expect(calls.where((c) => !c.contains('/me/participations')), [
+        'GET /editions/A',
         'POST /uploads',
         'PUT signed-object',
         'POST /uploads/upload-1/finalize',
@@ -468,6 +520,11 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.enterText(find.byType(TextField), '');
+    await tester.scrollUntilVisible(
+      find.text('Salvar avaliação'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Salvar avaliação'));
     await tester.pumpAndSettle();
     expect(find.text('Avaliação atualizada.'), findsOneWidget);
@@ -483,5 +540,236 @@ void main() {
       'PUT /participations/done-1/review',
       'DELETE /participations/done-1',
     ]);
+  });
+
+  Future<IdentityGateway> draftGateway(
+    String editionDate,
+    void Function(Map<String, dynamic>? body) onComplete,
+  ) => signed(byteTransport: (uri, method, headers, bytes) async => 200, (
+    uri,
+    method,
+    headers,
+    body,
+  ) async {
+    if (uri.path == '/editions/A') {
+      return JsonReply(200, {...entry('A'), 'date': editionDate});
+    }
+    if (uri.path == '/uploads') {
+      return const JsonReply(201, {
+        'uploadId': 'u1',
+        'uploadUrl': 'https://private.example/u1',
+        'uploadMethod': 'PUT',
+        'uploadHeaders': {'Content-Type': 'image/jpeg'},
+      });
+    }
+    if (uri.path.endsWith('/finalize')) {
+      return const JsonReply(200, {
+        'uploadId': 'u1',
+        'state': 'valid',
+        'imageReference': 'img-valid',
+      });
+    }
+    if (!uri.path.endsWith('/complete')) {
+      return const JsonReply(200, {'items': []});
+    }
+    onComplete(body);
+    return const JsonReply(200, {
+      'id': 'd1',
+      'editionId': 'A',
+      'distanceId': '10k',
+      'state': 'completed',
+      'version': 2,
+    });
+  });
+
+  Future<void> openDraftWithPhoto(
+    WidgetTester tester,
+    IdentityGateway gateway,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ParticipationDraftScreen(
+          gateway: gateway,
+          initial: const {
+            'id': 'd1',
+            'editionId': 'A',
+            'distanceId': '10k',
+            'state': 'draft',
+            'version': 1,
+          },
+          photoSelector: () async => [0xff, 0xd8, 0xff, 0xd9],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Selecionar foto'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'star ratings per criterion are sent when the race already happened',
+    (tester) async {
+      Map<String, dynamic>? completion;
+      final gateway = await draftGateway(
+        '2000-01-01',
+        (body) => completion = body,
+      );
+      await openDraftWithPhoto(tester, gateway);
+      final list = find.byType(Scrollable).first;
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('rating-Kit-2')),
+        200,
+        scrollable: list,
+      );
+      await tester.tap(find.byKey(const Key('rating-Kit-2')));
+      await tester.pump();
+      final declaration = find.text('Declaro que concluí esta corrida');
+      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
+      await tester.tap(declaration);
+      await tester.pump();
+      final finish = find.text('Concluir participação');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await tester.tap(finish);
+      await tester.pumpAndSettle();
+      expect((completion?['ratings'] as Map)['kit'], 2);
+      expect((completion?['ratings'] as Map)['course'], 5);
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a race that has not happened yet explains and blocks completion',
+    (tester) async {
+      var completed = false;
+      final gateway = await draftGateway('2999-01-01', (_) => completed = true);
+      await openDraftWithPhoto(tester, gateway);
+      final list = find.byType(Scrollable).first;
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('upcoming-notice')),
+        200,
+        scrollable: list,
+      );
+      expect(find.textContaining('Esta corrida acontece em'), findsOneWidget);
+      final finish = find.widgetWithText(FilledButton, 'Concluir participação');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      expect(tester.widget<FilledButton>(finish).onPressed, isNull);
+      expect(completed, isFalse);
+    },
+  );
+
+  testWidgets('a race already in my list is marked and opens my record', (
+    tester,
+  ) async {
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/me/participations') {
+        return const JsonReply(200, {
+          'items': [
+            {
+              'id': 'mine-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'draft',
+              'version': 1,
+            },
+            {
+              'id': 'gone',
+              'editionId': 'B',
+              'distanceId': '5k',
+              'state': 'deleted',
+              'version': 3,
+            },
+          ],
+        });
+      }
+      if (uri.path == '/editions') {
+        return JsonReply(200, {
+          'items': [entry('A'), entry('B')],
+        });
+      }
+      return JsonReply(200, entry('A'));
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    await reveal(tester, find.textContaining('Já está na sua lista'));
+    expect(find.textContaining('Já está na sua lista'), findsOneWidget);
+    await tester.tap(find.text('Corrida A'));
+    await tester.pumpAndSettle();
+    expect(find.text('Corrida já cadastrada'), findsOneWidget);
+    expect(find.textContaining('já está na sua timeline'), findsOneWidget);
+    // "Não" volta para a lista sem abrir nada.
+    await tester.tap(find.text('Não'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rascunho da participação'), findsNothing);
+    expect(find.byType(CatalogScreen), findsOneWidget);
+    // "Sim" abre a edição do registro existente.
+    await tester.tap(find.text('Corrida A'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sim'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rascunho da participação'), findsOneWidget);
+  });
+
+  testWidgets('the Corridas tab on a draft returns to the race list', (
+    tester,
+  ) async {
+    final gateway = await draftGateway('2999-01-01', (_) {});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ParticipationDraftScreen(
+          gateway: gateway,
+          initial: const {
+            'id': 'd1',
+            'editionId': 'A',
+            'distanceId': '10k',
+            'state': 'draft',
+            'version': 1,
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Corridas'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CatalogScreen), findsOneWidget);
+    expect(find.text('Rascunho da participação'), findsNothing);
+  });
+
+  testWidgets('an archived edition states why it is archived', (tester) async {
+    final gateway = await signed(
+      (uri, method, headers, body) async => JsonReply(200, {
+        ...entry('old', archived: true),
+        'archivedReason': 'cancelled',
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'old'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'Edição arquivada: corrida cancelada pela organização.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  test('error messages state the reason and what to do next', () {
+    for (final code in [
+      'EDITION_NOT_COMPLETABLE',
+      'PARTICIPATION_EXISTS',
+      'UPLOAD_UNAVAILABLE',
+      'VERSION_CONFLICT',
+      'SOMETHING_UNKNOWN',
+    ]) {
+      expect(
+        catalogError(IdentityIssue(code)).length,
+        greaterThan(50),
+        reason: code,
+      );
+    }
+    expect(archivedReasonLabel('unavailable'), contains('compra'));
+    expect(archivedReasonLabel(null), isNull);
   });
 }

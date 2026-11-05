@@ -66,4 +66,78 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('concluiu Corrida de Demonstração 01'), findsOneWidget);
   });
+
+  testWidgets('a private draft is listed on the home screen and reopens', (
+    tester,
+  ) async {
+    final demo = DemoTransport();
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.demo.invalid'),
+      api: Uri.parse('https://api.demo.invalid'),
+      clientId: 'demo-not-a-real-client',
+      transport: demo.call,
+      byteTransport: demo.putBytes,
+    );
+    await gateway.signIn('demo@runpass.test', 'RunpassDemo123!');
+    await gateway.request(
+      '/me',
+      method: 'PUT',
+      body: {'displayName': 'Corredor Demo', 'username': 'corredor_demo'},
+    );
+    await gateway.request(
+      '/beta/admissions',
+      method: 'POST',
+      body: {'birthDate': '1990-01-01', 'declaresAdult': true},
+    );
+    final draft = await gateway.request(
+      '/participations',
+      method: 'POST',
+      body: {'editionId': 'demo-1', 'distanceId': '10k'},
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Rascunhos em andamento'), findsOneWidget);
+    await tester.tap(find.byKey(Key('draft-${draft['id']}')));
+    await tester.pumpAndSettle();
+    expect(find.text('Rascunho da participação'), findsOneWidget);
+  });
+
+  testWidgets('a draft can be deleted from the home screen', (tester) async {
+    final demo = DemoTransport();
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.demo.invalid'),
+      api: Uri.parse('https://api.demo.invalid'),
+      clientId: 'demo-not-a-real-client',
+      transport: demo.call,
+      byteTransport: demo.putBytes,
+    );
+    await gateway.signIn('demo@runpass.test', 'RunpassDemo123!');
+    await gateway.request(
+      '/me',
+      method: 'PUT',
+      body: {'displayName': 'Corredor Demo', 'username': 'corredor_demo'},
+    );
+    await gateway.request(
+      '/beta/admissions',
+      method: 'POST',
+      body: {'birthDate': '1990-01-01', 'declaresAdult': true},
+    );
+    final draft = await gateway.request(
+      '/participations',
+      method: 'POST',
+      body: {'editionId': 'demo-1', 'distanceId': '10k'},
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(Key('delete-draft-${draft['id']}')));
+    await tester.pumpAndSettle();
+    expect(find.text('Excluir rascunho?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Excluir rascunho'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rascunhos em andamento'), findsNothing);
+  });
 }

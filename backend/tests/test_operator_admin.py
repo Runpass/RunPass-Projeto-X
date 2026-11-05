@@ -71,6 +71,24 @@ class OperatorAdminTest(unittest.TestCase):
         listed = self.catalog.list(runner, CatalogFilters())["items"]
         self.assertTrue(all("Sint" in e["name"] for e in listed))
 
+    def test_changed_entry_publishes_a_new_version_with_the_archive_reason(self):
+        grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
+        self.session()
+        text = FIXTURE.read_text()
+        load_catalog(self.catalog, self.operator, text)
+        changed = text.replace('"archivedReason":"cancelled"', '"archivedReason":"unavailable"')
+        self.assertNotEqual(changed, text)
+        load_catalog(self.catalog, self.operator, changed)
+        load_catalog(self.catalog, self.operator, changed)  # repetir nao cria versao nova
+        head = self.store.get(("catalog", "EDITION#synthetic-archived", "HEAD"))
+        self.assertEqual(head["version"], 2)
+        runner = Principal("runner", True)
+        self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
+        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        body = self.catalog.detail(runner, "synthetic-archived")
+        self.assertEqual(body["status"], "archived")
+        self.assertEqual(body["archivedReason"], "unavailable")
+
     def test_revoked_access_stops_the_load(self):
         grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
         self.session()

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'identity_gateway.dart';
 import 'catalog_screen.dart';
+import 'home_screen.dart';
 import 'runpass_theme.dart';
 
 void main() {
@@ -31,6 +32,7 @@ class MainApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'RunPass',
+    navigatorObservers: [runPassRouteObserver],
     // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
     builder: (context, shell) {
       final child = GestureDetector(
@@ -171,7 +173,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
         'BETA_FULL' => 'As vagas do beta foram preenchidas. Você pode entrar na lista de espera.',
         'ACCOUNT_UNAVAILABLE' => 'Esta conta está indisponível.',
         'INVALID_INPUT' => 'Confira os campos e tente novamente.',
-        _ => 'Não foi possível concluir. Seus dados continuam nesta tela; tente novamente.',
+        _ => 'Não foi possível concluir agora (falta de conexão ou instabilidade do serviço). Seus dados continuam nesta tela; tente novamente em instantes.',
       };
       if (error.code == 'BETA_FULL') full = true;
     } on Exception {

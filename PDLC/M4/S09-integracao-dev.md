@@ -194,3 +194,39 @@ Verificação feita: chamadas sem credencial a `/me/participations` e `/editions
 
 **Ainda não provado:** HEIC e fotos reais em aparelhos, carga, restore com RPO/RTO, permissões negativas além do rascunho, DLQ e replay, alarmes (com e-mail recebido pelos quatro destinatários), limites de Lambda, privacidade em outras rotas. Há 4 itens `WORK#event#pending#...` na OperationsTable com mais de 3 horas na leitura; não foi verificado se são fila normal ou eventos parados.
 
+### Primeiro teste em iPhone real contra o DEV — 05/11/2026
+
+iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de corredor criada no app com e-mail real e código de confirmação. **Resultado: a jornada não fechou na primeira tentativa.** Passaram: cadastro, login, catálogo (5 edições sintéticas) e criação do rascunho. Falharam e foram corrigidos no app (PR #14), **ainda sem novo teste em aparelho**:
+
+| Achado | Causa (verificada) | Correção |
+| --- | --- | --- |
+| Foto não enviada | O app enviava ao S3 sem `Content-Length` (Dart usa `Transfer-Encoding: chunked`) e o S3 respondia 501; 6 uploads JPEG de 1,1 a 1,7 MB ficaram `pending` sem objeto no S3. Reproduzido com o código do app; com o tamanho informado, 200 e o servidor validou o JPEG. O smoke não pegou porque o cliente Python informa o tamanho | `putBytes` com `contentLength`, teste de regressão |
+| Teclado não fechava | Teclado numérico do iOS sem tecla de fim e nenhum fechamento por toque ou rolagem | Toque fora fecha; arrastar a lista fecha |
+| "Você já possui um registro" em toda corrida | Um registro por edição por pessoa; os 4 rascunhos do primeiro teste existiam e o app só listava participações concluídas | Criar rascunho reabre o existente; Início lista "Rascunhos em andamento" |
+| Tela do rascunho confundia | Não dizia que o rascunho já estava criado; edição arquivada bloqueia a distância sem explicar | Texto explicativo nas duas telas |
+
+**HEIC:** o seletor do iOS entregou JPEG (os uploads do aparelho foram `image/jpeg`); o backend continua aceitando só JPEG, MPO e PNG. **Foto de câmera:** não testável, o app só abre a galeria. Os uploads `pending` do teste permanecem no DEV.
+
+**Segunda rodada em iPhone (05/11/2026), correções feitas e ainda sem novo teste em aparelho:**
+
+| Achado | Causa | Correção |
+| --- | --- | --- |
+| "Esta corrida ainda não pode ser concluída" sem explicação | Regra do servidor correta: a data da prova (08/11/2026 na edição de SP 2026) é futura; o app oferecia o botão e mostrava a mensagem no fim da tela | Aviso com a data, botão desabilitado e mensagem clara; rascunho continua salvo |
+| Avaliação em lista suspensa | Pedido de usar ícones e até 5 estrelas, como no mockup | Estrelas por critério, também na edição da avaliação |
+| Perda da foto e das notas ao voltar | Estado só em memória da tela | Foto validada e avaliação preservadas ao reabrir o mesmo rascunho (em memória do app; não sobrevive a fechar o app) |
+| Sem opção de excluir rascunho | Só havia exclusão de participação concluída | "Excluir rascunho" na tela do rascunho e no cartão do Início, com confirmação |
+| Rascunhos só apareciam ao rolar | Início não recarregava ao voltar de outra tela (causa provável, não confirmada em aparelho) | Recarrega ao voltar e ao reabrir o app |
+| Mensagens de erro fora da tela | Ficavam no fim da lista | Mensagem logo abaixo do título |
+
+**Não corrigido (lacuna do produto):** a foto enviada **não aparece** em Início nem em Medalhas. O contrato da API só expõe `medalImageReference` (um identificador) e não tem rota para ler a imagem; o app mostra uma arte desenhada. É o item "imagem da medalha exibível" do S12 e exige rota nova com URL assinada de leitura, só para o dono, mais a decisão de privacidade correspondente. "Salvar visibilidade" funciona: a tela permanece e mostra a mensagem de confirmação.
+
+**Marca "já está na sua lista" (05/11/2026).** Na busca e na tela da edição, a corrida em que a pessoa já tem rascunho ou participação concluída ganha um ícone de confirmação e o texto "Já está na sua lista"; a tela da edição troca "Criar rascunho" por "Continuar rascunho" ou "Ver minha participação". A "Prova Sintética Arquivada" continua marcada como arquivada: é uma edição da fixture (`synthetic-archived`, `archived: true`) criada para provar a regra de histórico preservado sem novos registros, e **não** está na lista de ninguém. Sem verificação em aparelho.
+
+**Concluir e arquivada (05/11/2026).** Ao concluir a participação, o app mostra a confirmação e leva a pessoa para a tela Medalhas (a decisão pode ser trocada por Início). A edição arquivada aparece em cinza na busca e na tela da corrida, com o seletor de distância desabilitado. Sem verificação em aparelho.
+
+**Corrida já cadastrada (05/11/2026).** Ao tocar, na busca, numa corrida que já está na lista da pessoa, o app não abre a página da edição: pergunta "Corrida já cadastrada: <nome> já está na sua timeline. Deseja editar?". "Sim" abre o registro existente (rascunho para editar, ou a participação concluída com a edição da avaliação); "Não" volta para a lista. Sem verificação em aparelho.
+
+**Navegação nas telas internas (05/11/2026).** Nas telas de rascunho, detalhe da edição e avaliação, a barra de baixo destacava a aba "Corridas" e tocar nela não fazia nada (havia um retorno antecipado quando a aba já estava ativa), então a pessoa ficava sem caminho de volta à lista pela barra. Agora, nessas telas internas, tocar na aba leva à tela principal dela. O teste em iPhone enviou prints de uma versão **anterior** do app (mensagem curta de corrida futura e cartão do Início sem a lixeira), então as correções posteriores precisam ser reinstaladas no aparelho para serem verificadas.
+
+**Motivo da edição arquivada e mensagens (05/11/2026).** O catálogo ganha `archivedReason` (`cancelled`, `unavailable`, `duplicate`, `ended`), validado no importador (só com `archived`), no contrato OpenAPI, no modelo de dados e na fixture (`synthetic-archived` marcada como `cancelled`). O app mostra o motivo na busca e na tela da corrida. O carregador do catálogo (`scripts/operator_tool.py load-catalog`) agora publica uma **nova versão** quando o conteúdo de uma edição muda e continua sem criar versão quando é igual. As mensagens de erro do app foram reescritas para dizer o motivo e o que fazer. **No DEV, o motivo só aparece depois de rodar `load-catalog` de novo** (precisa de operador com MFA) e é uma versão nova do catálogo; não verifiquei se a API atual já devolve o campo novo sem redeploy da Lambda (ela devolve o corpo guardado, o que indica que sim, mas não foi testado).
+

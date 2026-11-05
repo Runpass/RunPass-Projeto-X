@@ -5123,6 +5123,16 @@
             "type": "string",
             "minLength": 1,
             "description": "Optional catalog organizer reference; server validates existence. Not required for unknown historical organizer."
+          },
+          "archivedReason": {
+            "type": "string",
+            "enum": [
+              "cancelled",
+              "unavailable",
+              "duplicate",
+              "ended"
+            ],
+            "description": "Present only when status is archived: cancelled (race cancelled), unavailable (no longer available for registration or purchase), duplicate (duplicate catalog entry), ended (edition closed). Absent when the reason is not recorded."
           }
         }
       },
