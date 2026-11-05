@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
 import 'identity_gateway.dart';
+import 'main.dart' show IdentityScreen;
 import 'runpass_theme.dart';
 
 /// A completed participation joined with the official edition it refers to.
@@ -718,6 +719,56 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     );
   }
 
+  void toSignIn([String? notice]) => Navigator.of(context).pushAndRemoveUntil(
+    MaterialPageRoute<void>(
+      builder: (_) => IdentityScreen(gateway: widget.gateway, notice: notice),
+    ),
+    (route) => false,
+  );
+
+  Future<void> signOut() async {
+    try {
+      await widget.gateway.signOut();
+    } on Exception {
+      // A sessão local já foi encerrada; falha de rede não impede sair.
+    }
+    if (mounted) toSignIn();
+  }
+
+  Future<void> deleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Excluir sua conta?'),
+        content: const Text(
+          'O acesso será bloqueado imediatamente e a limpeza dos seus dados (perfil, participações, avaliações e fotos) será agendada. Isso não pode ser desfeito.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Excluir minha conta'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.gateway.request('/me', method: 'DELETE');
+    } on IdentityIssue catch (issue) {
+      if (mounted) soon(catalogError(issue));
+      return;
+    }
+    widget.gateway.clearSession();
+    if (mounted) {
+      toSignIn('Exclusão aceita. O acesso à conta foi encerrado.');
+    }
+  }
+
+  @override
   @override
   Widget build(BuildContext context) => Scaffold(
     bottomNavigationBar: runPassNavigation(context, widget.gateway, 3),
@@ -841,10 +892,42 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                   const Card(
                     child: ListTile(
                       leading: Icon(Icons.lock_outline),
-                      title: Text('Perfil protegido'),
+                      title: Text('Resultados e fotos privados'),
                       subtitle: Text(
-                        'Seus dados locais de demonstração não são enviados à AWS.',
+                        'Nesta versão de teste, seus resultados, fotos e avaliações ficam no ambiente de teste do RunPass e só você os vê.',
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Card(
+                    child: Column(
+                      children: [
+                        ListTile(
+                          key: const Key('sign-out'),
+                          leading: const Icon(Icons.logout_rounded),
+                          title: const Text('Sair'),
+                          subtitle: const Text(
+                            'Encerra a sessão neste aparelho.',
+                          ),
+                          onTap: signOut,
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          key: const Key('delete-account'),
+                          leading: const Icon(
+                            Icons.delete_forever_outlined,
+                            color: Colors.red,
+                          ),
+                          title: const Text(
+                            'Excluir minha conta',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                          subtitle: const Text(
+                            'Bloqueia o acesso na hora e agenda a limpeza dos seus dados.',
+                          ),
+                          onTap: deleteAccount,
+                        ),
+                      ],
                     ),
                   ),
                 ],
