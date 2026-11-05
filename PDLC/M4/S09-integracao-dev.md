@@ -239,3 +239,5 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 
 **Minha avaliação na aba Avaliações (05/11/2026).** Na página da corrida, a aba Avaliações mostra, acima da nota geral, a **avaliação que a própria pessoa já cadastrou** (oito critérios com estrelas e o comentário) e o botão "Editar avaliação". Vem de `GET /participations/{id}/review`, rota que existe no backend real; a leitura não foi testada contra o DEV. A lista pública de avaliações de outros corredores continua indisponível (S12).
 
+**Ver a avaliação já salva (05/11/2026).** Depois do teste em iPhone, a pessoa não conseguia ver as avaliações que tinha salvo. Verificado por leitura no DEV: a conta de teste tinha 3 participações concluídas, cada uma com a avaliação válida gravada (o servidor guardava tudo). A tela da participação concluída (a que se abre pela aba Medalhas) mostrava só os botões de editar e excluir, sem o conteúdo da avaliação. Agora ela mostra o cartão "Minha avaliação" (oito critérios com estrelas e o comentário), que também aparece na aba Avaliações da página da corrida. Sem verificação em aparelho.
+

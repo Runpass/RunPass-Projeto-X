@@ -541,8 +541,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('A participação foi ocultada'), findsOneWidget);
     expect(calls, [
-      'GET /participations/done-1/review',
+      'GET /participations/done-1/review', // minha avaliação ao abrir
+      'GET /participations/done-1/review', // tela de edição
       'PUT /participations/done-1/review',
+      'GET /participations/done-1/review', // recarrega ao voltar
       'DELETE /participations/done-1',
     ]);
   });
@@ -924,5 +926,45 @@ void main() {
     expect(find.text('Minha avaliação'), findsOneWidget);
     expect(find.text('“Ótima corrida”'), findsOneWidget);
     expect(find.text('Editar avaliação'), findsOneWidget);
+  });
+
+  testWidgets('a completed participation shows the review I saved', (
+    tester,
+  ) async {
+    final gateway = await signed((uri, method, headers, body) async {
+      return const JsonReply(200, {
+        'participationId': 'done-1',
+        'version': 1,
+        'ratings': {
+          'organization': 5,
+          'course': 4,
+          'kit': 3,
+          'medal': 5,
+          'hydration': 4,
+          'facilities': 2,
+          'safety': 5,
+          'valueForMoney': 4,
+        },
+        'comment': 'Percurso bonito',
+      });
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ParticipationDraftScreen(
+          gateway: gateway,
+          initial: const {
+            'id': 'done-1',
+            'editionId': 'A',
+            'distanceId': '10k',
+            'state': 'completed',
+            'version': 3,
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Minha avaliação'), findsOneWidget);
+    expect(find.text('“Percurso bonito”'), findsOneWidget);
+    expect(find.text('Hidratação'), findsOneWidget);
   });
 }
