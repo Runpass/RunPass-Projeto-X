@@ -694,8 +694,18 @@ void main() {
     expect(find.textContaining('Já está na sua lista'), findsOneWidget);
     await tester.tap(find.text('Corrida A'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('already-mine')), findsOneWidget);
-    expect(find.text('Continuar rascunho'), findsOneWidget);
-    expect(find.text('Criar rascunho'), findsNothing);
+    expect(find.text('Corrida já cadastrada'), findsOneWidget);
+    expect(find.textContaining('já está na sua timeline'), findsOneWidget);
+    // "Não" volta para a lista sem abrir nada.
+    await tester.tap(find.text('Não'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rascunho da participação'), findsNothing);
+    expect(find.byType(CatalogScreen), findsOneWidget);
+    // "Sim" abre a edição do registro existente.
+    await tester.tap(find.text('Corrida A'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sim'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rascunho da participação'), findsOneWidget);
   });
 }

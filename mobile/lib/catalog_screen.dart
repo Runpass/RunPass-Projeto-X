@@ -137,6 +137,42 @@ class _CatalogScreenState extends State<CatalogScreen> {
     if (mounted) setState(() => mine = result);
   }
 
+  /// Corrida que já está na timeline: só oferece editar. "Não" volta para a lista.
+  Future<void> editExisting(
+    Map<String, dynamic> edition,
+    Map<String, dynamic> existing,
+  ) async {
+    final edit = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Corrida já cadastrada'),
+        content: Text(
+          '${edition['name']} já está na sua timeline. Deseja editar?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Não'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sim'),
+          ),
+        ],
+      ),
+    );
+    if (edit != true || !mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: existing,
+        ),
+      ),
+    );
+    loadMine();
+  }
+
   @override
   void dispose() {
     for (final controller in fields.values) {
@@ -369,6 +405,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 onTap: loading
                     ? null
                     : () async {
+                        final existing = mine[edition['id']];
+                        if (existing != null) {
+                          await editExisting(edition, existing);
+                          return;
+                        }
                         await Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => EditionScreen(

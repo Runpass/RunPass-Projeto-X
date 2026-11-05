@@ -224,3 +224,5 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 
 **Concluir e arquivada (05/11/2026).** Ao concluir a participação, o app mostra a confirmação e leva a pessoa para a tela Medalhas (a decisão pode ser trocada por Início). A edição arquivada aparece em cinza na busca e na tela da corrida, com o seletor de distância desabilitado. Sem verificação em aparelho.
 
+**Corrida já cadastrada (05/11/2026).** Ao tocar, na busca, numa corrida que já está na lista da pessoa, o app não abre a página da edição: pergunta "Corrida já cadastrada: <nome> já está na sua timeline. Deseja editar?". "Sim" abre o registro existente (rascunho para editar, ou a participação concluída com a edição da avaliação); "Não" volta para a lista. Sem verificação em aparelho.
+
