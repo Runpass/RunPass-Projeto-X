@@ -206,6 +206,51 @@ void main() {
     },
   );
 
+  testWidgets('existing draft in the edition is reopened instead of an error', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      calls.add('$method ${uri.path}');
+      if (method == 'GET' && uri.path == '/me/participations') {
+        expect(uri.queryParameters['state'], 'draft');
+        return const JsonReply(200, {
+          'items': [
+            {
+              'id': 'other',
+              'editionId': 'B',
+              'distanceId': '5k',
+              'state': 'draft',
+              'version': 1,
+            },
+            {
+              'id': 'draft-9',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'draft',
+              'version': 2,
+            },
+          ],
+        });
+      }
+      if (method == 'GET') return JsonReply(200, entry('A'));
+      return const JsonReply(409, {'code': 'PARTICIPATION_EXISTS'});
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'A'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('10K'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Criar rascunho'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rascunho da participação'), findsOneWidget);
+    expect(find.textContaining('Você já possui'), findsNothing);
+    expect(calls, contains('GET /me/participations'));
+  });
+
   testWidgets('archived edition remains visible without new selection', (
     tester,
   ) async {

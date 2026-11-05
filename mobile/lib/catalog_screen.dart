@@ -626,10 +626,48 @@ class _EditionScreenState extends State<EditionScreen> {
         ),
       );
     } on IdentityIssue catch (issue) {
-      if (mounted) error = catalogError(issue);
+      if (issue.code == 'PARTICIPATION_EXISTS') {
+        await openExistingDraft();
+      } else if (mounted) {
+        error = catalogError(issue);
+      }
     } finally {
       if (mounted) setState(() => saving = false);
     }
+  }
+
+  /// Já existe um registro desta edição: se for um rascunho, abre-o para continuar.
+  Future<void> openExistingDraft() async {
+    Map<String, dynamic>? existing;
+    try {
+      final page = await widget.gateway.request(
+        '/me/participations',
+        query: {'state': 'draft', 'limit': '100'},
+      );
+      for (final item in (page['items'] as List? ?? const [])) {
+        if ((item as Map)['editionId'] == widget.editionId) {
+          existing = Map<String, dynamic>.from(item);
+          break;
+        }
+      }
+    } on IdentityIssue {
+      existing = null;
+    }
+    if (!mounted) return;
+    if (existing == null) {
+      setState(
+        () => error = catalogError(const IdentityIssue('PARTICIPATION_EXISTS')),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: existing!,
+        ),
+      ),
+    );
   }
 
   Widget bar(String label, IconData icon, double? value) => Padding(
