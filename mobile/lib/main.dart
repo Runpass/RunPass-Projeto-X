@@ -82,7 +82,10 @@ enum Step {
 
 class IdentityScreen extends StatefulWidget {
   final IdentityGateway? gateway;
-  const IdentityScreen({super.key, this.gateway});
+
+  /// Aviso mostrado na tela de entrada (por exemplo, depois de excluir a conta).
+  final String? notice;
+  const IdentityScreen({super.key, this.gateway, this.notice});
   @override
   State<IdentityScreen> createState() => _IdentityScreenState();
 }
@@ -99,6 +102,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
   bool busy = false, adult = false, full = false;
   String? message;
   String? displayName;
+
+  @override
+  void initState() {
+    super.initState();
+    message = widget.notice;
+  }
 
   @override
   void dispose() {
