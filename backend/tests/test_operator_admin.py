@@ -3,13 +3,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from dynamo_fake import SerializingDynamoStore
 from runpass.catalog import CatalogFilters, CatalogService
 from runpass.identity import Principal
 from runpass.operator_admin import FIXTURE_ORIGIN, grant_access, load_catalog
 from runpass.service import IdentityService
 from runpass.store import MemoryStore
-
-from .dynamo_fake import SerializingDynamoStore
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/catalog.synthetic.json"
 NOW = datetime(2026, 11, 4, 15, tzinfo=timezone.utc)
