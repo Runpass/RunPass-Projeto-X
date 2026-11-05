@@ -10,6 +10,7 @@ Definição de produto e direções técnicas prioritárias aprovadas. S00 prepa
 
 - [Desenvolvimento local e verificações](docs/desenvolvimento.md)
 - [Serviços criados e onde cada informação fica](docs/servicos-e-dados.md)
+- [Roteiro de testes do app e coleta de feedback](docs/roteiro-teste-app.md)
 - [Operadores: bootstrap, sessão e recuperação](docs/operadores.md)
 - [Deploy em DEV](docs/deploy-dev.md)
 - [Plano de implementação](PDLC/M4/implementation-slices.md)
