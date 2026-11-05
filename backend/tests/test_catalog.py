@@ -246,6 +246,23 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaises(Problem):
             self.importer.retire_indexes("one", 2, synthetic=True)
 
+    def test_archive_reason_requires_an_archived_edition(self):
+        operator = Principal("operator", True, "operator", "digest")
+        with self.assertRaises(Problem):
+            self.importer.put(
+                edition("reason", archivedReason="cancelled"),
+                expected_version=0,
+                origin="https://example.test/race",
+                actor=operator,
+            )
+        with self.assertRaises(Problem):
+            self.importer.put(
+                edition("bad", archived=True, archivedReason="made-up"),
+                expected_version=0,
+                origin="https://example.test/race",
+                actor=operator,
+            )
+
     def test_revoked_operator_during_staging_cannot_activate(self):
         operator = Principal("operator", True, "operator", "digest")
         access = ("identity", "OPERATOR#operator", "ACCESS")

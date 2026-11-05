@@ -173,7 +173,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
         'BETA_FULL' => 'As vagas do beta foram preenchidas. Você pode entrar na lista de espera.',
         'ACCOUNT_UNAVAILABLE' => 'Esta conta está indisponível.',
         'INVALID_INPUT' => 'Confira os campos e tente novamente.',
-        _ => 'Não foi possível concluir. Seus dados continuam nesta tela; tente novamente.',
+        _ => 'Não foi possível concluir agora (falta de conexão ou instabilidade do serviço). Seus dados continuam nesta tela; tente novamente em instantes.',
       };
       if (error.code == 'BETA_FULL') full = true;
     } on Exception {

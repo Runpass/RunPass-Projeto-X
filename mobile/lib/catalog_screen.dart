@@ -16,38 +16,50 @@ String displayDate(String value) {
   return parts.length == 3 ? '${parts[2]}/${parts[1]}/${parts[0]}' : value;
 }
 
+/// Motivo curto pelo qual uma edição saiu de circulação (campo `archivedReason` da API).
+String? archivedReasonLabel(String? reason) => switch (reason) {
+  'cancelled' => 'corrida cancelada pela organização',
+  'unavailable' => 'corrida indisponível para inscrição ou compra',
+  'duplicate' => 'cadastro duplicado, substituído por outro no catálogo',
+  'ended' => 'edição encerrada',
+  _ => null,
+};
+
+/// Texto completo para a tela da corrida arquivada.
+String archivedNotice(String? reason) {
+  final label = archivedReasonLabel(reason);
+  return label == null
+      ? 'Edição arquivada: o histórico está preservado e novos registros não estão disponíveis.'
+      : 'Edição arquivada: $label. O histórico está preservado e novos registros não estão disponíveis.';
+}
+
+/// Toda mensagem diz o motivo e o que fazer em seguida.
 String catalogError(IdentityIssue issue) => switch (issue.code) {
-  'INVALID_TOKEN' || 'ACCOUNT_UNAVAILABLE' =>
-    'Sua sessão não está disponível. Volte e entre novamente.',
+  'INVALID_TOKEN' || 'ACCOUNT_UNAVAILABLE' => 'Sua sessão expirou ou a conta está indisponível. Volte à tela inicial e entre novamente.',
   'BETA_ADMISSION_REQUIRED' =>
     'É necessário participar do beta para consultar as corridas.',
-  'INVALID_CURSOR' =>
-    'A busca expirou. Toque em Buscar para começar novamente.',
-  'INVALID_INPUT' ||
-  'INVALID_FILTERS' => 'Confira os filtros, as datas e a distância informada.',
-  'EDITION_NOT_FOUND' => 'Esta edição não está disponível.',
-  'EDITION_ARCHIVED' ||
-  'EDITION_CHANGED' => 'Esta edição mudou e não aceita um novo rascunho.',
-  'DISTANCE_NOT_IN_EDITION' => 'A distância não pertence mais a esta edição.',
-  'PARTICIPATION_EXISTS' => 'Você já possui um registro para esta edição.',
-  'VERSION_CONFLICT' =>
-    'O registro mudou em outro lugar. Reabra-o antes de editar.',
-  'REVIEW_NOT_FOUND' => 'A avaliação atual não está disponível.',
-  'PARTICIPATION_NOT_FOUND' => 'Esta participação não está mais disponível.',
+  'INVALID_CURSOR' => 'A busca ficou aberta por muito tempo e expirou. Toque em Buscar para começar de novo.',
+  'INVALID_INPUT' || 'INVALID_FILTERS' => 'Algum campo está inválido (data, distância ou texto fora do limite). Confira os filtros e tente de novo.',
+  'EDITION_NOT_FOUND' =>
+    'Esta corrida não está mais no catálogo. Volte à lista e escolha outra.',
+  'EDITION_ARCHIVED' => 'Esta edição está arquivada e não aceita novos registros. Escolha outra corrida.',
+  'EDITION_CHANGED' => 'O cadastro desta corrida foi atualizado depois que você abriu a tela. Volte à lista e abra a corrida de novo.',
+  'DISTANCE_NOT_IN_EDITION' => 'Esta distância foi removida da corrida. Volte e escolha uma das distâncias atuais.',
+  'PARTICIPATION_EXISTS' => 'Você já tem um registro nesta corrida (só é permitido um por edição). Abra o registro existente para continuar.',
+  'VERSION_CONFLICT' => 'Este registro foi alterado em outro lugar (outro aparelho ou outra tela). Feche e abra de novo antes de editar.',
+  'REVIEW_NOT_FOUND' => 'A avaliação desta participação não foi encontrada. Ela só existe depois que a participação é concluída.',
+  'PARTICIPATION_NOT_FOUND' =>
+    'Este registro não existe mais (pode ter sido excluído). Volte à lista.',
   'DELETION_OPERATION_NOT_FOUND' =>
-    'A operação de exclusão não foi encontrada.',
-  'IMAGE_SIZE_INVALID' => 'A foto deve ter no máximo 10 MB.',
-  'IMAGE_FORMAT_INVALID' =>
-    'Escolha uma foto JPEG ou PNG. Não foi possível converter esta imagem.',
-  'INVALID_IMAGE' || 'FORMAT_MISMATCH' || 'PIXEL_LIMIT_EXCEEDED' =>
-    'A foto não pôde ser validada. O rascunho foi preservado.',
-  'PROCESSING_TIMEOUT' || 'UPLOAD_UNAVAILABLE' =>
-    'A foto não foi processada. Tente novamente; o rascunho foi preservado.',
-  'IMAGE_NOT_VALID' => 'A imagem não está válida. O rascunho foi preservado.',
-  'EDITION_NOT_COMPLETABLE' => 'Esta corrida ainda não aconteceu. Só é possível concluir a participação depois da data da prova.',
-  'PARTICIPATION_NOT_DRAFT' =>
-    'Esta participação já foi concluída ou alterada.',
-  _ => 'Não foi possível carregar as corridas. Tente novamente.',
+    'Não encontramos o pedido de exclusão. Ele pode já ter terminado.',
+  'IMAGE_SIZE_INVALID' => 'A foto é maior que 10 MB. Escolha uma foto menor.',
+  'IMAGE_FORMAT_INVALID' => 'O formato desta foto não é aceito (use JPEG ou PNG) e não foi possível converter. Escolha outra foto.',
+  'INVALID_IMAGE' || 'FORMAT_MISMATCH' || 'PIXEL_LIMIT_EXCEEDED' => 'A foto não passou na validação (arquivo corrompido, formato diferente do informado ou imagem grande demais). Escolha outra foto; o rascunho foi preservado.',
+  'PROCESSING_TIMEOUT' || 'UPLOAD_UNAVAILABLE' => 'Não foi possível enviar ou processar a foto agora (conexão ou serviço). Tente de novo; o rascunho foi preservado.',
+  'IMAGE_NOT_VALID' => 'A foto escolhida ainda não foi validada. Envie a foto de novo; o rascunho foi preservado.',
+  'EDITION_NOT_COMPLETABLE' => 'Esta corrida ainda não aconteceu. Só dá para concluir a participação depois da data da prova.',
+  'PARTICIPATION_NOT_DRAFT' => 'Esta participação já foi concluída ou excluída, então não pode mais ser alterada como rascunho.',
+  _ => 'Não foi possível concluir agora. Pode ser falta de conexão ou instabilidade do serviço. Tente novamente em instantes.',
 };
 
 /// [subScreen]: tela interna (detalhe, rascunho). Tocar na aba já destacada leva à tela principal
@@ -223,7 +235,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
     } on IdentityIssue catch (issue) {
       if (mounted) error = catalogError(issue);
     } on Exception {
-      if (mounted) error = 'Não foi possível conectar. Tente novamente.';
+      if (mounted) error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.';
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -398,7 +410,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 subtitle: Text(
                   '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}\n'
                   '${(edition['distances'] as List).map((d) => '${d['kilometers']} km').join(' · ')}'
-                  '${edition['status'] == 'archived' ? '\nEdição arquivada' : ''}'
+                  '${edition['status'] == 'archived' ? '\nArquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}' : ''}'
                   '${mine.containsKey(edition['id']) ? '\nJá está na sua lista' : ''}',
                 ),
                 isThreeLine: true,
@@ -489,7 +501,7 @@ class _EditionScreenState extends State<EditionScreen> {
     } on IdentityIssue catch (issue) {
       if (mounted) error = catalogError(issue);
     } on Exception {
-      if (mounted) error = 'Não foi possível conectar. Tente novamente.';
+      if (mounted) error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.';
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -705,11 +717,9 @@ class _EditionScreenState extends State<EditionScreen> {
       const SizedBox(height: 14),
       distanceSelector(body),
       if (body['status'] == 'archived')
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text(
-            'Edição arquivada: o histórico está preservado e novos registros não estão disponíveis.',
-          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(archivedNotice(body['archivedReason'] as String?)),
         ),
       const SizedBox(height: 16),
     ],
@@ -1306,7 +1316,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   Future<void> save() async {
     final seconds = positive(time.text), place = positive(placement.text);
     if (seconds == -1 || place == -1 || bib.text.length > 40) {
-      setState(() => message = 'Confira tempo, colocação e número de peito.');
+      setState(
+        () => message = 'Tempo e colocação precisam ser números inteiros maiores que zero, e o número de peito pode ter no máximo 40 caracteres.',
+      );
       return;
     }
     setState(() {
@@ -1383,8 +1395,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       if (mounted) message = catalogError(issue);
     } on Exception {
       if (mounted) {
-        message =
-            'Não foi possível selecionar a foto. O rascunho foi preservado.';
+        message = 'O app não conseguiu abrir ou ler a foto escolhida. Tente de novo ou escolha outra; o rascunho foi preservado.';
       }
     } finally {
       if (mounted) setState(() => uploading = false);
@@ -1421,7 +1432,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   Future<void> complete() async {
     if (imageReference == null || !declaredCompleted) {
       setState(
-        () => message = 'Confirme a conclusão e use uma imagem validada.',
+        () => message = 'Para concluir, anexe uma foto validada e marque "Declaro que concluí esta corrida".',
       );
       return;
     }

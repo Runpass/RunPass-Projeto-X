@@ -6,6 +6,7 @@ import unicodedata
 from copy import deepcopy
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -285,6 +286,8 @@ class ImportEdition(Input):
     imageReference: str | None = None
     medalImageReference: str | None = None
     archived: bool = False
+    # Por que a edição saiu de circulação; só vale com archived=True.
+    archivedReason: Literal["cancelled", "unavailable", "duplicate", "ended"] | None = None
 
     @field_validator("name", "city")
     @classmethod
@@ -304,6 +307,8 @@ class ImportEdition(Input):
     def unique_distances(self):
         if len({d.id for d in self.distances}) != len(self.distances):
             raise ValueError("Duplicate distance ID")
+        if self.archivedReason and not self.archived:
+            raise ValueError("archivedReason requires an archived edition")
         return self
 
 

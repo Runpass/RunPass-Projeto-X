@@ -733,4 +733,43 @@ void main() {
     expect(find.byType(CatalogScreen), findsOneWidget);
     expect(find.text('Rascunho da participação'), findsNothing);
   });
+
+  testWidgets('an archived edition states why it is archived', (tester) async {
+    final gateway = await signed(
+      (uri, method, headers, body) async => JsonReply(200, {
+        ...entry('old', archived: true),
+        'archivedReason': 'cancelled',
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'old'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'Edição arquivada: corrida cancelada pela organização.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  test('error messages state the reason and what to do next', () {
+    for (final code in [
+      'EDITION_NOT_COMPLETABLE',
+      'PARTICIPATION_EXISTS',
+      'UPLOAD_UNAVAILABLE',
+      'VERSION_CONFLICT',
+      'SOMETHING_UNKNOWN',
+    ]) {
+      expect(
+        catalogError(IdentityIssue(code)).length,
+        greaterThan(50),
+        reason: code,
+      );
+    }
+    expect(archivedReasonLabel('unavailable'), contains('compra'));
+    expect(archivedReasonLabel(null), isNull);
+  });
 }
