@@ -172,42 +172,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
     if (mounted) setState(() => mine = result);
   }
 
-  /// Corrida que já está na timeline: só oferece editar. "Não" volta para a lista.
-  Future<void> editExisting(
-    Map<String, dynamic> edition,
-    Map<String, dynamic> existing,
-  ) async {
-    final edit = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Corrida já cadastrada'),
-        content: Text(
-          '${edition['name']} já está na sua timeline. Deseja editar?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Não'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Sim'),
-          ),
-        ],
-      ),
-    );
-    if (edit != true || !mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ParticipationDraftScreen(
-          gateway: widget.gateway,
-          initial: existing,
-        ),
-      ),
-    );
-    loadMine();
-  }
-
   @override
   void dispose() {
     for (final controller in fields.values) {
@@ -440,11 +404,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 onTap: loading
                     ? null
                     : () async {
-                        final existing = mine[edition['id']];
-                        if (existing != null) {
-                          await editExisting(edition, existing);
-                          return;
-                        }
                         await Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => EditionScreen(
@@ -731,6 +690,20 @@ class _EditionScreenState extends State<EditionScreen> {
         ],
       ),
       const SizedBox(height: 14),
+      if (mine != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            children: const [
+              Icon(Icons.check_circle_rounded, color: runPassOrange, size: 18),
+              SizedBox(width: 6),
+              Text(
+                'Esta corrida está na sua lista',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
       distanceSelector(body),
       if (body['status'] == 'archived')
         Padding(
@@ -785,8 +758,8 @@ class _EditionScreenState extends State<EditionScreen> {
           onPressed: openMine,
           child: Text(
             mine!['state'] == 'completed'
-                ? 'Ver minha participação'
-                : 'Continuar rascunho',
+                ? 'Editar minha participação'
+                : 'Editar meu rascunho',
           ),
         ),
       ] else if (selectedDistance != null) ...[
