@@ -35,7 +35,7 @@ Estas lacunas estão no backend ou no escopo; reporte só se **o comportamento f
 - "Quero correr" (coração), compartilhar, Avisos (sino), Configurações, foto de perfil, Passaporte e "Ver todas": "em breve".
 - **Foto de câmera:** o app só abre a **galeria**.
 - **Corridas desejadas** (wishlist) e stories: não existem no backend real.
-- **A confirmar neste teste:** depois de entrar, **não encontramos** como **sair da conta** nem como **excluir a conta**: esses botões estão só na tela "Olá, <nome>!" que aparece antes do Início. Procure e anote onde (ou se) aparecem.
+- **Sair e Excluir minha conta** ficam no **Perfil**, no fim da tela, a partir do PR que os adiciona ("Sair e Excluir minha conta no Perfil"); nas versões anteriores eles só existiam na tela "Olá, <nome>!", antes do Início. Confirme no teste onde aparecem.
 
 ### 1.4 Verifique se o DEV está de pé (opcional, Thiago)
 ```sh
@@ -189,13 +189,13 @@ Marque cada linha com **OK**, **Falha** ou **Parcial** e escreva a observação.
 | --- | --- | --- | --- | --- |
 | J1 | Abrir **Perfil** | Seu nome, `@usuário` e estatísticas das corridas concluídas | | |
 | J2 | Itens "em breve" (Configurações, foto, Passaporte) | Mensagem de "em breve", sem erro | | |
-| J3 | Procurar **Sair** e **Excluir minha conta** | **Anote onde estão, ou que não existem** (ver 1.3) | | |
+| J3 | No fim do Perfil: **Sair** e depois **Excluir minha conta** (com uma conta que você pode perder) | Sair volta à tela de entrada e pede login; Excluir pede confirmação, bloqueia o acesso e volta à entrada com o aviso "Exclusão aceita" | | |
 
 ### K. Exclusão
 | ID | Passos | Esperado | Resultado | Observação |
 | --- | --- | --- | --- | --- |
 | K1 | **Excluir participação** concluída | Confirmação, depois "A participação foi ocultada..." | | |
-| K2 | Excluir a **conta** (se achar o botão) | Bloqueia o acesso na hora; em até uns 5 minutos os dados são apagados | | |
+| K2 | Excluir a **conta** (Perfil, fim da tela) e tentar entrar de novo com ela | O acesso é bloqueado na hora; em até uns 5 minutos os dados são apagados e a conta deixa de existir | | |
 
 ### L. Resiliência e navegação
 | ID | Passos | Esperado | Resultado | Observação |
