@@ -69,6 +69,36 @@ Widget runPassNavigation(
   },
 );
 
+/// Participações (rascunho ou concluída) da pessoa por edição, para marcar "já está na sua lista".
+/// Falhas deixam o mapa vazio: a marca é só uma ajuda e nunca bloqueia a tela.
+Future<Map<String, Map<String, dynamic>>> loadMyEditions(
+  IdentityGateway gateway,
+) async {
+  final mine = <String, Map<String, dynamic>>{};
+  try {
+    String? cursor;
+    var pages = 0;
+    do {
+      final page = await gateway.request(
+        '/me/participations',
+        query: {'limit': '100', 'cursor': ?cursor},
+      );
+      for (final item in (page['items'] as List? ?? const [])) {
+        final map = Map<String, dynamic>.from(item as Map);
+        final id = map['editionId'];
+        if (id is String &&
+            (map['state'] == 'draft' || map['state'] == 'completed')) {
+          mine[id] = map;
+        }
+      }
+      cursor = page['nextCursor'] as String?;
+    } while (cursor != null && ++pages < 5);
+  } on Exception {
+    return mine;
+  }
+  return mine;
+}
+
 class CatalogScreen extends StatefulWidget {
   final IdentityGateway gateway;
   const CatalogScreen({super.key, required this.gateway});
@@ -90,6 +120,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   };
   final form = GlobalKey<FormState>();
   final items = <Map<String, dynamic>>[];
+  Map<String, Map<String, dynamic>> mine = {};
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
   bool loading = false;
@@ -98,6 +129,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
   void initState() {
     super.initState();
     load();
+    loadMine();
+  }
+
+  Future<void> loadMine() async {
+    final result = await loadMyEditions(widget.gateway);
+    if (mounted) setState(() => mine = result);
   }
 
   @override
@@ -303,19 +340,30 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 subtitle: Text(
                   '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}\n'
                   '${(edition['distances'] as List).map((d) => '${d['kilometers']} km').join(' · ')}'
-                  '${edition['status'] == 'archived' ? '\nEdição arquivada' : ''}',
+                  '${edition['status'] == 'archived' ? '\nEdição arquivada' : ''}'
+                  '${mine.containsKey(edition['id']) ? '\nJá está na sua lista' : ''}',
                 ),
                 isThreeLine: true,
+                trailing: mine.containsKey(edition['id'])
+                    ? const Icon(
+                        Icons.check_circle_rounded,
+                        color: runPassOrange,
+                        semanticLabel: 'Já está na sua lista',
+                      )
+                    : null,
                 onTap: loading
                     ? null
-                    : () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => EditionScreen(
-                            gateway: widget.gateway,
-                            editionId: edition['id'] as String,
+                    : () async {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => EditionScreen(
+                              gateway: widget.gateway,
+                              editionId: edition['id'] as String,
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                        loadMine();
+                      },
               ),
             ),
           if (nextCursor != null)
@@ -346,6 +394,7 @@ class _EditionScreenState extends State<EditionScreen> {
   String? selectedDistance, error;
   bool loading = true, saving = false, loadingReviews = false;
   List<Map<String, dynamic>>? reviews;
+  Map<String, dynamic>? mine;
 
   static const criteria = [
     ('organization', 'Organização', Icons.groups_outlined),
@@ -381,7 +430,35 @@ class _EditionScreenState extends State<EditionScreen> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
-    if (mounted && edition != null) loadReviews();
+    if (mounted && edition != null) {
+      loadReviews();
+      loadMyParticipation();
+    }
+  }
+
+  /// Participação desta pessoa nesta edição, se já existir (rascunho ou concluída).
+  Future<void> loadMyParticipation() async {
+    final all = await loadMyEditions(widget.gateway);
+    final found = all[widget.editionId];
+    if (!mounted || found == null) return;
+    setState(() {
+      mine = found;
+      selectedDistance ??= found['distanceId'] as String?;
+    });
+  }
+
+  Future<void> openMine() async {
+    final existing = mine;
+    if (existing == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: existing,
+        ),
+      ),
+    );
+    if (mounted) loadMyParticipation();
   }
 
   /// Public reviews for the selected distance. Unavailable reviews leave the
@@ -597,7 +674,31 @@ class _EditionScreenState extends State<EditionScreen> {
           padding: EdgeInsets.only(top: 12),
           child: Text('Distância selecionada.'),
         ),
-      if (selectedDistance != null) ...[
+      if (mine != null) ...[
+        const SizedBox(height: 16),
+        Row(
+          key: const Key('already-mine'),
+          children: const [
+            Icon(Icons.check_circle_rounded, color: runPassOrange),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Esta corrida já está na sua lista.',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: openMine,
+          child: Text(
+            mine!['state'] == 'completed'
+                ? 'Ver minha participação'
+                : 'Continuar rascunho',
+          ),
+        ),
+      ] else if (selectedDistance != null) ...[
         const SizedBox(height: 16),
         FilledButton(
           onPressed: saving ? null : createDraft,

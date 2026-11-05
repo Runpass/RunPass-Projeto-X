@@ -199,7 +199,7 @@ void main() {
       await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
       expect(find.text('Distância selecionada.'), findsOneWidget);
-      expect(paths, [
+      expect(paths.where((c) => c != '/me/participations'), [
         '/editions',
         '/editions/A',
         '/editions/A/reviews',
@@ -320,7 +320,7 @@ void main() {
     await tester.tap(find.text('Salvar rascunho'));
     await tester.pumpAndSettle();
     expect(find.text('Rascunho salvo. Nada foi publicado.'), findsOneWidget);
-    expect(calls, [
+    expect(calls.where((c) => !c.contains('/me/participations')), [
       'GET /editions/A',
       'GET /editions/A/reviews',
       'GET /editions/A/reviews',
@@ -648,4 +648,46 @@ void main() {
       expect(completed, isFalse);
     },
   );
+
+  testWidgets('a race already in my list is marked and opens my record', (
+    tester,
+  ) async {
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/me/participations') {
+        return const JsonReply(200, {
+          'items': [
+            {
+              'id': 'mine-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'draft',
+              'version': 1,
+            },
+            {
+              'id': 'gone',
+              'editionId': 'B',
+              'distanceId': '5k',
+              'state': 'deleted',
+              'version': 3,
+            },
+          ],
+        });
+      }
+      if (uri.path == '/editions') {
+        return JsonReply(200, {
+          'items': [entry('A'), entry('B')],
+        });
+      }
+      return JsonReply(200, entry('A'));
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    await reveal(tester, find.textContaining('Já está na sua lista'));
+    expect(find.textContaining('Já está na sua lista'), findsOneWidget);
+    await tester.tap(find.text('Corrida A'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('already-mine')), findsOneWidget);
+    expect(find.text('Continuar rascunho'), findsOneWidget);
+    expect(find.text('Criar rascunho'), findsNothing);
+  });
 }

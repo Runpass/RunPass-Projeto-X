@@ -220,3 +220,5 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 
 **Não corrigido (lacuna do produto):** a foto enviada **não aparece** em Início nem em Medalhas. O contrato da API só expõe `medalImageReference` (um identificador) e não tem rota para ler a imagem; o app mostra uma arte desenhada. É o item "imagem da medalha exibível" do S12 e exige rota nova com URL assinada de leitura, só para o dono, mais a decisão de privacidade correspondente. "Salvar visibilidade" funciona: a tela permanece e mostra a mensagem de confirmação.
 
+**Marca "já está na sua lista" (05/11/2026).** Na busca e na tela da edição, a corrida em que a pessoa já tem rascunho ou participação concluída ganha um ícone de confirmação e o texto "Já está na sua lista"; a tela da edição troca "Criar rascunho" por "Continuar rascunho" ou "Ver minha participação". A "Prova Sintética Arquivada" continua marcada como arquivada: é uma edição da fixture (`synthetic-archived`, `archived: true`) criada para provar a regra de histórico preservado sem novos registros, e **não** está na lista de ninguém. Sem verificação em aparelho.
+
