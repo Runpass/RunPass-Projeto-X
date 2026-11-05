@@ -31,6 +31,27 @@ typedef Sleeper = Future<void> Function(Duration duration);
 
 Future<void> wait(Duration duration) => Future<void>.delayed(duration);
 
+/// Envia o corpo com Content-Length explicito. Sem ele o Dart usa Transfer-Encoding: chunked,
+/// que o S3 recusa em URL pre-assinada (501 NotImplemented).
+Future<int> putBytes(
+  HttpClient client,
+  Uri uri,
+  String method,
+  Map<String, String> headers,
+  List<int> bytes,
+) async {
+  final request = await client
+      .openUrl(method, uri)
+      .timeout(const Duration(seconds: 10));
+  request.followRedirects = false;
+  headers.forEach(request.headers.set);
+  request.contentLength = bytes.length;
+  request.add(bytes);
+  final response = await request.close().timeout(const Duration(seconds: 30));
+  await response.drain<void>();
+  return response.statusCode;
+}
+
 Future<int> sendBytes(
   Uri uri,
   String method,
@@ -40,15 +61,7 @@ Future<int> sendBytes(
   if (uri.scheme != 'https') throw const IdentityIssue('INVALID_UPLOAD_URL');
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
   try {
-    final request = await client
-        .openUrl(method, uri)
-        .timeout(const Duration(seconds: 10));
-    request.followRedirects = false;
-    headers.forEach(request.headers.set);
-    request.add(bytes);
-    final response = await request.close().timeout(const Duration(seconds: 30));
-    await response.drain<void>();
-    return response.statusCode;
+    return await putBytes(client, uri, method, headers, bytes);
   } on IdentityIssue {
     rethrow;
   } on Exception {

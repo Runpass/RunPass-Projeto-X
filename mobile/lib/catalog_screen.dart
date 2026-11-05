@@ -562,6 +562,13 @@ class _EditionScreenState extends State<EditionScreen> {
       ),
       const SizedBox(height: 14),
       distanceSelector(body),
+      if (body['status'] == 'archived')
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text(
+            'Edição arquivada: o histórico está preservado e novos registros não estão disponíveis.',
+          ),
+        ),
       const SizedBox(height: 16),
     ],
   );
@@ -575,13 +582,6 @@ class _EditionScreenState extends State<EditionScreen> {
         Padding(
           padding: const EdgeInsets.only(top: 12),
           child: Text('Organização: ${body['organizerName']}'),
-        ),
-      if (body['status'] == 'archived')
-        const Padding(
-          padding: EdgeInsets.only(top: 12),
-          child: Text(
-            'Edição arquivada: o histórico está preservado e novos registros não estão disponíveis.',
-          ),
         ),
       if ((body['distances'] as List).any(
         (d) =>
@@ -1317,6 +1317,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       appBar: AppBar(title: const RunPassWordmark(compact: true)),
       bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
       body: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(24),
         children: [
           const Text(
@@ -1325,6 +1326,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           ),
           const SizedBox(height: 8),
           const Text('Privado · não gera medalha, avaliação ou publicação.'),
+          const SizedBox(height: 4),
+          const Text(
+            'Rascunho criado. Preencha o que quiser e toque em Salvar rascunho.',
+          ),
           TextField(
             controller: time,
             keyboardType: TextInputType.number,
@@ -1342,6 +1347,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           TextField(
             controller: bib,
             maxLength: 40,
+            textInputAction: TextInputAction.done,
             decoration: const InputDecoration(
               labelText: 'Número de peito (opcional)',
             ),

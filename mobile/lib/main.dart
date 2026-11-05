@@ -31,27 +31,35 @@ class MainApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'RunPass',
-    builder: (context, child) => !demonstration
-        ? child!
-        : Column(
-            children: [
-              SafeArea(
-                bottom: false,
-                child: Material(
-                  color: Colors.amber.shade100,
-                  child: const Padding(
-                    padding: EdgeInsets.all(8),
-                    child: Text(
-                      'DEMONSTRAÇÃO LOCAL · Dados fictícios\nUse e-mail .test · Código: 123456',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.black, fontSize: 12),
+    // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
+    builder: (context, shell) {
+      final child = GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        child: shell!,
+      );
+      return !demonstration
+          ? child
+          : Column(
+              children: [
+                SafeArea(
+                  bottom: false,
+                  child: Material(
+                    color: Colors.amber.shade100,
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Text(
+                        'DEMONSTRAÇÃO LOCAL · Dados fictícios\nUse e-mail .test · Código: 123456',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.black, fontSize: 12),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              Expanded(child: child!),
-            ],
-          ),
+                Expanded(child: child),
+              ],
+            );
+    },
     theme: runPassTheme(),
     home: IdentityScreen(gateway: gateway),
   );
