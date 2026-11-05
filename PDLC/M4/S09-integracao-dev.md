@@ -194,3 +194,16 @@ Verificação feita: chamadas sem credencial a `/me/participations` e `/editions
 
 **Ainda não provado:** HEIC e fotos reais em aparelhos, carga, restore com RPO/RTO, permissões negativas além do rascunho, DLQ e replay, alarmes (com e-mail recebido pelos quatro destinatários), limites de Lambda, privacidade em outras rotas. Há 4 itens `WORK#event#pending#...` na OperationsTable com mais de 3 horas na leitura; não foi verificado se são fila normal ou eventos parados.
 
+### Primeiro teste em iPhone real contra o DEV — 05/11/2026
+
+iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de corredor criada no app com e-mail real e código de confirmação. **Resultado: a jornada não fechou na primeira tentativa.** Passaram: cadastro, login, catálogo (5 edições sintéticas) e criação do rascunho. Falharam e foram corrigidos no app (PR #14), **ainda sem novo teste em aparelho**:
+
+| Achado | Causa (verificada) | Correção |
+| --- | --- | --- |
+| Foto não enviada | O app enviava ao S3 sem `Content-Length` (Dart usa `Transfer-Encoding: chunked`) e o S3 respondia 501; 6 uploads JPEG de 1,1 a 1,7 MB ficaram `pending` sem objeto no S3. Reproduzido com o código do app; com o tamanho informado, 200 e o servidor validou o JPEG. O smoke não pegou porque o cliente Python informa o tamanho | `putBytes` com `contentLength`, teste de regressão |
+| Teclado não fechava | Teclado numérico do iOS sem tecla de fim e nenhum fechamento por toque ou rolagem | Toque fora fecha; arrastar a lista fecha |
+| "Você já possui um registro" em toda corrida | Um registro por edição por pessoa; os 4 rascunhos do primeiro teste existiam e o app só listava participações concluídas | Criar rascunho reabre o existente; Início lista "Rascunhos em andamento" |
+| Tela do rascunho confundia | Não dizia que o rascunho já estava criado; edição arquivada bloqueia a distância sem explicar | Texto explicativo nas duas telas |
+
+**HEIC:** o seletor do iOS entregou JPEG (os uploads do aparelho foram `image/jpeg`); o backend continua aceitando só JPEG, MPO e PNG. **Foto de câmera:** não testável, o app só abre a galeria. Os uploads `pending` do teste permanecem no DEV.
+
