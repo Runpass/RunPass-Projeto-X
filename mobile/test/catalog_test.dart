@@ -708,4 +708,29 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Rascunho da participação'), findsOneWidget);
   });
+
+  testWidgets('the Corridas tab on a draft returns to the race list', (
+    tester,
+  ) async {
+    final gateway = await draftGateway('2999-01-01', (_) {});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ParticipationDraftScreen(
+          gateway: gateway,
+          initial: const {
+            'id': 'd1',
+            'editionId': 'A',
+            'distanceId': '10k',
+            'state': 'draft',
+            'version': 1,
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Corridas'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CatalogScreen), findsOneWidget);
+    expect(find.text('Rascunho da participação'), findsNothing);
+  });
 }

@@ -50,22 +50,29 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   _ => 'Não foi possível carregar as corridas. Tente novamente.',
 };
 
+/// [subScreen]: tela interna (detalhe, rascunho). Tocar na aba já destacada leva à tela principal
+/// da aba, em vez de não fazer nada.
 Widget runPassNavigation(
   BuildContext context,
   IdentityGateway gateway,
-  int selectedIndex,
-) => RunPassBottomNav(
+  int selectedIndex, {
+  bool subScreen = false,
+}) => RunPassBottomNav(
   selectedIndex: selectedIndex,
   onDestinationSelected: (index) {
-    if (index == selectedIndex) return;
+    if (index == selectedIndex && !subScreen) return;
     final screen = switch (index) {
       0 => RunPassHomeScreen(gateway: gateway),
       1 => CatalogScreen(gateway: gateway),
       2 => MedalCollectionScreen(gateway: gateway),
       _ => RunnerProfileScreen(gateway: gateway),
     };
-    Navigator.of(context)
-        .pushReplacement(MaterialPageRoute<void>(builder: (_) => screen));
+    final route = MaterialPageRoute<void>(builder: (_) => screen);
+    if (subScreen) {
+      Navigator.of(context).pushAndRemoveUntil(route, (r) => r.isFirst);
+    } else {
+      Navigator.of(context).pushReplacement(route);
+    }
   },
 );
 
@@ -1086,7 +1093,12 @@ class _EditionScreenState extends State<EditionScreen> {
       appBar: loading || error != null || body == null
           ? AppBar(title: const Text('Detalhes da corrida'))
           : null,
-      bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+      bottomNavigationBar: runPassNavigation(
+        context,
+        widget.gateway,
+        1,
+        subScreen: true,
+      ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : error != null
@@ -1531,7 +1543,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     if (deleted) {
       return Scaffold(
         appBar: AppBar(title: const Text('Participação excluída')),
-        bottomNavigationBar: runPassNavigation(context, widget.gateway, 3),
+        bottomNavigationBar: runPassNavigation(
+          context,
+          widget.gateway,
+          3,
+          subScreen: true,
+        ),
         body: const Padding(
           padding: EdgeInsets.all(24),
           child: Text(
@@ -1543,7 +1560,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     if (draft['state'] == 'completed') {
       return Scaffold(
         appBar: AppBar(title: const RunPassWordmark(compact: true)),
-        bottomNavigationBar: runPassNavigation(context, widget.gateway, 2),
+        bottomNavigationBar: runPassNavigation(
+          context,
+          widget.gateway,
+          2,
+          subScreen: true,
+        ),
         body: ListView(
           padding: const EdgeInsets.all(24),
           children: [
@@ -1611,7 +1633,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
     return Scaffold(
       appBar: AppBar(title: const RunPassWordmark(compact: true)),
-      bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+      bottomNavigationBar: runPassNavigation(
+        context,
+        widget.gateway,
+        1,
+        subScreen: true,
+      ),
       body: ListView(
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(24),
@@ -1814,7 +1841,12 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Editar avaliação')),
-    bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+    bottomNavigationBar: runPassNavigation(
+      context,
+      widget.gateway,
+      1,
+      subScreen: true,
+    ),
     body: loading
         ? const Center(child: CircularProgressIndicator())
         : review == null

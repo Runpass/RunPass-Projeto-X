@@ -226,3 +226,5 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 
 **Corrida já cadastrada (05/11/2026).** Ao tocar, na busca, numa corrida que já está na lista da pessoa, o app não abre a página da edição: pergunta "Corrida já cadastrada: <nome> já está na sua timeline. Deseja editar?". "Sim" abre o registro existente (rascunho para editar, ou a participação concluída com a edição da avaliação); "Não" volta para a lista. Sem verificação em aparelho.
 
+**Navegação nas telas internas (05/11/2026).** Nas telas de rascunho, detalhe da edição e avaliação, a barra de baixo destacava a aba "Corridas" e tocar nela não fazia nada (havia um retorno antecipado quando a aba já estava ativa), então a pessoa ficava sem caminho de volta à lista pela barra. Agora, nessas telas internas, tocar na aba leva à tela principal dela. O teste em iPhone enviou prints de uma versão **anterior** do app (mensagem curta de corrida futura e cartão do Início sem a lixeira), então as correções posteriores precisam ser reinstaladas no aparelho para serem verificadas.
+
