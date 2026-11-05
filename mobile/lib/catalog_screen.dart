@@ -325,16 +325,31 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           for (final edition in items)
             Card(
+              color: edition['status'] == 'archived'
+                  ? const Color(0xffe6e8eb)
+                  : null,
               child: ListTile(
+                textColor: edition['status'] == 'archived'
+                    ? const Color(0xff7a808a)
+                    : null,
                 contentPadding: const EdgeInsets.all(16),
                 leading: Container(
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: runPassOrange.withValues(alpha: .12),
+                    color: edition['status'] == 'archived'
+                        ? const Color(0xffcdd1d6)
+                        : runPassOrange.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(Icons.directions_run, color: runPassOrange),
+                  child: Icon(
+                    edition['status'] == 'archived'
+                        ? Icons.inventory_2_outlined
+                        : Icons.directions_run,
+                    color: edition['status'] == 'archived'
+                        ? const Color(0xff7a808a)
+                        : runPassOrange,
+                  ),
                 ),
                 title: Text(edition['name'] as String),
                 subtitle: Text(
@@ -575,7 +590,7 @@ class _EditionScreenState extends State<EditionScreen> {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0xffe9ecf1),
+        color: archived ? const Color(0xffd5d8dd) : const Color(0xffe9ecf1),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -605,7 +620,9 @@ class _EditionScreenState extends State<EditionScreen> {
                     distanceLabel((distance['kilometers'] as num).toDouble()),
                     style: TextStyle(
                       fontWeight: FontWeight.w700,
-                      color: selectedDistance == distance['id']
+                      color: archived
+                          ? const Color(0xff7a808a)
+                          : selectedDistance == distance['id']
                           ? Colors.white
                           : Colors.black87,
                     ),
@@ -1374,6 +1391,20 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       );
       if (mounted) {
         message = 'Participação concluída. Avaliação e medalha foram salvas.';
+        // Ao concluir, leva a pessoa para a coleção de medalhas, onde a conquista aparece.
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Participação concluída. Avaliação e medalha foram salvas.',
+            ),
+          ),
+        );
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute<void>(
+            builder: (_) => MedalCollectionScreen(gateway: widget.gateway),
+          ),
+          (route) => route.isFirst,
+        );
       }
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);

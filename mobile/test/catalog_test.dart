@@ -361,6 +361,9 @@ void main() {
               'imageReference': 'img-valid',
             });
           }
+          if (!uri.path.endsWith('/complete')) {
+            return const JsonReply(200, {'items': []});
+          }
           completion = body;
           return const JsonReply(200, {
             'id': 'draft-1',
@@ -416,7 +419,8 @@ void main() {
       expect(find.text('Salvar rascunho'), findsNothing);
       expect(find.text('Selecionar foto'), findsNothing);
       expect(find.textContaining('Privado · não gera medalha'), findsNothing);
-      expect(calls, [
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
+      expect(calls.where((c) => !c.contains('/me/participations')), [
         'GET /editions/A',
         'POST /uploads',
         'PUT signed-object',
@@ -565,6 +569,9 @@ void main() {
         'imageReference': 'img-valid',
       });
     }
+    if (!uri.path.endsWith('/complete')) {
+      return const JsonReply(200, {'items': []});
+    }
     onComplete(body);
     return const JsonReply(200, {
       'id': 'd1',
@@ -626,6 +633,7 @@ void main() {
       await tester.pumpAndSettle();
       expect((completion?['ratings'] as Map)['kit'], 2);
       expect((completion?['ratings'] as Map)['course'], 5);
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
     },
   );
 
