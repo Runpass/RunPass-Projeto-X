@@ -525,66 +525,19 @@ class _EditionScreenState extends State<EditionScreen> {
             )
           : const SizedBox.shrink();
     }
-    final ratings = (review['ratings'] as Map?) ?? const {};
-    final comment = review['comment'] as String?;
-    return Card(
-      key: const Key('my-review'),
-      margin: const EdgeInsets.only(bottom: 14),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Minha avaliação',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+    return MyReviewView(
+      review: review,
+      onEdit: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ReviewEditScreen(
+              gateway: widget.gateway,
+              participationId: participation['id'] as String,
             ),
-            const SizedBox(height: 6),
-            for (final (key, label, icon) in criteria)
-              if (ratings[key] is num)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    children: [
-                      Icon(icon, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(label)),
-                      Stars(ratings[key] as num, size: 18),
-                      SizedBox(
-                        width: 28,
-                        child: Text(
-                          '${ratings[key]}',
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            if (comment != null && comment.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text('“$comment”'),
-            ],
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () async {
-                  await Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => ReviewEditScreen(
-                        gateway: widget.gateway,
-                        participationId: participation['id'] as String,
-                      ),
-                    ),
-                  );
-                  if (mounted) loadMyReview(participation['id'] as String);
-                },
-                child: const Text('Editar avaliação'),
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+        if (mounted) loadMyReview(participation['id'] as String);
+      },
     );
   }
 
@@ -1248,6 +1201,69 @@ class _EditionScreenState extends State<EditionScreen> {
   }
 }
 
+/// Avaliação da própria pessoa, só leitura: oito critérios com estrelas e o comentário.
+class MyReviewView extends StatelessWidget {
+  final Map<String, dynamic> review;
+  final VoidCallback? onEdit;
+  const MyReviewView({super.key, required this.review, this.onEdit});
+
+  @override
+  Widget build(BuildContext context) {
+    final ratings = (review['ratings'] as Map?) ?? const {};
+    final comment = review['comment'] as String?;
+    return Card(
+      key: const Key('my-review'),
+      margin: const EdgeInsets.only(bottom: 14),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Minha avaliação',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+            const SizedBox(height: 6),
+            for (final (key, label, icon) in _EditionScreenState.criteria)
+              if (ratings[key] is num)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Icon(icon, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(label)),
+                      Stars(ratings[key] as num, size: 18),
+                      SizedBox(
+                        width: 28,
+                        child: Text(
+                          '${ratings[key]}',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            if (comment != null && comment.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('“$comment”'),
+            ],
+            if (onEdit != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: onEdit,
+                  child: const Text('Editar avaliação'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Nota de 1 a 5 estrelas para um critério, com o ícone do critério (como no mockup).
 class RatingInput extends StatelessWidget {
   final String label;
@@ -1315,6 +1331,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   bool declaredCompleted = false, publishToFeed = false;
   bool deleted = false;
   DateTime? editionDate;
+  Map<String, dynamic>? review;
   List<Map<String, dynamic>> distances = const [];
   String? distanceId;
   // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
@@ -1353,6 +1370,20 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       ratings.addAll(Map<String, int>.from(saved['ratings'] as Map));
     }
     loadEditionDate();
+    if (draft['state'] == 'completed') loadReview();
+  }
+
+  Future<void> loadReview() async {
+    final id = draft['id'];
+    if (id is! String) return;
+    try {
+      final result = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}/review',
+      );
+      if (mounted) setState(() => review = result);
+    } on Exception {
+      if (mounted) setState(() => review = null);
+    }
   }
 
   Future<void> loadEditionDate() async {
@@ -1749,6 +1780,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             const Text(
               'A conquista permanece privada enquanto a publicação não estiver disponível.',
             ),
+            const SizedBox(height: 12),
+            if (review != null) MyReviewView(review: review!),
             SwitchListTile(
               value: draft['showTime'] != false,
               onChanged: saving
@@ -1776,14 +1809,17 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             OutlinedButton(
               onPressed: saving
                   ? null
-                  : () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => ReviewEditScreen(
-                          gateway: widget.gateway,
-                          participationId: draft['id'] as String,
+                  : () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ReviewEditScreen(
+                            gateway: widget.gateway,
+                            participationId: draft['id'] as String,
+                          ),
                         ),
-                      ),
-                    ),
+                      );
+                      if (mounted) loadReview();
+                    },
               child: const Text('Editar avaliação'),
             ),
             TextButton(
