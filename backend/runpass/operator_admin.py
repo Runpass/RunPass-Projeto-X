@@ -63,5 +63,5 @@ def load_catalog(catalog, actor, fixture_text, origin=FIXTURE_ORIGIN):
         if head is None:
             importer.put(entry, expected_version=0, origin=origin, actor=actor)
         elif not _already_loaded(catalog, entry, head, origin):
-            importer.put(entry, expected_version=head["version"], origin=origin, actor=actor)
+            importer.put(entry, expected_version=int(head["version"]), origin=origin, actor=actor)
     return [entry["id"] for entry in entries]
