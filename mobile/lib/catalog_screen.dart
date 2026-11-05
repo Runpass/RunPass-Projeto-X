@@ -445,6 +445,7 @@ class _EditionScreenState extends State<EditionScreen> {
   bool loading = true, saving = false, loadingReviews = false;
   List<Map<String, dynamic>>? reviews;
   Map<String, dynamic>? mine;
+  Map<String, dynamic>? myReview;
 
   static const criteria = [
     ('organization', 'Organização', Icons.groups_outlined),
@@ -495,6 +496,96 @@ class _EditionScreenState extends State<EditionScreen> {
       mine = found;
       selectedDistance ??= found['distanceId'] as String?;
     });
+    if (found['state'] == 'completed') loadMyReview(found['id'] as String);
+  }
+
+  /// Avaliação que a própria pessoa já cadastrou para esta corrida.
+  Future<void> loadMyReview(String participationId) async {
+    try {
+      final review = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(participationId)}/review',
+      );
+      if (mounted) setState(() => myReview = review);
+    } on Exception {
+      if (mounted) setState(() => myReview = null);
+    }
+  }
+
+  Widget myReviewCard() {
+    final participation = mine;
+    if (participation == null) return const SizedBox.shrink();
+    final review = myReview;
+    if (participation['state'] != 'completed' || review == null) {
+      return participation['state'] == 'draft'
+          ? const Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: Text(
+                'Sua avaliação aparece aqui depois que você concluir a participação.',
+              ),
+            )
+          : const SizedBox.shrink();
+    }
+    final ratings = (review['ratings'] as Map?) ?? const {};
+    final comment = review['comment'] as String?;
+    return Card(
+      key: const Key('my-review'),
+      margin: const EdgeInsets.only(bottom: 14),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Minha avaliação',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+            const SizedBox(height: 6),
+            for (final (key, label, icon) in criteria)
+              if (ratings[key] is num)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Icon(icon, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(label)),
+                      Stars(ratings[key] as num, size: 18),
+                      SizedBox(
+                        width: 28,
+                        child: Text(
+                          '${ratings[key]}',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            if (comment != null && comment.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('“$comment”'),
+            ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ReviewEditScreen(
+                        gateway: widget.gateway,
+                        participationId: participation['id'] as String,
+                      ),
+                    ),
+                  );
+                  if (mounted) loadMyReview(participation['id'] as String);
+                },
+                child: const Text('Editar avaliação'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> openMine() async {
@@ -1028,12 +1119,15 @@ class _EditionScreenState extends State<EditionScreen> {
       padding: const EdgeInsets.all(20),
       children: [
         header(body),
+        myReviewCard(),
         scoreCard(body),
         const SizedBox(height: 14),
         if (loadingReviews)
           const Center(child: CircularProgressIndicator())
         else if (loaded == null)
-          const Text('As avaliações detalhadas ainda não estão disponíveis.')
+          const Text(
+            'A lista pública de avaliações ainda não está disponível. As suas aparecem acima.',
+          )
         else if (loaded.isNotEmpty) ...[
           for (final (key, label, icon) in criteria)
             bar(label, icon, average(key)),

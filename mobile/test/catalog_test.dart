@@ -875,4 +875,54 @@ void main() {
     expect(parseDuration('abc'), -1);
     expect(parseDuration('0'), -1);
   });
+
+  testWidgets('the reviews tab shows the review I already registered', (
+    tester,
+  ) async {
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/me/participations') {
+        return const JsonReply(200, {
+          'items': [
+            {
+              'id': 'done-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'completed',
+              'version': 2,
+            },
+          ],
+        });
+      }
+      if (uri.path == '/participations/done-1/review') {
+        return const JsonReply(200, {
+          'participationId': 'done-1',
+          'version': 1,
+          'ratings': {
+            'organization': 5,
+            'course': 4,
+            'kit': 3,
+            'medal': 5,
+            'hydration': 4,
+            'facilities': 2,
+            'safety': 5,
+            'valueForMoney': 4,
+          },
+          'comment': 'Ótima corrida',
+        });
+      }
+      if (uri.path.endsWith('/reviews')) return const JsonReply(404, {});
+      return JsonReply(200, entry('A'));
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'A'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('Avalia').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Minha avaliação'), findsOneWidget);
+    expect(find.text('“Ótima corrida”'), findsOneWidget);
+    expect(find.text('Editar avaliação'), findsOneWidget);
+  });
 }
