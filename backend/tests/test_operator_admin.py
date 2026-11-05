@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from dynamo_fake import SerializingDynamoStore
 from runpass.catalog import CatalogFilters, CatalogService
 from runpass.identity import Principal
 from runpass.operator_admin import FIXTURE_ORIGIN, grant_access, load_catalog
@@ -88,6 +89,32 @@ class OperatorAdminTest(unittest.TestCase):
         body = self.catalog.detail(runner, "synthetic-archived")
         self.assertEqual(body["status"], "archived")
         self.assertEqual(body["archivedReason"], "unavailable")
+
+    def test_update_works_with_dynamodb_decimal_versions(self):
+        # DynamoDB devolve numeros como Decimal; a versao esperada precisa virar inteiro.
+        store = SerializingDynamoStore()
+        identity = IdentityService(store, b"synthetic-only-hmac-key-32-bytes!!", lambda: NOW)
+        catalog = CatalogService(identity, Fernet.generate_key())
+        grant_access(store, "op", ["catalog_admin"], "other", NOW)
+        access = store.get(("identity", "OPERATOR#op", "ACCESS"))
+        key = ("operations", "OPERATOR#op", "SESSION#digest")
+        store.commit(
+            {key: None},
+            {
+                key: {
+                    "factor": "SOFTWARE_TOKEN_MFA",
+                    "accessVersion": access["_rev"],
+                    "expiresAt": int(NOW.timestamp()) + 1000,
+                }
+            },
+        )
+        text = FIXTURE.read_text()
+        load_catalog(catalog, self.operator, text)
+        changed = text.replace('"archivedReason":"cancelled"', '"archivedReason":"ended"')
+        load_catalog(catalog, self.operator, changed)
+        load_catalog(catalog, self.operator, changed)
+        head = store.get(("catalog", "EDITION#synthetic-archived", "HEAD"))
+        self.assertEqual(head["version"], 2)
 
     def test_revoked_access_stops_the_load(self):
         grant_access(self.store, "op", ["catalog_admin"], "other", NOW)

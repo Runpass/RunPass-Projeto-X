@@ -17,6 +17,22 @@ String displayDate(String value) {
 }
 
 /// Motivo curto pelo qual uma edição saiu de circulação (campo `archivedReason` da API).
+/// Aceita "1:30:00", "45:10" ou segundos puros. Vazio vira null; inválido ou zero vira -1.
+int? parseDuration(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return null;
+  final parts = text.split(':');
+  if (parts.length > 3 || parts.any((p) => int.tryParse(p) == null)) return -1;
+  final numbers = parts.map(int.parse).toList();
+  if (numbers.any((n) => n < 0)) return -1;
+  if (numbers.length > 1 && numbers.skip(1).any((n) => n > 59)) return -1;
+  var total = 0;
+  for (final n in numbers) {
+    total = total * 60 + n;
+  }
+  return total > 0 ? total : -1;
+}
+
 String? archivedReasonLabel(String? reason) => switch (reason) {
   'cancelled' => 'corrida cancelada pela organização',
   'unavailable' => 'corrida indisponível para inscrição ou compra',
@@ -154,42 +170,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Future<void> loadMine() async {
     final result = await loadMyEditions(widget.gateway);
     if (mounted) setState(() => mine = result);
-  }
-
-  /// Corrida que já está na timeline: só oferece editar. "Não" volta para a lista.
-  Future<void> editExisting(
-    Map<String, dynamic> edition,
-    Map<String, dynamic> existing,
-  ) async {
-    final edit = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Corrida já cadastrada'),
-        content: Text(
-          '${edition['name']} já está na sua timeline. Deseja editar?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Não'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Sim'),
-          ),
-        ],
-      ),
-    );
-    if (edit != true || !mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ParticipationDraftScreen(
-          gateway: widget.gateway,
-          initial: existing,
-        ),
-      ),
-    );
-    loadMine();
   }
 
   @override
@@ -424,11 +404,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 onTap: loading
                     ? null
                     : () async {
-                        final existing = mine[edition['id']];
-                        if (existing != null) {
-                          await editExisting(edition, existing);
-                          return;
-                        }
                         await Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => EditionScreen(
@@ -715,6 +690,20 @@ class _EditionScreenState extends State<EditionScreen> {
         ],
       ),
       const SizedBox(height: 14),
+      if (mine != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            children: const [
+              Icon(Icons.check_circle_rounded, color: runPassOrange, size: 18),
+              SizedBox(width: 6),
+              Text(
+                'Esta corrida está na sua lista',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
       distanceSelector(body),
       if (body['status'] == 'archived')
         Padding(
@@ -769,8 +758,8 @@ class _EditionScreenState extends State<EditionScreen> {
           onPressed: openMine,
           child: Text(
             mine!['state'] == 'completed'
-                ? 'Ver minha participação'
-                : 'Continuar rascunho',
+                ? 'Editar minha participação'
+                : 'Editar meu rascunho',
           ),
         ),
       ] else if (selectedDistance != null) ...[
@@ -1232,6 +1221,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   bool declaredCompleted = false, publishToFeed = false;
   bool deleted = false;
   DateTime? editionDate;
+  List<Map<String, dynamic>> distances = const [];
+  String? distanceId;
   // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
   static final Map<String, Map<String, dynamic>> formCache = {};
   final ratings = {
@@ -1249,7 +1240,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   void initState() {
     super.initState();
     draft = Map<String, dynamic>.from(widget.initial);
-    time = TextEditingController(text: draft['timeSeconds']?.toString() ?? '');
+    distanceId = draft['distanceId'] as String?;
+    final seconds = draft['timeSeconds'];
+    time = TextEditingController(
+      text: seconds is num ? formatDuration(seconds.toInt()) : '',
+    );
     placement = TextEditingController(
       text: draft['placement']?.toString() ?? '',
     );
@@ -1268,13 +1263,22 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
 
   Future<void> loadEditionDate() async {
     final id = draft['editionId'];
-    if (draft['state'] != 'draft' || id is! String) return;
+    if (id is! String) return;
     try {
       final edition = await widget.gateway.request(
         '/editions/${Uri.encodeComponent(id)}',
       );
       final parsed = DateTime.tryParse(edition['date'] as String? ?? '');
-      if (mounted && parsed != null) setState(() => editionDate = parsed);
+      final list = (edition['distances'] as List? ?? const [])
+          .whereType<Map>()
+          .map((d) => Map<String, dynamic>.from(d))
+          .toList();
+      if (mounted) {
+        setState(() {
+          if (parsed != null && draft['state'] == 'draft') editionDate = parsed;
+          distances = list;
+        });
+      }
     } on Exception {
       // Sem a data, o servidor continua validando a conclusao.
     }
@@ -1313,11 +1317,55 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     return parsed != null && parsed > 0 ? parsed : -1;
   }
 
+  /// Meus dados desta corrida: distância, tempo, colocação e número de peito.
+  List<Widget> raceDataFields({required String saveLabel}) => [
+    if (distances.length > 1)
+      DropdownButtonFormField<String>(
+        key: const Key('distance-field'),
+        initialValue: distanceId,
+        decoration: const InputDecoration(labelText: 'Distância'),
+        items: [
+          for (final d in distances)
+            DropdownMenuItem(
+              value: d['id'] as String,
+              child: Text(distanceLabel((d['kilometers'] as num).toDouble())),
+            ),
+        ],
+        onChanged: saving
+            ? null
+            : (value) => setState(() => distanceId = value),
+      ),
+    TextField(
+      controller: time,
+      keyboardType: TextInputType.datetime,
+      decoration: const InputDecoration(
+        labelText: 'Tempo (h:mm:ss ou segundos, opcional)',
+      ),
+    ),
+    TextField(
+      controller: placement,
+      keyboardType: TextInputType.number,
+      decoration: const InputDecoration(labelText: 'Colocação (opcional)'),
+    ),
+    TextField(
+      controller: bib,
+      maxLength: 40,
+      textInputAction: TextInputAction.done,
+      decoration: const InputDecoration(
+        labelText: 'Número de peito (opcional)',
+      ),
+    ),
+    FilledButton(
+      onPressed: saving ? null : save,
+      child: Text(saving ? 'Salvando...' : saveLabel),
+    ),
+  ];
+
   Future<void> save() async {
-    final seconds = positive(time.text), place = positive(placement.text);
+    final seconds = parseDuration(time.text), place = positive(placement.text);
     if (seconds == -1 || place == -1 || bib.text.length > 40) {
       setState(
-        () => message = 'Tempo e colocação precisam ser números inteiros maiores que zero, e o número de peito pode ter no máximo 40 caracteres.',
+        () => message = 'O tempo deve ser como 1:30:00 (ou só segundos), a colocação um número inteiro maior que zero e o número de peito ter no máximo 40 caracteres.',
       );
       return;
     }
@@ -1334,9 +1382,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           'timeSeconds': seconds,
           'placement': place,
           'bibNumber': bib.text.trim().isEmpty ? null : bib.text.trim(),
+          if (distanceId != null && distanceId != draft['distanceId'])
+            'distanceId': distanceId,
         },
       );
-      if (mounted) message = 'Rascunho salvo. Nada foi publicado.';
+      if (mounted) {
+        message = draft['state'] == 'completed'
+            ? 'Dados da corrida salvos.'
+            : 'Rascunho salvo. Nada foi publicado.';
+      }
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
     } finally {
@@ -1619,6 +1673,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               onPressed: saving ? null : saveVisibility,
               child: const Text('Salvar visibilidade'),
             ),
+            const Divider(height: 32),
+            const Text(
+              'Meus dados desta corrida',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            ...raceDataFields(saveLabel: 'Salvar dados da corrida'),
             OutlinedButton(
               onPressed: saving
                   ? null
@@ -1673,61 +1733,39 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
-          TextField(
-            controller: time,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Tempo em segundos (opcional)',
-            ),
-          ),
-          TextField(
-            controller: placement,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Colocação (opcional)',
-            ),
-          ),
-          TextField(
-            controller: bib,
-            maxLength: 40,
-            textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(
-              labelText: 'Número de peito (opcional)',
-            ),
-          ),
-          FilledButton(
-            onPressed: saving ? null : save,
-            child: Text(saving ? 'Salvando...' : 'Salvar rascunho'),
-          ),
+          ...raceDataFields(saveLabel: 'Salvar rascunho'),
           const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: saving || uploading ? null : selectPhoto,
-            icon: const Icon(Icons.photo_library_outlined),
-            label: Text(uploading ? 'Enviando foto...' : 'Selecionar foto'),
-          ),
-          if (imageReference != null)
-            const Text('Imagem validada para uso na conclusão.'),
-          if (pendingUploadId != null)
-            TextButton(
-              onPressed: uploading ? null : refreshPhoto,
-              child: const Text('Consultar processamento da foto'),
-            ),
-          if (imageReference != null && draft['state'] == 'draft') ...[
-            const Divider(height: 32),
-            if (upcoming)
-              Container(
-                key: const Key('upcoming-notice'),
-                padding: const EdgeInsets.all(12),
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: const Color(0xfffff3e0),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  'Esta corrida acontece em ${displayDate(editionDate!.toIso8601String().substring(0, 10))}. '
-                  'Você poderá concluir a participação depois dessa data; o rascunho fica salvo.',
-                ),
+          if (upcoming && draft['state'] == 'draft')
+            Container(
+              key: const Key('upcoming-notice'),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xfffff3e0),
+                borderRadius: BorderRadius.circular(12),
               ),
+              child: Text(
+                'Corrida futura: acontece em ${displayDate(editionDate!.toIso8601String().substring(0, 10))}. '
+                'Ela fica salva como rascunho em "Minhas corridas futuras". Depois da data da prova você poderá anexar a foto, avaliar e concluir.',
+              ),
+            )
+          else ...[
+            OutlinedButton.icon(
+              onPressed: saving || uploading ? null : selectPhoto,
+              icon: const Icon(Icons.photo_library_outlined),
+              label: Text(uploading ? 'Enviando foto...' : 'Selecionar foto'),
+            ),
+            if (imageReference != null)
+              const Text('Imagem validada para uso na conclusão.'),
+            if (pendingUploadId != null)
+              TextButton(
+                onPressed: uploading ? null : refreshPhoto,
+                child: const Text('Consultar processamento da foto'),
+              ),
+          ],
+          if (imageReference != null &&
+              draft['state'] == 'draft' &&
+              !upcoming) ...[
+            const Divider(height: 32),
             const Text(
               'Avaliação obrigatória',
               style: TextStyle(fontWeight: FontWeight.w700),
@@ -1763,7 +1801,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               ),
             ),
             FilledButton(
-              onPressed: saving || upcoming ? null : complete,
+              onPressed: saving ? null : complete,
               child: Text(saving ? 'Concluindo...' : 'Concluir participação'),
             ),
           ],

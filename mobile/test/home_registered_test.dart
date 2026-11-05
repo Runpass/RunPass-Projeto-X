@@ -140,4 +140,67 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Rascunhos em andamento'), findsNothing);
   });
+
+  testWidgets('future races are listed apart from drafts in progress', (
+    tester,
+  ) async {
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.example'),
+      api: Uri.parse('https://api.example'),
+      clientId: 'synthetic',
+      transport: (uri, method, headers, body) async {
+        if (uri.host == 'cognito.example') {
+          return const JsonReply(200, {
+            'AuthenticationResult': {'AccessToken': 'synthetic'},
+          });
+        }
+        if (uri.path == '/me/participations') {
+          return const JsonReply(200, {
+            'items': [
+              {
+                'id': 'p-future',
+                'editionId': 'F',
+                'distanceId': '10k',
+                'state': 'draft',
+                'version': 1,
+              },
+              {
+                'id': 'p-past',
+                'editionId': 'P',
+                'distanceId': '5k',
+                'state': 'draft',
+                'version': 1,
+              },
+            ],
+          });
+        }
+        if (uri.path == '/editions/F' || uri.path == '/editions/P') {
+          final future = uri.path.endsWith('F');
+          return JsonReply(200, {
+            'id': future ? 'F' : 'P',
+            'name': future ? 'Prova Futura' : 'Prova Passada',
+            'date': future ? '2999-01-01' : '2000-01-01',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '5k', 'kilometers': 5},
+              {'id': '10k', 'kilometers': 10},
+            ],
+            'status': future ? 'upcoming' : 'past',
+            'version': 1,
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      },
+    );
+    await gateway.signIn('synthetic@example.test', 'synthetic');
+    await tester.pumpWidget(
+      MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Minhas corridas futuras'), findsOneWidget);
+    expect(find.text('Rascunhos em andamento'), findsOneWidget);
+    expect(find.text('Prova Futura'), findsOneWidget);
+    expect(find.text('Prova Passada'), findsOneWidget);
+  });
 }

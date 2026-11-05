@@ -47,6 +47,15 @@ class DraftEntry {
       edition?['name'] as String? ??
       participation['editionId'] as String? ??
       'Corrida';
+
+  /// Corrida que ainda não aconteceu: fica como rascunho até a data da prova.
+  bool get upcoming {
+    final date = DateTime.tryParse(edition?['date'] as String? ?? '');
+    if (date == null) return false;
+    final now = DateTime.now();
+    return date.isAfter(DateTime(now.year, now.month, now.day));
+  }
+
   String get place =>
       [edition?['city'], edition?['state']].whereType<String>().join('/');
 }
@@ -294,46 +303,84 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     reload();
   }
 
+  Widget draftTile(DraftEntry entry) => ListTile(
+    key: Key('draft-${entry.participation['id']}'),
+    contentPadding: EdgeInsets.zero,
+    leading: Icon(
+      entry.upcoming ? Icons.event_rounded : Icons.edit_note_rounded,
+    ),
+    title: Text(entry.title),
+    subtitle: Text(
+      [
+        if (entry.upcoming && entry.edition?['date'] is String)
+          displayDate(entry.edition!['date'] as String),
+        if (entry.place.isNotEmpty) entry.place,
+        entry.participation['distanceId'] as String? ?? '',
+      ].where((part) => part.isNotEmpty).join(' · '),
+    ),
+    trailing: IconButton(
+      key: Key('delete-draft-${entry.participation['id']}'),
+      tooltip: 'Excluir rascunho',
+      icon: const Icon(Icons.delete_outline_rounded),
+      onPressed: () => deleteDraft(entry),
+    ),
+    onTap: () => openDraft(entry),
+  );
+
+  Widget draftGroup(
+    Key key,
+    String title,
+    String caption,
+    List<DraftEntry> items,
+  ) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Card(
+      key: key,
+      margin: const EdgeInsets.only(bottom: 14),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+            Text(caption),
+            for (final entry in items) draftTile(entry),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget draftsSection() => FutureBuilder<List<DraftEntry>>(
     future: drafts,
     builder: (context, snapshot) {
       final items = snapshot.data ?? const <DraftEntry>[];
       if (items.isEmpty) return const SizedBox.shrink();
-      return Card(
-        margin: const EdgeInsets.only(bottom: 14),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Rascunhos em andamento',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-              ),
-              const Text('Privados: nada foi publicado.'),
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          draftGroup(
+            const Key('upcoming-races'),
+            'Minhas corridas futuras',
+            'Ainda não aconteceram: ficam salvas como rascunho até a data da prova.',
+            [
               for (final entry in items)
-                ListTile(
-                  key: Key('draft-${entry.participation['id']}'),
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.edit_note_rounded),
-                  title: Text(entry.title),
-                  subtitle: Text(
-                    [
-                      if (entry.place.isNotEmpty) entry.place,
-                      entry.participation['distanceId'] as String? ?? '',
-                    ].where((part) => part.isNotEmpty).join(' · '),
-                  ),
-                  trailing: IconButton(
-                    key: Key('delete-draft-${entry.participation['id']}'),
-                    tooltip: 'Excluir rascunho',
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    onPressed: () => deleteDraft(entry),
-                  ),
-                  onTap: () => openDraft(entry),
-                ),
+                if (entry.upcoming) entry,
             ],
           ),
-        ),
+          draftGroup(
+            const Key('drafts-in-progress'),
+            'Rascunhos em andamento',
+            'Privados: nada foi publicado.',
+            [
+              for (final entry in items)
+                if (!entry.upcoming) entry,
+            ],
+          ),
+        ],
       );
     },
   );

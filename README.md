@@ -9,6 +9,9 @@ Definição de produto e direções técnicas prioritárias aprovadas. S00 prepa
 ## Documentação
 
 - [Desenvolvimento local e verificações](docs/desenvolvimento.md)
+- [Serviços criados e onde cada informação fica](docs/servicos-e-dados.md)
+- [Operadores: bootstrap, sessão e recuperação](docs/operadores.md)
+- [Deploy em DEV](docs/deploy-dev.md)
 - [Plano de implementação](PDLC/M4/implementation-slices.md)
 - [Evidências da S00](PDLC/M4/S00-preparacao-local.md)
 - [Desenho e contratos da S01](PDLC/M4/S01-desenho-e-contratos.md)

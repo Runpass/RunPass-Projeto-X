@@ -314,7 +314,7 @@ void main() {
     expect(find.text('Rascunho da participação'), findsOneWidget);
     expect(find.textContaining('não gera medalha'), findsOneWidget);
     await tester.enterText(
-      find.widgetWithText(TextField, 'Tempo em segundos (opcional)'),
+      find.widgetWithText(TextField, 'Tempo (h:mm:ss ou segundos, opcional)'),
       '3600',
     );
     await tester.tap(find.text('Salvar rascunho'));
@@ -512,6 +512,11 @@ void main() {
         ),
       ),
     );
+    await tester.scrollUntilVisible(
+      find.text('Editar avaliação'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Editar avaliação'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
@@ -638,21 +643,31 @@ void main() {
   );
 
   testWidgets(
-    'a race that has not happened yet explains and blocks completion',
+    'a race that has not happened yet stays as a draft without photo or rating',
     (tester) async {
       var completed = false;
       final gateway = await draftGateway('2999-01-01', (_) => completed = true);
-      await openDraftWithPhoto(tester, gateway);
-      final list = find.byType(Scrollable).first;
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('upcoming-notice')),
-        200,
-        scrollable: list,
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: const {
+              'id': 'd1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'draft',
+              'version': 1,
+            },
+          ),
+        ),
       );
-      expect(find.textContaining('Esta corrida acontece em'), findsOneWidget);
-      final finish = find.widgetWithText(FilledButton, 'Concluir participação');
-      await tester.scrollUntilVisible(finish, 200, scrollable: list);
-      expect(tester.widget<FilledButton>(finish).onPressed, isNull);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('upcoming-notice')), findsOneWidget);
+      expect(find.textContaining('Minhas corridas futuras'), findsOneWidget);
+      // Segue editável como rascunho, mas não evolui: sem foto, avaliação nem conclusão.
+      expect(find.text('Salvar rascunho'), findsOneWidget);
+      expect(find.text('Selecionar foto'), findsNothing);
+      expect(find.text('Concluir participação'), findsNothing);
       expect(completed, isFalse);
     },
   );
@@ -694,17 +709,22 @@ void main() {
     expect(find.textContaining('Já está na sua lista'), findsOneWidget);
     await tester.tap(find.text('Corrida A'));
     await tester.pumpAndSettle();
-    expect(find.text('Corrida já cadastrada'), findsOneWidget);
-    expect(find.textContaining('já está na sua timeline'), findsOneWidget);
-    // "Não" volta para a lista sem abrir nada.
-    await tester.tap(find.text('Não'));
-    await tester.pumpAndSettle();
-    expect(find.text('Rascunho da participação'), findsNothing);
-    expect(find.byType(CatalogScreen), findsOneWidget);
-    // "Sim" abre a edição do registro existente.
-    await tester.tap(find.text('Corrida A'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sim'));
+    // Tocar abre a página da corrida (informações e avaliações), não uma pergunta.
+    expect(find.text('Corrida já cadastrada'), findsNothing);
+    expect(find.byType(EditionScreen), findsOneWidget);
+    expect(find.byKey(const Key('already-mine')), findsOneWidget);
+    expect(find.text('Criar rascunho'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('Editar meu rascunho'),
+      200,
+      scrollable: find
+          .descendant(
+            of: find.byType(TabBarView),
+            matching: find.byType(Scrollable),
+          )
+          .last,
+    );
+    await tester.tap(find.text('Editar meu rascunho'));
     await tester.pumpAndSettle();
     expect(find.text('Rascunho da participação'), findsOneWidget);
   });
@@ -771,5 +791,88 @@ void main() {
     }
     expect(archivedReasonLabel('unavailable'), contains('compra'));
     expect(archivedReasonLabel(null), isNull);
+  });
+
+  testWidgets(
+    'a completed race lets me edit distance, time, placement and bib',
+    (tester) async {
+      Map<String, dynamic>? patched;
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions/A') return JsonReply(200, entry('A'));
+        if (method == 'PATCH') {
+          patched = body;
+          return const JsonReply(200, {
+            'id': 'done-1',
+            'editionId': 'A',
+            'distanceId': '5k',
+            'state': 'completed',
+            'version': 4,
+            'timeSeconds': 5400,
+          });
+        }
+        return const JsonReply(200, {});
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: const {
+              'id': 'done-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'completed',
+              'version': 3,
+              'timeSeconds': 3600,
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final list = find.byType(Scrollable).first;
+      await tester.scrollUntilVisible(
+        find.text('Meus dados desta corrida'),
+        200,
+        scrollable: list,
+      );
+      // O tempo guardado aparece formatado.
+      final timeLabel = find.text('Tempo (h:mm:ss ou segundos, opcional)');
+      await tester.scrollUntilVisible(timeLabel, 200, scrollable: list);
+      final timeField = find.widgetWithText(
+        TextField,
+        'Tempo (h:mm:ss ou segundos, opcional)',
+      );
+      expect(tester.widget<TextField>(timeField).controller!.text, '1:00:00');
+      await tester.tap(find.byKey(const Key('distance-field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('5K').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(timeField, '1:30:00');
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Número de peito (opcional)'),
+        '4821',
+      );
+      await tester.scrollUntilVisible(
+        find.text('Salvar dados da corrida'),
+        200,
+        scrollable: list,
+      );
+      await tester.tap(find.text('Salvar dados da corrida'));
+      await tester.pumpAndSettle();
+      expect(patched?['expectedVersion'], 3);
+      expect(patched?['distanceId'], '5k');
+      expect(patched?['timeSeconds'], 5400);
+      expect(patched?['bibNumber'], '4821');
+      expect(find.text('Dados da corrida salvos.'), findsOneWidget);
+    },
+  );
+
+  test('duration parser accepts h:mm:ss, mm:ss and seconds', () {
+    expect(parseDuration('1:30:00'), 5400);
+    expect(parseDuration('45:10'), 2710);
+    expect(parseDuration('3600'), 3600);
+    expect(parseDuration(''), isNull);
+    expect(parseDuration('1:75:00'), -1);
+    expect(parseDuration('abc'), -1);
+    expect(parseDuration('0'), -1);
   });
 }
