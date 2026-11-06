@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "br.com.runpass.runpass"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
