@@ -128,6 +128,40 @@ class ParticipationTests(unittest.TestCase):
             )
         self.assertEqual(error.exception.code, "VERSION_CONFLICT")
 
+    def test_completed_race_can_swap_its_medal_photo_and_refs_follow(self):
+        draft = self.service.create(self.actor, "c", self.payload(timeSeconds=3600))
+        with self.assertRaises(Problem) as early:
+            self.service.patch(
+                self.actor, draft["id"], "early", {"expectedVersion": 1, "medalImageReference": "x"}
+            )
+        self.assertEqual(early.exception.code, "PARTICIPATION_NOT_COMPLETED")
+        done = self.service.complete(self.actor, draft["id"], "done", self.completion(draft))
+        second = ("operations", "USER#owner", "IMAGE#img-two")
+        self.store.commit(
+            {second: None},
+            {second: {"owner": "owner", "origin": "runner", "state": "valid", "refs": 0}},
+        )
+        with self.assertRaises(Problem) as missing:
+            self.service.patch(
+                self.actor,
+                draft["id"],
+                "bad",
+                {"expectedVersion": done["version"], "medalImageReference": "img-unknown"},
+            )
+        self.assertEqual(missing.exception.code, "IMAGE_NOT_VALID")
+        swapped = self.service.patch(
+            self.actor,
+            draft["id"],
+            "swap",
+            {"expectedVersion": done["version"], "medalImageReference": "img-two"},
+        )
+        self.assertEqual(swapped["medalImageReference"], "img-two")
+        self.assertEqual(self.store.get(second)["refs"], 1)
+        first = self.store.get(("operations", "USER#owner", "IMAGE#img-valid"))
+        self.assertEqual(first["refs"], 0)
+        medal = self.store.get(("history", "USER#owner", "P#" + draft["id"] + "#MEDAL"))
+        self.assertEqual(medal["imageReference"], "img-two")
+
     def test_invalid_archived_or_mismatched_catalog_is_rejected_without_mutation(self):
         before = dict(self.store.items)
         for payload, code in (

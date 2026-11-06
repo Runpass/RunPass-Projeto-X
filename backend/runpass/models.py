@@ -89,13 +89,17 @@ class PatchParticipation(Input):
     bibNumber: Annotated[str, Field(max_length=40)] | None = None
     showTime: bool | None = None
     showPlacement: bool | None = None
+    medalImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
 
     @model_validator(mode="after")
     def changes(self):
         changed = self.model_fields_set - {"expectedVersion"}
         if not changed:
             raise ValueError("At least one change required")
-        if any(getattr(self, name) is None for name in changed & {"editionId", "distanceId"}):
+        if any(
+            getattr(self, name) is None
+            for name in changed & {"editionId", "distanceId", "medalImageReference"}
+        ):
             raise ValueError("Catalog references cannot be cleared")
         if "bibNumber" in changed and self.bibNumber is not None:
             if not self.bibNumber.strip():

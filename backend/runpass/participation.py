@@ -577,6 +577,10 @@ class ParticipationService:
                     item[field] = payload[field]
             if observed:
                 item["catalogVersion"] = observed["version"]
+            if "medalImageReference" in payload:
+                self._replace_medal_image(
+                    read, write, pk, participation_id, item, payload["medalImageReference"]
+                )
             item["version"] += 1
             item["updatedAt"] = stamp(now)
             write(part_key, item)
@@ -645,6 +649,37 @@ class ParticipationService:
         return self.identity.transact(
             actor, "patchParticipation", key, payload, work, admitted=True
         )
+
+    @staticmethod
+    def _replace_medal_image(read, write, pk, participation_id, item, reference):
+        """Swap the runner's medal photo of a completed race; the new image must be mine and valid."""
+        if item["state"] != "completed":
+            raise Problem(409, "PARTICIPATION_NOT_COMPLETED")
+        medal_key = ("history", pk, "P#" + participation_id + "#MEDAL")
+        medal = read(medal_key)
+        if not medal:
+            raise Problem(503, "PARTICIPATION_INTEGRITY_FAILURE")
+        if reference == medal["imageReference"]:
+            return
+        new_key = ("operations", pk, "IMAGE#" + reference)
+        new = read(new_key)
+        if not new or new.get("state") != "valid":
+            raise Problem(422, "IMAGE_NOT_VALID")
+        old_key = (
+            ("operations", pk, "IMAGE#" + medal["imageReference"])
+            if medal["imageOrigin"] == "runner"
+            else (
+                "operations",
+                "EDITION#" + item["editionId"],
+                "IMAGE#" + medal["imageReference"],
+            )
+        )
+        old = read(old_key)
+        if old:
+            write(old_key, {**old, "refs": max(0, old.get("refs", 0) - 1)})
+        write(new_key, {**new, "refs": new.get("refs", 0) + 1})
+        write(medal_key, {**medal, "imageReference": reference, "imageOrigin": "runner"})
+        item["medalImageReference"] = reference
 
     def _binding(self, actor, state, limit):
         return hashlib.sha256(
