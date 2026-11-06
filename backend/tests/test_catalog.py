@@ -391,6 +391,10 @@ class CatalogApiTests(unittest.TestCase):
         contract = json.loads((ROOT / "PDLC/M4/API-RunPass-v1.openapi.json").read_text())
         for path, schema in [
             ("/editions?city=sao%20paulo&distanceKm=10&limit=1", "EditionPage"),
+            (
+                "/editions?q=sao&registrationStatus=unknown&lat=-23.55&lon=-46.63&radiusKm=50",
+                "EditionPage",
+            ),
             ("/editions/synthetic-sp-2024", "Edition"),
         ]:
             response = self.client.get(path, headers=self.headers)
@@ -415,6 +419,11 @@ class CatalogApiTests(unittest.TestCase):
             "dateFrom=2027-01-01&dateTo=2026-01-01",
             "city=%20%20",
             "cursor=",
+            "lat=-23.5&lon=-46.6",  # raio incompleto
+            "radiusKm=10",
+            "lat=95&lon=0&radiusKm=5",
+            "registrationStatus=aberta",
+            "q=%20%20",
         ):
             response = self.client.get("/editions?" + query, headers=self.headers)
             self.assertEqual(response.status_code, 422, query)

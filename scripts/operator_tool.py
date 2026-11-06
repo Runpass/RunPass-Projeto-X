@@ -18,6 +18,8 @@ from pathlib import Path
 import boto3
 from cryptography.fernet import Fernet
 from runpass.catalog import CatalogService
+from runpass.catalog_import import import_rows, parse_csv, rows_to_results
+from runpass.catalog_sources import ADAPTERS, SourceDisabled, SourceError
 from runpass.identity import CognitoDirectory, CognitoVerifier, JwksProvider
 from runpass.operator_admin import PERMISSIONS, grant_access, load_catalog
 from runpass.operators import establish_session
@@ -124,7 +126,8 @@ def grant(session, env, subject, permissions, operator_iam_user):
     )
 
 
-def load(session, env, username):
+def operator_login(session, env, username):
+    """Login do operador com MFA; devolve (ator, catalogo) sobre o armazenamento real."""
     pool = outputs(session, f"runpass-{env}-identity")
     issuer = f"https://cognito-idp.{REGION}.amazonaws.com/{pool['OperatorPool']}"
     idp = session.client("cognito-idp")
@@ -148,9 +151,91 @@ def load(session, env, username):
         environment=env,
         identity_namespace=issuer,
     )
-    catalog = CatalogService(identity, Fernet.generate_key())
+    return actor, CatalogService(identity, Fernet.generate_key())
+
+
+def load(session, env, username):
+    actor, catalog = operator_login(session, env, username)
     ids = load_catalog(catalog, actor, FIXTURE.read_text())
     print(f"{len(ids)} edicoes carregadas pelo importador (idempotente): {', '.join(ids)}")
+
+
+def print_report(report):
+    c = report["counts"]
+    print(
+        f"{'SIMULACAO' if report['dryRun'] else 'EXECUCAO'} fonte={report['sourceCode']}: "
+        f"criadas={c['created']} atualizadas={c['updated']} iguais={c['unchanged']} "
+        f"revisao={c['needs_review']} erros={c['error']}"
+    )
+    for row in report["rows"]:
+        if row["status"] in ("error", "needs_review"):
+            print(
+                f"  linha {row['row']} [{row['externalId']}] {row['status']}: "
+                f"{row.get('errors') or row.get('detail')}"
+            )
+    if report.get("runId"):
+        print(f"Execucao registrada: {report['runId']}")
+
+
+def import_csv(session, args):
+    """CSV autorizado -> catalogo. --offline so valida o arquivo (sem AWS, sem login)."""
+    results = parse_csv(Path(args.file).read_text(encoding="utf-8"), args.source_code)
+    if args.offline:
+        report = {
+            "dryRun": True,
+            "sourceCode": args.source_code,
+            "counts": {"created": 0, "updated": 0, "unchanged": 0, "needs_review": 0, "error": 0},
+            "rows": [],
+        }
+        for r in results:
+            status = "error" if r["errors"] else "created"
+            report["counts"][status] += 1
+            report["rows"].append(
+                {
+                    "row": r["row"],
+                    "externalId": r["externalId"],
+                    "status": status,
+                    "errors": r["errors"],
+                }
+            )
+        print_report(report)
+        return
+    actor, catalog = operator_login(session, args.env, args.username)
+    print_report(
+        import_rows(
+            catalog,
+            actor,
+            results,
+            origin=args.origin,
+            source_code=args.source_code,
+            dry_run=args.dry_run,
+        )
+    )
+
+
+def sync_source(session, args):
+    """Busca numa fonte externa habilitada (flag + credencial no ambiente) e importa."""
+    adapter = ADAPTERS[args.source].from_env()
+    try:
+        items = adapter.fetch(query=args.query, city=args.city, state=args.state)
+    except SourceDisabled:
+        sys.exit(
+            f"Fonte '{args.source}' desligada ou sem credencial. Veja docs/catalogo-corridas.md."
+        )
+    except SourceError as error:
+        sys.exit(f"Falha na fonte '{args.source}': {error.code}")
+    results = rows_to_results(items, args.source)
+    actor, catalog = operator_login(session, args.env, args.username)
+    print_report(
+        import_rows(
+            catalog,
+            actor,
+            results,
+            origin=args.origin,
+            source_code=args.source,
+            dry_run=args.dry_run,
+        )
+    )
 
 
 def main():
@@ -159,13 +244,36 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("enroll", "load-catalog"):
         sub.add_parser(name).add_argument("--username", required=True, help="e-mail do operador")
+    imp = sub.add_parser("import-csv", help="importa provas de um CSV autorizado")
+    imp.add_argument("--username", help="e-mail do operador (nao precisa com --offline)")
+    imp.add_argument("--file", required=True)
+    imp.add_argument("--source-code", required=True, help="ex.: csv-sp")
+    imp.add_argument(
+        "--origin", default="https://exemplo.invalid/origem", help="URL https da fonte"
+    )
+    imp.add_argument("--dry-run", action="store_true", help="classifica sem gravar")
+    imp.add_argument("--offline", action="store_true", help="so valida o arquivo, sem AWS")
+    syn = sub.add_parser("sync-source", help="busca numa fonte externa habilitada")
+    syn.add_argument("--username", required=True)
+    syn.add_argument("--source", choices=sorted(ADAPTERS), required=True)
+    syn.add_argument("--origin", required=True, help="URL https da fonte (termos de uso)")
+    syn.add_argument("--state", default="SP")
+    syn.add_argument("--city", default="Sao Paulo")
+    syn.add_argument("--query", default="corrida")
+    syn.add_argument("--dry-run", action="store_true")
     g = sub.add_parser("grant")
     g.add_argument("--subject", required=True)
     g.add_argument("--permission", action="append", choices=PERMISSIONS, required=True)
     g.add_argument("--operator-iam-user", required=True, help="usuario IAM de quem sera operador")
     args = parser.parse_args()
     session = boto3.Session(region_name=REGION)
-    if args.command == "enroll":
+    if args.command == "import-csv":
+        if not args.offline and not args.username:
+            sys.exit("Informe --username (ou use --offline para so validar o arquivo).")
+        import_csv(session, args)
+    elif args.command == "sync-source":
+        sync_source(session, args)
+    elif args.command == "enroll":
         enroll(session, args.env, args.username)
     elif args.command == "grant":
         grant(session, args.env, args.subject, args.permission, args.operator_iam_user)

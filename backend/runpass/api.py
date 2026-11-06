@@ -141,6 +141,11 @@ def create_app(
         dateFrom: date | None = None,
         dateTo: date | None = None,
         distanceKm: Decimal | None = Query(None, gt=0),
+        q: str | None = Query(None, min_length=1, max_length=160),
+        registrationStatus: str | None = Query(None, pattern=r"^(unknown|open|closed|sold_out)$"),
+        lat: float | None = Query(None, ge=-90, le=90),
+        lon: float | None = Query(None, ge=-180, le=180),
+        radiusKm: float | None = Query(None, gt=0, le=500),
     ):
         service.authorize(actor, admitted=True)
         if catalog is None:
@@ -154,6 +159,11 @@ def create_app(
                 dateFrom=dateFrom,
                 dateTo=dateTo,
                 distanceKm=distanceKm,
+                q=q,
+                registrationStatus=registrationStatus,
+                lat=lat,
+                lon=lon,
+                radiusKm=radiusKm,
             )
         except ValidationError as error:
             raise Problem(422, "INVALID_FILTERS") from error

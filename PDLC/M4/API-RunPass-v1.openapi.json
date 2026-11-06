@@ -847,6 +847,58 @@
               "minimum": 0,
               "exclusiveMinimum": true
             }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "description": "Nome contendo o texto, sem acento nem caixa."
+          },
+          {
+            "name": "registrationStatus",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unknown",
+                "open",
+                "closed",
+                "sold_out"
+              ]
+            }
+          },
+          {
+            "name": "lat",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "description": "Com lon e radiusKm; os tres juntos ou 422."
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            }
+          },
+          {
+            "name": "radiusKm",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMinimum": true,
+              "maximum": 500
+            }
           }
         ],
         "x-requires-beta-admission": true
@@ -5615,6 +5667,55 @@
               "ended"
             ],
             "description": "Present only when status is archived: cancelled (race cancelled), unavailable (no longer available for registration or purchase), duplicate (duplicate catalog entry), ended (edition closed). Absent when the reason is not recorded."
+          },
+          "venue": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Local da largada."
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180
+          },
+          "registrationStatus": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "open",
+              "closed",
+              "sold_out"
+            ],
+            "description": "Situacao das inscricoes informada pela fonte; ausente = unknown. Nunca presumir aberta."
+          },
+          "eventStatus": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "postponed",
+              "cancelled",
+              "completed",
+              "unknown"
+            ]
+          },
+          "lastVerifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Ultima vez que a informacao foi conferida."
+          },
+          "sourceCode": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]{2,40}$",
+            "description": "Fonte do cadastro (ex.: csv-sp, active)."
+          },
+          "sourceExternalId": {
+            "type": "string",
+            "description": "Identificador da prova na fonte."
           }
         }
       },
@@ -6991,6 +7092,55 @@
             "type": "string",
             "minLength": 1,
             "description": "Optional catalog organizer reference; server validates existence. Not required for unknown historical organizer."
+          },
+          "venue": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Local da largada."
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180
+          },
+          "registrationStatus": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "open",
+              "closed",
+              "sold_out"
+            ],
+            "description": "Situacao das inscricoes informada pela fonte; ausente = unknown. Nunca presumir aberta."
+          },
+          "eventStatus": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "postponed",
+              "cancelled",
+              "completed",
+              "unknown"
+            ]
+          },
+          "lastVerifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Ultima vez que a informacao foi conferida."
+          },
+          "sourceCode": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]{2,40}$",
+            "description": "Fonte do cadastro (ex.: csv-sp, active)."
+          },
+          "sourceExternalId": {
+            "type": "string",
+            "description": "Identificador da prova na fonte."
           }
         },
         "required": [
@@ -7069,6 +7219,55 @@
             "type": "string",
             "minLength": 1,
             "description": "Optional catalog organizer reference; server validates existence. Not required for unknown historical organizer."
+          },
+          "venue": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Local da largada."
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180
+          },
+          "registrationStatus": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "open",
+              "closed",
+              "sold_out"
+            ],
+            "description": "Situacao das inscricoes informada pela fonte; ausente = unknown. Nunca presumir aberta."
+          },
+          "eventStatus": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "postponed",
+              "cancelled",
+              "completed",
+              "unknown"
+            ]
+          },
+          "lastVerifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Ultima vez que a informacao foi conferida."
+          },
+          "sourceCode": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]{2,40}$",
+            "description": "Fonte do cadastro (ex.: csv-sp, active)."
+          },
+          "sourceExternalId": {
+            "type": "string",
+            "description": "Identificador da prova na fonte."
           }
         },
         "required": [

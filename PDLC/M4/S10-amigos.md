@@ -73,3 +73,10 @@ Testes: 161 do backend (3 novos em `test_social.py`) e 59 do app (UTF-8, avisos,
 | **Modo escuro** | Chave em Configuracoes, lembrada entre aberturas. Tema escuro vale para todo o app: textos, icones, cartoes, campos, chips, destaques (comentario, pedido, avisos) e logotipo trocam de cor via paleta do tema. Formato escolhido: **chave liga/desliga** com texto explicando o efeito (padrao dos apps); fica de fora "seguir o celular" (automatico). Sem revisao visual em aparelho: telas de detalhe de corrida e rascunho foram ajustadas por busca de cores fixas e precisam de olhar humano. |
 
 Testes: 164 no backend e 72 no app. Falta deploy (nao executado) e teste humano.
+
+## Rodada 4 (06/11/2026)
+- **Avisos no iPhone:** `AppDelegate` agora define o delegate de notificacoes (sem isso o iOS nao mostra aviso local com o app aberto); permissao pedida logo apos o login. Aviso com o app fechado continua exigindo push remoto (nao contratado).
+- **Comentarios:** curtir (`PUT/DELETE /comments/{id}/like`) e responder (`parentId`, um nivel, ate 20 respostas); respostas embutidas no comentario principal; apagar o principal leva as respostas; avisos `comment_like` e `reply`. Toque na foto ou no nome abre o perfil. Limite: curtidas de um comentario apagado ficam orfas ate o autor da curtida excluir a conta.
+- **Perfil:** seguidores e seguindo ao lado da foto (corridas saiu); botao Banner abaixo da area dos icones; aviso de novo seguidor com "Seguir de volta".
+- **Biometria:** Face ID, Touch ID e digital como trava de abertura sobre o "manter conectado" (oferta unica apos o primeiro login; chave em Configuracoes). Falha ou cancelamento caem na senha. So a logica e testada automaticamente; o hardware precisa de teste no aparelho.
+- **Catalogo:** ver S03 e `docs/catalogo-corridas.md`.

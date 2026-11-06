@@ -1,6 +1,6 @@
 # Plano de implantacao - Rodada 4 (06/11/2026)
 
-Status: **proposto, nada executado**. Cada etapa so comeca com o seu "pode seguir".
+Status em 06/11/2026: **etapas A, B, C, D e E1 implementadas e commitadas no PR #24; nada publicado na AWS nem instalado**. Pendentes de autorizacao: deploy (backend das etapas B e E) e instalacao no iPhone/APK. E2 (dados reais) depende de credenciais. Ver `docs/catalogo-corridas.md`.
 Base: PR #24 (rodadas 2 e 3 ja no DEV). Regras fixas: commits e PR para `dev`; deploy so com autorizacao; sem segredos no Git; dados sinteticos nos testes.
 
 ## O que foi verificado antes de planejar

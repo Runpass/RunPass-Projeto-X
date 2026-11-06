@@ -1062,4 +1062,70 @@ void main() {
     expect(find.text('“Percurso bonito”'), findsOneWidget);
     expect(find.text('Hidratação'), findsOneWidget);
   });
+
+  testWidgets(
+    'filtro de inscricoes envia registrationStatus e some ao limpar',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <Map<String, String>>[];
+      final gateway = await signed((uri, method, headers, body) async {
+        calls.add(uri.queryParameters);
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      await openSearch(tester);
+      await tester.tap(find.byKey(const ValueKey('filter-registration-0')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Abertas').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Buscar'));
+      await tester.tap(find.text('Buscar'));
+      await tester.pumpAndSettle();
+      expect(calls.last['registrationStatus'], 'open');
+      await tester.ensureVisible(find.text('Limpar busca'));
+      await tester.tap(find.text('Limpar busca'));
+      await tester.pumpAndSettle();
+      expect(calls.last.containsKey('registrationStatus'), isFalse);
+    },
+  );
+
+  testWidgets('detalhe so afirma inscricao quando a fonte informou', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Future<void> open(Map<String, dynamic> extra) async {
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions/E1') {
+          return JsonReply(200, {...entry('A'), 'id': 'E1', ...extra});
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(const SizedBox()); // descarta o estado anterior
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditionScreen(gateway: gateway, editionId: 'E1'),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await open({});
+    expect(find.text('Situação das inscrições não informada.'), findsOneWidget);
+    expect(find.byKey(const Key('verified-info')), findsNothing);
+    await open({
+      'registrationStatus': 'open',
+      'lastVerifiedAt': '2026-11-06T12:00:00Z',
+      'venue': 'Parque Exemplo',
+    });
+    expect(find.text('Inscrições abertas.'), findsOneWidget);
+    expect(find.text('Informação conferida em 06/11/2026.'), findsOneWidget);
+    expect(find.text('Local: Parque Exemplo'), findsOneWidget);
+  });
 }

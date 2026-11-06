@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import unicodedata
 from copy import deepcopy
 from datetime import date, timedelta
@@ -43,7 +44,7 @@ def pack(value):
         sort_keys=True,
         ensure_ascii=False,
         separators=(",", ":"),
-        default=lambda v: distance(v) if isinstance(v, Decimal) else str(v),
+        default=lambda v: format(v.normalize(), "f") if isinstance(v, Decimal) else str(v),
     )
 
 
@@ -55,8 +56,15 @@ class CatalogFilters(Input):
     dateFrom: date | None = None
     dateTo: date | None = None
     distanceKm: Decimal | None = None
+    # Nome contendo o texto (sem acento nem caixa). Filtra o resultado; nao muda o indice.
+    q: str | None = Field(default=None, min_length=1, max_length=160)
+    registrationStatus: Literal["unknown", "open", "closed", "sold_out"] | None = None
+    # Raio em torno de um ponto: os tres juntos ou nenhum.
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    radiusKm: float | None = Field(default=None, gt=0, le=500)
 
-    @field_validator("namePrefix", "city")
+    @field_validator("namePrefix", "city", "q")
     @classmethod
     def text(cls, value):
         if value is None:
@@ -87,6 +95,8 @@ class CatalogFilters(Input):
     def interval(self):
         if self.dateFrom and self.dateTo and self.dateFrom > self.dateTo:
             raise ValueError("dateFrom must precede dateTo")
+        if len({self.lat is None, self.lon is None, self.radiusKm is None}) != 1:
+            raise ValueError("lat, lon and radiusKm must be given together")
         return self
 
     def plan(self):
@@ -106,6 +116,16 @@ class CatalogFilters(Input):
             }
         )
         return pk, query
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Distancia em linha reta entre dois pontos, em km."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (
+        math.sin((p2 - p1) / 2) ** 2
+        + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    )
+    return 2 * 6371.0088 * math.asin(math.sqrt(a))
 
 
 class CursorCodec:
@@ -223,6 +243,27 @@ class CatalogService:
                     Decimal(str(d["kilometers"])) == filters.distanceKm for d in body["distances"]
                 ):
                     continue
+                if filters.q and filters.q not in normalized(body["name"]):
+                    continue
+                # Inscricao desconhecida nunca vira "aberta": so casa com "unknown".
+                if (
+                    filters.registrationStatus
+                    and body.get("registrationStatus", "unknown") != filters.registrationStatus
+                ):
+                    continue
+                if filters.radiusKm is not None:
+                    if body.get("latitude") is None or body.get("longitude") is None:
+                        continue
+                    if (
+                        haversine_km(
+                            filters.lat,
+                            filters.lon,
+                            float(body["latitude"]),
+                            float(body["longitude"]),
+                        )
+                        > filters.radiusKm
+                    ):
+                        continue
                 day = date.fromisoformat(body["date"])
                 if (filters.dateFrom and day < filters.dateFrom) or (
                     filters.dateTo and day > filters.dateTo
@@ -279,6 +320,21 @@ class ImportEdition(Input):
     state: str = Field(pattern=r"^[A-Z]{2}$")
     # Pais da prova; ausente significa Brasil. Alimenta "Paises visitados" no medalheiro.
     country: str | None = Field(default=None, min_length=2, max_length=80)
+    venue: str | None = Field(default=None, min_length=1, max_length=250)
+    # Decimal, nao float: o DynamoDB nao grava float.
+    latitude: Decimal | None = Field(default=None, ge=-90, le=90, max_digits=12, decimal_places=7)
+    longitude: Decimal | None = Field(
+        default=None, ge=-180, le=180, max_digits=12, decimal_places=7
+    )
+    # Situacao informada pela fonte; ausente significa desconhecida (nunca presumir "aberta").
+    registrationStatus: Literal["unknown", "open", "closed", "sold_out"] | None = None
+    eventStatus: Literal["scheduled", "postponed", "cancelled", "completed", "unknown"] | None = (
+        None
+    )
+    lastVerifiedAt: str | None = Field(default=None, max_length=40)
+    # Proveniencia: de onde veio e com que identificador na fonte.
+    sourceCode: str | None = Field(default=None, pattern=r"^[a-z0-9_-]{2,40}$")
+    sourceExternalId: str | None = Field(default=None, min_length=1, max_length=200)
     distances: list[ImportDistance] = Field(min_length=1)
     description: str | None = None
     organizerName: str | None = None
@@ -304,6 +360,32 @@ class ImportEdition(Input):
         if date.fromisoformat(value).isoformat() != value:
             raise ValueError("YYYY-MM-DD required")
         return value
+
+    @field_validator("latitude", "longitude", mode="before")
+    @classmethod
+    def decimal_coordinate(cls, value):
+        # O modelo e estrito: aceita numero ou texto e converte para Decimal.
+        if value is None or isinstance(value, Decimal):
+            return value
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError("Coordenada invalida") from error
+
+    @field_validator("lastVerifiedAt")
+    @classmethod
+    def verified(cls, value):
+        if value is not None:
+            from datetime import datetime
+
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return value
+
+    @model_validator(mode="after")
+    def coordinates_together(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be given together")
+        return self
 
     @model_validator(mode="after")
     def unique_distances(self):

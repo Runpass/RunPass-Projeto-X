@@ -12,6 +12,13 @@ export 'my_races.dart';
 
 typedef PhotoSelector = Future<List<int>?> Function();
 
+String registrationText(String? status) => switch (status) {
+  'open' => 'Inscrições abertas.',
+  'closed' => 'Inscrições encerradas.',
+  'sold_out' => 'Inscrições esgotadas.',
+  _ => 'Situação das inscrições não informada.',
+};
+
 String displayDate(String value) {
   final parts = value.split('-');
   return parts.length == 3 ? '${parts[2]}/${parts[1]}/${parts[0]}' : value;
@@ -158,6 +165,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Map<String, Map<String, dynamic>> mine = {};
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
+  // Situacao das inscricoes (filtro): nulo = qualquer.
+  String? registration;
+  int registrationEpoch =
+      0; // recria o seletor ao limpar (reset() devolveria o valor antigo)
   bool loading = false;
   bool showFilters = false;
 
@@ -189,6 +200,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         for (final entry in fields.entries)
           if (entry.value.text.trim().isNotEmpty)
             entry.key: entry.value.text.trim(),
+        'registrationStatus': ?registration,
       };
       items.clear();
       nextCursor = null;
@@ -228,6 +240,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
       controller.clear();
     }
     form.currentState?.reset();
+    setState(() {
+      registration = null;
+      registrationEpoch++;
+    });
     load();
   }
 
@@ -276,6 +292,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
               for (final controller in fields.values) {
                 controller.clear();
               }
+              registration = null;
+              registrationEpoch++;
               load();
             }
             setState(() => showFilters = !showFilters);
@@ -343,6 +361,42 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         'dateTo',
                         'Data final (AAAA-MM-DD)',
                         validate: dateValidator,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: DropdownButtonFormField<String?>(
+                          key: ValueKey(
+                            'filter-registration-$registrationEpoch',
+                          ),
+                          initialValue: registration,
+                          decoration: const InputDecoration(
+                            labelText: 'Inscrições',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: null,
+                              child: Text('Qualquer situação'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'open',
+                              child: Text('Abertas'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'closed',
+                              child: Text('Encerradas'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'sold_out',
+                              child: Text('Esgotadas'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'unknown',
+                              child: Text('Não informada'),
+                            ),
+                          ],
+                          onChanged: (value) =>
+                              setState(() => registration = value),
+                        ),
                       ),
                       FilledButton(
                         onPressed: loading ? null : () => load(),
@@ -826,6 +880,28 @@ class _EditionScreenState extends State<EditionScreen> {
           child: Text(saving ? 'Salvando...' : 'Criar rascunho'),
         ),
       ],
+      // Informacoes da fonte ao fim da aba, sem empurrar as acoes da pessoa.
+      const SizedBox(height: 16),
+      if (body['venue'] != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text('Local: ${body['venue']}'),
+        ),
+      // Nunca afirma que as inscricoes estao abertas quando a fonte nao informou.
+      Padding(
+        key: const Key('registration-info'),
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(registrationText(body['registrationStatus'] as String?)),
+      ),
+      if (body['lastVerifiedAt'] != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            'Informação conferida em ${displayDate((body['lastVerifiedAt'] as String).substring(0, 10))}.',
+            key: const Key('verified-info'),
+            style: TextStyle(fontSize: 12, color: context.muted),
+          ),
+        ),
     ],
   );
 
