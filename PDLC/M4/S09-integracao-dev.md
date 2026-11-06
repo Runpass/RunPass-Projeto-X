@@ -243,3 +243,10 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 
 **Sair e excluir a conta pelo app (05/11/2026).** Ao montar o roteiro de testes viu-se que "Sair" e "Excluir minha conta" só existiam na tela "Olá, <nome>!", anterior ao Início, e depois de entrar não havia como sair nem excluir a conta (requisito de privacidade). Agora ficam no fim do Perfil, com confirmação na exclusão; ambos voltam à tela de entrada, e a exclusão mostra "Exclusão aceita". O texto do Perfil "dados locais de demonstração não são enviados à AWS" era falso no modo real e foi trocado. Testado só em widget com servidor falso; a exclusão real já tinha sido provada pela API em DEV, o fluxo pela tela não.
 
+
+## Deploy de amigos, fotos e comentarios no DEV - 06/11/2026
+
+- Autorizado pelo usuario ("Pode realizar o deploy"). Change set `amigos-fotos-061425` da stack `runpass-dev-app` (UPDATE), pacote `lambda/runpass-bd7ed408252e0dfe.zip` (commit `76b089a`, PR #23). Anterior: `lambda/runpass-4cc03e9d4ca9ce3e.zip` (volta por troca da chave `ArtifactKey`).
+- Mudancas: apenas codigo das Lambdas (Api, Publisher, ScoreConsumer, AuditConsumer, Maintenance) e re-vinculo da integracao/regra/permissao; sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- Verificacao feita: rotas novas (`/profiles`, `/feed`, `/me/follow-requests`) respondem 401 sem token e rota inexistente responde 404, ou seja, as rotas existem no deploy. **Nao** verificado ainda com usuarios reais: busca, seguir, aprovacao de perfil privado, comentarios, foto de perfil e troca de foto da medalha. Isso depende do teste humano com duas contas.
+- Limites: ver `PDLC/M4/S10-amigos.md`.
