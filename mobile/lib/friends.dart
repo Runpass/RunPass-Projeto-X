@@ -24,14 +24,39 @@ String followLabel(String? state) => switch (state) {
 
 class ProfileAvatar extends StatelessWidget {
   final double radius;
-  const ProfileAvatar({super.key, this.radius = 22});
+  final IdentityGateway? gateway;
+  final Map? profile;
+  const ProfileAvatar({
+    super.key,
+    this.radius = 22,
+    this.gateway,
+    this.profile,
+  });
 
   @override
-  Widget build(BuildContext context) => CircleAvatar(
-    radius: radius,
-    backgroundColor: const Color(0xffffe4dc),
-    child: Icon(Icons.person, color: runPassOrange, size: radius * 1.1),
-  );
+  Widget build(BuildContext context) {
+    final id = profile?['id'] as String?;
+    final person = Icon(Icons.person, color: runPassOrange, size: radius * 1.1);
+    final photo =
+        gateway != null && id != null && profile?['photoReference'] != null;
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: const Color(0xffffe4dc),
+      child: photo
+          ? ClipOval(
+              child: SizedBox(
+                width: radius * 2,
+                height: radius * 2,
+                child: SignedPhoto(
+                  gateway: gateway!,
+                  endpoint: '/profiles/${Uri.encodeComponent(id)}/photo',
+                  fallback: Center(child: person),
+                ),
+              ),
+            )
+          : person,
+    );
+  }
 }
 
 /// Procurar pessoas por nome ou usuário, para seguir.
@@ -132,7 +157,7 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
           Card(
             child: ListTile(
               key: Key('friend-${profile['id']}'),
-              leading: const ProfileAvatar(),
+              leading: ProfileAvatar(gateway: widget.gateway, profile: profile),
               title: Text(profile['displayName'] as String? ?? ''),
               subtitle: Text(
                 '@${profile['username']}'
@@ -255,7 +280,11 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
               children: [
                 Row(
                   children: [
-                    const ProfileAvatar(radius: 34),
+                    ProfileAvatar(
+                      radius: 34,
+                      gateway: widget.gateway,
+                      profile: p,
+                    ),
                     const SizedBox(width: 14),
                     Expanded(
                       child: Column(
@@ -432,7 +461,10 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
         for (final row in items ?? const <Map<String, dynamic>>[])
           Card(
             child: ListTile(
-              leading: const ProfileAvatar(),
+              leading: ProfileAvatar(
+                gateway: widget.gateway,
+                profile: row['profile'] as Map,
+              ),
               title: Text((row['profile'] as Map)['displayName'] as String),
               subtitle: Text('@${(row['profile'] as Map)['username']}'),
               trailing: Wrap(
@@ -569,7 +601,11 @@ class _CommentsScreenState extends State<CommentsScreen> {
                 ListTile(
                   key: Key('comment-${c['id']}'),
                   contentPadding: EdgeInsets.zero,
-                  leading: const ProfileAvatar(radius: 18),
+                  leading: ProfileAvatar(
+                    radius: 18,
+                    gateway: widget.gateway,
+                    profile: c['author'] as Map,
+                  ),
                   title: Text(
                     '${(c['author'] as Map)['displayName'] ?? 'Corredor'}'
                     ' · ${timeAgo(DateTime.tryParse(c['createdAt'] as String? ?? '') ?? DateTime.now())}',

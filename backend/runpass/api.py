@@ -330,6 +330,12 @@ def create_app(
     def delete_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().delete_comment(actor, id, idempotency_key)
 
+    @app.get("/profiles/{id}/photo", operation_id="getProfilePhoto")
+    def profile_photo(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.profile_photo(actor, id)
+
     @app.get("/participations/{id}/image", operation_id="getParticipationImage")
     def participation_image(id: str, actor: Actor):
         if uploads is None:

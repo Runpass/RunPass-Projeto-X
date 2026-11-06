@@ -237,4 +237,31 @@ void main() {
     expect(sent, {'expectedVersion': 1, 'isPrivate': true});
     expect(find.textContaining('Só quem você aceitar'), findsOneWidget);
   });
+
+  testWidgets(
+    'avatar asks for the profile photo only when the profile has one',
+    (tester) async {
+      final paths = <String>[];
+      final gateway = await gatewayWith((uri, method, headers, body) async {
+        paths.add(uri.path);
+        return const JsonReply(404, {'code': 'IMAGE_NOT_AVAILABLE'});
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Column(
+            children: [
+              ProfileAvatar(gateway: gateway, profile: {'id': 'sem'}),
+              ProfileAvatar(
+                gateway: gateway,
+                profile: {'id': 'com', 'photoReference': 'img_1'},
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(paths, ['/profiles/com/photo']);
+      expect(find.byIcon(Icons.person), findsNWidgets(2));
+    },
+  );
 }

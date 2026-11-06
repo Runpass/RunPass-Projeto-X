@@ -6,6 +6,7 @@ from runpass.identity import Principal
 from runpass.service import IdentityService, Problem
 from runpass.social import SocialService
 from runpass.store import MemoryStore
+from runpass.upload import MemoryBlobStore, UploadService
 
 NOW = datetime(2026, 11, 6, 15, tzinfo=timezone.utc)
 
@@ -197,6 +198,55 @@ class SocialTests(unittest.TestCase):
         self.assertFalse(
             self.social.may_view_photo(read, self.bia, "ana", {"publishToFeed": False})
         )
+
+    # ---- profile photo ----
+    def valid_image(self, actor, reference, blobs):
+        key = ("operations", "USER#" + actor.subject, "IMAGE#" + reference)
+        self.store.commit(
+            {key: None},
+            {key: {"owner": actor.subject, "origin": "runner", "state": "valid", "refs": 0}},
+        )
+        blobs.write_derived(reference, b"jpg", "image/jpeg", actor.subject)
+
+    def test_profile_photo_needs_my_valid_image_and_follows_visibility(self):
+        blobs = MemoryBlobStore()
+        uploads = UploadService(
+            self.identity, blobs, may_view_profile=self.social.may_view_profile_photo
+        )
+        profile = self.identity.profile(self.ana)
+        with self.assertRaises(Problem) as bad:
+            self.identity.patch_profile(
+                self.ana, "ph0", {"expectedVersion": profile["version"], "photoReference": "nope"}
+            )
+        self.assertEqual(bad.exception.code, "IMAGE_NOT_VALID")
+        self.valid_image(self.ana, "img1", blobs)
+        self.valid_image(self.bia, "img-bia", blobs)
+        with self.assertRaises(Problem) as theirs:
+            self.identity.patch_profile(
+                self.ana,
+                "ph1",
+                {"expectedVersion": profile["version"], "photoReference": "img-bia"},
+            )
+        self.assertEqual(theirs.exception.code, "IMAGE_NOT_VALID")
+        saved = self.identity.patch_profile(
+            self.ana, "ph2", {"expectedVersion": profile["version"], "photoReference": "img1"}
+        )
+        self.assertEqual(saved["photoReference"], "img1")
+        self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#img1"))["refs"], 1)
+        self.assertIn("url", uploads.profile_photo(self.bia, "ana"))
+        self.private(self.ana)
+        with self.assertRaises(Problem):
+            uploads.profile_photo(self.caio, "ana")
+        self.assertIn("url", uploads.profile_photo(self.ana, "ana"))
+        # clearing releases the image
+        current = self.identity.profile(self.ana)
+        cleared = self.identity.patch_profile(
+            self.ana, "ph3", {"expectedVersion": current["version"], "photoReference": None}
+        )
+        self.assertNotIn("photoReference", cleared)
+        self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#img1"))["refs"], 0)
+        with self.assertRaises(Problem):
+            uploads.profile_photo(self.bia, "ana")
 
     # ---- erasure ----
     def test_erasing_an_account_removes_index_follows_and_comments(self):

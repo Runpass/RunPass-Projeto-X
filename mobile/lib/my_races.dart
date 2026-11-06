@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'catalog_screen.dart';
 import 'friends.dart';
@@ -105,9 +106,86 @@ class MedalArt extends StatelessWidget {
       Icon(Icons.emoji_events, size: size, color: const Color(0xffe8b23a));
 }
 
-/// Foto da medalha enviada pela pessoa. Pede um link curto e assinado ao servidor
-/// (`GET /participations/{id}/image`); se nao houver foto ou a rede falhar, mostra o trofeu.
-class MedalPhoto extends StatefulWidget {
+/// Imagem privada servida por link curto e assinado (`GET <endpoint>` devolve `url`).
+/// Sem foto, sem permissao ou sem rede, mostra o `fallback`.
+class SignedPhoto extends StatefulWidget {
+  final IdentityGateway gateway;
+  final String? endpoint;
+  final Widget fallback;
+  final BoxFit fit;
+  const SignedPhoto({
+    super.key,
+    required this.gateway,
+    required this.endpoint,
+    required this.fallback,
+    this.fit = BoxFit.cover,
+  });
+
+  @override
+  State<SignedPhoto> createState() => _SignedPhotoState();
+}
+
+/// Links valem 5 minutos; reaproveita enquanto a tela esta aberta.
+final Map<String, ({String url, DateTime expires})> _photoLinks = {};
+
+/// Esquece o link guardado, por exemplo depois de trocar a foto.
+void forgetMedalPhoto(String participationId) => _photoLinks.remove(
+  '/participations/${Uri.encodeComponent(participationId)}/image',
+);
+
+void forgetProfilePhoto(String profileId) =>
+    _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/photo');
+
+class _SignedPhotoState extends State<SignedPhoto> {
+  String? url;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    final endpoint = widget.endpoint;
+    if (endpoint == null) return;
+    final cached = _photoLinks[endpoint];
+    if (cached != null && cached.expires.isAfter(DateTime.now())) {
+      url = cached.url;
+      return;
+    }
+    try {
+      final reply = await widget.gateway.request(endpoint);
+      final link = reply['url'];
+      final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
+      if (link is String && link.startsWith('https://')) {
+        _photoLinks[endpoint] = (
+          url: link,
+          expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
+              .subtract(const Duration(seconds: 30)),
+        );
+        if (mounted) setState(() => url = link);
+      }
+    } on Exception {
+      // Sem foto ou sem rede: fica o fallback.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final link = url;
+    if (link == null) return widget.fallback;
+    return Image.network(
+      link,
+      fit: widget.fit,
+      errorBuilder: (_, _, _) => widget.fallback,
+      loadingBuilder: (_, child, progress) =>
+          progress == null ? child : widget.fallback,
+    );
+  }
+}
+
+/// Foto da medalha enviada pela pessoa (`GET /participations/{id}/image`); sem foto, o trofeu.
+class MedalPhoto extends StatelessWidget {
   final IdentityGateway gateway;
   final String? participationId;
   final double size;
@@ -121,64 +199,32 @@ class MedalPhoto extends StatefulWidget {
   });
 
   @override
-  State<MedalPhoto> createState() => _MedalPhotoState();
+  Widget build(BuildContext context) => SignedPhoto(
+    gateway: gateway,
+    endpoint: participationId == null
+        ? null
+        : '/participations/${Uri.encodeComponent(participationId!)}/image',
+    fallback: MedalArt(size: size),
+    fit: fit,
+  );
 }
 
-/// Links valem 5 minutos; reaproveita enquanto a tela esta aberta.
-final Map<String, ({String url, DateTime expires})> _medalLinks = {};
-
-/// Esquece o link guardado, por exemplo depois de trocar a foto da medalha.
-void forgetMedalPhoto(String participationId) =>
-    _medalLinks.remove(participationId);
-
-class _MedalPhotoState extends State<MedalPhoto> {
-  String? url;
-
-  @override
-  void initState() {
-    super.initState();
-    load();
+/// Detecta JPEG ou PNG pelos primeiros bytes; qualquer outro formato volta nulo.
+String? imageContentType(List<int> bytes) {
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xff &&
+      bytes[1] == 0xd8 &&
+      bytes[2] == 0xff) {
+    return 'image/jpeg';
   }
-
-  Future<void> load() async {
-    final id = widget.participationId;
-    if (id == null) return;
-    final cached = _medalLinks[id];
-    if (cached != null && cached.expires.isAfter(DateTime.now())) {
-      url = cached.url;
-      return;
-    }
-    try {
-      final reply = await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(id)}/image',
-      );
-      final link = reply['url'];
-      final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
-      if (link is String && link.startsWith('https://')) {
-        _medalLinks[id] = (
-          url: link,
-          expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
-              .subtract(const Duration(seconds: 30)),
-        );
-        if (mounted) setState(() => url = link);
-      }
-    } on Exception {
-      // Sem foto ou sem rede: fica o trofeu.
-    }
+  if (bytes.length >= 8 &&
+      bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4e &&
+      bytes[3] == 0x47) {
+    return 'image/png';
   }
-
-  @override
-  Widget build(BuildContext context) {
-    final link = url;
-    if (link == null) return MedalArt(size: widget.size);
-    return Image.network(
-      link,
-      fit: widget.fit,
-      errorBuilder: (_, _, _) => MedalArt(size: widget.size),
-      loadingBuilder: (_, child, progress) =>
-          progress == null ? child : MedalArt(size: widget.size),
-    );
-  }
+  return null;
 }
 
 class Stars extends StatelessWidget {
@@ -638,7 +684,46 @@ class RunnerProfileScreen extends StatefulWidget {
 }
 
 class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
-  late final Future<ProfileData> data = load();
+  late Future<ProfileData> data = load();
+
+  Future<void> changePhoto(Map<String, dynamic> profile) async {
+    try {
+      final file = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 2000,
+        maxHeight: 2000,
+        imageQuality: 85,
+        requestFullMetadata: false,
+      );
+      final bytes = await file?.readAsBytes();
+      if (bytes == null) return;
+      final type = imageContentType(bytes);
+      if (type == null) {
+        soon('Escolha uma foto JPEG ou PNG.');
+        return;
+      }
+      soon('Enviando a foto...');
+      final result = await widget.gateway.uploadImage(bytes, type);
+      if (result['state'] != 'valid') {
+        soon('A foto não foi aceita. Escolha outra imagem.');
+        return;
+      }
+      await widget.gateway.request(
+        '/me',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': profile['version'],
+          'photoReference': result['imageReference'],
+        },
+      );
+      forgetProfilePhoto(profile['id'] as String);
+      if (mounted) setState(() => data = load());
+    } on IdentityIssue catch (issue) {
+      soon(catalogError(issue));
+    } on Exception {
+      soon('Não foi possível trocar a foto agora. Tente de novo.');
+    }
+  }
 
   Future<ProfileData> load() async {
     final profile = await widget.gateway.request('/me');
@@ -698,20 +783,22 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              const CircleAvatar(
+              CircleAvatar(
                 radius: 46,
                 backgroundColor: Colors.white,
-                child: CircleAvatar(
+                child: ProfileAvatar(
+                  key: ValueKey('avatar-${profile['photoReference']}'),
                   radius: 42,
-                  backgroundColor: Color(0xffffe4dc),
-                  child: Icon(Icons.person, size: 48, color: runPassOrange),
+                  gateway: widget.gateway,
+                  profile: profile,
                 ),
               ),
               Positioned(
                 right: -2,
                 bottom: 2,
                 child: InkWell(
-                  onTap: () => soon('Foto do perfil em breve.'),
+                  key: const Key('change-profile-photo'),
+                  onTap: () => changePhoto(profile),
                   child: const CircleAvatar(
                     radius: 14,
                     backgroundColor: runPassNavy,

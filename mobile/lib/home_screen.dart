@@ -14,6 +14,7 @@ class FeedEntry {
   final DateTime? publishedAt;
   final RaceRecord race;
   final bool mine;
+  final Map? authorProfile;
   int likes, comments;
   bool liked;
 
@@ -24,6 +25,7 @@ class FeedEntry {
     required this.title,
     required this.race,
     required this.mine,
+    this.authorProfile,
     this.comment,
     this.place,
     this.publishedAt,
@@ -158,6 +160,7 @@ Future<List<FeedEntry>> loadFeed(IdentityGateway gateway) async {
         publishedAt: DateTime.tryParse(post['publishedAt'] as String? ?? ''),
         race: race,
         mine: myId != null && author['id'] == myId,
+        authorProfile: author,
         likes: (post['likeCount'] as num?)?.toInt() ?? 0,
         comments: (post['commentCount'] as num?)?.toInt() ?? 0,
         liked: post['likedByMe'] == true,
@@ -175,6 +178,7 @@ Future<List<FeedEntry>> loadFeed(IdentityGateway gateway) async {
           place: race.place.isEmpty ? null : race.place,
           race: race,
           mine: true,
+          authorProfile: profile,
         ),
   ];
   return [...own, ...entries];
@@ -529,10 +533,9 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
           children: [
             Row(
               children: [
-                const CircleAvatar(
-                  radius: 22,
-                  backgroundColor: Color(0xffffe4dc),
-                  child: Icon(Icons.person, color: runPassOrange),
+                ProfileAvatar(
+                  gateway: widget.gateway,
+                  profile: entry.authorProfile,
                 ),
                 const SizedBox(width: 10),
                 Expanded(

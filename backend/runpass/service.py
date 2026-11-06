@@ -186,6 +186,25 @@ class IdentityService:
 
         return self.transact(principal, "createOwnProfile", key, payload, work)
 
+    @staticmethod
+    def _swap_profile_photo(read, write, subject, profile, payload):
+        """The photo must be a valid image uploaded by this runner; reference counts follow."""
+        reference = payload["photoReference"]
+        if reference == profile.get("photoReference"):
+            return
+        if reference is not None:
+            new_key = ("operations", "USER#" + subject, "IMAGE#" + reference)
+            new = read(new_key)
+            if not new or new.get("state") != "valid" or new.get("owner") != subject:
+                raise Problem(422, "IMAGE_NOT_VALID")
+            write(new_key, {**new, "refs": new.get("refs", 0) + 1})
+        previous = profile.get("photoReference")
+        if previous:
+            old_key = ("operations", "USER#" + subject, "IMAGE#" + previous)
+            old = read(old_key)
+            if old:
+                write(old_key, {**old, "refs": max(0, old.get("refs", 0) - 1)})
+
     def patch_profile(self, principal, key, payload):
         pk = "USER#" + principal.subject
 
@@ -198,9 +217,8 @@ class IdentityService:
                 return self.public_profile(profile), {}
             if profile["version"] != payload["expectedVersion"]:
                 raise Problem(409, "VERSION_CONFLICT")
-            if payload.get("photoReference") is not None:
-                # S05 must validate image owner, origin and state before enabling this field.
-                raise Problem(503, "PHOTO_UPLOAD_NOT_IMPLEMENTED")
+            if "photoReference" in payload:
+                self._swap_profile_photo(read, write, principal.subject, profile, payload)
             new_username = payload.get("username", profile["username"]).lower()
             if new_username != profile["username"]:
                 new = ("identity", "USERNAME#" + new_username, "CLAIM")

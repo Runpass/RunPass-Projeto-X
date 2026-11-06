@@ -68,6 +68,9 @@ class SocialService:
             return True
         return bool(part.get("publishToFeed")) and self.can_view(read, actor.subject, owner)
 
+    def may_view_profile_photo(self, read, actor, owner):
+        return owner == actor.subject or self.can_view(read, actor.subject, owner)
+
     def _list(self, table, pk, prefix, limit=1000):
         rows, after = [], None
         while len(rows) < limit:
