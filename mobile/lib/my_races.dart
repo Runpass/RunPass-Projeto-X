@@ -104,6 +104,77 @@ class MedalArt extends StatelessWidget {
       Icon(Icons.emoji_events, size: size, color: const Color(0xffe8b23a));
 }
 
+/// Foto da medalha enviada pela pessoa. Pede um link curto e assinado ao servidor
+/// (`GET /participations/{id}/image`); se nao houver foto ou a rede falhar, mostra o trofeu.
+class MedalPhoto extends StatefulWidget {
+  final IdentityGateway gateway;
+  final String? participationId;
+  final double size;
+  final BoxFit fit;
+  const MedalPhoto({
+    super.key,
+    required this.gateway,
+    required this.participationId,
+    this.size = 46,
+    this.fit = BoxFit.cover,
+  });
+
+  @override
+  State<MedalPhoto> createState() => _MedalPhotoState();
+}
+
+class _MedalPhotoState extends State<MedalPhoto> {
+  /// Links valem 5 minutos; reaproveita enquanto a tela esta aberta.
+  static final Map<String, ({String url, DateTime expires})> links = {};
+  String? url;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    final id = widget.participationId;
+    if (id == null) return;
+    final cached = links[id];
+    if (cached != null && cached.expires.isAfter(DateTime.now())) {
+      url = cached.url;
+      return;
+    }
+    try {
+      final reply = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}/image',
+      );
+      final link = reply['url'];
+      final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
+      if (link is String && link.startsWith('https://')) {
+        links[id] = (
+          url: link,
+          expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
+              .subtract(const Duration(seconds: 30)),
+        );
+        if (mounted) setState(() => url = link);
+      }
+    } on Exception {
+      // Sem foto ou sem rede: fica o trofeu.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final link = url;
+    if (link == null) return MedalArt(size: widget.size);
+    return Image.network(
+      link,
+      fit: widget.fit,
+      errorBuilder: (_, _, _) => MedalArt(size: widget.size),
+      loadingBuilder: (_, child, progress) =>
+          progress == null ? child : MedalArt(size: widget.size),
+    );
+  }
+}
+
 class Stars extends StatelessWidget {
   final num value;
   final double size;
@@ -335,9 +406,20 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       ),
       child: Column(
         children: [
-          const Spacer(),
-          const Icon(Icons.emoji_events, size: 46, color: Color(0xffe8b23a)),
-          const Spacer(),
+          const SizedBox(height: 4),
+          Expanded(
+            flex: 3,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox.expand(
+                child: MedalPhoto(
+                  gateway: widget.gateway,
+                  participationId: race.participation['id'] as String?,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
           Text(
             race.name,
             maxLines: 2,

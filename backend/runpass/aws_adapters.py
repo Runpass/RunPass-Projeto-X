@@ -9,6 +9,7 @@ from .service import Problem
 from .store import Unavailable
 
 UPLOAD_URL_SECONDS = 15 * 60
+VIEW_URL_SECONDS = 5 * 60
 DELETE_BATCH = 1000
 
 
@@ -107,6 +108,25 @@ class S3BlobStore:
             )
         except (BotoCoreError, ClientError) as error:
             raise Unavailable() from error
+
+    def view_url(self, owner, reference):
+        """Short-lived signed GET for the sanitized copy only; originals stay unreachable."""
+        key = self._derived(owner, reference)
+        try:
+            head = self.client.head_object(Bucket=self.bucket, Key=key)
+            url = self.client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self.bucket, "Key": key},
+                ExpiresIn=VIEW_URL_SECONDS,
+                HttpMethod="GET",
+            )
+        except ClientError as error:
+            if _code(error) in ("404", "NoSuchKey", "NotFound"):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE") from error
+            raise Unavailable() from error
+        except BotoCoreError as error:
+            raise Unavailable() from error
+        return {"url": url, "contentType": head["ContentType"]}
 
     def delete_owner(self, owner):
         try:

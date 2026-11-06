@@ -252,6 +252,12 @@ def create_app(service=None, verifier=None, catalog=None, participations=None, u
             raise Unavailable()
         return uploads.finalize(actor, id, idempotency_key)
 
+    @app.get("/participations/{id}/image", operation_id="getParticipationImage")
+    def participation_image(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.medal_image(actor, id)
+
     @app.get("/uploads/{id}/status", operation_id="getUploadStatus")
     def upload_status(id: str, actor: Actor):
         if uploads is None:

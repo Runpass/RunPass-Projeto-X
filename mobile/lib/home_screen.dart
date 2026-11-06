@@ -547,7 +547,18 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
                     colors: [Color(0xffffd9cc), Color(0xfffff2ec)],
                   ),
                 ),
-                child: const Center(child: MedalArt(size: 72)),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: SizedBox.expand(
+                    child: MedalPhoto(
+                      gateway: widget.gateway,
+                      participationId: entry.mine
+                          ? entry.race.participation['id'] as String?
+                          : null,
+                      size: 72,
+                    ),
+                  ),
+                ),
               ),
             ),
             if (km != null ||

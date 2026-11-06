@@ -64,6 +64,15 @@ class MemoryBlobStore:
             raise Problem(503, "DERIVED_COLLISION")
         self.derived[reference] = value
 
+    def view_url(self, owner, reference):
+        item = self.derived.get(reference)
+        if not item or item["owner"] != owner:
+            raise Problem(404, "IMAGE_NOT_AVAILABLE")
+        return {
+            "url": f"memory://private/derived/{reference}?capability={self.secret}",
+            "contentType": item["contentType"],
+        }
+
     def delete_owner(self, owner):
         """Active local deletion of originals, versions and derived personal bytes."""
         removed = 0
@@ -81,9 +90,39 @@ class MemoryBlobStore:
         return removed
 
 
+VIEW_SECONDS = 5 * 60
+
+
 class UploadService:
-    def __init__(self, identity, blobs):
+    def __init__(self, identity, blobs, may_view=None):
         self.identity, self.store, self.blobs = identity, identity.store, blobs
+        # may_view(read, actor, owner_subject) -> bool. Default: only the owner sees the photo.
+        # The social module injects follow/visibility rules here without touching this service.
+        self.may_view = may_view or (lambda read, actor, owner: owner == actor.subject)
+
+    def medal_image(self, actor, participation_id):
+        """Short-lived signed link to the sanitized medal photo; never the original."""
+
+        def work(read, write, account, now, replay):
+            owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
+            if not owner or not self.may_view(read, actor, owner.get("owner")):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            subject = owner["owner"]
+            part = read(("history", "USER#" + subject, "P#" + participation_id + "#PART"))
+            medal = read(("history", "USER#" + subject, "P#" + participation_id + "#MEDAL"))
+            if not part or part.get("state") != "completed" or not medal:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            if medal.get("imageOrigin") != "runner":
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            return {"owner": subject, "reference": medal["imageReference"], "now": now}, {}
+
+        found = self.identity.transact(actor, "getMedalImage", None, {}, work, admitted=True)
+        link = self.blobs.view_url(found["owner"], found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
 
     @staticmethod
     def status(item):
