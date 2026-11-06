@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'home_screen.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
+import 'notifications.dart';
 import 'runpass_theme.dart';
 
 export 'home_screen.dart';
@@ -52,8 +53,7 @@ String archivedNotice(String? reason) {
 /// Toda mensagem diz o motivo e o que fazer em seguida.
 String catalogError(IdentityIssue issue) => switch (issue.code) {
   'INVALID_TOKEN' || 'ACCOUNT_UNAVAILABLE' => 'Sua sessão expirou ou a conta está indisponível. Volte à tela inicial e entre novamente.',
-  'BETA_ADMISSION_REQUIRED' =>
-    'É necessário participar do beta para consultar as corridas.',
+  'BETA_ADMISSION_REQUIRED' => 'É necessário participar do período de avaliação para consultar as corridas.',
   'INVALID_CURSOR' => 'A busca ficou aberta por muito tempo e expirou. Toque em Buscar para começar de novo.',
   'INVALID_INPUT' || 'INVALID_FILTERS' => 'Algum campo está inválido (data, distância ou texto fora do limite). Confira os filtros e tente de novo.',
   'EDITION_NOT_FOUND' =>
@@ -281,9 +281,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
             setState(() => showFilters = !showFilters);
           },
         ),
+        NotificationBell(gateway: widget.gateway),
         const SizedBox(width: 8),
-        const Badge(child: Icon(Icons.notifications_none_rounded)),
-        const SizedBox(width: 18),
       ],
     ),
     bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),

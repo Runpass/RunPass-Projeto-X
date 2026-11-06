@@ -516,10 +516,14 @@ void main() {
     await tester.pumpAndSettle();
     await reveal(
       tester,
-      find.text('É necessário participar do beta para consultar as corridas.'),
+      find.text(
+        'É necessário participar do período de avaliação para consultar as corridas.',
+      ),
     );
     expect(
-      find.text('É necessário participar do beta para consultar as corridas.'),
+      find.text(
+        'É necessário participar do período de avaliação para consultar as corridas.',
+      ),
       findsOneWidget,
     );
     expect(find.byType(ListTile), findsNothing);

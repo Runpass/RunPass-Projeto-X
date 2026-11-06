@@ -26,6 +26,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Tirar uma foto de perfil ou da medalha para usar no RunPass.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Selecionar uma foto da corrida para validar e associar à participação.</string>
 	<key>UIApplicationSceneManifest</key>

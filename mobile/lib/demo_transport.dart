@@ -329,6 +329,24 @@ class DemoTransport {
         account['profile'] = profile;
         return JsonReply(201, profile);
       }
+      if (method == 'PATCH') {
+        final profile = account['profile'] as Map?;
+        if (profile == null) return failure('PROFILE_NOT_FOUND', 404);
+        if (data['expectedVersion'] != profile['version']) {
+          return failure('VERSION_CONFLICT', 409);
+        }
+        for (final name in ['photoReference', 'isPrivate', 'displayName']) {
+          if (data.containsKey(name)) {
+            if (data[name] == null) {
+              profile.remove(name);
+            } else {
+              profile[name] = data[name];
+            }
+          }
+        }
+        profile['version'] = (profile['version'] as int) + 1;
+        return JsonReply(200, Map<String, dynamic>.from(profile));
+      }
       if (method == 'DELETE') {
         account['deleted'] = true;
         return const JsonReply(202, {'accessBlocked': true});

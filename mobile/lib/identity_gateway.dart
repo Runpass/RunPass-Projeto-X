@@ -84,7 +84,17 @@ Future<JsonReply> sendJson(
         .timeout(const Duration(seconds: 10));
     request.followRedirects = false;
     headers.forEach(request.headers.set);
-    if (body != null) request.write(jsonEncode(body));
+    if (body != null) {
+      // Bytes UTF-8 explicitos: acentos e emojis nao podem depender do charset padrao.
+      final bytes = utf8.encode(jsonEncode(body));
+      request.headers.contentType = ContentType(
+        'application',
+        'json',
+        charset: 'utf-8',
+      );
+      request.contentLength = bytes.length;
+      request.add(bytes);
+    }
     final response = await request.close().timeout(const Duration(seconds: 15));
     final text = await utf8.decoder
         .bind(response)

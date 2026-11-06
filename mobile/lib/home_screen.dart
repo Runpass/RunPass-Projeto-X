@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'catalog_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
+import 'notifications.dart';
 import 'runpass_theme.dart';
 
 /// One card of the Início feed. Built from a published post (`/feed`) or from
@@ -15,6 +16,7 @@ class FeedEntry {
   final RaceRecord race;
   final bool mine;
   final Map? authorProfile;
+  final Map? lastComment;
   int likes, comments;
   bool liked;
 
@@ -26,6 +28,7 @@ class FeedEntry {
     required this.race,
     required this.mine,
     this.authorProfile,
+    this.lastComment,
     this.comment,
     this.place,
     this.publishedAt,
@@ -161,6 +164,7 @@ Future<List<FeedEntry>> loadFeed(IdentityGateway gateway) async {
         race: race,
         mine: myId != null && author['id'] == myId,
         authorProfile: author,
+        lastComment: post['lastComment'] as Map?,
         likes: (post['likeCount'] as num?)?.toInt() ?? 0,
         comments: (post['commentCount'] as num?)?.toInt() ?? 0,
         liked: post['likedByMe'] == true,
@@ -518,6 +522,61 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     ),
   );
 
+  /// Comentario mais recente em destaque; os demais ficam atras do botao de comentarios.
+  Widget lastCommentBox(FeedEntry entry) {
+    final comment = entry.lastComment!;
+    final who = comment['author'] as Map? ?? const {};
+    return InkWell(
+      key: Key('last-comment-${entry.postId}'),
+      onTap: () => openComments(entry),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xfffff6e0),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: runPassGold.withValues(alpha: 0.6)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ProfileAvatar(gateway: widget.gateway, profile: who, radius: 15),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    who['displayName'] as String? ?? 'Corredor',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                  Text(
+                    comment['text'] as String? ?? '',
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (entry.comments > 1)
+                    Text(
+                      'Ver todos os ${entry.comments} comentários',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget post(FeedEntry entry) {
     final race = entry.race;
     final km = race.kilometers;
@@ -586,9 +645,8 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
                   child: SizedBox.expand(
                     child: MedalPhoto(
                       gateway: widget.gateway,
-                      participationId: entry.mine
-                          ? entry.race.participation['id'] as String?
-                          : null,
+                      participationId:
+                          entry.race.participation['id'] as String?,
                       size: 72,
                     ),
                   ),
@@ -645,6 +703,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
               ),
             ),
             const SizedBox(height: 10),
+            if (entry.lastComment != null) lastCommentBox(entry),
             Row(
               children: [
                 InkWell(
@@ -710,11 +769,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
           icon: const Icon(Icons.search_rounded),
           onPressed: () => go(CatalogScreen(gateway: widget.gateway)),
         ),
-        IconButton(
-          tooltip: 'Avisos',
-          icon: const Icon(Icons.notifications_none_rounded),
-          onPressed: () => soon('Avisos em breve.'),
-        ),
+        NotificationBell(gateway: widget.gateway),
         const SizedBox(width: 4),
       ],
     ),
