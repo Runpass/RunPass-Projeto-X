@@ -1345,7 +1345,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   bool saving = false, uploading = false;
   String? imageReference, pendingUploadId;
   bool declaredCompleted = false, publishToFeed = false;
-  bool deleted = false;
   DateTime? editionDate;
   Map<String, dynamic>? review;
   List<Map<String, dynamic>> distances = const [];
@@ -1437,7 +1436,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
 
   @override
   void dispose() {
-    if (draft['state'] == 'draft' && !deleted) {
+    if (draft['state'] == 'draft') {
       formCache[draft['id'] as String] = {
         'imageReference': imageReference,
         'declaredCompleted': declaredCompleted,
@@ -1774,15 +1773,36 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       saving = true;
       message = null;
     });
+    final wasDraft = draft['state'] == 'draft';
     try {
       await widget.gateway.request(
         '/participations/${Uri.encodeComponent(draft['id'] as String)}',
         method: 'DELETE',
         query: {'expectedVersion': '${draft['version']}'},
       );
-      if (mounted) deleted = true;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            wasDraft ? 'Rascunho excluído.' : 'Participação excluída. Ela já não aparece nas suas medalhas; a limpeza dos dados continua em segundo plano.',
+          ),
+        ),
+      );
+      // Volta para a lista de onde a pessoa veio, em vez de ficar numa tela sem saída.
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (_) => wasDraft
+              ? CatalogScreen(gateway: widget.gateway)
+              : MedalCollectionScreen(gateway: widget.gateway),
+        ),
+        (route) => route.isFirst,
+      );
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) {
+        message = 'Não foi possível excluir agora. Verifique a internet e tente de novo; nada foi alterado.';
+      }
     } finally {
       if (mounted) setState(() => saving = false);
     }
@@ -1790,23 +1810,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (deleted) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Participação excluída')),
-        bottomNavigationBar: runPassNavigation(
-          context,
-          widget.gateway,
-          3,
-          subScreen: true,
-        ),
-        body: const Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            'A participação foi ocultada. A limpeza foi agendada e pode continuar em segundo plano.',
-          ),
-        ),
-      );
-    }
     if (draft['state'] == 'completed') {
       return Scaffold(
         appBar: AppBar(title: const RunPassWordmark(compact: true)),

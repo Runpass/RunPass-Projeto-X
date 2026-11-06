@@ -616,14 +616,22 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Excluir participação').last);
     await tester.pumpAndSettle();
-    expect(find.textContaining('A participação foi ocultada'), findsOneWidget);
-    expect(calls.where((c) => !c.endsWith('/image')), [
-      'GET /participations/done-1/review', // minha avaliação ao abrir
-      'GET /participations/done-1/review', // tela de edição
-      'PUT /participations/done-1/review',
-      'GET /participations/done-1/review', // recarrega ao voltar
-      'DELETE /participations/done-1',
-    ]);
+    // Depois de excluir volta para a lista de medalhas, com aviso.
+    expect(find.byType(MedalCollectionScreen), findsOneWidget);
+    expect(find.textContaining('Participação excluída'), findsOneWidget);
+    // Depois do DELETE a lista de medalhas faz suas próprias consultas.
+    expect(
+      calls
+          .sublist(0, calls.indexOf('DELETE /participations/done-1') + 1)
+          .where((c) => !c.endsWith('/image')),
+      [
+        'GET /participations/done-1/review', // minha avaliação ao abrir
+        'GET /participations/done-1/review', // tela de edição
+        'PUT /participations/done-1/review',
+        'GET /participations/done-1/review', // recarrega ao voltar
+        'DELETE /participations/done-1',
+      ],
+    );
   });
 
   Future<IdentityGateway> draftGateway(
