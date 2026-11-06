@@ -94,6 +94,62 @@ class SocialTests(unittest.TestCase):
         self.identity.profile(self.ana)
         self.assertEqual(len(self.social.search(self.bia, "marina")["items"]), 1)
 
+    def test_status_at_sign_in_makes_old_profiles_without_photo_searchable(self):
+        for key in list(self.store.items):
+            if key[1].startswith("PIDX#") or key[2] == "SEARCHIDX":
+                self.store.items.pop(key)
+        self.assertEqual(self.social.search(self.bia, "marina")["items"], [])
+        self.identity.status(self.ana)
+        self.assertEqual(
+            [p["username"] for p in self.social.search(self.bia, "paula")["items"]], ["ana_runs"]
+        )
+
+    # ---- likes, last comment, notifications ----
+    def test_likes_count_once_and_last_comment_is_shown_on_the_post(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        self.assertEqual(self.social.like(self.bia, "p1", "l1")["likedByMe"], True)
+        self.social.like(self.bia, "p1", "l2")
+        self.social.like(self.caio, "p1", "l3")
+        post = self.social.post(self.bia, "p1")
+        self.assertEqual((post["likeCount"], post["likedByMe"]), (2, True))
+        self.assertNotIn("lastComment", post)
+        self.social.comment(self.bia, "p1", "c1", "Parabéns! 🎉 ção")
+        self.social.comment(self.caio, "p1", "c2", "Muito bom")
+        post = self.social.post(self.bia, "p1")
+        listed = self.social.comments(self.ana, "p1")["items"]
+        self.assertEqual((post["commentCount"], post["lastComment"]["id"]), (2, listed[-1]["id"]))
+        self.assertEqual(self.social.like(self.bia, "p1", "l4", liked=False)["likedByMe"], False)
+        self.assertEqual(self.social.post(self.bia, "p1")["likeCount"], 1)
+        self.assertIn("Parabéns! 🎉 ção", [c["text"] for c in listed])
+
+    def test_notifications_cover_follow_requests_likes_comments_and_friend_posts(self):
+        self.private(self.ana)
+        self.complete(self.ana, "p1", "2026-11-05T10:00:00Z")
+        self.social.follow(self.bia, "ana", "f1")
+        self.social.decide(self.ana, "bia", True, "d1")
+        self.social.follow(self.caio, "ana", "f2")
+        self.social.like(self.bia, "p1", "l1")
+        self.social.comment(self.bia, "p1", "c1", "Show")
+        self.social.like(self.ana, "p1", "l2")
+        self.complete(self.bia, "p2", "2026-11-06T09:00:00Z")
+        self.social.follow(self.ana, "bia", "f3")
+        mine = self.social.notifications(self.ana)
+        kinds = sorted((i["kind"], i["actor"]["username"]) for i in mine["items"])
+        self.assertEqual(
+            kinds,
+            [
+                ("comment", "bia_lima"),
+                ("follow", "bia_lima"),
+                ("follow_request", "caio"),
+                ("like", "bia_lima"),
+                ("post", "bia_lima"),
+            ],
+        )
+        self.assertEqual(mine["unreadCount"], 5)
+        self.social.mark_notifications_read(self.ana, "r1")
+        self.assertEqual(self.social.notifications(self.ana)["unreadCount"], 0)
+        self.assertEqual(self.social.notifications(self.caio)["items"], [])
+
     # ---- follow ----
     def test_public_profile_is_followed_immediately_and_unfollowed(self):
         self.assertEqual(self.social.follow(self.bia, "ana", "f1")["state"], "active")

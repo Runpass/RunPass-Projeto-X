@@ -313,6 +313,22 @@ def create_app(
     def get_post(id: str, actor: Actor):
         return friends().post(actor, id)
 
+    @app.put("/posts/{id}/like", operation_id="likePost")
+    def put_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like(actor, id, idempotency_key, True)
+
+    @app.delete("/posts/{id}/like", operation_id="unlikePost")
+    def delete_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like(actor, id, idempotency_key, False)
+
+    @app.get("/me/notifications", operation_id="listMyNotifications")
+    def list_notifications(actor: Actor):
+        return friends().notifications(actor)
+
+    @app.post("/me/notifications/read", operation_id="markMyNotificationsRead")
+    def read_notifications(actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().mark_notifications_read(actor, idempotency_key)
+
     @app.get("/posts/{id}/comments", operation_id="listPostComments")
     def list_comments(
         id: str,

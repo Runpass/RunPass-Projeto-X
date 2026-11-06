@@ -247,6 +247,10 @@ class IdentityService:
     def status(self, principal):
         def work(read, write, account, now, replay):
             control = read(("identity", "BETA#v1", "CONTROL")) or {"count": 0}
+            profile = read(("identity", "USER#" + principal.subject, "PROFILE"))
+            if profile and account and account.get("state") == "active":
+                # Runs at every sign-in, so profiles created before search existed become findable.
+                self._sync_index(read, write, principal.subject, profile)
             waiting = read(("identity", "USER#" + principal.subject, "WAITLIST"))
             closed = bool(
                 control.get("endsAt") and now >= datetime.fromisoformat(control["endsAt"])

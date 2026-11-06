@@ -4610,6 +4610,73 @@
         },
         "x-requires-beta-admission": true
       }
+    },
+    "/me/notifications": {
+      "get": {
+        "operationId": "listMyNotifications",
+        "tags": [
+          "Social"
+        ],
+        "description": "Avisos derivados do que existe: pedidos e novos seguidores, curtidas e comentarios nas minhas publicacoes e publicacoes de quem sigo (ultimos 30 dias, ate 50). Nada extra para apagar na exclusao da conta.",
+        "responses": {
+          "200": {
+            "description": "Resultado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/me/notifications/read": {
+      "post": {
+        "operationId": "markMyNotificationsRead",
+        "tags": [
+          "Social"
+        ],
+        "description": "Marca todos os avisos atuais como lidos.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resultado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationsRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
     }
   },
   "components": {
@@ -5279,6 +5346,12 @@
             "type": "string",
             "description": "Brazilian state code, distinct from edition status."
           },
+          "country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 80,
+            "description": "Pais da prova; ausente significa Brasil. Alimenta Paises visitados no medalheiro."
+          },
           "distances": {
             "type": "array",
             "minItems": 1,
@@ -5773,6 +5846,10 @@
           "comment": {
             "type": "string",
             "description": "Texto do autor sobre a corrida."
+          },
+          "lastComment": {
+            "$ref": "#/components/schemas/Comment",
+            "description": "Comentario mais recente, mostrado em destaque na publicacao."
           }
         },
         "required": [
@@ -6629,6 +6706,12 @@
             "type": "string",
             "description": "Brazilian state code, distinct from edition status."
           },
+          "country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 80,
+            "description": "Pais da prova; ausente significa Brasil. Alimenta Paises visitados no medalheiro."
+          },
           "distances": {
             "type": "array",
             "minItems": 1,
@@ -6708,6 +6791,12 @@
           "state": {
             "type": "string",
             "description": "Brazilian state code, distinct from edition status."
+          },
+          "country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 80,
+            "description": "Pais da prova; ausente significa Brasil. Alimenta Paises visitados no medalheiro."
           },
           "distances": {
             "type": "array",
@@ -7442,6 +7531,87 @@
             }
           }
         }
+      },
+      "Notification": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "follow_request",
+              "follow",
+              "like",
+              "comment",
+              "post"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "unread": {
+            "type": "boolean"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/PublicProfile"
+          },
+          "postId": {
+            "type": "string"
+          },
+          "editionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "text": {
+            "type": "string",
+            "description": "Trecho do comentario (ate 140 caracteres)."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "createdAt",
+          "unread",
+          "actor"
+        ]
+      },
+      "NotificationPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            }
+          },
+          "unreadCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "unreadCount"
+        ]
+      },
+      "NotificationsRead": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "readAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "readAt"
+        ]
       }
     }
   }

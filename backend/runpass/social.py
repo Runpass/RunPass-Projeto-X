@@ -262,8 +262,11 @@ class SocialService:
 
     # ---- posts, feed, comments -----------------------------------------------------------
 
-    def _comment_count(self, post_id):
-        return len(self._list("history", "POST#" + post_id, "COMMENT#", 1000))
+    def _comment_rows(self, post_id):
+        return self._list("history", "POST#" + post_id, "COMMENT#", 1000)
+
+    def _like_rows(self, post_id):
+        return self._list("history", "POST#" + post_id, "LIKE#", 1000)
 
     def _post_view(self, part, viewer):
         author = self._active_profile(self.store.get, part["owner"])
@@ -274,8 +277,14 @@ class SocialService:
             "participation": self._public_participation(part, viewer),
             "publishedAt": part.get("completedAt", ""),
             "version": part["version"],
-            "commentCount": self._comment_count(part["id"]),
         }
+        comments = self._comment_rows(part["id"])
+        post["commentCount"] = len(comments)
+        if comments:
+            post["lastComment"] = self._comment_out(comments[-1][1], viewer)
+        likes = self._like_rows(part["id"])
+        post["likeCount"] = len(likes)
+        post["likedByMe"] = any(sk == "LIKE#" + viewer for sk, _ in likes)
         if review and review.get("comment") and review.get("moderationState") != "invalidated":
             post["comment"] = review["comment"]
         return post
@@ -300,15 +309,12 @@ class SocialService:
             self._authorized_post(self.store.get, actor.subject, post_id), actor.subject
         )
 
-    def feed(self, actor, limit=20, cursor=None):
-        """My posts plus those of people I follow, newest first."""
-        self.identity.authorize(actor, admitted=True)
-        authors = [actor.subject] + [
+    def _feed_posts(self, actor, after=None, mine=True):
+        authors = ([actor.subject] if mine else []) + [
             sk.split("#", 1)[1]
             for sk, row in self._list("identity", "USER#" + actor.subject, "FOLLOWING#")
             if row["state"] == "active"
         ][: MAX_FEED_AUTHORS - 1]
-        after = _cursor_decode(cursor) if cursor else None
         posts = []
         for author in authors:
             if not self.can_view(self.store.get, actor.subject, author):
@@ -319,6 +325,12 @@ class SocialService:
                     if after is None or key < tuple(after):
                         posts.append({**part, "owner": author})
         posts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
+        return posts
+
+    def feed(self, actor, limit=20, cursor=None):
+        """My posts plus those of people I follow, newest first."""
+        self.identity.authorize(actor, admitted=True)
+        posts = self._feed_posts(actor, _cursor_decode(cursor) if cursor else None)
         page = posts[:limit]
         result = {"items": [self._post_view(p, actor.subject) for p in page]}
         if len(posts) > limit:
@@ -349,6 +361,101 @@ class SocialService:
         if after:
             result["nextCursor"] = after
         return result
+
+    def like(self, actor, post_id, key, liked=True):
+        def work(read, write, account, now, replay):
+            self._authorized_post(read, actor.subject, post_id)
+            like_key = ("history", "POST#" + post_id, "LIKE#" + actor.subject)
+            ref_key = ("identity", "USER#" + actor.subject, "LIKEREF#" + post_id)
+            exists = read(like_key) is not None
+            if liked and not exists:
+                write(like_key, {"author": actor.subject, "createdAt": stamp(now)})
+                write(ref_key, {"sharedKeys": [list(like_key)]})
+            elif not liked and exists:
+                write(like_key, None)
+                write(ref_key, None)
+            return {"postId": post_id, "likedByMe": liked}, {}
+
+        return self.identity.transact(
+            actor,
+            "putPostLike" if liked else "deletePostLike",
+            key,
+            {"postId": post_id},
+            work,
+            admitted=True,
+        )
+
+    # ---- notifications (derived from what already exists; nothing extra to erase) ---------
+
+    NOTIFICATION_DAYS = 30
+    NOTIFICATION_LIMIT = 50
+    NOTIFICATION_POSTS = 20
+
+    def _notification_items(self, actor, since):
+        me = actor.subject
+        items = []
+
+        def add(kind, at, who, post=None, extra=None):
+            if at < since:
+                return
+            profile = self._active_profile(self.store.get, who)
+            if not profile:
+                return
+            item = {
+                "id": ":".join([kind, who, (post or {}).get("id", ""), at]),
+                "kind": kind,
+                "createdAt": at,
+                "actor": self._card(profile, me),
+            }
+            if post:
+                item["postId"] = post["id"]
+                item["editionId"] = post.get("editionId")
+            if extra:
+                item.update(extra)
+            items.append(item)
+
+        for sk, row in self._list("identity", "USER#" + me, "FOLLOWER#"):
+            who = sk.split("#", 1)[1]
+            add("follow_request" if row["state"] == "pending" else "follow", row["at"], who)
+        mine = [p for p in self._completed(me) if p.get("publishToFeed")]
+        for part in mine[: self.NOTIFICATION_POSTS]:
+            for sk, row in self._like_rows(part["id"]):
+                if row["author"] != me:
+                    add("like", row["createdAt"], row["author"], part)
+            for _, row in self._comment_rows(part["id"]):
+                if row["author"] != me:
+                    add(
+                        "comment",
+                        row["createdAt"],
+                        row["author"],
+                        part,
+                        {"text": row["text"][:140]},
+                    )
+        for part in self._feed_posts(actor, mine=False)[: self.NOTIFICATION_POSTS]:
+            add("post", part.get("completedAt", ""), part["owner"], part)
+        items.sort(key=lambda i: i["createdAt"], reverse=True)
+        return items[: self.NOTIFICATION_LIMIT]
+
+    def notifications(self, actor):
+        self.identity.authorize(actor, admitted=True)
+        from datetime import timedelta
+
+        now = self.identity.clock()
+        since = stamp(now - timedelta(days=self.NOTIFICATION_DAYS))
+        state = self.store.get(("identity", "USER#" + actor.subject, "NOTIFSTATE")) or {}
+        read_at = state.get("readAt", "")
+        items = self._notification_items(actor, since)
+        for item in items:
+            item["unread"] = item["createdAt"] > read_at
+        return {"items": items, "unreadCount": sum(1 for i in items if i["unread"])}
+
+    def mark_notifications_read(self, actor, key):
+        def work(read, write, account, now, replay):
+            row_key = ("identity", "USER#" + actor.subject, "NOTIFSTATE")
+            write(row_key, {"readAt": stamp(now)})
+            return {"readAt": stamp(now)}, {}
+
+        return self.identity.transact(actor, "markNotificationsRead", key, {}, work, admitted=True)
 
     def comment(self, actor, post_id, key, text):
         text = text.strip()
@@ -390,10 +497,11 @@ class SocialService:
         )
 
     def _comment_out(self, row, actor):
+        viewer = actor if isinstance(actor, str) else actor.subject
         profile = self._active_profile(self.store.get, row["author"]) or {}
         return {
             **{k: v for k, v in row.items() if k != "author"},
-            "author": self._card(profile, actor.subject) if profile else {"id": row["author"]},
+            "author": self._card(profile, viewer) if profile else {"id": row["author"]},
         }
 
     def delete_comment(self, actor, comment_id, key):

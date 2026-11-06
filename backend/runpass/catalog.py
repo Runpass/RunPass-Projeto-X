@@ -277,6 +277,8 @@ class ImportEdition(Input):
     date: str
     city: str = Field(min_length=1)
     state: str = Field(pattern=r"^[A-Z]{2}$")
+    # Pais da prova; ausente significa Brasil. Alimenta "Paises visitados" no medalheiro.
+    country: str | None = Field(default=None, min_length=2, max_length=80)
     distances: list[ImportDistance] = Field(min_length=1)
     description: str | None = None
     organizerName: str | None = None
@@ -289,10 +291,10 @@ class ImportEdition(Input):
     # Por que a edição saiu de circulação; só vale com archived=True.
     archivedReason: Literal["cancelled", "unavailable", "duplicate", "ended"] | None = None
 
-    @field_validator("name", "city")
+    @field_validator("name", "city", "country")
     @classmethod
     def nonblank(cls, value):
-        if not normalized(value):
+        if value is not None and not normalized(value):
             raise ValueError("Nonblank text required")
         return value
 
