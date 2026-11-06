@@ -4783,6 +4783,100 @@
         "x-requires-beta-admission": true,
         "description": "Link assinado e curto do banner do perfil, so para quem pode ver o perfil."
       }
+    },
+    "/comments/{id}/like": {
+      "put": {
+        "operationId": "likeComment",
+        "tags": [
+          "Social"
+        ],
+        "description": "Uma curtida ativa por pessoa e comentario; segue a visibilidade da publicacao.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentLikeState"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      },
+      "delete": {
+        "operationId": "unlikeComment",
+        "tags": [
+          "Social"
+        ],
+        "description": "Remove a propria curtida do comentario (idempotente).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentLikeState"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
     }
   },
   "components": {
@@ -6109,6 +6203,28 @@
             "type": "string",
             "format": "date-time",
             "description": "Most recent actual text change; absent before first edit."
+          },
+          "likeCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "likedByMe": {
+            "type": "boolean"
+          },
+          "parentId": {
+            "type": "string",
+            "description": "Id do comentario principal quando e uma resposta."
+          },
+          "replyCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "replies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Comment"
+            },
+            "description": "Respostas (so no comentario principal)."
           }
         },
         "required": [
@@ -6128,6 +6244,12 @@
           "text": {
             "type": "string",
             "minLength": 1
+          },
+          "parentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Comentario que esta sendo respondido; resposta a resposta vira resposta ao principal. No maximo 20 respostas por comentario."
           }
         },
         "required": [
@@ -7663,7 +7785,9 @@
               "follow",
               "like",
               "comment",
-              "post"
+              "post",
+              "comment_like",
+              "reply"
             ]
           },
           "createdAt": {
@@ -7686,6 +7810,9 @@
           "text": {
             "type": "string",
             "description": "Trecho do comentario (ate 140 caracteres)."
+          },
+          "commentId": {
+            "type": "string"
           }
         },
         "required": [
@@ -7727,6 +7854,23 @@
         },
         "required": [
           "readAt"
+        ]
+      },
+      "CommentLikeState": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "commentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "likedByMe": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "commentId",
+          "likedByMe"
         ]
       }
     }

@@ -264,4 +264,95 @@ void main() {
       expect(find.byIcon(Icons.person), findsNWidgets(2));
     },
   );
+
+  testWidgets('comentarios: curtir, responder e abrir o perfil do autor', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    final bodies = <Map<String, dynamic>?>[];
+    final gateway = await gatewayWith((uri, method, headers, body) async {
+      calls.add('$method ${uri.path}');
+      if (method == 'POST' && uri.path == '/posts/p1/comments') {
+        bodies.add(body);
+        return const JsonReply(201, {'id': 'novo'});
+      }
+      if (uri.path.endsWith('/like')) {
+        return const JsonReply(200, {'commentId': 'c1', 'likedByMe': true});
+      }
+      if (uri.path == '/profiles/ana') {
+        return JsonReply(200, {
+          ...person('ana'),
+          'canView': true,
+          'followersCount': 0,
+          'followingCount': 0,
+          'participationCount': 0,
+        });
+      }
+      if (uri.path == '/posts/p1/comments') {
+        return JsonReply(200, {
+          'items': [
+            {
+              'id': 'c1',
+              'postId': 'p1',
+              'text': 'Principal',
+              'createdAt': '2026-11-06T10:00:00Z',
+              'likeCount': 1,
+              'likedByMe': false,
+              'author': person('ana'),
+              'replies': [
+                {
+                  'id': 'r1',
+                  'postId': 'p1',
+                  'parentId': 'c1',
+                  'text': 'Resposta',
+                  'createdAt': '2026-11-06T11:00:00Z',
+                  'likeCount': 0,
+                  'likedByMe': false,
+                  'author': person('bia'),
+                },
+              ],
+            },
+          ],
+        });
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CommentsScreen(
+          gateway: gateway,
+          postId: 'p1',
+          title: 'Corrida',
+          myId: 'eu',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Principal'), findsOneWidget);
+    expect(find.text('Resposta'), findsOneWidget);
+    expect(find.byKey(const Key('like-count-c1')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('like-comment-c1')));
+    await tester.pumpAndSettle();
+    expect(calls, contains('PUT /comments/c1/like'));
+    expect(find.text('2'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('like-comment-c1')));
+    await tester.pumpAndSettle();
+    expect(calls, contains('DELETE /comments/c1/like'));
+
+    // Responder a uma resposta responde ao comentario principal.
+    await tester.tap(find.byKey(const Key('reply-r1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('replying-to')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('comment-field')), 'Valeu!');
+    await tester.tap(find.byKey(const Key('comment-send')));
+    await tester.pumpAndSettle();
+    expect(bodies.single, {'text': 'Valeu!', 'parentId': 'c1'});
+    expect(find.byKey(const Key('replying-to')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('comment-author-c1')));
+    await tester.pumpAndSettle();
+    expect(calls, contains('GET /profiles/ana'));
+    expect(find.byKey(const Key('follow-button')), findsOneWidget);
+  });
 }

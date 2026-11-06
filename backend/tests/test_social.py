@@ -384,6 +384,84 @@ class SocialTests(unittest.TestCase):
         self.assertEqual(leftovers, [])
         self.assertEqual(self.social.profile_view(self.caio, "ana")["followingCount"], 1)
 
+    # ---- curtir e responder comentarios ----
+    def test_comment_likes_count_once_and_follow_post_visibility(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        made = self.social.comment(self.bia, "p1", "c1", "Show")
+        cid = made["id"]
+        self.assertEqual(self.social.like_comment(self.caio, cid, "l1")["likedByMe"], True)
+        self.social.like_comment(self.caio, cid, "l2")
+        self.social.like_comment(self.ana, cid, "l3")
+        top = self.social.comments(self.caio, "p1")["items"][0]
+        self.assertEqual((top["likeCount"], top["likedByMe"]), (2, True))
+        self.assertEqual(self.social.comments(self.bia, "p1")["items"][0]["likedByMe"], False)
+        self.assertEqual(
+            self.social.like_comment(self.caio, cid, "l4", liked=False)["likedByMe"], False
+        )
+        self.assertEqual(self.social.comments(self.caio, "p1")["items"][0]["likeCount"], 1)
+        with self.assertRaises(Problem) as missing:
+            self.social.like_comment(self.caio, "nao-existe", "l5")
+        self.assertEqual(missing.exception.code, "COMMENT_NOT_FOUND")
+        self.private(self.ana)
+        with self.assertRaises(Problem):
+            self.social.like_comment(self.caio, cid, "l6")  # nao segue o perfil privado
+
+    def test_replies_nest_under_the_main_comment_and_go_with_it(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        root = self.social.comment(self.bia, "p1", "c1", "Principal")
+        first = self.social.comment(self.caio, "p1", "c2", "Resposta 1", root["id"])
+        # responder a uma resposta vira resposta ao principal
+        second = self.social.comment(self.ana, "p1", "c3", "Resposta 2", first["id"])
+        self.assertEqual((first["parentId"], second["parentId"]), (root["id"], root["id"]))
+        page = self.social.comments(self.ana, "p1")
+        self.assertEqual(len(page["items"]), 1)
+        self.assertEqual(page["items"][0]["replyCount"], 2)
+        self.assertEqual(
+            sorted(r["text"] for r in page["items"][0]["replies"]), ["Resposta 1", "Resposta 2"]
+        )
+        with self.assertRaises(Problem) as bad:
+            self.social.comment(self.caio, "p1", "c4", "x", "nao-existe")
+        self.assertEqual(bad.exception.code, "INVALID_PARENT_COMMENT")
+        self.complete(self.bia, "p2", "2026-11-02T10:00:00Z")
+        with self.assertRaises(Problem):
+            self.social.comment(self.caio, "p2", "c5", "x", root["id"])  # pai de outra publicacao
+        self.social.delete_comment(self.bia, root["id"], "d1")
+        self.assertEqual(self.social.comments(self.ana, "p1")["items"], [])
+        self.assertEqual(self.social.post(self.ana, "p1")["commentCount"], 0)
+        for made in (first, second):
+            self.assertIsNone(self.store.get(("history", "COMMENT#" + made["id"], "LOC")))
+
+    def test_reply_limit(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        root = self.social.comment(self.bia, "p1", "c0", "Principal")
+        for n in range(self.social.MAX_REPLIES):
+            self.social.comment(self.caio, "p1", f"r{n}", f"r{n}", root["id"])
+        with self.assertRaises(Problem) as limit:
+            self.social.comment(self.caio, "p1", "rx", "demais", root["id"])
+        self.assertEqual(limit.exception.code, "REPLY_LIMIT_REACHED")
+
+    def test_notifications_for_comment_likes_and_replies(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        root = self.social.comment(self.bia, "p1", "c1", "Meu comentario")
+        self.social.like_comment(self.caio, root["id"], "l1")
+        self.social.comment(self.caio, "p1", "c2", "Respondendo", root["id"])
+        mine = self.social.notifications(self.bia)["items"]
+        kinds = sorted((i["kind"], i["actor"]["username"]) for i in mine)
+        self.assertEqual(kinds, [("comment_like", "caio"), ("reply", "caio")])
+        # quem e dono da publicacao recebe aviso de comentario, nao duplica com "resposta"
+        owner_kinds = sorted(i["kind"] for i in self.social.notifications(self.ana)["items"])
+        self.assertEqual(owner_kinds, ["comment", "comment"])
+
+    def test_erasing_a_commenter_removes_comment_likes_and_replies(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        root = self.social.comment(self.ana, "p1", "c1", "Principal")
+        self.social.comment(self.bia, "p1", "c2", "Resposta", root["id"])
+        self.social.like_comment(self.bia, root["id"], "l1")
+        self.identity.delete_account(self.bia, "del-bia")
+        ErasureProcessor(self.identity).run_pending()
+        item = self.social.comments(self.ana, "p1")["items"][0]
+        self.assertEqual((item["replyCount"], item["likeCount"]), (0, 0))
+
 
 if __name__ == "__main__":
     unittest.main()

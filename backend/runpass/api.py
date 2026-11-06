@@ -344,7 +344,15 @@ def create_app(
 
     @app.post("/posts/{id}/comments", status_code=201, operation_id="createPostComment")
     def create_comment(id: str, body: CreateComment, actor: Actor, idempotency_key: IdempotencyKey):
-        return friends().comment(actor, id, idempotency_key, body.text)
+        return friends().comment(actor, id, idempotency_key, body.text, body.parentId)
+
+    @app.put("/comments/{id}/like", operation_id="likeComment")
+    def put_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like_comment(actor, id, idempotency_key, True)
+
+    @app.delete("/comments/{id}/like", operation_id="unlikeComment")
+    def delete_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like_comment(actor, id, idempotency_key, False)
 
     @app.delete("/comments/{id}", operation_id="deleteOwnComment")
     def delete_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):

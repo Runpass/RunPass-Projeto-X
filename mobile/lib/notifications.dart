@@ -20,6 +20,8 @@ String notificationText(Map<String, dynamic> item) {
     'like' => '$name curtiu sua publicação.',
     'comment' => '$name comentou: “${item['text'] ?? ''}”',
     'post' => '$name publicou uma conquista.',
+    'comment_like' => '$name curtiu seu comentário.',
+    'reply' => '$name respondeu seu comentário: “${item['text'] ?? ''}”',
     _ => '$name interagiu com você.',
   };
 }
@@ -29,6 +31,8 @@ IconData notificationIcon(String? kind) => switch (kind) {
   'follow' => Icons.person_rounded,
   'like' => Icons.favorite_rounded,
   'comment' => Icons.chat_bubble_rounded,
+  'comment_like' => Icons.favorite_rounded,
+  'reply' => Icons.reply_rounded,
   _ => Icons.emoji_events_rounded,
 };
 

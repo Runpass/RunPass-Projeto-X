@@ -156,6 +156,8 @@ class ReplaceReview(Input):
 
 class CreateComment(Input):
     text: Annotated[str, Field(min_length=1, max_length=1000)]
+    # Resposta a um comentario (um nivel: responder a uma resposta vira resposta ao comentario raiz).
+    parentId: Annotated[str, Field(min_length=1, max_length=64)] | None = None
 
     @field_validator("text")
     @classmethod
