@@ -1352,6 +1352,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   String? distanceId;
   // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
   static final Map<String, Map<String, dynamic>> formCache = {};
+  int photoRevision = 0;
   // Comeca vazio (0): a pessoa precisa dar uma nota de 1 a 5 em cada criterio.
   final ratings = {
     'organization': 0,
@@ -1599,6 +1600,47 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
+  /// Corrida concluída: escolhe outra foto e troca a da medalha.
+  Future<void> changeMedalPhoto() async {
+    imageReference = null;
+    await selectPhoto();
+    if (!mounted) return;
+    final reference = imageReference;
+    if (reference == null) {
+      setState(() {
+        message ??= 'A foto ainda não foi trocada. Tente de novo.';
+        if (pendingUploadId != null) {
+          message = 'A foto está em processamento. Tente trocar de novo em instantes.';
+        }
+      });
+      return;
+    }
+    setState(() {
+      saving = true;
+      message = null;
+    });
+    try {
+      draft = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(draft['id'] as String)}',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': draft['version'],
+          'medalImageReference': reference,
+        },
+      );
+      forgetMedalPhoto(draft['id'] as String);
+      photoRevision++;
+      message = 'Foto da medalha atualizada.';
+    } on IdentityIssue catch (issue) {
+      message = catalogError(issue);
+    } on Exception {
+      message =
+          'Não foi possível trocar a foto agora. A foto anterior foi mantida.';
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
   Future<void> refreshPhoto() async {
     final uploadId = pendingUploadId;
     if (uploadId == null) return;
@@ -1777,26 +1819,39 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         body: ListView(
           padding: const EdgeInsets.all(24),
           children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Color(0xffffe4dc),
-              ),
-              child: const Icon(
-                Icons.emoji_events_rounded,
-                size: 40,
-                color: runPassOrange,
+            SizedBox(
+              height: 220,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: ColoredBox(
+                  color: const Color(0xffffe4dc),
+                  child: MedalPhoto(
+                    key: ValueKey('medal-photo-$photoRevision'),
+                    gateway: widget.gateway,
+                    participationId: draft['id'] as String?,
+                    size: 72,
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const Key('change-medal-photo'),
+              onPressed: saving || uploading ? null : changeMedalPhoto,
+              icon: const Icon(Icons.photo_library_outlined),
+              label: Text(
+                uploading ? 'Enviando foto...' : 'Trocar foto da medalha',
+              ),
+            ),
+            const SizedBox(height: 12),
             const Text(
               'Participação concluída · medalha e avaliação registradas.',
             ),
             const SizedBox(height: 8),
-            const Text(
-              'A conquista permanece privada enquanto a publicação não estiver disponível.',
+            Text(
+              draft['publishToFeed'] == true
+                  ? 'Conquista publicada: quem pode ver seu perfil vê esta corrida.'
+                  : 'Conquista não publicada: só você vê esta corrida.',
             ),
             const SizedBox(height: 12),
             if (review != null) MyReviewView(review: review!),
