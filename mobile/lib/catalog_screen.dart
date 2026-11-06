@@ -159,6 +159,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
   bool loading = false;
+  bool showFilters = false;
 
   @override
   void initState() {
@@ -264,11 +265,25 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: const RunPassWordmark(compact: true),
-      actions: const [
-        Icon(Icons.search_rounded),
-        SizedBox(width: 16),
-        Badge(child: Icon(Icons.notifications_none_rounded)),
-        SizedBox(width: 18),
+      actions: [
+        IconButton(
+          key: const Key('catalog-search-toggle'),
+          tooltip: showFilters ? 'Fechar pesquisa' : 'Pesquisar corridas',
+          icon: Icon(showFilters ? Icons.close_rounded : Icons.search_rounded),
+          onPressed: () {
+            if (showFilters && activeFilters.isNotEmpty) {
+              // Ao fechar a pesquisa, volta a lista completa.
+              for (final controller in fields.values) {
+                controller.clear();
+              }
+              load();
+            }
+            setState(() => showFilters = !showFilters);
+          },
+        ),
+        const SizedBox(width: 8),
+        const Badge(child: Icon(Icons.notifications_none_rounded)),
+        const SizedBox(width: 18),
       ],
     ),
     bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
@@ -276,73 +291,74 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Form(
-                key: form,
-                child: Column(
-                  children: [
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Encontre sua próxima conquista',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 18,
+          if (showFilters)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Form(
+                  key: form,
+                  child: Column(
+                    children: [
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Encontre sua próxima conquista',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 18,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    filter(
-                      'namePrefix',
-                      'Início do nome da corrida',
-                      maxLength: 160,
-                    ),
-                    filter('city', 'Cidade', maxLength: 100),
-                    filter(
-                      'state',
-                      'Estado (UF)',
-                      maxLength: 2,
-                      validate: (value) =>
-                          RegExp(r'^[A-Za-z]{2}$').hasMatch(value)
-                          ? null
-                          : 'Informe a UF.',
-                    ),
-                    filter(
-                      'distanceKm',
-                      'Distância em km',
-                      validate: (value) {
-                        final km = double.tryParse(value);
-                        return km != null && km.isFinite && km > 0
+                      const SizedBox(height: 12),
+                      filter(
+                        'namePrefix',
+                        'Início do nome da corrida',
+                        maxLength: 160,
+                      ),
+                      filter('city', 'Cidade', maxLength: 100),
+                      filter(
+                        'state',
+                        'Estado (UF)',
+                        maxLength: 2,
+                        validate: (value) =>
+                            RegExp(r'^[A-Za-z]{2}$').hasMatch(value)
                             ? null
-                            : 'Informe uma distância positiva, usando ponto para decimais.';
-                      },
-                    ),
-                    filter(
-                      'dateFrom',
-                      'Data inicial (AAAA-MM-DD)',
-                      validate: dateValidator,
-                    ),
-                    filter(
-                      'dateTo',
-                      'Data final (AAAA-MM-DD)',
-                      validate: dateValidator,
-                    ),
-                    FilledButton(
-                      onPressed: loading ? null : () => load(),
-                      child: const Text('Buscar'),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: loading ? null : clearSearch,
-                      child: const Text('Limpar busca'),
-                    ),
-                  ],
+                            : 'Informe a UF.',
+                      ),
+                      filter(
+                        'distanceKm',
+                        'Distância em km',
+                        validate: (value) {
+                          final km = double.tryParse(value);
+                          return km != null && km.isFinite && km > 0
+                              ? null
+                              : 'Informe uma distância positiva, usando ponto para decimais.';
+                        },
+                      ),
+                      filter(
+                        'dateFrom',
+                        'Data inicial (AAAA-MM-DD)',
+                        validate: dateValidator,
+                      ),
+                      filter(
+                        'dateTo',
+                        'Data final (AAAA-MM-DD)',
+                        validate: dateValidator,
+                      ),
+                      FilledButton(
+                        onPressed: loading ? null : () => load(),
+                        child: const Text('Buscar'),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton(
+                        onPressed: loading ? null : clearSearch,
+                        child: const Text('Limpar busca'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
           const SizedBox(height: 16),
           if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
@@ -1295,7 +1311,7 @@ class RatingInput extends StatelessWidget {
             constraints: const BoxConstraints(minWidth: 34, minHeight: 40),
             icon: Icon(
               star <= value ? Icons.star_rounded : Icons.star_border_rounded,
-              color: runPassOrange,
+              color: runPassGold,
               size: 28,
             ),
             onPressed: onChanged == null ? null : () => onChanged!(star),
@@ -1336,16 +1352,18 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   String? distanceId;
   // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
   static final Map<String, Map<String, dynamic>> formCache = {};
+  // Comeca vazio (0): a pessoa precisa dar uma nota de 1 a 5 em cada criterio.
   final ratings = {
-    'organization': 5,
-    'course': 5,
-    'kit': 5,
-    'medal': 5,
-    'hydration': 5,
-    'facilities': 5,
-    'safety': 5,
-    'valueForMoney': 5,
+    'organization': 0,
+    'course': 0,
+    'kit': 0,
+    'medal': 0,
+    'hydration': 0,
+    'facilities': 0,
+    'safety': 0,
+    'valueForMoney': 0,
   };
+  bool get ratingsComplete => ratings.values.every((v) => v >= 1);
 
   @override
   void initState() {
@@ -1904,7 +1922,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               RatingInput(
                 label: label,
                 icon: icon,
-                value: ratings[key] ?? 5,
+                value: ratings[key] ?? 0,
                 onChanged: saving
                     ? null
                     : (value) => setState(() => ratings[key] = value),
@@ -1930,8 +1948,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 'Publicar conquista quando o feed estiver disponível',
               ),
             ),
+            if (!ratingsComplete)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Dê uma nota de 1 a 5 estrelas em todos os critérios para concluir.',
+                ),
+              ),
             FilledButton(
-              onPressed: saving ? null : complete,
+              onPressed: saving || !ratingsComplete ? null : complete,
               child: Text(saving ? 'Concluindo...' : 'Concluir participação'),
             ),
           ],

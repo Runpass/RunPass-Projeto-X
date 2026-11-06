@@ -61,6 +61,9 @@ void main() {
       expect(find.text('Encontre sua próxima conquista'), findsNothing);
       await tester.tap(find.text('Corridas'));
       await tester.pumpAndSettle();
+      expect(find.text('Encontre sua próxima conquista'), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+      await tester.pumpAndSettle();
       expect(find.text('Encontre sua próxima conquista'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('Carregar mais').hitTestable(),
