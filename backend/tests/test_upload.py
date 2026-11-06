@@ -56,6 +56,50 @@ class UploadTests(unittest.TestCase):
         )
         return session, version
 
+    def seed_medal(self, origin="runner", state="completed"):
+        pid = "p1"
+        rows = {
+            ("history", "PARTICIPATION#" + pid, "OWNER"): {"owner": "owner"},
+            ("history", "USER#owner", "P#p1#PART"): {"state": state},
+            ("history", "USER#owner", "P#p1#MEDAL"): {
+                "imageReference": "ref1",
+                "imageOrigin": origin,
+            },
+        }
+        self.store.commit({k: None for k in rows}, rows)
+        self.blobs.write_derived("ref1", b"bytes", "image/jpeg", "owner")
+        return pid
+
+    def test_owner_gets_a_short_lived_link_and_others_get_404(self):
+        pid = self.seed_medal()
+        link = self.service.medal_image(self.actor, pid)
+        self.assertEqual(link["contentType"], "image/jpeg")
+        self.assertTrue(link["url"].startswith("memory://private/derived/ref1"))
+        self.assertEqual(link["expiresAt"], "2026-10-28T15:05:00Z")
+        other = self.admit("other")
+        with self.assertRaises(Problem) as denied:
+            self.service.medal_image(other, pid)
+        self.assertEqual(
+            (denied.exception.status, denied.exception.code), (404, "IMAGE_NOT_AVAILABLE")
+        )
+        with self.assertRaises(Problem) as missing:
+            self.service.medal_image(other, "does-not-exist")
+        self.assertEqual(missing.exception.code, "IMAGE_NOT_AVAILABLE")
+
+    def test_visibility_rule_can_be_injected_and_drafts_or_official_art_have_no_photo(self):
+        pid = self.seed_medal()
+        other = self.admit("other")
+        shared = UploadService(self.identity, self.blobs, may_view=lambda read, actor, owner: True)
+        self.assertIn("url", shared.medal_image(other, pid))
+        with self.assertRaises(Problem):
+            self.service.medal_image(self.actor, "p-draft")
+        key = ("history", "USER#owner", "P#p1#MEDAL")
+        self.store.commit(
+            {key: self.store.get(key)}, {key: {"imageReference": "ref1", "imageOrigin": "official"}}
+        )
+        with self.assertRaises(Problem):
+            self.service.medal_image(self.actor, pid)
+
     def test_valid_image_is_oriented_and_stripped_before_reference(self):
         source = jpeg(size=(40, 20), orientation=6)
         session, _ = self.start_and_put(source)

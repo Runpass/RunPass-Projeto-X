@@ -521,6 +521,50 @@
         "x-requires-beta-admission": true
       }
     },
+    "/participations/{id}/image": {
+      "get": {
+        "operationId": "getParticipationImage",
+        "summary": "Link temporario e assinado para a foto sanitizada da medalha; so o dono ou quem a visibilidade autoriza. Nunca serve o original.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
     "/participations": {
       "post": {
         "operationId": "createParticipationDraft",
@@ -7130,6 +7174,32 @@
           },
           "nextCursor": {
             "type": "string"
+          }
+        }
+      },
+      "MedalImageLink": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "contentType",
+          "expiresAt"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "contentType": {
+            "type": "string",
+            "enum": [
+              "image/jpeg",
+              "image/png"
+            ]
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }
