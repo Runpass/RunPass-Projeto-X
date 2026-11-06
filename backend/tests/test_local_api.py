@@ -49,7 +49,7 @@ class LocalApiTests(unittest.TestCase):
             spec = json.loads(
                 (Path(directory) / ".local/runpass-api/RunPass-local.openapi.json").read_text()
             )
-            self.assertEqual(sum(len(v) for v in spec["paths"].values()), 24)
+            self.assertEqual(sum(len(v) for v in spec["paths"].values()), 37)
             self.assertEqual(spec["servers"][0]["url"], "http://127.0.0.1:8001")
             self.assertEqual(stat.S_IMODE(bruno.stat().st_mode), 0o600)
             self.assertEqual(stat.S_IMODE(insomnia.stat().st_mode), 0o600)

@@ -30,13 +30,15 @@ class PatchProfile(Input):
     city: Annotated[str, Field(max_length=100)] | None = None
     bio: Annotated[str, Field(max_length=500)] | None = None
     photoReference: str | None = None
+    isPrivate: bool | None = None
 
     @model_validator(mode="after")
     def fields(self):
         if not self.model_fields_set - {"expectedVersion"}:
             raise ValueError("At least one change required")
         if any(
-            getattr(self, f) is None for f in self.model_fields_set & {"displayName", "username"}
+            getattr(self, f) is None
+            for f in self.model_fields_set & {"displayName", "username", "isPrivate"}
         ):
             raise ValueError("Required field cannot be cleared")
         if self.displayName is not None and not self.displayName.strip():
@@ -145,3 +147,14 @@ class ReplaceReview(Input):
     expectedVersion: Annotated[int, Field(ge=1)]
     ratings: ReviewRatings
     comment: Annotated[str, Field(max_length=2000)] | None = None
+
+
+class CreateComment(Input):
+    text: Annotated[str, Field(min_length=1, max_length=1000)]
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Comment cannot be blank")
+        return value.strip()

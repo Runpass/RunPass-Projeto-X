@@ -10,6 +10,7 @@ from .events import EventProcessor
 from .identity import CognitoDirectory, CognitoVerifier, JwksProvider
 from .participation import ParticipationService
 from .service import IdentityService
+from .social import SocialService
 from .store import DynamoStore
 from .upload import UploadService
 
@@ -64,8 +65,15 @@ def create_aws_app(settings: AwsSettings, dynamodb_client, cognito_client, blob_
         catalog = CatalogService(service, settings.cursor_encryption_key)
         if settings.history_table:
             participations = ParticipationService(service, catalog, settings.cursor_encryption_key)
-    uploads = UploadService(service, blob_store) if blob_store is not None else None
-    return create_app(service, verifier, catalog, participations, uploads)
+    social = SocialService(service) if settings.history_table else None
+    uploads = None
+    if blob_store is not None:
+        uploads = UploadService(
+            service,
+            blob_store,
+            may_view=social.may_view_photo if social else None,
+        )
+    return create_app(service, verifier, catalog, participations, uploads, social)
 
 
 def create_event_processor(settings: AwsSettings, dynamodb_client, s3_client, audit_bucket):

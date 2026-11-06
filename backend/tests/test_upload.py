@@ -89,7 +89,9 @@ class UploadTests(unittest.TestCase):
     def test_visibility_rule_can_be_injected_and_drafts_or_official_art_have_no_photo(self):
         pid = self.seed_medal()
         other = self.admit("other")
-        shared = UploadService(self.identity, self.blobs, may_view=lambda read, actor, owner: True)
+        shared = UploadService(
+            self.identity, self.blobs, may_view=lambda read, actor, owner, part: True
+        )
         self.assertIn("url", shared.medal_image(other, pid))
         with self.assertRaises(Problem):
             self.service.medal_image(self.actor, "p-draft")

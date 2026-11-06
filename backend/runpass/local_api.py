@@ -18,6 +18,7 @@ from .catalog import CatalogService, seed_synthetic
 from .identity import CognitoVerifier, Principal
 from .participation import ParticipationService
 from .service import IdentityService
+from .social import SocialService
 from .store import MemoryStore
 from .upload import MemoryBlobStore, UploadService
 
@@ -73,7 +74,7 @@ def create_runtime():
     )
     identity.admit(admitted, "seed-admission", {"birthDate": "1990-01-01", "declaresAdult": True})
     return LocalRuntime(
-        create_app(identity, verifier, catalog, participations, uploads),
+        create_app(identity, verifier, catalog, participations, uploads, SocialService(identity)),
         tokens,
         (now + timedelta(hours=1)).isoformat(),
     )
