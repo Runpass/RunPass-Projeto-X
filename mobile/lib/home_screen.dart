@@ -3,35 +3,11 @@ import 'package:flutter/material.dart';
 import 'catalog_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
+import 'notifications.dart';
+import 'post_card.dart';
 import 'runpass_theme.dart';
 
-/// One card of the Início feed. Built from a published post (`/feed`) or from
-/// one of the runner's own completed races when it is not in the feed.
-class FeedEntry {
-  final String? postId;
-  final String author, username, title;
-  final String? comment, place;
-  final DateTime? publishedAt;
-  final RaceRecord race;
-  final bool mine;
-  int likes, comments;
-  bool liked;
-
-  FeedEntry({
-    required this.postId,
-    required this.author,
-    required this.username,
-    required this.title,
-    required this.race,
-    required this.mine,
-    this.comment,
-    this.place,
-    this.publishedAt,
-    this.likes = 0,
-    this.comments = 0,
-    this.liked = false,
-  });
-}
+export 'post_card.dart' show FeedEntry;
 
 /// Avisa a tela Início quando ela volta a ser a tela visível (por exemplo, ao voltar de um rascunho).
 final RouteObserver<ModalRoute<void>> runPassRouteObserver =
@@ -136,32 +112,10 @@ Future<List<FeedEntry>> loadFeed(IdentityGateway gateway) async {
   final entries = <FeedEntry>[];
   final posted = <String>{};
   for (final post in posts) {
-    final participation = Map<String, dynamic>.from(
-      post['participation'] as Map? ?? const {},
-    );
-    final author = Map<String, dynamic>.from(
-      post['author'] as Map? ?? const {},
-    );
-    final race = RaceRecord(
-      participation,
-      editions[participation['editionId']],
-    );
+    final participation = post['participation'] as Map? ?? const {};
     posted.add(participation['id'] as String? ?? '');
     entries.add(
-      FeedEntry(
-        postId: post['id'] as String?,
-        author: author['displayName'] as String? ?? 'Corredor',
-        username: author['username'] as String? ?? '',
-        title: race.name,
-        comment: post['comment'] as String?,
-        place: race.place.isEmpty ? null : race.place,
-        publishedAt: DateTime.tryParse(post['publishedAt'] as String? ?? ''),
-        race: race,
-        mine: myId != null && author['id'] == myId,
-        likes: (post['likeCount'] as num?)?.toInt() ?? 0,
-        comments: (post['commentCount'] as num?)?.toInt() ?? 0,
-        liked: post['likedByMe'] == true,
-      ),
+      entryFromPost(post, editions[participation['editionId']], myId),
     );
   }
   final own = [
@@ -175,6 +129,7 @@ Future<List<FeedEntry>> loadFeed(IdentityGateway gateway) async {
           place: race.place.isEmpty ? null : race.place,
           race: race,
           mine: true,
+          authorProfile: profile,
         ),
   ];
   return [...own, ...entries];
@@ -236,58 +191,6 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
 
   void soon(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-
-  Future<void> toggleLike(FeedEntry entry) async {
-    final id = entry.postId;
-    if (id == null) return;
-    final wasLiked = entry.liked;
-    setState(() {
-      entry.liked = !wasLiked;
-      entry.likes += wasLiked ? -1 : 1;
-    });
-    try {
-      await widget.gateway.request(
-        '/posts/${Uri.encodeComponent(id)}/like',
-        method: wasLiked ? 'DELETE' : 'PUT',
-      );
-    } on Exception {
-      if (!mounted) return;
-      setState(() {
-        entry.liked = wasLiked;
-        entry.likes += wasLiked ? 1 : -1;
-      });
-      soon('Não foi possível atualizar a curtida.');
-    }
-  }
-
-  Future<void> openComments(FeedEntry entry) async {
-    final id = entry.postId;
-    if (id == null) {
-      soon(
-        'Publique a conquista ao concluir a corrida para receber comentários.',
-      );
-      return;
-    }
-    String? myId;
-    try {
-      myId = (await widget.gateway.request('/me'))['id'] as String?;
-    } on Exception {
-      myId = null;
-    }
-    if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CommentsScreen(
-          gateway: widget.gateway,
-          postId: id,
-          title: entry.title,
-          myId: myId,
-          postIsMine: entry.mine,
-        ),
-      ),
-    );
-    reload();
-  }
 
   Future<void> openDraft(DraftEntry entry) async {
     await Navigator.of(context).push(
@@ -459,7 +362,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
                       shape: BoxShape.circle,
                       color: item == FeedFilter.all
                           ? runPassOrange
-                          : const Color(0xffffe4dc),
+                          : context.softFill,
                       border: Border.all(
                         color: filter == item
                             ? runPassOrange
@@ -493,200 +396,6 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     ),
   );
 
-  Widget statItem(IconData icon, String value, String label) => Expanded(
-    child: Row(
-      children: [
-        Icon(icon, size: 22),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-              Text(
-                label,
-                style: const TextStyle(fontSize: 11, color: Colors.black54),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-
-  Widget post(FeedEntry entry) {
-    final race = entry.race;
-    final km = race.kilometers;
-    final subtitle = [
-      if (entry.publishedAt != null) timeAgo(entry.publishedAt!),
-      if (entry.place != null) entry.place!,
-    ].join('  •  ');
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const CircleAvatar(
-                  radius: 22,
-                  backgroundColor: Color(0xffffe4dc),
-                  child: Icon(Icons.person, color: runPassOrange),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.author,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      if (subtitle.isNotEmpty)
-                        Text(
-                          subtitle,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.black54,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.more_horiz),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'concluiu ${entry.title}',
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
-            ),
-            if (entry.comment != null) ...[
-              const SizedBox(height: 6),
-              Text(entry.comment!),
-            ],
-            const SizedBox(height: 12),
-            AspectRatio(
-              aspectRatio: 16 / 10,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xffffd9cc), Color(0xfffff2ec)],
-                  ),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: SizedBox.expand(
-                    child: MedalPhoto(
-                      gateway: widget.gateway,
-                      participationId: entry.mine
-                          ? entry.race.participation['id'] as String?
-                          : null,
-                      size: 72,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            if (km != null ||
-                race.timeSeconds != null ||
-                race.paceSecondsPerKm != null) ...[
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  if (km != null)
-                    statItem(
-                      Icons.directions_run,
-                      formatKilometers(km),
-                      'Distância',
-                    ),
-                  if (race.timeSeconds != null)
-                    statItem(
-                      Icons.timer_outlined,
-                      formatDuration(race.timeSeconds!),
-                      'Tempo',
-                    ),
-                  if (race.paceSecondsPerKm != null)
-                    statItem(
-                      Icons.speed,
-                      formatPace(race.paceSecondsPerKm!),
-                      'Pace',
-                    ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 14),
-            InkWell(
-              onTap: () => go(CatalogScreen(gateway: widget.gateway)),
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xfffff1e8),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.workspace_premium, color: Color(0xffe0a526)),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: Text('Mais uma medalha para o medalheiro!'),
-                    ),
-                    Icon(Icons.chevron_right),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                InkWell(
-                  onTap: entry.postId == null ? null : () => toggleLike(entry),
-                  child: Row(
-                    children: [
-                      Icon(
-                        entry.liked ? Icons.favorite : Icons.favorite_border,
-                        color: runPassOrange,
-                      ),
-                      const SizedBox(width: 6),
-                      Text('${entry.likes}'),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 22),
-                InkWell(
-                  onTap: () => openComments(entry),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.chat_bubble_outline),
-                      const SizedBox(width: 6),
-                      Text('${entry.comments}'),
-                    ],
-                  ),
-                ),
-                const Spacer(),
-                InkWell(
-                  onTap: () => soon('Compartilhamento em breve.'),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.ios_share, size: 20),
-                      SizedBox(width: 6),
-                      Text('Compartilhar'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
@@ -707,11 +416,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
           icon: const Icon(Icons.search_rounded),
           onPressed: () => go(CatalogScreen(gateway: widget.gateway)),
         ),
-        IconButton(
-          tooltip: 'Avisos',
-          icon: const Icon(Icons.notifications_none_rounded),
-          onPressed: () => soon('Avisos em breve.'),
-        ),
+        NotificationBell(gateway: widget.gateway),
         const SizedBox(width: 4),
       ],
     ),
@@ -761,7 +466,11 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
                 )
               else
                 for (final entry in shown) ...[
-                  post(entry),
+                  PostCard(
+                    gateway: widget.gateway,
+                    entry: entry,
+                    onChanged: reload,
+                  ),
                   const SizedBox(height: 14),
                 ],
             ],

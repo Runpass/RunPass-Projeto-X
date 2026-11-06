@@ -72,6 +72,7 @@ def create_aws_app(settings: AwsSettings, dynamodb_client, cognito_client, blob_
             service,
             blob_store,
             may_view=social.may_view_photo if social else None,
+            may_view_profile=social.may_view_profile_photo if social else None,
         )
     return create_app(service, verifier, catalog, participations, uploads, social)
 

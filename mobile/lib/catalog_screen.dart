@@ -4,12 +4,20 @@ import 'package:image_picker/image_picker.dart';
 import 'home_screen.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
+import 'notifications.dart';
 import 'runpass_theme.dart';
 
 export 'home_screen.dart';
 export 'my_races.dart';
 
 typedef PhotoSelector = Future<List<int>?> Function();
+
+String registrationText(String? status) => switch (status) {
+  'open' => 'Inscrições abertas.',
+  'closed' => 'Inscrições encerradas.',
+  'sold_out' => 'Inscrições esgotadas.',
+  _ => 'Situação das inscrições não informada.',
+};
 
 String displayDate(String value) {
   final parts = value.split('-');
@@ -52,8 +60,7 @@ String archivedNotice(String? reason) {
 /// Toda mensagem diz o motivo e o que fazer em seguida.
 String catalogError(IdentityIssue issue) => switch (issue.code) {
   'INVALID_TOKEN' || 'ACCOUNT_UNAVAILABLE' => 'Sua sessão expirou ou a conta está indisponível. Volte à tela inicial e entre novamente.',
-  'BETA_ADMISSION_REQUIRED' =>
-    'É necessário participar do beta para consultar as corridas.',
+  'BETA_ADMISSION_REQUIRED' => 'É necessário participar do período de avaliação para consultar as corridas.',
   'INVALID_CURSOR' => 'A busca ficou aberta por muito tempo e expirou. Toque em Buscar para começar de novo.',
   'INVALID_INPUT' || 'INVALID_FILTERS' => 'Algum campo está inválido (data, distância ou texto fora do limite). Confira os filtros e tente de novo.',
   'EDITION_NOT_FOUND' =>
@@ -158,6 +165,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Map<String, Map<String, dynamic>> mine = {};
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
+  // Situacao das inscricoes (filtro): nulo = qualquer.
+  String? registration;
+  int registrationEpoch =
+      0; // recria o seletor ao limpar (reset() devolveria o valor antigo)
   bool loading = false;
   bool showFilters = false;
 
@@ -189,6 +200,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         for (final entry in fields.entries)
           if (entry.value.text.trim().isNotEmpty)
             entry.key: entry.value.text.trim(),
+        'registrationStatus': ?registration,
       };
       items.clear();
       nextCursor = null;
@@ -228,6 +240,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
       controller.clear();
     }
     form.currentState?.reset();
+    setState(() {
+      registration = null;
+      registrationEpoch++;
+    });
     load();
   }
 
@@ -276,14 +292,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
               for (final controller in fields.values) {
                 controller.clear();
               }
+              registration = null;
+              registrationEpoch++;
               load();
             }
             setState(() => showFilters = !showFilters);
           },
         ),
+        NotificationBell(gateway: widget.gateway),
         const SizedBox(width: 8),
-        const Badge(child: Icon(Icons.notifications_none_rounded)),
-        const SizedBox(width: 18),
       ],
     ),
     bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
@@ -345,6 +362,42 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         'Data final (AAAA-MM-DD)',
                         validate: dateValidator,
                       ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: DropdownButtonFormField<String?>(
+                          key: ValueKey(
+                            'filter-registration-$registrationEpoch',
+                          ),
+                          initialValue: registration,
+                          decoration: const InputDecoration(
+                            labelText: 'Inscrições',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: null,
+                              child: Text('Qualquer situação'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'open',
+                              child: Text('Abertas'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'closed',
+                              child: Text('Encerradas'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'sold_out',
+                              child: Text('Esgotadas'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'unknown',
+                              child: Text('Não informada'),
+                            ),
+                          ],
+                          onChanged: (value) =>
+                              setState(() => registration = value),
+                        ),
+                      ),
                       FilledButton(
                         onPressed: loading ? null : () => load(),
                         child: const Text('Buscar'),
@@ -376,12 +429,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           for (final edition in items)
             Card(
-              color: edition['status'] == 'archived'
-                  ? const Color(0xffe6e8eb)
-                  : null,
+              color: edition['status'] == 'archived' ? context.panelCard : null,
               child: ListTile(
                 textColor: edition['status'] == 'archived'
-                    ? const Color(0xff7a808a)
+                    ? context.archivedText
                     : null,
                 contentPadding: const EdgeInsets.all(16),
                 leading: Container(
@@ -389,7 +440,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   height: 48,
                   decoration: BoxDecoration(
                     color: edition['status'] == 'archived'
-                        ? const Color(0xffcdd1d6)
+                        ? context.panelStrong
                         : runPassOrange.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(14),
                   ),
@@ -398,7 +449,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         ? Icons.inventory_2_outlined
                         : Icons.directions_run,
                     color: edition['status'] == 'archived'
-                        ? const Color(0xff7a808a)
+                        ? context.archivedText
                         : runPassOrange,
                   ),
                 ),
@@ -685,7 +736,7 @@ class _EditionScreenState extends State<EditionScreen> {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: archived ? const Color(0xffd5d8dd) : const Color(0xffe9ecf1),
+        color: archived ? context.panelStrong : context.panel,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -716,10 +767,10 @@ class _EditionScreenState extends State<EditionScreen> {
                     style: TextStyle(
                       fontWeight: FontWeight.w700,
                       color: archived
-                          ? const Color(0xff7a808a)
+                          ? context.archivedText
                           : selectedDistance == distance['id']
                           ? Colors.white
-                          : Colors.black87,
+                          : context.onSurfaceText,
                     ),
                   ),
                 ),
@@ -829,6 +880,28 @@ class _EditionScreenState extends State<EditionScreen> {
           child: Text(saving ? 'Salvando...' : 'Criar rascunho'),
         ),
       ],
+      // Informacoes da fonte ao fim da aba, sem empurrar as acoes da pessoa.
+      const SizedBox(height: 16),
+      if (body['venue'] != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text('Local: ${body['venue']}'),
+        ),
+      // Nunca afirma que as inscricoes estao abertas quando a fonte nao informou.
+      Padding(
+        key: const Key('registration-info'),
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(registrationText(body['registrationStatus'] as String?)),
+      ),
+      if (body['lastVerifiedAt'] != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            'Informação conferida em ${displayDate((body['lastVerifiedAt'] as String).substring(0, 10))}.',
+            key: const Key('verified-info'),
+            style: TextStyle(fontSize: 12, color: context.muted),
+          ),
+        ),
     ],
   );
 
@@ -909,7 +982,7 @@ class _EditionScreenState extends State<EditionScreen> {
               value: (value ?? 0) / 5,
               minHeight: 7,
               color: runPassOrange,
-              backgroundColor: const Color(0xffeceff3),
+              backgroundColor: context.track,
             ),
           ),
         ),
@@ -991,7 +1064,7 @@ class _EditionScreenState extends State<EditionScreen> {
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xffe6f6ec),
+                color: context.greenFill,
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Column(
@@ -1037,9 +1110,9 @@ class _EditionScreenState extends State<EditionScreen> {
           children: [
             Row(
               children: [
-                const CircleAvatar(
+                CircleAvatar(
                   radius: 20,
-                  backgroundColor: Color(0xffffe4dc),
+                  backgroundColor: context.softFill,
                   child: Icon(Icons.person, color: runPassOrange),
                 ),
                 const SizedBox(width: 10),
@@ -1058,9 +1131,9 @@ class _EditionScreenState extends State<EditionScreen> {
                             const SizedBox(width: 8),
                             Text(
                               timeAgo(created),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.black54,
+                                color: context.muted,
                               ),
                             ),
                           ],
@@ -1130,7 +1203,7 @@ class _EditionScreenState extends State<EditionScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 48, color: Colors.black26),
+          Icon(icon, size: 48, color: context.muted),
           const SizedBox(height: 12),
           Text(text, textAlign: TextAlign.center),
         ],
@@ -1183,12 +1256,12 @@ class _EditionScreenState extends State<EditionScreen> {
               child: Column(
                 children: [
                   hero(body),
-                  const Material(
+                  Material(
                     color: Colors.white,
                     child: TabBar(
                       labelColor: runPassOrange,
                       indicatorColor: runPassOrange,
-                      unselectedLabelColor: Colors.black87,
+                      unselectedLabelColor: context.onSurfaceText,
                       tabs: [
                         Tab(text: 'Sobre'),
                         Tab(text: 'Avaliações'),
@@ -1827,7 +1900,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: ColoredBox(
-                  color: const Color(0xffffe4dc),
+                  color: context.softFill,
                   child: MedalPhoto(
                     key: ValueKey('medal-photo-$photoRevision'),
                     gateway: widget.gateway,
@@ -1946,7 +2019,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               key: const Key('upcoming-notice'),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xfffff3e0),
+                color: context.warnFill,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(

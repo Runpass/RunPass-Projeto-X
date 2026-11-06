@@ -847,6 +847,58 @@
               "minimum": 0,
               "exclusiveMinimum": true
             }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "description": "Nome contendo o texto, sem acento nem caixa."
+          },
+          {
+            "name": "registrationStatus",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unknown",
+                "open",
+                "closed",
+                "sold_out"
+              ]
+            }
+          },
+          {
+            "name": "lat",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "description": "Com lon e radiusKm; os tres juntos ou 422."
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            }
+          },
+          {
+            "name": "radiusKm",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMinimum": true,
+              "maximum": 500
+            }
           }
         ],
         "x-requires-beta-admission": true
@@ -4566,6 +4618,317 @@
         },
         "x-requires-beta-admission": true
       }
+    },
+    "/profiles/{id}/photo": {
+      "get": {
+        "operationId": "getProfilePhoto",
+        "summary": "Link temporario e assinado para a foto de perfil; so o dono ou quem pode ver o perfil. Nunca serve o original.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/me/notifications": {
+      "get": {
+        "operationId": "listMyNotifications",
+        "tags": [
+          "Social"
+        ],
+        "description": "Avisos derivados do que existe: pedidos e novos seguidores, curtidas e comentarios nas minhas publicacoes e publicacoes de quem sigo (ultimos 30 dias, ate 50). Nada extra para apagar na exclusao da conta.",
+        "responses": {
+          "200": {
+            "description": "Resultado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/me/notifications/read": {
+      "post": {
+        "operationId": "markMyNotificationsRead",
+        "tags": [
+          "Social"
+        ],
+        "description": "Marca todos os avisos atuais como lidos.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resultado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationsRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/me/notifications/{id}": {
+      "delete": {
+        "operationId": "deleteMyNotification",
+        "tags": [
+          "Social"
+        ],
+        "description": "Apaga um aviso da lista (deslizar). Pedidos para seguir nao se apagam: aceite ou recuse.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Apagado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "dismissed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "dismissed"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/profiles/{id}/banner": {
+      "get": {
+        "operationId": "getProfileBanner",
+        "summary": "Link temporario e assinado para a foto de perfil; so o dono ou quem pode ver o perfil. Nunca serve o original.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true,
+        "description": "Link assinado e curto do banner do perfil, so para quem pode ver o perfil."
+      }
+    },
+    "/comments/{id}/like": {
+      "put": {
+        "operationId": "likeComment",
+        "tags": [
+          "Social"
+        ],
+        "description": "Uma curtida ativa por pessoa e comentario; segue a visibilidade da publicacao.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentLikeState"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      },
+      "delete": {
+        "operationId": "unlikeComment",
+        "tags": [
+          "Social"
+        ],
+        "description": "Remove a propria curtida do comentario (idempotente).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentLikeState"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
     }
   },
   "components": {
@@ -5235,6 +5598,12 @@
             "type": "string",
             "description": "Brazilian state code, distinct from edition status."
           },
+          "country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 80,
+            "description": "Pais da prova; ausente significa Brasil. Alimenta Paises visitados no medalheiro."
+          },
           "distances": {
             "type": "array",
             "minItems": 1,
@@ -5298,6 +5667,55 @@
               "ended"
             ],
             "description": "Present only when status is archived: cancelled (race cancelled), unavailable (no longer available for registration or purchase), duplicate (duplicate catalog entry), ended (edition closed). Absent when the reason is not recorded."
+          },
+          "venue": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Local da largada."
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180
+          },
+          "registrationStatus": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "open",
+              "closed",
+              "sold_out"
+            ],
+            "description": "Situacao das inscricoes informada pela fonte; ausente = unknown. Nunca presumir aberta."
+          },
+          "eventStatus": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "postponed",
+              "cancelled",
+              "completed",
+              "unknown"
+            ]
+          },
+          "lastVerifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Ultima vez que a informacao foi conferida."
+          },
+          "sourceCode": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]{2,40}$",
+            "description": "Fonte do cadastro (ex.: csv-sp, active)."
+          },
+          "sourceExternalId": {
+            "type": "string",
+            "description": "Identificador da prova na fonte."
           }
         }
       },
@@ -5408,6 +5826,11 @@
           "followingCount": {
             "type": "integer",
             "minimum": 0
+          },
+          "bannerReference": {
+            "type": "string",
+            "nullable": true,
+            "description": "Imagem do banner do perfil (mesmo envio de imagens); nulo remove."
           }
         },
         "additionalProperties": false
@@ -5461,6 +5884,11 @@
           "isPrivate": {
             "type": "boolean",
             "description": "Liga ou desliga o perfil privado."
+          },
+          "bannerReference": {
+            "type": "string",
+            "nullable": true,
+            "description": "Imagem do banner do perfil (mesmo envio de imagens); nulo remove."
           }
         },
         "description": "Somente campos enviados mudam; null limpa opcionais. Username ASCII normalizado em minúsculas e reservado atomicamente. Nome não pode ser apenas whitespace. Versão obrigatória; não altera idade, admissão ou papéis."
@@ -5729,6 +6157,10 @@
           "comment": {
             "type": "string",
             "description": "Texto do autor sobre a corrida."
+          },
+          "lastComment": {
+            "$ref": "#/components/schemas/Comment",
+            "description": "Comentario mais recente, mostrado em destaque na publicacao."
           }
         },
         "required": [
@@ -5872,6 +6304,28 @@
             "type": "string",
             "format": "date-time",
             "description": "Most recent actual text change; absent before first edit."
+          },
+          "likeCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "likedByMe": {
+            "type": "boolean"
+          },
+          "parentId": {
+            "type": "string",
+            "description": "Id do comentario principal quando e uma resposta."
+          },
+          "replyCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "replies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Comment"
+            },
+            "description": "Respostas (so no comentario principal)."
           }
         },
         "required": [
@@ -5891,6 +6345,12 @@
           "text": {
             "type": "string",
             "minLength": 1
+          },
+          "parentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Comentario que esta sendo respondido; resposta a resposta vira resposta ao principal. No maximo 20 respostas por comentario."
           }
         },
         "required": [
@@ -6585,6 +7045,12 @@
             "type": "string",
             "description": "Brazilian state code, distinct from edition status."
           },
+          "country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 80,
+            "description": "Pais da prova; ausente significa Brasil. Alimenta Paises visitados no medalheiro."
+          },
           "distances": {
             "type": "array",
             "minItems": 1,
@@ -6626,6 +7092,55 @@
             "type": "string",
             "minLength": 1,
             "description": "Optional catalog organizer reference; server validates existence. Not required for unknown historical organizer."
+          },
+          "venue": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Local da largada."
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180
+          },
+          "registrationStatus": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "open",
+              "closed",
+              "sold_out"
+            ],
+            "description": "Situacao das inscricoes informada pela fonte; ausente = unknown. Nunca presumir aberta."
+          },
+          "eventStatus": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "postponed",
+              "cancelled",
+              "completed",
+              "unknown"
+            ]
+          },
+          "lastVerifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Ultima vez que a informacao foi conferida."
+          },
+          "sourceCode": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]{2,40}$",
+            "description": "Fonte do cadastro (ex.: csv-sp, active)."
+          },
+          "sourceExternalId": {
+            "type": "string",
+            "description": "Identificador da prova na fonte."
           }
         },
         "required": [
@@ -6665,6 +7180,12 @@
             "type": "string",
             "description": "Brazilian state code, distinct from edition status."
           },
+          "country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 80,
+            "description": "Pais da prova; ausente significa Brasil. Alimenta Paises visitados no medalheiro."
+          },
           "distances": {
             "type": "array",
             "minItems": 1,
@@ -6698,6 +7219,55 @@
             "type": "string",
             "minLength": 1,
             "description": "Optional catalog organizer reference; server validates existence. Not required for unknown historical organizer."
+          },
+          "venue": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Local da largada."
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180
+          },
+          "registrationStatus": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "open",
+              "closed",
+              "sold_out"
+            ],
+            "description": "Situacao das inscricoes informada pela fonte; ausente = unknown. Nunca presumir aberta."
+          },
+          "eventStatus": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "postponed",
+              "cancelled",
+              "completed",
+              "unknown"
+            ]
+          },
+          "lastVerifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Ultima vez que a informacao foi conferida."
+          },
+          "sourceCode": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]{2,40}$",
+            "description": "Fonte do cadastro (ex.: csv-sp, active)."
+          },
+          "sourceExternalId": {
+            "type": "string",
+            "description": "Identificador da prova na fonte."
           }
         },
         "required": [
@@ -7398,6 +7968,109 @@
             }
           }
         }
+      },
+      "Notification": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "follow_request",
+              "follow",
+              "like",
+              "comment",
+              "post",
+              "comment_like",
+              "reply"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "unread": {
+            "type": "boolean"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/PublicProfile"
+          },
+          "postId": {
+            "type": "string"
+          },
+          "editionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "text": {
+            "type": "string",
+            "description": "Trecho do comentario (ate 140 caracteres)."
+          },
+          "commentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "createdAt",
+          "unread",
+          "actor"
+        ]
+      },
+      "NotificationPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            }
+          },
+          "unreadCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "unreadCount"
+        ]
+      },
+      "NotificationsRead": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "readAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "readAt"
+        ]
+      },
+      "CommentLikeState": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "commentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "likedByMe": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "commentId",
+          "likedByMe"
+        ]
       }
     }
   }

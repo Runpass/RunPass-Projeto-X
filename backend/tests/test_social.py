@@ -6,6 +6,7 @@ from runpass.identity import Principal
 from runpass.service import IdentityService, Problem
 from runpass.social import SocialService
 from runpass.store import MemoryStore
+from runpass.upload import MemoryBlobStore, UploadService
 
 NOW = datetime(2026, 11, 6, 15, tzinfo=timezone.utc)
 
@@ -92,6 +93,62 @@ class SocialTests(unittest.TestCase):
         self.assertEqual(self.social.search(self.bia, "marina")["items"], [])
         self.identity.profile(self.ana)
         self.assertEqual(len(self.social.search(self.bia, "marina")["items"]), 1)
+
+    def test_status_at_sign_in_makes_old_profiles_without_photo_searchable(self):
+        for key in list(self.store.items):
+            if key[1].startswith("PIDX#") or key[2] == "SEARCHIDX":
+                self.store.items.pop(key)
+        self.assertEqual(self.social.search(self.bia, "marina")["items"], [])
+        self.identity.status(self.ana)
+        self.assertEqual(
+            [p["username"] for p in self.social.search(self.bia, "paula")["items"]], ["ana_runs"]
+        )
+
+    # ---- likes, last comment, notifications ----
+    def test_likes_count_once_and_last_comment_is_shown_on_the_post(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        self.assertEqual(self.social.like(self.bia, "p1", "l1")["likedByMe"], True)
+        self.social.like(self.bia, "p1", "l2")
+        self.social.like(self.caio, "p1", "l3")
+        post = self.social.post(self.bia, "p1")
+        self.assertEqual((post["likeCount"], post["likedByMe"]), (2, True))
+        self.assertNotIn("lastComment", post)
+        self.social.comment(self.bia, "p1", "c1", "Parabéns! 🎉 ção")
+        self.social.comment(self.caio, "p1", "c2", "Muito bom")
+        post = self.social.post(self.bia, "p1")
+        listed = self.social.comments(self.ana, "p1")["items"]
+        self.assertEqual((post["commentCount"], post["lastComment"]["id"]), (2, listed[-1]["id"]))
+        self.assertEqual(self.social.like(self.bia, "p1", "l4", liked=False)["likedByMe"], False)
+        self.assertEqual(self.social.post(self.bia, "p1")["likeCount"], 1)
+        self.assertIn("Parabéns! 🎉 ção", [c["text"] for c in listed])
+
+    def test_notifications_cover_follow_requests_likes_comments_and_friend_posts(self):
+        self.private(self.ana)
+        self.complete(self.ana, "p1", "2026-11-05T10:00:00Z")
+        self.social.follow(self.bia, "ana", "f1")
+        self.social.decide(self.ana, "bia", True, "d1")
+        self.social.follow(self.caio, "ana", "f2")
+        self.social.like(self.bia, "p1", "l1")
+        self.social.comment(self.bia, "p1", "c1", "Show")
+        self.social.like(self.ana, "p1", "l2")
+        self.complete(self.bia, "p2", "2026-11-06T09:00:00Z")
+        self.social.follow(self.ana, "bia", "f3")
+        mine = self.social.notifications(self.ana)
+        kinds = sorted((i["kind"], i["actor"]["username"]) for i in mine["items"])
+        self.assertEqual(
+            kinds,
+            [
+                ("comment", "bia_lima"),
+                ("follow", "bia_lima"),
+                ("follow_request", "caio"),
+                ("like", "bia_lima"),
+                ("post", "bia_lima"),
+            ],
+        )
+        self.assertEqual(mine["unreadCount"], 5)
+        self.social.mark_notifications_read(self.ana, "r1")
+        self.assertEqual(self.social.notifications(self.ana)["unreadCount"], 0)
+        self.assertEqual(self.social.notifications(self.caio)["items"], [])
 
     # ---- follow ----
     def test_public_profile_is_followed_immediately_and_unfollowed(self):
@@ -198,6 +255,115 @@ class SocialTests(unittest.TestCase):
             self.social.may_view_photo(read, self.bia, "ana", {"publishToFeed": False})
         )
 
+    # ---- profile photo ----
+    def valid_image(self, actor, reference, blobs):
+        key = ("operations", "USER#" + actor.subject, "IMAGE#" + reference)
+        self.store.commit(
+            {key: None},
+            {key: {"owner": actor.subject, "origin": "runner", "state": "valid", "refs": 0}},
+        )
+        blobs.write_derived(reference, b"jpg", "image/jpeg", actor.subject)
+
+    def test_banner_is_separate_from_photo_and_follows_visibility(self):
+        blobs = MemoryBlobStore()
+        uploads = UploadService(
+            self.identity, blobs, may_view_profile=self.social.may_view_profile_photo
+        )
+        self.valid_image(self.ana, "ban1", blobs)
+        profile = self.identity.profile(self.ana)
+        saved = self.identity.patch_profile(
+            self.ana, "b1", {"expectedVersion": profile["version"], "bannerReference": "ban1"}
+        )
+        self.assertEqual(saved["bannerReference"], "ban1")
+        self.assertNotIn("photoReference", saved)
+        self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#ban1"))["refs"], 1)
+        self.assertIn("url", uploads.profile_photo(self.bia, "ana", "bannerReference"))
+        with self.assertRaises(Problem):
+            uploads.profile_photo(self.bia, "ana")  # sem foto de perfil
+        self.private(self.ana)
+        with self.assertRaises(Problem):
+            uploads.profile_photo(self.caio, "ana", "bannerReference")
+        current = self.identity.profile(self.ana)
+        cleared = self.identity.patch_profile(
+            self.ana, "b2", {"expectedVersion": current["version"], "bannerReference": None}
+        )
+        self.assertNotIn("bannerReference", cleared)
+        self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#ban1"))["refs"], 0)
+
+    def test_follow_requests_stay_first_and_old_ones_never_expire(self):
+        self.private(self.ana)
+        self.social.follow(self.caio, "ana", "f1")
+        # Pedido antigo (mais de 30 dias) continua aparecendo.
+        row_key = ("identity", "USER#ana", "FOLLOWER#caio")
+        row = self.store.get(row_key)
+        self.store.commit({row_key: row}, {row_key: {**row, "at": "2026-01-01T00:00:00Z"}})
+        self.complete(self.bia, "p2", "2026-11-06T09:00:00Z")
+        self.social.follow(self.ana, "bia", "f2")
+        items = self.social.notifications(self.ana)["items"]
+        self.assertEqual([i["kind"] for i in items], ["follow_request", "post"])
+
+    def test_notification_can_be_dismissed_but_requests_cannot(self):
+        self.complete(self.ana, "p1", "2026-11-05T10:00:00Z")
+        self.social.like(self.bia, "p1", "l1")
+        self.social.follow(self.caio, "ana", "f1")
+        first = self.social.notifications(self.ana)["items"]
+        like = next(i for i in first if i["kind"] == "like")
+        self.assertEqual(
+            self.social.dismiss_notification(self.ana, like["id"], "d1")["dismissed"], True
+        )
+        after = self.social.notifications(self.ana)["items"]
+        self.assertEqual(sorted(i["kind"] for i in after), ["follow"])
+        self.private(self.bia)
+        self.social.follow(self.caio, "bia", "f9")
+        with self.assertRaises(Problem) as nope:
+            self.social.dismiss_notification(self.bia, "follow_request:caio::x", "d2")
+        self.assertEqual(nope.exception.code, "NOTIFICATION_NOT_DISMISSIBLE")
+        # marcar como lido nao apaga a lista de apagados
+        self.social.mark_notifications_read(self.ana, "r1")
+        self.assertEqual(
+            sorted(i["kind"] for i in self.social.notifications(self.ana)["items"]), ["follow"]
+        )
+
+    def test_profile_photo_needs_my_valid_image_and_follows_visibility(self):
+        blobs = MemoryBlobStore()
+        uploads = UploadService(
+            self.identity, blobs, may_view_profile=self.social.may_view_profile_photo
+        )
+        profile = self.identity.profile(self.ana)
+        with self.assertRaises(Problem) as bad:
+            self.identity.patch_profile(
+                self.ana, "ph0", {"expectedVersion": profile["version"], "photoReference": "nope"}
+            )
+        self.assertEqual(bad.exception.code, "IMAGE_NOT_VALID")
+        self.valid_image(self.ana, "img1", blobs)
+        self.valid_image(self.bia, "img-bia", blobs)
+        with self.assertRaises(Problem) as theirs:
+            self.identity.patch_profile(
+                self.ana,
+                "ph1",
+                {"expectedVersion": profile["version"], "photoReference": "img-bia"},
+            )
+        self.assertEqual(theirs.exception.code, "IMAGE_NOT_VALID")
+        saved = self.identity.patch_profile(
+            self.ana, "ph2", {"expectedVersion": profile["version"], "photoReference": "img1"}
+        )
+        self.assertEqual(saved["photoReference"], "img1")
+        self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#img1"))["refs"], 1)
+        self.assertIn("url", uploads.profile_photo(self.bia, "ana"))
+        self.private(self.ana)
+        with self.assertRaises(Problem):
+            uploads.profile_photo(self.caio, "ana")
+        self.assertIn("url", uploads.profile_photo(self.ana, "ana"))
+        # clearing releases the image
+        current = self.identity.profile(self.ana)
+        cleared = self.identity.patch_profile(
+            self.ana, "ph3", {"expectedVersion": current["version"], "photoReference": None}
+        )
+        self.assertNotIn("photoReference", cleared)
+        self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#img1"))["refs"], 0)
+        with self.assertRaises(Problem):
+            uploads.profile_photo(self.bia, "ana")
+
     # ---- erasure ----
     def test_erasing_an_account_removes_index_follows_and_comments(self):
         self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
@@ -217,6 +383,84 @@ class SocialTests(unittest.TestCase):
         ]
         self.assertEqual(leftovers, [])
         self.assertEqual(self.social.profile_view(self.caio, "ana")["followingCount"], 1)
+
+    # ---- curtir e responder comentarios ----
+    def test_comment_likes_count_once_and_follow_post_visibility(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        made = self.social.comment(self.bia, "p1", "c1", "Show")
+        cid = made["id"]
+        self.assertEqual(self.social.like_comment(self.caio, cid, "l1")["likedByMe"], True)
+        self.social.like_comment(self.caio, cid, "l2")
+        self.social.like_comment(self.ana, cid, "l3")
+        top = self.social.comments(self.caio, "p1")["items"][0]
+        self.assertEqual((top["likeCount"], top["likedByMe"]), (2, True))
+        self.assertEqual(self.social.comments(self.bia, "p1")["items"][0]["likedByMe"], False)
+        self.assertEqual(
+            self.social.like_comment(self.caio, cid, "l4", liked=False)["likedByMe"], False
+        )
+        self.assertEqual(self.social.comments(self.caio, "p1")["items"][0]["likeCount"], 1)
+        with self.assertRaises(Problem) as missing:
+            self.social.like_comment(self.caio, "nao-existe", "l5")
+        self.assertEqual(missing.exception.code, "COMMENT_NOT_FOUND")
+        self.private(self.ana)
+        with self.assertRaises(Problem):
+            self.social.like_comment(self.caio, cid, "l6")  # nao segue o perfil privado
+
+    def test_replies_nest_under_the_main_comment_and_go_with_it(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        root = self.social.comment(self.bia, "p1", "c1", "Principal")
+        first = self.social.comment(self.caio, "p1", "c2", "Resposta 1", root["id"])
+        # responder a uma resposta vira resposta ao principal
+        second = self.social.comment(self.ana, "p1", "c3", "Resposta 2", first["id"])
+        self.assertEqual((first["parentId"], second["parentId"]), (root["id"], root["id"]))
+        page = self.social.comments(self.ana, "p1")
+        self.assertEqual(len(page["items"]), 1)
+        self.assertEqual(page["items"][0]["replyCount"], 2)
+        self.assertEqual(
+            sorted(r["text"] for r in page["items"][0]["replies"]), ["Resposta 1", "Resposta 2"]
+        )
+        with self.assertRaises(Problem) as bad:
+            self.social.comment(self.caio, "p1", "c4", "x", "nao-existe")
+        self.assertEqual(bad.exception.code, "INVALID_PARENT_COMMENT")
+        self.complete(self.bia, "p2", "2026-11-02T10:00:00Z")
+        with self.assertRaises(Problem):
+            self.social.comment(self.caio, "p2", "c5", "x", root["id"])  # pai de outra publicacao
+        self.social.delete_comment(self.bia, root["id"], "d1")
+        self.assertEqual(self.social.comments(self.ana, "p1")["items"], [])
+        self.assertEqual(self.social.post(self.ana, "p1")["commentCount"], 0)
+        for made in (first, second):
+            self.assertIsNone(self.store.get(("history", "COMMENT#" + made["id"], "LOC")))
+
+    def test_reply_limit(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        root = self.social.comment(self.bia, "p1", "c0", "Principal")
+        for n in range(self.social.MAX_REPLIES):
+            self.social.comment(self.caio, "p1", f"r{n}", f"r{n}", root["id"])
+        with self.assertRaises(Problem) as limit:
+            self.social.comment(self.caio, "p1", "rx", "demais", root["id"])
+        self.assertEqual(limit.exception.code, "REPLY_LIMIT_REACHED")
+
+    def test_notifications_for_comment_likes_and_replies(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        root = self.social.comment(self.bia, "p1", "c1", "Meu comentario")
+        self.social.like_comment(self.caio, root["id"], "l1")
+        self.social.comment(self.caio, "p1", "c2", "Respondendo", root["id"])
+        mine = self.social.notifications(self.bia)["items"]
+        kinds = sorted((i["kind"], i["actor"]["username"]) for i in mine)
+        self.assertEqual(kinds, [("comment_like", "caio"), ("reply", "caio")])
+        # quem e dono da publicacao recebe aviso de comentario, nao duplica com "resposta"
+        owner_kinds = sorted(i["kind"] for i in self.social.notifications(self.ana)["items"])
+        self.assertEqual(owner_kinds, ["comment", "comment"])
+
+    def test_erasing_a_commenter_removes_comment_likes_and_replies(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        root = self.social.comment(self.ana, "p1", "c1", "Principal")
+        self.social.comment(self.bia, "p1", "c2", "Resposta", root["id"])
+        self.social.like_comment(self.bia, root["id"], "l1")
+        self.identity.delete_account(self.bia, "del-bia")
+        ErasureProcessor(self.identity).run_pending()
+        item = self.social.comments(self.ana, "p1")["items"][0]
+        self.assertEqual((item["replyCount"], item["likeCount"]), (0, 0))
 
 
 if __name__ == "__main__":

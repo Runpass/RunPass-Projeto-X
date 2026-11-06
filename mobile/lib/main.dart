@@ -1,11 +1,18 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import 'identity_gateway.dart';
 import 'catalog_screen.dart';
+import 'biometrics.dart';
 import 'home_screen.dart';
+import 'notifications.dart';
+import 'profile_photo.dart';
 import 'runpass_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ThemeController.load();
   const api = String.fromEnvironment('RUNPASS_API_URL');
   const cognito = String.fromEnvironment('RUNPASS_COGNITO_URL');
   const client = String.fromEnvironment('RUNPASS_COGNITO_CLIENT_ID');
@@ -16,54 +23,67 @@ void main() {
         api: Uri.parse(api),
         cognito: Uri.parse(cognito),
         clientId: client,
+        tokenStore: SecureTokenStore(),
       );
     } on ArgumentError {
       gateway = null;
     }
   }
+  NotificationCenter.active = true;
   runApp(MainApp(gateway: gateway));
 }
 
 class MainApp extends StatelessWidget {
   final IdentityGateway? gateway;
   final bool demonstration;
-  const MainApp({super.key, this.gateway, this.demonstration = false});
+  final ProfilePhotoPicker photoPicker;
+  const MainApp({
+    super.key,
+    this.gateway,
+    this.demonstration = false,
+    this.photoPicker = pickProfilePhoto,
+  });
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'RunPass',
-    navigatorObservers: [runPassRouteObserver],
-    // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
-    builder: (context, shell) {
-      final child = GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
-        child: shell!,
-      );
-      return !demonstration
-          ? child
-          : Column(
-              children: [
-                SafeArea(
-                  bottom: false,
-                  child: Material(
-                    color: Colors.amber.shade100,
-                    child: const Padding(
-                      padding: EdgeInsets.all(8),
-                      child: Text(
-                        'DEMONSTRAÇÃO LOCAL · Dados fictícios\nUse e-mail .test · Código: 123456',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.black, fontSize: 12),
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+    valueListenable: ThemeController.dark,
+    builder: (context, dark, _) => MaterialApp(
+      title: 'RunPass',
+      navigatorObservers: [runPassRouteObserver],
+      // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
+      builder: (context, shell) {
+        final child = GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: shell!,
+        );
+        return !demonstration
+            ? child
+            : Column(
+                children: [
+                  SafeArea(
+                    bottom: false,
+                    child: Material(
+                      color: Colors.amber.shade100,
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Text(
+                          'DEMONSTRAÇÃO LOCAL · Dados fictícios\nUse e-mail .test · Código: 123456',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.black, fontSize: 12),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                Expanded(child: child),
-              ],
-            );
-    },
-    theme: runPassTheme(),
-    home: IdentityScreen(gateway: gateway),
+                  Expanded(child: child),
+                ],
+              );
+      },
+      theme: runPassTheme(),
+      darkTheme: runPassDarkTheme(),
+      themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+      home: IdentityScreen(gateway: gateway, photoPicker: photoPicker),
+    ),
   );
 }
 
@@ -75,6 +95,7 @@ enum Step {
   reset,
   profile,
   admission,
+  photo,
   ready,
   waiting,
   closed,
@@ -85,7 +106,13 @@ class IdentityScreen extends StatefulWidget {
 
   /// Aviso mostrado na tela de entrada (por exemplo, depois de excluir a conta).
   final String? notice;
-  const IdentityScreen({super.key, this.gateway, this.notice});
+  final ProfilePhotoPicker photoPicker;
+  const IdentityScreen({
+    super.key,
+    this.gateway,
+    this.notice,
+    this.photoPicker = pickProfilePhoto,
+  });
   @override
   State<IdentityScreen> createState() => _IdentityScreenState();
 }
@@ -102,11 +129,54 @@ class _IdentityScreenState extends State<IdentityScreen> {
   bool busy = false, adult = false, full = false;
   String? message;
   String? displayName;
+  // Cadastro novo ainda sem foto: a foto de perfil e obrigatoria antes de entrar.
+  bool needsPhoto = false;
+  // "Manter conectado": guarda so o token de renovacao, nunca a senha.
+  bool keepSignedIn = true;
+  // Entrando com a sessao guardada: mostra um indicador em vez do formulario.
+  bool restoring = false;
+  List<int>? chosenPhoto;
 
   @override
   void initState() {
     super.initState();
     message = widget.notice;
+    if (widget.gateway?.canRestore ?? false) restoreSession();
+  }
+
+  /// Mostra "Entrar com biometria" quando a trava esta ligada e ha sessao guardada.
+  bool biometricLocked = false;
+
+  Future<void> restoreSession() async {
+    setState(() => restoring = true);
+    try {
+      if (await BiometricPrefs.enabled()) {
+        // Trava ligada: a biometria vem antes de renovar o acesso. Falhou ou cancelou:
+        // cai na tela de entrada (senha) com o botao para tentar de novo.
+        final ok = await biometricGate.authenticate(
+          'Entrar no RunPass com a biometria',
+        );
+        if (!ok) {
+          if (mounted) {
+            setState(() {
+              restoring = false;
+              biometricLocked = true;
+            });
+          }
+          return;
+        }
+      }
+      if (await widget.gateway!.restoreSession()) {
+        await resume();
+        if (mounted && step == Step.ready) {
+          openHome();
+          return;
+        }
+      }
+    } on Exception {
+      // Sem rede ou falha: cai na tela de entrada; a sessao guardada continua valendo.
+    }
+    if (mounted) setState(() => restoring = false);
   }
 
   @override
@@ -133,12 +203,72 @@ class _IdentityScreenState extends State<IdentityScreen> {
       'closed' => Step.closed,
       _ => Step.admission,
     };
+    if (step == Step.ready && needsPhoto) step = Step.photo;
+  }
+
+  /// Uma vez, depois de entrar com "Manter conectado": oferece ligar a biometria.
+  Future<void> offerBiometrics() async {
+    if (!keepSignedIn || !(widget.gateway?.canRestore ?? false)) return;
+    if (await BiometricPrefs.asked() || !await biometricGate.available()) {
+      return;
+    }
+    await BiometricPrefs.setAsked();
+    if (!mounted) return;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Entrar com biometria?'),
+        content: const Text(
+          'Nas próximas vezes, use o rosto ou a digital do aparelho em vez de digitar a senha. Você pode mudar isso em Configurações.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('biometric-later'),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Agora não'),
+          ),
+          FilledButton(
+            key: const Key('biometric-yes'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Ativar'),
+          ),
+        ],
+      ),
+    );
+    if (yes == true &&
+        await biometricGate.authenticate('Confirme para ativar a biometria')) {
+      await BiometricPrefs.setEnabled(true);
+    }
+  }
+
+  void openHome() => Navigator.of(context).pushReplacement(
+    MaterialPageRoute<void>(
+      builder: (_) => RunPassHomeScreen(gateway: widget.gateway!),
+    ),
+  );
+
+  Future<void> choosePhoto() async {
+    final choice = await askPhotoChoice(context);
+    if (choice == null || !mounted) return;
+    try {
+      final bytes = await widget.photoPicker(context, choice);
+      if (bytes != null && mounted) {
+        setState(() {
+          chosenPhoto = bytes;
+          message = null;
+        });
+      }
+    } on Exception catch (error) {
+      if (mounted) setState(() => message = photoError(error));
+    }
   }
 
   Future<void> resume() async {
     try {
       final profile = await widget.gateway!.request('/me');
       displayName = profile['displayName'] as String?;
+      // Versao 1 sem foto: o cadastro nao foi concluido. Quem apagou a foto depois, nao.
+      needsPhoto = profile['photoReference'] == null && profile['version'] == 1;
       await status();
     } on IdentityIssue catch (error) {
       if (error.code == 'PROFILE_NOT_FOUND') {
@@ -177,9 +307,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
         'InvalidPasswordException' => 'Use ao menos 12 caracteres, com maiúscula, minúscula, número e símbolo.',
         'CodeMismatchException' || 'ExpiredCodeException' =>
           'Confira o código recebido ou solicite outro.',
-        'NOT_ELIGIBLE' =>
-          'O beta é destinado a pessoas com 18 anos completos ou mais.',
-        'BETA_FULL' => 'As vagas do beta foram preenchidas. Você pode entrar na lista de espera.',
+        'NOT_ELIGIBLE' => 'O período de avaliação é destinado a pessoas com 18 anos completos ou mais.',
+        'BETA_FULL' => 'As vagas do período de avaliação foram preenchidas. Você pode entrar na lista de espera.',
+        'IMAGE_TYPE_INVALID' ||
+        'IMAGE_NOT_VALID' ||
+        'IMAGE_SIZE_INVALID' ||
+        'UPLOAD_UNAVAILABLE' => photoError(error),
         'ACCOUNT_UNAVAILABLE' => 'Esta conta está indisponível.',
         'INVALID_INPUT' => 'Confira os campos e tente novamente.',
         _ => 'Não foi possível concluir agora (falta de conexão ou instabilidade do serviço). Seus dados continuam nesta tela; tente novamente em instantes.',
@@ -194,13 +327,22 @@ class _IdentityScreenState extends State<IdentityScreen> {
         });
       }
     }
+    // Quem entrou (ou terminou o cadastro) vai direto para o app, sem tela intermediaria.
+    if (mounted && step == Step.ready && (widget.gateway?.signedIn ?? false)) {
+      await offerBiometrics();
+      if (mounted) openHome();
+    }
   }
 
   Future<void> submit() => perform(() async {
     final gateway = widget.gateway!;
     switch (step) {
       case Step.signIn:
-        await gateway.signIn(email.text.trim(), password.text);
+        await gateway.signIn(
+          email.text.trim(),
+          password.text,
+          keepSignedIn: keepSignedIn,
+        );
         password.clear();
         await resume();
       case Step.signUp:
@@ -228,7 +370,27 @@ class _IdentityScreenState extends State<IdentityScreen> {
           body: {'displayName': name.text.trim(), 'username': username.text},
         );
         displayName = profile['displayName'] as String?;
+        needsPhoto = true;
         await status();
+      case Step.photo:
+        final photo = chosenPhoto;
+        if (photo == null) {
+          message = 'Escolha uma foto para continuar.';
+          return;
+        }
+        final reference = await uploadProfilePhoto(gateway, photo);
+        final current = await gateway.request('/me');
+        await gateway.request(
+          '/me',
+          method: 'PATCH',
+          body: {
+            'expectedVersion': current['version'],
+            'photoReference': reference,
+          },
+        );
+        needsPhoto = false;
+        chosenPhoto = null;
+        step = Step.ready;
       case Step.admission:
         if (!adult) {
           message = 'Confirme que tem 18 anos completos ou mais.';
@@ -245,35 +407,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
         break;
     }
   }, validate: true);
-
-  Future<void> deleteAccount() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Excluir sua conta?'),
-        content: const Text(
-          'O acesso será bloqueado imediatamente e a limpeza dos seus dados será agendada.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Excluir minha conta'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    await perform(() async {
-      await widget.gateway!.request('/me', method: 'DELETE');
-      widget.gateway!.clearSession();
-      step = Step.signIn;
-      message = 'Exclusão aceita. O acesso à conta foi encerrado.';
-    });
-  }
 
   Widget field(
     TextEditingController controller,
@@ -319,10 +452,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.forgot => 'Recupere sua senha',
       Step.reset => 'Defina uma nova senha',
       Step.profile => 'Seu perfil de corredor',
-      Step.admission => full ? 'Lista de espera' : 'Participe do beta',
-      Step.ready => 'Olá, ${displayName ?? 'corredor'}!',
+      Step.admission =>
+        full ? 'Lista de espera' : 'Participe do período de avaliação',
+      Step.photo => 'Sua foto de perfil',
+      Step.ready => 'Entrando, ${displayName ?? 'corredor'}…',
       Step.waiting => 'Você está na lista de espera',
-      Step.closed => 'As admissões do beta foram encerradas',
+      Step.closed => 'As admissões do período de avaliação foram encerradas',
     };
     return Scaffold(
       appBar: AppBar(title: const RunPassWordmark(compact: true)),
@@ -335,6 +470,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
               child: gateway == null
                   ? const Text(
                       'O RunPass ainda não está disponível neste ambiente.',
+                    )
+                  : restoring
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 80),
+                      child: Center(child: CircularProgressIndicator()),
                     )
                   : Form(
                       key: form,
@@ -376,7 +516,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             style: Theme.of(context).textTheme.headlineSmall
                                 ?.copyWith(
                                   fontWeight: FontWeight.w800,
-                                  color: runPassNavy,
+                                  color: context.isDark
+                                      ? Colors.white
+                                      : runPassNavy,
                                 ),
                           ),
                           const SizedBox(height: 24),
@@ -387,6 +529,19 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             Step.reset,
                           ].contains(step))
                             field(password, 'Senha', secret: true),
+                          if (step == Step.signIn)
+                            CheckboxListTile(
+                              key: const Key('keep-signed-in'),
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              value: keepSignedIn,
+                              onChanged: busy
+                                  ? null
+                                  : (value) => setState(
+                                      () => keepSignedIn = value ?? true,
+                                    ),
+                              title: const Text('Manter conectado'),
+                            ),
                           if ([Step.confirm, Step.reset].contains(step))
                             field(code, 'Código recebido'),
                           if (step == Step.profile) ...[
@@ -406,7 +561,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             Text(
                               full
                                   ? 'A lista de espera não garante vaga ou posição.'
-                                  : 'Beta gratuito para maiores de 18 anos.',
+                                  : 'Período de avaliação gratuito para maiores de 18 anos.',
                             ),
                             field(
                               birth,
@@ -428,22 +583,45 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               ),
                             ),
                           ],
-                          if (step == Step.ready)
+                          if (step == Step.photo) ...[
                             const Text(
-                              'Sua participação no beta está confirmada.',
+                              'Para seus amigos reconhecerem você, adicione uma foto. Ela é obrigatória e você poderá trocar ou remover depois, no perfil.',
                             ),
+                            const SizedBox(height: 16),
+                            Center(
+                              child: InkWell(
+                                key: const Key('choose-photo'),
+                                customBorder: const CircleBorder(),
+                                onTap: busy ? null : choosePhoto,
+                                child: CircleAvatar(
+                                  radius: 64,
+                                  backgroundColor: context.softFill,
+                                  backgroundImage: chosenPhoto == null
+                                      ? null
+                                      : MemoryImage(
+                                          Uint8List.fromList(chosenPhoto!),
+                                        ),
+                                  child: chosenPhoto == null
+                                      ? const Icon(
+                                          Icons.add_a_photo_outlined,
+                                          size: 40,
+                                          color: runPassOrange,
+                                        )
+                                      : null,
+                                ),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: busy ? null : choosePhoto,
+                              child: Text(
+                                chosenPhoto == null
+                                    ? 'Escolher foto'
+                                    : 'Trocar foto',
+                              ),
+                            ),
+                          ],
                           if (step == Step.ready)
-                            FilledButton(
-                              onPressed: busy
-                                  ? null
-                                  : () => Navigator.of(context).pushReplacement(
-                                      MaterialPageRoute<void>(
-                                        builder: (_) =>
-                                            RunPassHomeScreen(gateway: gateway),
-                                      ),
-                                    ),
-                              child: const Text('Entrar no RunPass'),
-                            ),
+                            const Center(child: CircularProgressIndicator()),
                           if (message != null)
                             Padding(
                               padding: const EdgeInsets.symmetric(vertical: 12),
@@ -467,8 +645,17 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     ? 'Aguarde…'
                                     : step == Step.admission && full
                                     ? 'Entrar na lista de espera'
+                                    : step == Step.signIn
+                                    ? 'Entrar no RunPass'
                                     : 'Continuar',
                               ),
+                            ),
+                          if (step == Step.signIn && biometricLocked)
+                            OutlinedButton.icon(
+                              key: const Key('biometric-retry'),
+                              onPressed: busy ? null : restoreSession,
+                              icon: const Icon(Icons.fingerprint),
+                              label: const Text('Entrar com biometria'),
                             ),
                           if (step == Step.signIn) ...[
                             TextButton(
@@ -509,7 +696,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     }),
                               child: const Text('Sair da lista de espera'),
                             ),
-                          if (gateway.signedIn)
+                          if (gateway.signedIn &&
+                              (step == Step.waiting || step == Step.closed))
                             TextButton(
                               onPressed: busy
                                   ? null
@@ -521,11 +709,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                       }
                                     }),
                               child: const Text('Sair'),
-                            ),
-                          if (gateway.signedIn && step == Step.ready)
-                            TextButton(
-                              onPressed: busy ? null : deleteAccount,
-                              child: const Text('Excluir minha conta'),
                             ),
                           if (initial && step != Step.signIn)
                             TextButton(

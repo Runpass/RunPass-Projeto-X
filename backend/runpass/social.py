@@ -68,6 +68,9 @@ class SocialService:
             return True
         return bool(part.get("publishToFeed")) and self.can_view(read, actor.subject, owner)
 
+    def may_view_profile_photo(self, read, actor, owner):
+        return owner == actor.subject or self.can_view(read, actor.subject, owner)
+
     def _list(self, table, pk, prefix, limit=1000):
         rows, after = [], None
         while len(rows) < limit:
@@ -259,8 +262,11 @@ class SocialService:
 
     # ---- posts, feed, comments -----------------------------------------------------------
 
-    def _comment_count(self, post_id):
-        return len(self._list("history", "POST#" + post_id, "COMMENT#", 1000))
+    def _comment_rows(self, post_id):
+        return self._list("history", "POST#" + post_id, "COMMENT#", 1000)
+
+    def _like_rows(self, post_id):
+        return self._list("history", "POST#" + post_id, "LIKE#", 1000)
 
     def _post_view(self, part, viewer):
         author = self._active_profile(self.store.get, part["owner"])
@@ -271,8 +277,14 @@ class SocialService:
             "participation": self._public_participation(part, viewer),
             "publishedAt": part.get("completedAt", ""),
             "version": part["version"],
-            "commentCount": self._comment_count(part["id"]),
         }
+        comments = self._comment_rows(part["id"])
+        post["commentCount"] = len(comments)
+        if comments:
+            post["lastComment"] = self._comment_out(comments[-1][1], viewer)
+        likes = self._like_rows(part["id"])
+        post["likeCount"] = len(likes)
+        post["likedByMe"] = any(sk == "LIKE#" + viewer for sk, _ in likes)
         if review and review.get("comment") and review.get("moderationState") != "invalidated":
             post["comment"] = review["comment"]
         return post
@@ -297,15 +309,12 @@ class SocialService:
             self._authorized_post(self.store.get, actor.subject, post_id), actor.subject
         )
 
-    def feed(self, actor, limit=20, cursor=None):
-        """My posts plus those of people I follow, newest first."""
-        self.identity.authorize(actor, admitted=True)
-        authors = [actor.subject] + [
+    def _feed_posts(self, actor, after=None, mine=True):
+        authors = ([actor.subject] if mine else []) + [
             sk.split("#", 1)[1]
             for sk, row in self._list("identity", "USER#" + actor.subject, "FOLLOWING#")
             if row["state"] == "active"
         ][: MAX_FEED_AUTHORS - 1]
-        after = _cursor_decode(cursor) if cursor else None
         posts = []
         for author in authors:
             if not self.can_view(self.store.get, actor.subject, author):
@@ -316,38 +325,250 @@ class SocialService:
                     if after is None or key < tuple(after):
                         posts.append({**part, "owner": author})
         posts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
+        return posts
+
+    def feed(self, actor, limit=20, cursor=None):
+        """My posts plus those of people I follow, newest first."""
+        self.identity.authorize(actor, admitted=True)
+        posts = self._feed_posts(actor, _cursor_decode(cursor) if cursor else None)
         page = posts[:limit]
         result = {"items": [self._post_view(p, actor.subject) for p in page]}
         if len(posts) > limit:
             result["nextCursor"] = _cursor_encode([page[-1].get("completedAt", ""), page[-1]["id"]])
         return result
 
+    def _comment_likes(self, post_id):
+        """{comment id: [liker subject, ...]} de uma publicacao."""
+        likes = {}
+        for sk, row in self._list("history", "POST#" + post_id, "CLIKE#", 5000):
+            _, comment_id, who = sk.split("#", 2)
+            likes.setdefault(comment_id, []).append((who, row.get("createdAt", "")))
+        return likes
+
+    def _decorated(self, row, viewer, likes):
+        out = self._comment_out(row, viewer)
+        who = [w for w, _ in likes.get(row["id"], [])]
+        out["likeCount"] = len(who)
+        out["likedByMe"] = viewer in who
+        return out
+
     def comments(self, actor, post_id, limit=20, cursor=None):
+        """Comentarios principais (paginados) com as respostas de cada um embutidas."""
         self.identity.authorize(actor, admitted=True)
         self._authorized_post(self.store.get, actor.subject, post_id)
-        rows, after = self.store.query(
-            "history",
-            "POST#" + post_id,
-            prefix="COMMENT#",
-            after=cursor,
-            limit=limit,
-        )
+        rows = [r for _, r in self._comment_rows(post_id)]
+        likes = self._comment_likes(post_id)
+        replies = {}
+        for row in rows:
+            if row.get("parentId"):
+                replies.setdefault(row["parentId"], []).append(row)
+        roots = [r for r in rows if not r.get("parentId")]
+        if cursor:
+            roots = [r for r in roots if f"COMMENT#{r['createdAt']}#{r['id']}" > cursor]
+        page = roots[:limit]
         items = []
-        for _, row in rows:
-            author = self._active_profile(self.store.get, row["author"])
-            if author:
-                items.append(
-                    {
-                        **{k: v for k, v in row.items() if k != "author"},
-                        "author": self._card(author, actor.subject),
-                    }
-                )
+        for row in page:
+            if not self._active_profile(self.store.get, row["author"]):
+                continue
+            item = self._decorated(row, actor.subject, likes)
+            mine = [
+                self._decorated(r, actor.subject, likes)
+                for r in replies.get(row["id"], [])
+                if self._active_profile(self.store.get, r["author"])
+            ]
+            item["replies"] = mine
+            item["replyCount"] = len(mine)
+            items.append(item)
         result = {"items": items}
-        if after:
-            result["nextCursor"] = after
+        if len(roots) > limit and page:
+            last = page[-1]
+            result["nextCursor"] = f"COMMENT#{last['createdAt']}#{last['id']}"
         return result
 
-    def comment(self, actor, post_id, key, text):
+    def like_comment(self, actor, comment_id, key, liked=True):
+        def work(read, write, account, now, replay):
+            loc = read(("history", "COMMENT#" + comment_id, "LOC"))
+            if not loc:
+                raise Problem(404, "COMMENT_NOT_FOUND")
+            self._authorized_post(read, actor.subject, loc["postId"])
+            like_key = (
+                "history",
+                "POST#" + loc["postId"],
+                f"CLIKE#{comment_id}#{actor.subject}",
+            )
+            ref_key = ("identity", "USER#" + actor.subject, "CLIKEREF#" + comment_id)
+            exists = read(like_key) is not None
+            if liked and not exists:
+                write(like_key, {"author": actor.subject, "createdAt": stamp(now)})
+                write(ref_key, {"sharedKeys": [list(like_key)]})
+            elif not liked and exists:
+                write(like_key, None)
+                write(ref_key, None)
+            return {"commentId": comment_id, "likedByMe": liked}, {}
+
+        return self.identity.transact(
+            actor,
+            "likeComment" if liked else "unlikeComment",
+            key,
+            {"commentId": comment_id},
+            work,
+            admitted=True,
+        )
+
+    def like(self, actor, post_id, key, liked=True):
+        def work(read, write, account, now, replay):
+            self._authorized_post(read, actor.subject, post_id)
+            like_key = ("history", "POST#" + post_id, "LIKE#" + actor.subject)
+            ref_key = ("identity", "USER#" + actor.subject, "LIKEREF#" + post_id)
+            exists = read(like_key) is not None
+            if liked and not exists:
+                write(like_key, {"author": actor.subject, "createdAt": stamp(now)})
+                write(ref_key, {"sharedKeys": [list(like_key)]})
+            elif not liked and exists:
+                write(like_key, None)
+                write(ref_key, None)
+            return {"postId": post_id, "likedByMe": liked}, {}
+
+        return self.identity.transact(
+            actor,
+            "putPostLike" if liked else "deletePostLike",
+            key,
+            {"postId": post_id},
+            work,
+            admitted=True,
+        )
+
+    # ---- notifications (derived from what already exists; nothing extra to erase) ---------
+
+    NOTIFICATION_DAYS = 30
+    NOTIFICATION_LIMIT = 50
+    NOTIFICATION_POSTS = 20
+
+    def _notification_items(self, actor, since, dismissed=()):
+        me = actor.subject
+        items = []
+
+        def add(kind, at, who, post=None, extra=None, pinned=False):
+            if at < since and not pinned:
+                return
+            profile = self._active_profile(self.store.get, who)
+            if not profile:
+                return
+            item = {
+                "id": ":".join([kind, who, (post or {}).get("id", ""), at]),
+                "kind": kind,
+                "createdAt": at,
+                "actor": self._card(profile, me),
+            }
+            if post:
+                item["postId"] = post["id"]
+                item["editionId"] = post.get("editionId")
+            if extra:
+                item.update(extra)
+            items.append(item)
+
+        for sk, row in self._list("identity", "USER#" + me, "FOLLOWER#"):
+            who = sk.split("#", 1)[1]
+            pending = row["state"] == "pending"
+            add("follow_request" if pending else "follow", row["at"], who, pinned=pending)
+        mine = [p for p in self._completed(me) if p.get("publishToFeed")]
+        for part in mine[: self.NOTIFICATION_POSTS]:
+            for sk, row in self._like_rows(part["id"]):
+                if row["author"] != me:
+                    add("like", row["createdAt"], row["author"], part)
+            for _, row in self._comment_rows(part["id"]):
+                if row["author"] != me:
+                    add(
+                        "comment",
+                        row["createdAt"],
+                        row["author"],
+                        part,
+                        {"text": row["text"][:140]},
+                    )
+        self._comment_notifications(actor, add)
+        for part in self._feed_posts(actor, mine=False)[: self.NOTIFICATION_POSTS]:
+            add("post", part.get("completedAt", ""), part["owner"], part)
+        # Pedidos para seguir sempre primeiro (e nunca saem por idade ou limite); o resto, novo primeiro.
+        items = [i for i in items if i["id"] not in dismissed]
+        items.sort(key=lambda i: i["createdAt"], reverse=True)
+        requests = [i for i in items if i["kind"] == "follow_request"]
+        others = [i for i in items if i["kind"] != "follow_request"]
+        return requests + others[: self.NOTIFICATION_LIMIT]
+
+    def _comment_notifications(self, actor, add):
+        """Curtidas e respostas nos meus comentarios (dos ultimos que fiz)."""
+        me = actor.subject
+        by_post = {}
+        for sk, ref in self._list("identity", "USER#" + me, "COMMENTREF#", 100):
+            keys = ref.get("sharedKeys") or []
+            row = self.store.get(tuple(keys[0])) if keys else None
+            if row:
+                by_post.setdefault(row["postId"], []).append(row)
+        for post_id, mine in by_post.items():
+            try:
+                part = self._authorized_post(self.store.get, me, post_id)
+            except Problem:
+                continue
+            likes = self._comment_likes(post_id)
+            rows = [r for _, r in self._comment_rows(post_id)]
+            for comment in mine:
+                for who, at in likes.get(comment["id"], []):
+                    if who != me:
+                        add("comment_like", at, who, part, {"commentId": comment["id"]})
+                if comment.get("parentId") or part["owner"] == me:
+                    continue  # quem e dono da publicacao ja recebe aviso de cada comentario
+                for reply in rows:
+                    if reply.get("parentId") == comment["id"] and reply["author"] != me:
+                        add(
+                            "reply",
+                            reply["createdAt"],
+                            reply["author"],
+                            part,
+                            {"text": reply["text"][:140], "commentId": comment["id"]},
+                        )
+
+    def notifications(self, actor):
+        self.identity.authorize(actor, admitted=True)
+        from datetime import timedelta
+
+        now = self.identity.clock()
+        since = stamp(now - timedelta(days=self.NOTIFICATION_DAYS))
+        state = self.store.get(("identity", "USER#" + actor.subject, "NOTIFSTATE")) or {}
+        read_at = state.get("readAt", "")
+        items = self._notification_items(actor, since, set(state.get("dismissed", [])))
+        for item in items:
+            item["unread"] = item["createdAt"] > read_at
+        return {"items": items, "unreadCount": sum(1 for i in items if i["unread"])}
+
+    def mark_notifications_read(self, actor, key):
+        def work(read, write, account, now, replay):
+            row_key = ("identity", "USER#" + actor.subject, "NOTIFSTATE")
+            write(row_key, {**(read(row_key) or {}), "readAt": stamp(now)})
+            return {"readAt": stamp(now)}, {}
+
+        return self.identity.transact(actor, "markNotificationsRead", key, {}, work, admitted=True)
+
+    MAX_DISMISSED = 300
+    MAX_REPLIES = 20
+
+    def dismiss_notification(self, actor, notification_id, key):
+        """Apagar um aviso (deslizar na tela). Pedidos para seguir se resolvem aceitando ou recusando."""
+        if notification_id.startswith("follow_request:"):
+            raise Problem(422, "NOTIFICATION_NOT_DISMISSIBLE")
+
+        def work(read, write, account, now, replay):
+            row_key = ("identity", "USER#" + actor.subject, "NOTIFSTATE")
+            row = read(row_key) or {}
+            dismissed = [i for i in row.get("dismissed", []) if i != notification_id]
+            dismissed.append(notification_id)
+            write(row_key, {**row, "dismissed": dismissed[-self.MAX_DISMISSED :]})
+            return {"id": notification_id, "dismissed": True}, {}
+
+        return self.identity.transact(
+            actor, "deleteMyNotification", key, {"id": notification_id}, work, admitted=True
+        )
+
+    def comment(self, actor, post_id, key, text, parent_id=None):
         text = text.strip()
         if not text or len(text) > 1000:
             raise Problem(422, "INVALID_COMMENT")
@@ -361,6 +582,19 @@ class SocialService:
                 return self._comment_out(
                     read(("history", "POST#" + post_id, loc["sk"])), actor
                 ), replay
+            root = None
+            if parent_id:
+                parent_loc = read(("history", "COMMENT#" + parent_id, "LOC"))
+                if not parent_loc or parent_loc["postId"] != post_id:
+                    raise Problem(422, "INVALID_PARENT_COMMENT")
+                parent = read(("history", "POST#" + post_id, parent_loc["sk"]))
+                if not parent:
+                    raise Problem(422, "INVALID_PARENT_COMMENT")
+                # Um nivel so: responder a uma resposta vira resposta ao comentario principal.
+                root = parent.get("parentId") or parent["id"]
+                siblings = [r for _, r in self._comment_rows(post_id) if r.get("parentId") == root]
+                if len(siblings) >= self.MAX_REPLIES:
+                    raise Problem(422, "REPLY_LIMIT_REACHED")
             comment_id, created = str(uuid4()), stamp(now)
             sk = f"COMMENT#{created}#{comment_id}"
             row = {
@@ -372,6 +606,8 @@ class SocialService:
                 "version": 1,
                 "edited": False,
             }
+            if root:
+                row["parentId"] = root
             comment_key = ("history", "POST#" + post_id, sk)
             loc_key = ("history", "COMMENT#" + comment_id, "LOC")
             write(comment_key, row)
@@ -383,14 +619,22 @@ class SocialService:
             return self._comment_out(row, actor), {"id": comment_id}
 
         return self.identity.transact(
-            actor, "createPostComment", key, {"postId": post_id, "text": text}, work, admitted=True
+            actor,
+            "createPostComment",
+            key,
+            {"postId": post_id, "text": text, "parentId": parent_id},
+            work,
+            admitted=True,
         )
 
     def _comment_out(self, row, actor):
+        viewer = actor if isinstance(actor, str) else actor.subject
         profile = self._active_profile(self.store.get, row["author"]) or {}
         return {
+            "likeCount": 0,
+            "likedByMe": False,
             **{k: v for k, v in row.items() if k != "author"},
-            "author": self._card(profile, actor.subject) if profile else {"id": row["author"]},
+            "author": self._card(profile, viewer) if profile else {"id": row["author"]},
         }
 
     def delete_comment(self, actor, comment_id, key):
@@ -403,14 +647,24 @@ class SocialService:
             post_owner = owner["owner"] if owner else None
             if actor.subject not in (loc["author"], post_owner):
                 raise Problem(404, "COMMENT_NOT_FOUND")
-            write(("history", "POST#" + loc["postId"], loc["sk"]), None)
-            write(loc_key, None)
-            write(("identity", "USER#" + loc["author"], "COMMENTREF#" + comment_id), None)
+            self._erase_comment(read, write, loc["postId"], comment_id, loc)
+            # Apagar um comentario principal leva as respostas (no maximo MAX_REPLIES).
+            for _, reply in self._comment_rows(loc["postId"]):
+                if reply.get("parentId") == comment_id:
+                    reply_loc = read(("history", "COMMENT#" + reply["id"], "LOC"))
+                    if reply_loc:
+                        self._erase_comment(read, write, loc["postId"], reply["id"], reply_loc)
             return {"id": comment_id, "deleted": True}, {}
 
         return self.identity.transact(
             actor, "deleteOwnComment", key, {"id": comment_id}, work, admitted=True
         )
+
+    @staticmethod
+    def _erase_comment(read, write, post_id, comment_id, loc):
+        write(("history", "POST#" + post_id, loc["sk"]), None)
+        write(("history", "COMMENT#" + comment_id, "LOC"), None)
+        write(("identity", "USER#" + loc["author"], "COMMENTREF#" + comment_id), None)
 
 
 __all__ = ["SocialService", "Unavailable"]

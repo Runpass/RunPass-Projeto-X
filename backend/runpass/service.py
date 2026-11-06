@@ -128,6 +128,7 @@ class IdentityService:
                 "city",
                 "bio",
                 "photoReference",
+                "bannerReference",
                 "isPrivate",
             )
             if k in profile
@@ -186,6 +187,25 @@ class IdentityService:
 
         return self.transact(principal, "createOwnProfile", key, payload, work)
 
+    @staticmethod
+    def _swap_profile_photo(read, write, subject, profile, payload, field="photoReference"):
+        """The image must be valid and uploaded by this runner; reference counts follow."""
+        reference = payload[field]
+        if reference == profile.get(field):
+            return
+        if reference is not None:
+            new_key = ("operations", "USER#" + subject, "IMAGE#" + reference)
+            new = read(new_key)
+            if not new or new.get("state") != "valid" or new.get("owner") != subject:
+                raise Problem(422, "IMAGE_NOT_VALID")
+            write(new_key, {**new, "refs": new.get("refs", 0) + 1})
+        previous = profile.get(field)
+        if previous:
+            old_key = ("operations", "USER#" + subject, "IMAGE#" + previous)
+            old = read(old_key)
+            if old:
+                write(old_key, {**old, "refs": max(0, old.get("refs", 0) - 1)})
+
     def patch_profile(self, principal, key, payload):
         pk = "USER#" + principal.subject
 
@@ -198,9 +218,11 @@ class IdentityService:
                 return self.public_profile(profile), {}
             if profile["version"] != payload["expectedVersion"]:
                 raise Problem(409, "VERSION_CONFLICT")
-            if payload.get("photoReference") is not None:
-                # S05 must validate image owner, origin and state before enabling this field.
-                raise Problem(503, "PHOTO_UPLOAD_NOT_IMPLEMENTED")
+            for field in ("photoReference", "bannerReference"):
+                if field in payload:
+                    self._swap_profile_photo(
+                        read, write, principal.subject, profile, payload, field
+                    )
             new_username = payload.get("username", profile["username"]).lower()
             if new_username != profile["username"]:
                 new = ("identity", "USERNAME#" + new_username, "CLAIM")
@@ -229,6 +251,10 @@ class IdentityService:
     def status(self, principal):
         def work(read, write, account, now, replay):
             control = read(("identity", "BETA#v1", "CONTROL")) or {"count": 0}
+            profile = read(("identity", "USER#" + principal.subject, "PROFILE"))
+            if profile and account and account.get("state") == "active":
+                # Runs at every sign-in, so profiles created before search existed become findable.
+                self._sync_index(read, write, principal.subject, profile)
             waiting = read(("identity", "USER#" + principal.subject, "WAITLIST"))
             closed = bool(
                 control.get("endsAt") and now >= datetime.fromisoformat(control["endsAt"])

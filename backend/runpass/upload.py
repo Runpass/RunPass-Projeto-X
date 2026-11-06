@@ -94,11 +94,33 @@ VIEW_SECONDS = 5 * 60
 
 
 class UploadService:
-    def __init__(self, identity, blobs, may_view=None):
+    def __init__(self, identity, blobs, may_view=None, may_view_profile=None):
         self.identity, self.store, self.blobs = identity, identity.store, blobs
         # may_view(read, actor, owner_subject, participation) -> bool. Default: only the owner.
         # The social module injects follow/visibility rules here without touching this service.
         self.may_view = may_view or (lambda read, actor, owner, part: owner == actor.subject)
+        self.may_view_profile = may_view_profile or (
+            lambda read, actor, owner: owner == actor.subject
+        )
+
+    def profile_photo(self, actor, subject, field="photoReference"):
+        """Short-lived signed link to a runner's profile photo or banner, when the viewer may."""
+
+        def work(read, write, account, now, replay):
+            profile = read(("identity", "USER#" + subject, "PROFILE"))
+            if not profile or not profile.get(field):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            if not self.may_view_profile(read, actor, subject):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            return {"reference": profile[field], "now": now}, {}
+
+        found = self.identity.transact(actor, "getProfilePhoto", None, {}, work, admitted=True)
+        link = self.blobs.view_url(subject, found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
 
     def medal_image(self, actor, participation_id):
         """Short-lived signed link to the sanitized medal photo; never the original."""

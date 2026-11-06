@@ -1,0 +1,3 @@
+source_external_id,name,event_date,city,state,country,distances_km,registration_status,official_url,venue,latitude,longitude,last_verified_at
+example-sp-001,[FICTICIA] Corrida Exemplo Parque,2027-05-16,São Paulo,SP,BR,"5;10;21,0975",unknown,https://example.org/race-001,Parque Exemplo,-23.5874,-46.6576,2026-11-06T12:00:00Z
+example-sp-002,[FICTICIA] Desafio Avenida Exemplo,2027-06-20,São Paulo,SP,BR,"5;10",unknown,https://example.org/race-002,Avenida Exemplo,-23.5614,-46.6559,

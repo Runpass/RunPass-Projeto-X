@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const runPassOrange = Color(0xfffc5426);
 const runPassGold = Color(0xffe8b23a);
@@ -56,7 +57,31 @@ ThemeData runPassTheme() {
   );
 }
 
-/// Dark variant used by the medal collection screen.
+/// Modo escuro escolhido em Configuracoes; lembrado entre aberturas do app.
+class ThemeController {
+  static const _key = 'dark-mode';
+  static final dark = ValueNotifier<bool>(false);
+
+  static Future<void> load() async {
+    try {
+      dark.value =
+          (await SharedPreferences.getInstance()).getBool(_key) ?? false;
+    } on Object {
+      dark.value = false;
+    }
+  }
+
+  static Future<void> set(bool value) async {
+    dark.value = value;
+    try {
+      await (await SharedPreferences.getInstance()).setBool(_key, value);
+    } on Object {
+      // Vale ate fechar o app.
+    }
+  }
+}
+
+/// Tema escuro de todo o app (ligado em Configuracoes).
 ThemeData runPassDarkTheme() {
   const surface = Color(0xff1a1a1d);
   final scheme = ColorScheme.fromSeed(
@@ -88,6 +113,26 @@ ThemeData runPassDarkTheme() {
       side: BorderSide.none,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: surface,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xff33363b)),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: runPassOrange,
+        foregroundColor: Colors.white,
+        minimumSize: const Size.fromHeight(52),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      ),
+    ),
     navigationBarTheme: const NavigationBarThemeData(
       backgroundColor: Color(0xff0e0e10),
       indicatorColor: Color(0xff3a2a22),
@@ -116,7 +161,7 @@ class RunPassWordmark extends StatelessWidget {
             fontWeight: FontWeight.w900,
             fontSize: compact ? 25 : 34,
             letterSpacing: -1.4,
-            color: runPassNavy,
+            color: context.isDark ? Colors.white : runPassNavy,
           ),
           children: const [
             TextSpan(text: 'Run'),
@@ -157,4 +202,26 @@ class RunPassBottomNav extends StatelessWidget {
       NavigationDestination(icon: Icon(Icons.person_outline), label: 'Perfil'),
     ],
   );
+}
+
+/// Cores que mudam entre o tema claro e o escuro. Cores fixas de "fundo claro" nao podem ser
+/// usadas direto nas telas, senao ficam ilegiveis no modo escuro.
+extension RunPassPalette on BuildContext {
+  bool get isDark => Theme.of(this).brightness == Brightness.dark;
+  Color get muted => isDark ? Colors.white70 : Colors.black54;
+  Color get softFill =>
+      isDark ? const Color(0xff3a2a22) : const Color(0xffffe4dc);
+  Color get panel => isDark ? const Color(0xff26282c) : const Color(0xffe9ecf1);
+  Color get panelStrong =>
+      isDark ? const Color(0xff303338) : const Color(0xffd5d8dd);
+  Color get panelCard =>
+      isDark ? const Color(0xff202226) : const Color(0xffe6e8eb);
+  Color get archivedText =>
+      isDark ? const Color(0xff9aa0aa) : const Color(0xff7a808a);
+  Color get greenFill =>
+      isDark ? const Color(0xff17301f) : const Color(0xffe6f6ec);
+  Color get warnFill =>
+      isDark ? const Color(0xff33281a) : const Color(0xfffff3e0);
+  Color get track => isDark ? const Color(0xff33363b) : const Color(0xffeceff3);
+  Color get onSurfaceText => Theme.of(this).colorScheme.onSurface;
 }

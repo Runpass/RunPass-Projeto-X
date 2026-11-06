@@ -24,14 +24,39 @@ String followLabel(String? state) => switch (state) {
 
 class ProfileAvatar extends StatelessWidget {
   final double radius;
-  const ProfileAvatar({super.key, this.radius = 22});
+  final IdentityGateway? gateway;
+  final Map? profile;
+  const ProfileAvatar({
+    super.key,
+    this.radius = 22,
+    this.gateway,
+    this.profile,
+  });
 
   @override
-  Widget build(BuildContext context) => CircleAvatar(
-    radius: radius,
-    backgroundColor: const Color(0xffffe4dc),
-    child: Icon(Icons.person, color: runPassOrange, size: radius * 1.1),
-  );
+  Widget build(BuildContext context) {
+    final id = profile?['id'] as String?;
+    final person = Icon(Icons.person, color: runPassOrange, size: radius * 1.1);
+    final photo =
+        gateway != null && id != null && profile?['photoReference'] != null;
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: context.softFill,
+      child: photo
+          ? ClipOval(
+              child: SizedBox(
+                width: radius * 2,
+                height: radius * 2,
+                child: SignedPhoto(
+                  gateway: gateway!,
+                  endpoint: '/profiles/${Uri.encodeComponent(id)}/photo',
+                  fallback: Center(child: person),
+                ),
+              ),
+            )
+          : person,
+    );
+  }
 }
 
 /// Procurar pessoas por nome ou usuário, para seguir.
@@ -132,7 +157,7 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
           Card(
             child: ListTile(
               key: Key('friend-${profile['id']}'),
-              leading: const ProfileAvatar(),
+              leading: ProfileAvatar(gateway: widget.gateway, profile: profile),
               title: Text(profile['displayName'] as String? ?? ''),
               subtitle: Text(
                 '@${profile['username']}'
@@ -253,9 +278,29 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                if (canView && p['bannerReference'] != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: AspectRatio(
+                      aspectRatio: 16 / 7,
+                      child: SignedPhoto(
+                        key: ValueKey('banner-${p['bannerReference']}'),
+                        gateway: widget.gateway,
+                        endpoint:
+                            '/profiles/${Uri.encodeComponent(widget.profileId)}/banner',
+                        fallback: const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 Row(
                   children: [
-                    const ProfileAvatar(radius: 34),
+                    ProfileAvatar(
+                      radius: 34,
+                      gateway: widget.gateway,
+                      profile: p,
+                    ),
                     const SizedBox(width: 14),
                     Expanded(
                       child: Column(
@@ -366,7 +411,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         value,
         style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
       ),
-      Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+      Text(label, style: TextStyle(fontSize: 12, color: context.muted)),
     ],
   );
 }
@@ -432,7 +477,10 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
         for (final row in items ?? const <Map<String, dynamic>>[])
           Card(
             child: ListTile(
-              leading: const ProfileAvatar(),
+              leading: ProfileAvatar(
+                gateway: widget.gateway,
+                profile: row['profile'] as Map,
+              ),
               title: Text((row['profile'] as Map)['displayName'] as String),
               subtitle: Text('@${(row['profile'] as Map)['username']}'),
               trailing: Wrap(
@@ -482,9 +530,13 @@ class CommentsScreen extends StatefulWidget {
 
 class _CommentsScreenState extends State<CommentsScreen> {
   final text = TextEditingController();
+  final input = FocusNode();
   List<Map<String, dynamic>>? comments;
   String? error;
   bool sending = false;
+
+  /// Comentario principal que esta sendo respondido (nulo = comentario novo).
+  Map<String, dynamic>? replyingTo;
 
   @override
   void initState() {
@@ -495,10 +547,20 @@ class _CommentsScreenState extends State<CommentsScreen> {
   @override
   void dispose() {
     text.dispose();
+    input.dispose();
     super.dispose();
   }
 
   String get path => '/posts/${Uri.encodeComponent(widget.postId)}/comments';
+
+  void fail(Object error) {
+    if (!mounted) return;
+    setState(
+      () => this.error = friendsError(
+        error is IdentityIssue ? error : const IdentityIssue(''),
+      ),
+    );
+  }
 
   Future<void> load() async {
     try {
@@ -509,11 +571,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
           error = null;
         });
       }
-    } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
-    } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+    } on Exception catch (e) {
+      fail(e);
     }
   }
 
@@ -522,14 +581,16 @@ class _CommentsScreenState extends State<CommentsScreen> {
     if (value.isEmpty || sending) return;
     setState(() => sending = true);
     try {
-      await widget.gateway.request(path, method: 'POST', body: {'text': value});
+      await widget.gateway.request(
+        path,
+        method: 'POST',
+        body: {'text': value, 'parentId': ?replyingTo?['id']},
+      );
       text.clear();
+      replyingTo = null;
       await load();
-    } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
-    } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+    } on Exception catch (e) {
+      fail(e);
     } finally {
       if (mounted) setState(() => sending = false);
     }
@@ -541,11 +602,148 @@ class _CommentsScreenState extends State<CommentsScreen> {
         '/comments/${Uri.encodeComponent(id)}',
         method: 'DELETE',
       );
-    } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+    } on Exception catch (e) {
+      fail(e);
     }
     await load();
+  }
+
+  /// Curtir e descurtir um comentario (otimista; volta se falhar).
+  Future<void> toggleLike(Map<String, dynamic> c) async {
+    final was = c['likedByMe'] == true;
+    setState(() {
+      c['likedByMe'] = !was;
+      c['likeCount'] =
+          ((c['likeCount'] as num?)?.toInt() ?? 0) + (was ? -1 : 1);
+    });
+    try {
+      await widget.gateway.request(
+        '/comments/${Uri.encodeComponent(c['id'] as String)}/like',
+        method: was ? 'DELETE' : 'PUT',
+      );
+    } on Exception {
+      if (!mounted) return;
+      setState(() {
+        c['likedByMe'] = was;
+        c['likeCount'] =
+            ((c['likeCount'] as num?)?.toInt() ?? 0) + (was ? 1 : -1);
+        error = 'Não foi possível atualizar a curtida.';
+      });
+    }
+  }
+
+  void reply(Map<String, dynamic> root) {
+    setState(() => replyingTo = root);
+    input.requestFocus();
+  }
+
+  /// Foto ou nome no comentario: abre o perfil da pessoa (ou o meu).
+  Future<void> openProfile(Map author) async {
+    final id = author['id'] as String?;
+    if (id == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => id == widget.myId
+            ? RunnerProfileScreen(gateway: widget.gateway)
+            : PublicProfileScreen(
+                gateway: widget.gateway,
+                profileId: id,
+                initial: Map<String, dynamic>.from(author),
+              ),
+      ),
+    );
+  }
+
+  Widget commentTile(Map<String, dynamic> c, {Map<String, dynamic>? root}) {
+    final author = c['author'] as Map;
+    final liked = c['likedByMe'] == true;
+    final likes = (c['likeCount'] as num?)?.toInt() ?? 0;
+    final canDelete = author['id'] == widget.myId || widget.postIsMine;
+    return Padding(
+      key: Key('comment-${c['id']}'),
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            key: Key('comment-author-${c['id']}'),
+            onTap: () => openProfile(author),
+            borderRadius: BorderRadius.circular(40),
+            child: ProfileAvatar(
+              radius: root == null ? 18 : 14,
+              gateway: widget.gateway,
+              profile: author,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                InkWell(
+                  onTap: () => openProfile(author),
+                  child: Text(
+                    '${author['displayName'] ?? 'Corredor'}'
+                    ' · ${timeAgo(DateTime.tryParse(c['createdAt'] as String? ?? '') ?? DateTime.now())}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text(c['text'] as String? ?? ''),
+                Row(
+                  children: [
+                    TextButton(
+                      key: Key('reply-${c['id']}'),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () => reply(root ?? c),
+                      child: const Text('Responder'),
+                    ),
+                    if (canDelete)
+                      IconButton(
+                        key: Key('delete-comment-${c['id']}'),
+                        tooltip: 'Apagar comentário',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          size: 20,
+                        ),
+                        onPressed: () => remove(c['id'] as String),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Column(
+            children: [
+              IconButton(
+                key: Key('like-comment-${c['id']}'),
+                tooltip: liked ? 'Descurtir' : 'Curtir',
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  liked ? Icons.favorite : Icons.favorite_border,
+                  size: 20,
+                  color: liked ? runPassOrange : null,
+                ),
+                onPressed: () => toggleLike(c),
+              ),
+              if (likes > 0)
+                Text(
+                  '$likes',
+                  key: Key('like-count-${c['id']}'),
+                  style: const TextStyle(fontSize: 12),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -565,34 +763,47 @@ class _CommentsScreenState extends State<CommentsScreen> {
                   'Ainda não há comentários. Seja o primeiro!',
                   key: Key('no-comments'),
                 ),
-              for (final c in comments ?? const <Map<String, dynamic>>[])
-                ListTile(
-                  key: Key('comment-${c['id']}'),
-                  contentPadding: EdgeInsets.zero,
-                  leading: const ProfileAvatar(radius: 18),
-                  title: Text(
-                    '${(c['author'] as Map)['displayName'] ?? 'Corredor'}'
-                    ' · ${timeAgo(DateTime.tryParse(c['createdAt'] as String? ?? '') ?? DateTime.now())}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
+              for (final c in comments ?? const <Map<String, dynamic>>[]) ...[
+                commentTile(c),
+                if ((c['replies'] as List? ?? const []).isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 36),
+                    child: Column(
+                      children: [
+                        for (final r
+                            in (c['replies'] as List)
+                                .cast<Map<String, dynamic>>())
+                          commentTile(r, root: c),
+                      ],
                     ),
                   ),
-                  subtitle: Text(c['text'] as String? ?? ''),
-                  trailing:
-                      (c['author'] as Map)['id'] == widget.myId ||
-                          widget.postIsMine
-                      ? IconButton(
-                          key: Key('delete-comment-${c['id']}'),
-                          tooltip: 'Apagar comentário',
-                          icon: const Icon(Icons.delete_outline_rounded),
-                          onPressed: () => remove(c['id'] as String),
-                        )
-                      : null,
-                ),
+              ],
             ],
           ),
         ),
+        if (replyingTo != null)
+          Container(
+            key: const Key('replying-to'),
+            width: double.infinity,
+            color: context.softFill,
+            padding: const EdgeInsets.fromLTRB(16, 6, 4, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Respondendo a ${(replyingTo!['author'] as Map)['displayName'] ?? 'Corredor'}',
+                  ),
+                ),
+                IconButton(
+                  key: const Key('cancel-reply'),
+                  tooltip: 'Cancelar resposta',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  onPressed: () => setState(() => replyingTo = null),
+                ),
+              ],
+            ),
+          ),
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 8, 8),
@@ -602,9 +813,12 @@ class _CommentsScreenState extends State<CommentsScreen> {
                   child: TextField(
                     key: const Key('comment-field'),
                     controller: text,
+                    focusNode: input,
                     maxLength: 1000,
-                    decoration: const InputDecoration(
-                      hintText: 'Escreva um comentário',
+                    decoration: InputDecoration(
+                      hintText: replyingTo == null
+                          ? 'Escreva um comentário'
+                          : 'Escreva sua resposta',
                       counterText: '',
                     ),
                   ),

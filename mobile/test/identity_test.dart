@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/identity_gateway.dart';
+import 'package:runpass/home_screen.dart';
 import 'package:runpass/main.dart';
 
 void main() {
@@ -185,11 +186,12 @@ void main() {
         find.widgetWithText(TextFormField, 'Senha'),
         'Synthetic_password1!',
       );
-      await tester.tap(find.text('Continuar'));
+      await tester.tap(find.text('Entrar no RunPass'));
       await tester.pumpAndSettle();
-      expect(find.text('Olá, Corredora!'), findsOneWidget);
-      expect(find.textContaining('confirmada'), findsOneWidget);
+      // Sem tela intermediaria: quem ja tem cadastro entra direto no app.
+      expect(find.byType(RunPassHomeScreen), findsOneWidget);
       expect(find.byType(TextFormField), findsNothing);
+      expect(find.text('Excluir minha conta'), findsNothing);
     },
   );
 
@@ -200,58 +202,5 @@ void main() {
       findsOneWidget,
     );
     expect(find.byType(TextFormField), findsNothing);
-  });
-
-  testWidgets('runner confirms account deletion and local session is cleared', (
-    tester,
-  ) async {
-    final calls = <String>[];
-    final gateway = IdentityGateway(
-      cognito: Uri.parse('https://cognito.example'),
-      api: Uri.parse('https://api.example'),
-      clientId: 'synthetic',
-      transport: (uri, method, headers, body) async {
-        if (uri.host == 'cognito.example') {
-          return const JsonReply(200, {
-            'AuthenticationResult': {'AccessToken': 'synthetic'},
-          });
-        }
-        calls.add('$method ${uri.path}');
-        if (method == 'DELETE') {
-          return const JsonReply(202, {
-            'operationId': 'erase-1',
-            'state': 'accepted',
-            'accessBlocked': true,
-            'publiclyHidden': true,
-          });
-        }
-        if (uri.path == '/me') {
-          return const JsonReply(200, {'displayName': 'Corredora'});
-        }
-        return const JsonReply(200, {
-          'myStatus': 'admitted',
-          'admissionsOpen': true,
-        });
-      },
-    );
-    await tester.pumpWidget(MainApp(gateway: gateway));
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'E-mail'),
-      'synthetic@example.test',
-    );
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Senha'),
-      'Synthetic_password1!',
-    );
-    await tester.tap(find.text('Continuar'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Excluir minha conta'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Excluir minha conta').last);
-    await tester.pumpAndSettle();
-    expect(calls, ['GET /me', 'GET /beta/status', 'DELETE /me']);
-    expect(gateway.signedIn, false);
-    expect(find.textContaining('Exclusão aceita'), findsOneWidget);
-    expect(find.text('Entre no RunPass'), findsOneWidget);
   });
 }

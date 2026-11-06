@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'catalog_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
-import 'main.dart' show IdentityScreen;
+import 'notifications.dart';
+import 'profile_photo.dart';
 import 'runpass_theme.dart';
+import 'settings.dart';
 
 /// A completed participation joined with the official edition it refers to.
 class RaceRecord {
@@ -105,9 +107,89 @@ class MedalArt extends StatelessWidget {
       Icon(Icons.emoji_events, size: size, color: const Color(0xffe8b23a));
 }
 
-/// Foto da medalha enviada pela pessoa. Pede um link curto e assinado ao servidor
-/// (`GET /participations/{id}/image`); se nao houver foto ou a rede falhar, mostra o trofeu.
-class MedalPhoto extends StatefulWidget {
+/// Imagem privada servida por link curto e assinado (`GET <endpoint>` devolve `url`).
+/// Sem foto, sem permissao ou sem rede, mostra o `fallback`.
+class SignedPhoto extends StatefulWidget {
+  final IdentityGateway gateway;
+  final String? endpoint;
+  final Widget fallback;
+  final BoxFit fit;
+  const SignedPhoto({
+    super.key,
+    required this.gateway,
+    required this.endpoint,
+    required this.fallback,
+    this.fit = BoxFit.cover,
+  });
+
+  @override
+  State<SignedPhoto> createState() => _SignedPhotoState();
+}
+
+/// Links valem 5 minutos; reaproveita enquanto a tela esta aberta.
+final Map<String, ({String url, DateTime expires})> _photoLinks = {};
+
+/// Esquece o link guardado, por exemplo depois de trocar a foto.
+void forgetMedalPhoto(String participationId) => _photoLinks.remove(
+  '/participations/${Uri.encodeComponent(participationId)}/image',
+);
+
+void forgetBanner(String profileId) =>
+    _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/banner');
+
+void forgetProfilePhoto(String profileId) =>
+    _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/photo');
+
+class _SignedPhotoState extends State<SignedPhoto> {
+  String? url;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    final endpoint = widget.endpoint;
+    if (endpoint == null) return;
+    final cached = _photoLinks[endpoint];
+    if (cached != null && cached.expires.isAfter(DateTime.now())) {
+      url = cached.url;
+      return;
+    }
+    try {
+      final reply = await widget.gateway.request(endpoint);
+      final link = reply['url'];
+      final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
+      if (link is String && link.startsWith('https://')) {
+        _photoLinks[endpoint] = (
+          url: link,
+          expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
+              .subtract(const Duration(seconds: 30)),
+        );
+        if (mounted) setState(() => url = link);
+      }
+    } on Exception {
+      // Sem foto ou sem rede: fica o fallback.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final link = url;
+    if (link == null) return widget.fallback;
+    return Image.network(
+      link,
+      fit: widget.fit,
+      errorBuilder: (_, _, _) => widget.fallback,
+      loadingBuilder: (_, child, progress) =>
+          progress == null ? child : widget.fallback,
+    );
+  }
+}
+
+/// Foto da medalha enviada pela pessoa (`GET /participations/{id}/image`); sem foto, o trofeu.
+class MedalPhoto extends StatelessWidget {
   final IdentityGateway gateway;
   final String? participationId;
   final double size;
@@ -121,64 +203,32 @@ class MedalPhoto extends StatefulWidget {
   });
 
   @override
-  State<MedalPhoto> createState() => _MedalPhotoState();
+  Widget build(BuildContext context) => SignedPhoto(
+    gateway: gateway,
+    endpoint: participationId == null
+        ? null
+        : '/participations/${Uri.encodeComponent(participationId!)}/image',
+    fallback: MedalArt(size: size),
+    fit: fit,
+  );
 }
 
-/// Links valem 5 minutos; reaproveita enquanto a tela esta aberta.
-final Map<String, ({String url, DateTime expires})> _medalLinks = {};
-
-/// Esquece o link guardado, por exemplo depois de trocar a foto da medalha.
-void forgetMedalPhoto(String participationId) =>
-    _medalLinks.remove(participationId);
-
-class _MedalPhotoState extends State<MedalPhoto> {
-  String? url;
-
-  @override
-  void initState() {
-    super.initState();
-    load();
+/// Detecta JPEG ou PNG pelos primeiros bytes; qualquer outro formato volta nulo.
+String? imageContentType(List<int> bytes) {
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xff &&
+      bytes[1] == 0xd8 &&
+      bytes[2] == 0xff) {
+    return 'image/jpeg';
   }
-
-  Future<void> load() async {
-    final id = widget.participationId;
-    if (id == null) return;
-    final cached = _medalLinks[id];
-    if (cached != null && cached.expires.isAfter(DateTime.now())) {
-      url = cached.url;
-      return;
-    }
-    try {
-      final reply = await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(id)}/image',
-      );
-      final link = reply['url'];
-      final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
-      if (link is String && link.startsWith('https://')) {
-        _medalLinks[id] = (
-          url: link,
-          expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
-              .subtract(const Duration(seconds: 30)),
-        );
-        if (mounted) setState(() => url = link);
-      }
-    } on Exception {
-      // Sem foto ou sem rede: fica o trofeu.
-    }
+  if (bytes.length >= 8 &&
+      bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4e &&
+      bytes[3] == 0x47) {
+    return 'image/png';
   }
-
-  @override
-  Widget build(BuildContext context) {
-    final link = url;
-    if (link == null) return MedalArt(size: widget.size);
-    return Image.network(
-      link,
-      fit: widget.fit,
-      errorBuilder: (_, _, _) => MedalArt(size: widget.size),
-      loadingBuilder: (_, child, progress) =>
-          progress == null ? child : MedalArt(size: widget.size),
-    );
-  }
+  return null;
 }
 
 class Stars extends StatelessWidget {
@@ -312,17 +362,26 @@ String statLabel(double km) => switch (km.round()) {
 };
 
 class RaceStats {
-  final int completed, cities;
+  final int completed, cities, countries;
+  final double kilometers;
   final Map<double, int> byDistance;
-  const RaceStats(this.completed, this.cities, this.byDistance);
+  const RaceStats(
+    this.completed,
+    this.cities,
+    this.byDistance, {
+    this.countries = 0,
+    this.kilometers = 0,
+  });
 
   factory RaceStats.of(List<RaceRecord> races) {
     final byDistance = <double, int>{};
+    var kilometers = 0.0;
     for (final race in races) {
       final km = race.kilometers;
       if (km != null) {
         final key = km.roundToDouble();
         byDistance[key] = (byDistance[key] ?? 0) + 1;
+        kilometers += km;
       }
     }
     return RaceStats(
@@ -333,6 +392,14 @@ class RaceStats {
             race.edition!['city'] as String,
       }.length,
       byDistance,
+      // Edicao sem pais informado e do Brasil.
+      countries: {
+        for (final race in races)
+          if (race.edition != null)
+            (race.edition!['country'] as String?)?.trim().toLowerCase() ??
+                'brasil',
+      }.length,
+      kilometers: kilometers,
     );
   }
 }
@@ -404,11 +471,19 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
-        gradient: const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xff4a3425), Color(0xff1e1510)],
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(
+          color: context.isDark
+              ? const Color(0xff3a3330)
+              : const Color(0xffeadfd8),
         ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -431,11 +506,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
-            ),
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
           ),
           Text(
             [
@@ -445,7 +516,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white60, fontSize: 10),
+            style: TextStyle(color: context.muted, fontSize: 10),
           ),
         ],
       ),
@@ -518,7 +589,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
 
   @override
   Widget build(BuildContext context) => Theme(
-    data: runPassDarkTheme(),
+    data: Theme.of(context),
     child: Builder(
       builder: (context) => Scaffold(
         appBar: AppBar(
@@ -532,6 +603,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               ),
             ],
           ),
+          actions: [
+            NotificationBell(gateway: widget.gateway),
+            const SizedBox(width: 8),
+          ],
         ),
         bottomNavigationBar: runPassNavigation(context, widget.gateway, 2),
         body: FutureBuilder<List<RaceRecord>>(
@@ -572,18 +647,25 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                       children: [
                         statBlock(
                           '${stats.completed}',
-                          'provas\nconcluídas',
+                          'medalhas',
                           color: runPassOrange,
                         ),
                         statBlock(
-                          '${stats.completed}',
-                          'medalhas\nna coleção',
+                          stats.kilometers == stats.kilometers.roundToDouble()
+                              ? '${stats.kilometers.toInt()}'
+                              : stats.kilometers.toStringAsFixed(1),
+                          "km's\ncorridos",
                           color: const Color(0xffe8b23a),
                         ),
                         statBlock(
                           '${stats.cities}',
                           'cidades\nvisitadas',
                           color: const Color(0xff4cc38a),
+                        ),
+                        statBlock(
+                          '${stats.countries}',
+                          'países\nvisitados',
+                          color: const Color(0xff4a8cf0),
                         ),
                       ],
                     ),
@@ -626,19 +708,121 @@ class ProfileData {
   final Map<String, dynamic> profile;
   final List<RaceRecord> races;
   final List<Map<String, dynamic>> wishlist;
-  const ProfileData(this.profile, this.races, this.wishlist);
+  final int followers, following;
+  const ProfileData(
+    this.profile,
+    this.races,
+    this.wishlist, [
+    this.followers = 0,
+    this.following = 0,
+  ]);
 }
 
 class RunnerProfileScreen extends StatefulWidget {
   final IdentityGateway gateway;
-  const RunnerProfileScreen({super.key, required this.gateway});
+  final ProfilePhotoPicker photoPicker;
+  final ProfilePhotoPicker bannerPicker;
+  const RunnerProfileScreen({
+    super.key,
+    required this.gateway,
+    this.photoPicker = pickProfilePhoto,
+    this.bannerPicker = pickBannerPhoto,
+  });
 
   @override
   State<RunnerProfileScreen> createState() => _RunnerProfileScreenState();
 }
 
 class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
-  late final Future<ProfileData> data = load();
+  late Future<ProfileData> data = load();
+
+  Future<void> changePhoto(Map<String, dynamic> profile) async {
+    final hasPhoto = profile['photoReference'] != null;
+    final choice = await askPhotoChoice(context, canRemove: hasPhoto);
+    if (choice == null || !mounted) return;
+    try {
+      String? reference;
+      if (choice == PhotoChoice.remove) {
+        final sure = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Remover a foto de perfil?'),
+            content: const Text('Seu perfil volta a mostrar o ícone padrão.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                key: const Key('confirm-remove-photo'),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Remover'),
+              ),
+            ],
+          ),
+        );
+        if (sure != true) return;
+      } else {
+        final bytes = await widget.photoPicker(context, choice);
+        if (bytes == null) return;
+        soon('Enviando a foto...');
+        reference = await uploadProfilePhoto(widget.gateway, bytes);
+      }
+      await widget.gateway.request(
+        '/me',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': profile['version'],
+          'photoReference': reference,
+        },
+      );
+      forgetProfilePhoto(profile['id'] as String);
+      if (mounted) {
+        setState(() {
+          data = load();
+        });
+      }
+    } on IdentityIssue catch (issue) {
+      soon(photoError(issue));
+    } on Exception catch (error) {
+      soon(photoError(error));
+    }
+  }
+
+  Future<void> changeBanner(Map<String, dynamic> profile) async {
+    final choice = await askPhotoChoice(
+      context,
+      canRemove: profile['bannerReference'] != null,
+    );
+    if (choice == null || !mounted) return;
+    try {
+      String? reference;
+      if (choice != PhotoChoice.remove) {
+        final bytes = await widget.bannerPicker(context, choice);
+        if (bytes == null) return;
+        soon('Enviando o banner...');
+        reference = await uploadProfilePhoto(widget.gateway, bytes);
+      }
+      await widget.gateway.request(
+        '/me',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': profile['version'],
+          'bannerReference': reference,
+        },
+      );
+      forgetBanner(profile['id'] as String);
+      if (mounted) {
+        setState(() {
+          data = load();
+        });
+      }
+    } on IdentityIssue catch (issue) {
+      soon(photoError(issue));
+    } on Exception catch (error) {
+      soon(photoError(error));
+    }
+  }
 
   Future<ProfileData> load() async {
     final profile = await widget.gateway.request('/me');
@@ -659,19 +843,33 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     } on Exception {
       // The wishlist is optional; its section shows an empty message.
     }
-    return ProfileData(profile, races, wishlist);
+    var followers = 0, following = 0;
+    final myId = profile['id'] as String?;
+    if (myId != null) {
+      try {
+        final me = await widget.gateway.request(
+          '/profiles/${Uri.encodeComponent(myId)}',
+        );
+        followers = (me['followersCount'] as num?)?.toInt() ?? 0;
+        following = (me['followingCount'] as num?)?.toInt() ?? 0;
+      } on Exception {
+        // Sem contagem: mostra zero.
+      }
+    }
+    return ProfileData(profile, races, wishlist, followers, following);
   }
 
   void soon(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
-  Widget cover(Map<String, dynamic> profile) => SizedBox(
-    height: 190,
+  Widget cover(Map<String, dynamic> profile, ProfileData result) => SizedBox(
+    height: 216,
     child: Stack(
       clipBehavior: Clip.none,
       children: [
         Container(
-          height: 150,
+          height: 176,
+          clipBehavior: Clip.hardEdge,
           decoration: const BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -679,17 +877,81 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
               colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
             ),
           ),
+          child: profile['bannerReference'] == null
+              ? null
+              : SizedBox.expand(
+                  child: SignedPhoto(
+                    key: ValueKey('banner-${profile['bannerReference']}'),
+                    gateway: widget.gateway,
+                    endpoint:
+                        '/profiles/${Uri.encodeComponent(profile['id'] as String)}/banner',
+                    fallback: const SizedBox.shrink(),
+                  ),
+                ),
+        ),
+        Positioned(
+          right: 12,
+          top: 134,
+          child: InkWell(
+            key: const Key('change-banner'),
+            onTap: () => changeBanner(profile),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.image_outlined, size: 16, color: Colors.white),
+                  SizedBox(width: 6),
+                  Text(
+                    'Banner',
+                    style: TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
         Positioned(
           right: 8,
           top: 8,
           child: SafeArea(
-            child: IconButton(
-              tooltip: 'Configurações',
-              color: Colors.white,
-              icon: const Icon(Icons.settings_outlined),
-              onPressed: () => soon('Configurações em breve.'),
+            child: Row(
+              children: [
+                IconTheme(
+                  data: const IconThemeData(color: Colors.white),
+                  child: NotificationBell(gateway: widget.gateway),
+                ),
+                IconButton(
+                  key: const Key('open-settings'),
+                  tooltip: 'Configurações',
+                  color: Colors.white,
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => SettingsScreen(gateway: widget.gateway),
+                    ),
+                  ),
+                ),
+              ],
             ),
+          ),
+        ),
+        // Seguidores e seguindo ao lado da foto, no formato do Instagram.
+        Positioned(
+          left: 124,
+          right: 12,
+          bottom: 4,
+          child: Row(
+            key: const Key('profile-counts'),
+            children: [
+              statBlock('${result.followers}', 'seguidores'),
+              statBlock('${result.following}', 'seguindo'),
+            ],
           ),
         ),
         Positioned(
@@ -698,20 +960,22 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              const CircleAvatar(
+              CircleAvatar(
                 radius: 46,
-                backgroundColor: Colors.white,
-                child: CircleAvatar(
+                backgroundColor: Theme.of(context).colorScheme.surface,
+                child: ProfileAvatar(
+                  key: ValueKey('avatar-${profile['photoReference']}'),
                   radius: 42,
-                  backgroundColor: Color(0xffffe4dc),
-                  child: Icon(Icons.person, size: 48, color: runPassOrange),
+                  gateway: widget.gateway,
+                  profile: profile,
                 ),
               ),
               Positioned(
                 right: -2,
                 bottom: 2,
                 child: InkWell(
-                  onTap: () => soon('Foto do perfil em breve.'),
+                  key: const Key('change-profile-photo'),
+                  onTap: () => changePhoto(profile),
                   child: const CircleAvatar(
                     radius: 14,
                     backgroundColor: runPassNavy,
@@ -784,18 +1048,12 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                   if (date != null)
                     Text(
                       displayDate(date),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.black54,
-                      ),
+                      style: TextStyle(fontSize: 12, color: context.muted),
                     ),
                   if (edition['city'] != null)
                     Text(
                       '${edition['city']}${edition['state'] == null ? '' : ' - ${edition['state']}'}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.black54,
-                      ),
+                      style: TextStyle(fontSize: 12, color: context.muted),
                     ),
                 ],
               ),
@@ -807,56 +1065,6 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     );
   }
 
-  void toSignIn([String? notice]) => Navigator.of(context).pushAndRemoveUntil(
-    MaterialPageRoute<void>(
-      builder: (_) => IdentityScreen(gateway: widget.gateway, notice: notice),
-    ),
-    (route) => false,
-  );
-
-  Future<void> signOut() async {
-    try {
-      await widget.gateway.signOut();
-    } on Exception {
-      // A sessão local já foi encerrada; falha de rede não impede sair.
-    }
-    if (mounted) toSignIn();
-  }
-
-  Future<void> deleteAccount() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Excluir sua conta?'),
-        content: const Text(
-          'O acesso será bloqueado imediatamente e a limpeza dos seus dados (perfil, participações, avaliações e fotos) será agendada. Isso não pode ser desfeito.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Excluir minha conta'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      await widget.gateway.request('/me', method: 'DELETE');
-    } on IdentityIssue catch (issue) {
-      if (mounted) soon(catalogError(issue));
-      return;
-    }
-    widget.gateway.clearSession();
-    if (mounted) {
-      toSignIn('Exclusão aceita. O acesso à conta foi encerrado.');
-    }
-  }
-
-  @override
   @override
   Widget build(BuildContext context) => Scaffold(
     bottomNavigationBar: runPassNavigation(context, widget.gateway, 3),
@@ -881,7 +1089,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
         return ListView(
           padding: EdgeInsets.zero,
           children: [
-            cover(profile),
+            cover(profile, result),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
               child: Column(
@@ -899,12 +1107,13 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       '@${profile['username'] ?? ''}',
                       if (city != null && city.isNotEmpty) city,
                     ].join('  •  '),
-                    style: const TextStyle(color: Colors.black54),
+                    style: TextStyle(color: context.muted),
                   ),
                   if (bio != null && bio.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     Text(bio),
                   ],
+                  const SizedBox(height: 16),
                   const SizedBox(height: 16),
                   Card(
                     child: Padding(
@@ -980,8 +1189,6 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                   Card(
                     child: Column(
                       children: [
-                        PrivacyTile(gateway: widget.gateway, profile: profile),
-                        const Divider(height: 1),
                         ListTile(
                           key: const Key('find-friends-profile'),
                           leading: const Icon(Icons.person_search_rounded),
@@ -1012,38 +1219,6 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                                   FollowRequestsScreen(gateway: widget.gateway),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    child: Column(
-                      children: [
-                        ListTile(
-                          key: const Key('sign-out'),
-                          leading: const Icon(Icons.logout_rounded),
-                          title: const Text('Sair'),
-                          subtitle: const Text(
-                            'Encerra a sessão neste aparelho.',
-                          ),
-                          onTap: signOut,
-                        ),
-                        const Divider(height: 1),
-                        ListTile(
-                          key: const Key('delete-account'),
-                          leading: const Icon(
-                            Icons.delete_forever_outlined,
-                            color: Colors.red,
-                          ),
-                          title: const Text(
-                            'Excluir minha conta',
-                            style: TextStyle(color: Colors.red),
-                          ),
-                          subtitle: const Text(
-                            'Bloqueia o acesso na hora e agenda a limpeza dos seus dados.',
-                          ),
-                          onTap: deleteAccount,
                         ),
                       ],
                     ),

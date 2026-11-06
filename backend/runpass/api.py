@@ -141,6 +141,11 @@ def create_app(
         dateFrom: date | None = None,
         dateTo: date | None = None,
         distanceKm: Decimal | None = Query(None, gt=0),
+        q: str | None = Query(None, min_length=1, max_length=160),
+        registrationStatus: str | None = Query(None, pattern=r"^(unknown|open|closed|sold_out)$"),
+        lat: float | None = Query(None, ge=-90, le=90),
+        lon: float | None = Query(None, ge=-180, le=180),
+        radiusKm: float | None = Query(None, gt=0, le=500),
     ):
         service.authorize(actor, admitted=True)
         if catalog is None:
@@ -154,6 +159,11 @@ def create_app(
                 dateFrom=dateFrom,
                 dateTo=dateTo,
                 distanceKm=distanceKm,
+                q=q,
+                registrationStatus=registrationStatus,
+                lat=lat,
+                lon=lon,
+                radiusKm=radiusKm,
             )
         except ValidationError as error:
             raise Problem(422, "INVALID_FILTERS") from error
@@ -313,6 +323,26 @@ def create_app(
     def get_post(id: str, actor: Actor):
         return friends().post(actor, id)
 
+    @app.put("/posts/{id}/like", operation_id="likePost")
+    def put_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like(actor, id, idempotency_key, True)
+
+    @app.delete("/posts/{id}/like", operation_id="unlikePost")
+    def delete_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like(actor, id, idempotency_key, False)
+
+    @app.get("/me/notifications", operation_id="listMyNotifications")
+    def list_notifications(actor: Actor):
+        return friends().notifications(actor)
+
+    @app.delete("/me/notifications/{id}", operation_id="deleteMyNotification")
+    def delete_notification(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().dismiss_notification(actor, id, idempotency_key)
+
+    @app.post("/me/notifications/read", operation_id="markMyNotificationsRead")
+    def read_notifications(actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().mark_notifications_read(actor, idempotency_key)
+
     @app.get("/posts/{id}/comments", operation_id="listPostComments")
     def list_comments(
         id: str,
@@ -324,11 +354,31 @@ def create_app(
 
     @app.post("/posts/{id}/comments", status_code=201, operation_id="createPostComment")
     def create_comment(id: str, body: CreateComment, actor: Actor, idempotency_key: IdempotencyKey):
-        return friends().comment(actor, id, idempotency_key, body.text)
+        return friends().comment(actor, id, idempotency_key, body.text, body.parentId)
+
+    @app.put("/comments/{id}/like", operation_id="likeComment")
+    def put_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like_comment(actor, id, idempotency_key, True)
+
+    @app.delete("/comments/{id}/like", operation_id="unlikeComment")
+    def delete_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like_comment(actor, id, idempotency_key, False)
 
     @app.delete("/comments/{id}", operation_id="deleteOwnComment")
     def delete_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().delete_comment(actor, id, idempotency_key)
+
+    @app.get("/profiles/{id}/photo", operation_id="getProfilePhoto")
+    def profile_photo(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.profile_photo(actor, id)
+
+    @app.get("/profiles/{id}/banner", operation_id="getProfileBanner")
+    def profile_banner(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.profile_photo(actor, id, "bannerReference")
 
     @app.get("/participations/{id}/image", operation_id="getParticipationImage")
     def participation_image(id: str, actor: Actor):

@@ -69,3 +69,8 @@ Revisão adicional do importador detectou que uma versão esperada futura poderi
 ## Aceite humano — 03/11/2026
 
 Aceita pelo usuário como aceite local, com as ressalvas e pendências registradas em `implementation-slices.md` (seção "Aceite humano de S02, S03 e S04"). Integração real permanece na S09.
+
+
+## Rodada 4 (06/11/2026): catalogo de corridas reais
+
+Ver `docs/catalogo-corridas.md`. Resumo: campos opcionais novos (`venue`, `latitude/longitude`, `registrationStatus`, `eventStatus`, `lastVerifiedAt`, `sourceCode`, `sourceExternalId`), filtros `q`, `registrationStatus` e raio, importador CSV com simulacao (`operator_tool import-csv`), registro de execucoes, politica de nao sobrescrever outra fonte e conectores ACTIVE/Let's Do This **desligados**. Sem credenciais nao ha dados reais de Sao Paulo no DEV; os sinteticos permanecem. Latitude e longitude sao `Decimal` porque o DynamoDB nao grava `float`.
