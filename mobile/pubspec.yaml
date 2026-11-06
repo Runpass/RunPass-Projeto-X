@@ -17,6 +17,7 @@ dependencies:
   local_auth: ^3.0.2
   share_plus: ^13.3.1
   shared_preferences: ^2.5.6
+  timezone: ^0.11.2
 
 dev_dependencies:
   flutter_test:

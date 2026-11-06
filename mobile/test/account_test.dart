@@ -40,6 +40,11 @@ Future<void> openProfile(WidgetTester tester, IdentityGateway gateway) async {
   // Sair, excluir conta e privacidade ficam nas configuracoes (engrenagem).
   await tester.tap(find.byKey(const Key('open-settings')));
   await tester.pumpAndSettle();
+  // A tela de configuracoes e comprida: janela alta para os itens ficarem visiveis.
+  tester.view.physicalSize = const Size(800, 3000);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpAndSettle();
 }
 
 void main() {

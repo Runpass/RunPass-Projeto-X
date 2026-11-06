@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 import 'catalog_screen.dart' show timeAgo;
 import 'friends.dart';
@@ -42,6 +44,9 @@ IconData notificationIcon(String? kind) => switch (kind) {
 class LocalAlerts {
   static final _plugin = FlutterLocalNotificationsPlugin();
   static bool _ready = false;
+  static const requestCategory = 'follow_request';
+  static const acceptAction = 'accept';
+  static const declineAction = 'decline';
   static const _enabledKey = 'os-alerts-enabled';
   static const _lastKey = 'os-alerts-last';
 
@@ -67,14 +72,37 @@ class LocalAlerts {
     if (_ready) return;
     try {
       await _plugin.initialize(
-        settings: const InitializationSettings(
-          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        settings: InitializationSettings(
+          android: const AndroidInitializationSettings('@mipmap/ic_launcher'),
           iOS: DarwinInitializationSettings(
             requestAlertPermission: false,
             requestBadgePermission: false,
             requestSoundPermission: false,
+            // Pedido para seguir: botoes Aceitar e Recusar no proprio aviso do iPhone.
+            notificationCategories: [
+              DarwinNotificationCategory(
+                requestCategory,
+                actions: [
+                  DarwinNotificationAction.plain(
+                    acceptAction,
+                    'Aceitar',
+                    options: {DarwinNotificationActionOption.foreground},
+                  ),
+                  DarwinNotificationAction.plain(
+                    declineAction,
+                    'Recusar',
+                    options: {
+                      DarwinNotificationActionOption.foreground,
+                      DarwinNotificationActionOption.destructive,
+                    },
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
+        onDidReceiveNotificationResponse: (response) =>
+            NotificationCenter.instance.handleResponse(response),
       );
       _ready = true;
     } on Object {
@@ -100,7 +128,113 @@ class LocalAlerts {
     }
   }
 
-  static Future<void> show(int id, String body) async {
+  /// Ultimo erro e ultima checagem, para o diagnostico em Configuracoes.
+  static String? lastError;
+  static DateTime? lastCheck;
+
+  /// Permissao do sistema: verdadeiro/falso, ou nulo se nao deu para ler.
+  static Future<bool?> permissionGranted() async {
+    await init();
+    try {
+      final ios = _plugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >();
+      if (ios != null) return (await ios.checkPermissions())?.isEnabled;
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      return await android?.areNotificationsEnabled();
+    } on Object catch (error) {
+      lastError = '$error';
+      return null;
+    }
+  }
+
+  static const _details = NotificationDetails(
+    android: AndroidNotificationDetails(
+      'runpass-social',
+      'Amigos e interações',
+      channelDescription:
+          'Pedidos para seguir, curtidas, comentários e publicações de amigos.',
+      importance: Importance.high,
+      priority: Priority.high,
+    ),
+    iOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentBanner: true,
+      presentSound: true,
+    ),
+  );
+
+  /// Teste: aviso agora (app aberto) ou agendado no sistema (vale com o app fechado).
+  static Future<void> test({Duration after = Duration.zero}) async {
+    await init();
+    if (!_ready) {
+      lastError ??= 'plugin nao iniciou';
+      return;
+    }
+    try {
+      if (after == Duration.zero) {
+        await _plugin.show(
+          id: 7001,
+          title: 'RunPass',
+          body: 'Teste: os avisos estão funcionando neste celular.',
+          notificationDetails: _details,
+        );
+      } else {
+        await _plugin.zonedSchedule(
+          id: 7002,
+          title: 'RunPass',
+          body: 'Teste agendado: o aviso chegou com o app fechado.',
+          scheduledDate: tz.TZDateTime.now(tz.UTC).add(after),
+          notificationDetails: _details,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        );
+      }
+      lastError = null;
+    } on Object catch (error) {
+      lastError = '$error';
+    }
+  }
+
+  /// Aviso de pedido para seguir: com os botoes Aceitar e Recusar.
+  static const _requestDetails = NotificationDetails(
+    android: AndroidNotificationDetails(
+      'runpass-social',
+      'Amigos e interações',
+      channelDescription:
+          'Pedidos para seguir, curtidas, comentários e publicações de amigos.',
+      importance: Importance.high,
+      priority: Priority.high,
+      actions: [
+        AndroidNotificationAction(
+          acceptAction,
+          'Aceitar',
+          showsUserInterface: true,
+        ),
+        AndroidNotificationAction(
+          declineAction,
+          'Recusar',
+          showsUserInterface: true,
+        ),
+      ],
+    ),
+    iOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentBanner: true,
+      presentSound: true,
+      categoryIdentifier: requestCategory,
+    ),
+  );
+
+  static Future<void> show(
+    int id,
+    String body, {
+    String? payload,
+    bool request = false,
+  }) async {
     await init();
     if (!_ready) return;
     try {
@@ -108,30 +242,23 @@ class LocalAlerts {
         id: id,
         title: 'RunPass',
         body: body,
-        notificationDetails: const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'runpass-social',
-            'Amigos e interações',
-            channelDescription: 'Pedidos para seguir, curtidas, comentários e publicações de amigos.',
-            importance: Importance.high,
-            priority: Priority.high,
-          ),
-          iOS: DarwinNotificationDetails(
-            presentAlert: true,
-            presentBanner: true,
-            presentSound: true,
-          ),
-        ),
+        payload: payload,
+        notificationDetails: request ? _requestDetails : _details,
       );
-    } on Object {
-      // Sem permissao ou plugin indisponivel.
+    } on Object catch (error) {
+      lastError = '$error'; // sem permissao ou plugin indisponivel
     }
   }
 
   /// Mostra no celular so o que chegou depois do ultimo aviso mostrado. Na primeira vez apenas
   /// marca o ponto de partida, para nao despejar o historico inteiro.
-  static Future<void> announce(List<Map<String, dynamic>> items) async {
+  static Future<void> announce(
+    List<Map<String, dynamic>> items, {
+    Future<void> Function(int id, String body, {String? payload, bool request})?
+    present,
+  }) async {
     if (!await enabled()) return;
+    present ??= show;
     try {
       final prefs = await SharedPreferences.getInstance();
       final last = prefs.getString(_lastKey);
@@ -141,7 +268,10 @@ class LocalAlerts {
                 .map((i) => i['createdAt'] as String? ?? '')
                 .reduce((a, b) => a.compareTo(b) >= 0 ? a : b);
       if (last == null) {
-        if (newest != null) await prefs.setString(_lastKey, newest);
+        // Primeira checagem: marca o ponto de partida sem despejar o historico. Historico vazio
+        // grava "" (qualquer aviso futuro e novo); antes ficava nulo e o primeiro aviso real era
+        // engolido como se fosse o ponto de partida.
+        await prefs.setString(_lastKey, newest ?? '');
         await requestPermission();
         return;
       }
@@ -154,7 +284,18 @@ class LocalAlerts {
       if (fresh.isEmpty) return;
       if (newest != null) await prefs.setString(_lastKey, newest);
       for (final i in fresh.take(3)) {
-        await show(i['id'].hashCode & 0x7fffffff, notificationText(i));
+        final request = i['kind'] == 'follow_request';
+        await present(
+          i['id'].hashCode & 0x7fffffff,
+          notificationText(i),
+          request: request,
+          payload: request
+              ? jsonEncode({
+                  'kind': 'follow_request',
+                  'actorId': (i['actor'] as Map?)?['id'],
+                })
+              : null,
+        );
       }
     } on Object {
       // Avisos do celular sao um extra.
@@ -163,7 +304,7 @@ class LocalAlerts {
 }
 
 /// Contador do sininho e verificacao periodica enquanto o app esta aberto.
-class NotificationCenter {
+class NotificationCenter with WidgetsBindingObserver {
   NotificationCenter._();
   static final instance = NotificationCenter._();
 
@@ -185,6 +326,7 @@ class NotificationCenter {
       final items = (page['items'] as List? ?? const [])
           .cast<Map<String, dynamic>>();
       unread.value = (page['unreadCount'] as num?)?.toInt() ?? 0;
+      LocalAlerts.lastCheck = DateTime.now();
       if (announce) await LocalAlerts.announce(items);
       return items;
     } on Exception {
@@ -202,14 +344,74 @@ class NotificationCenter {
         if (on) LocalAlerts.requestPermission();
       });
     }
+    if (_timer == null) WidgetsBinding.instance.addObserver(this);
     _timer ??= Timer.periodic(const Duration(seconds: 45), (_) {
       final current = _gateway;
-      if (current != null && current.signedIn) refresh(current);
+      if (current != null && current.signedIn) {
+        flushDecisions();
+        refresh(current);
+      }
     });
     refresh(gateway);
+    flushDecisions();
+  }
+
+  final _decisions = <({String actorId, bool approve})>[];
+
+  /// Toque num botao do aviso do celular (Aceitar/Recusar). Se o app ainda nao entrou na conta,
+  /// a decisao espera na fila e e aplicada assim que houver sessao.
+  Future<void> handleResponse(NotificationResponse response) async {
+    final action = response.actionId;
+    if (action != LocalAlerts.acceptAction &&
+        action != LocalAlerts.declineAction) {
+      return;
+    }
+    try {
+      final data = jsonDecode(response.payload ?? '{}') as Map;
+      final actor = data['actorId'];
+      if (actor is String && actor.isNotEmpty) {
+        _decisions.add((
+          actorId: actor,
+          approve: action == LocalAlerts.acceptAction,
+        ));
+      }
+    } on Object {
+      return;
+    }
+    await flushDecisions();
+  }
+
+  Future<void> flushDecisions() async {
+    final gateway = _gateway;
+    if (gateway == null || !gateway.signedIn) return;
+    while (_decisions.isNotEmpty) {
+      final next = _decisions.first;
+      try {
+        await gateway.request(
+          '/me/follow-requests/${Uri.encodeComponent(next.actorId)}',
+          method: next.approve ? 'PUT' : 'DELETE',
+        );
+      } on Exception {
+        break; // sem rede: tenta de novo na proxima checagem
+      }
+      _decisions.removeAt(0);
+    }
+    await refresh(gateway, announce: false);
+  }
+
+  /// Voltar ao app (iOS suspende o timer em segundo plano): confere na hora.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final current = _gateway;
+    if (state == AppLifecycleState.resumed &&
+        current != null &&
+        current.signedIn) {
+      refresh(current);
+    }
   }
 
   void stop() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _timer = null;
     _gateway = null;
@@ -255,7 +457,7 @@ class _NotificationBellState extends State<NotificationBell> {
   );
 }
 
-/// Alternador "Avisos no celular", usado na tela de avisos e nas configuracoes.
+/// "Avisos no celular": chave, estado da permissao do sistema e testes de aviso.
 class OsAlertsSwitch extends StatefulWidget {
   const OsAlertsSwitch({super.key});
 
@@ -265,6 +467,7 @@ class OsAlertsSwitch extends StatefulWidget {
 
 class _OsAlertsSwitchState extends State<OsAlertsSwitch> {
   bool value = true;
+  bool? granted;
 
   @override
   void initState() {
@@ -272,22 +475,99 @@ class _OsAlertsSwitchState extends State<OsAlertsSwitch> {
     LocalAlerts.enabled().then((v) {
       if (mounted) setState(() => value = v);
     });
+    refreshStatus();
   }
 
+  Future<void> refreshStatus() async {
+    final result = await LocalAlerts.permissionGranted();
+    if (mounted) setState(() => granted = result);
+  }
+
+  String get statusText => switch (granted) {
+    true => 'Permissão do sistema: liberada.',
+    false => 'Permissão do sistema: NEGADA. Abra Ajustes > RunPass > Notificações e libere.',
+    null => 'Permissão do sistema: não foi possível conferir.',
+  };
+
   @override
-  Widget build(BuildContext context) => SwitchListTile(
-    key: const Key('os-alerts-switch'),
-    secondary: const Icon(Icons.notifications_active_outlined),
-    title: const Text('Avisos no celular'),
-    subtitle: const Text(
-      'Receba no iPhone ou no Android os avisos de seguidores, curtidas, comentários e publicações de amigos.',
-    ),
-    value: value,
-    onChanged: (next) {
-      setState(() => value = next);
-      LocalAlerts.setEnabled(next);
-    },
+  Widget build(BuildContext context) => Column(
+    children: [
+      SwitchListTile(
+        key: const Key('os-alerts-switch'),
+        secondary: const Icon(Icons.notifications_active_outlined),
+        title: const Text('Avisos no celular'),
+        subtitle: const Text(
+          'Receba no iPhone ou no Android os avisos de seguidores, curtidas, comentários e publicações de amigos.',
+        ),
+        value: value,
+        onChanged: (next) async {
+          setState(() => value = next);
+          await LocalAlerts.setEnabled(next);
+          await refreshStatus();
+        },
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(72, 0, 16, 4),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            statusText,
+            key: const Key('os-alerts-status'),
+            style: TextStyle(fontSize: 12, color: context.muted),
+          ),
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
+        child: Wrap(
+          spacing: 8,
+          children: [
+            OutlinedButton(
+              key: const Key('os-alerts-test-now'),
+              onPressed: () async {
+                await LocalAlerts.requestPermission();
+                await LocalAlerts.test();
+                await refreshStatus();
+                if (context.mounted) showResult(context);
+              },
+              child: const Text('Testar agora'),
+            ),
+            OutlinedButton(
+              key: const Key('os-alerts-test-later'),
+              onPressed: () async {
+                await LocalAlerts.requestPermission();
+                await LocalAlerts.test(after: const Duration(seconds: 10));
+                await refreshStatus();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Aviso agendado para daqui a 10 segundos. Feche o app agora para testar com ele fechado.',
+                      ),
+                    ),
+                  );
+                }
+              },
+              child: const Text('Testar em 10 s (feche o app)'),
+            ),
+          ],
+        ),
+      ),
+    ],
   );
+
+  void showResult(BuildContext context) {
+    final error = LocalAlerts.lastError;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null
+              ? 'Aviso enviado. Se não apareceu, confira a permissão acima.'
+              : 'Falha ao avisar: $error',
+        ),
+      ),
+    );
+  }
 }
 
 class NotificationsScreen extends StatefulWidget {
