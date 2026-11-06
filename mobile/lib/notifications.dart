@@ -169,6 +169,7 @@ class NotificationCenter {
   final unread = ValueNotifier<int>(0);
   Timer? _timer;
   IdentityGateway? _gateway;
+  bool _asked = false;
 
   Future<List<Map<String, dynamic>>> refresh(
     IdentityGateway gateway, {
@@ -190,6 +191,13 @@ class NotificationCenter {
   void start(IdentityGateway gateway) {
     if (!active) return;
     _gateway = gateway;
+    if (!_asked) {
+      _asked = true;
+      // Permissao pedida logo apos o login, e nao so no primeiro ciclo de checagem.
+      LocalAlerts.enabled().then((on) {
+        if (on) LocalAlerts.requestPermission();
+      });
+    }
     _timer ??= Timer.periodic(const Duration(seconds: 45), (_) {
       final current = _gateway;
       if (current != null && current.signedIn) refresh(current);
@@ -354,6 +362,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  /// Aviso "comecou a seguir voce": seguir de volta sem sair da lista.
+  Future<void> followBack(Map<String, dynamic> item) async {
+    final actor = item['actor'] as Map;
+    try {
+      final result = await widget.gateway.request(
+        '/profiles/${Uri.encodeComponent(actor['id'] as String)}/follow',
+        method: 'PUT',
+      );
+      if (mounted) {
+        setState(() => actor['followState'] = result['state'] ?? 'active');
+      }
+    } on Exception {
+      if (mounted) {
+        setState(() => error = friendsError(const IdentityIssue('')));
+      }
+    }
+  }
+
   Future<void> open(Map<String, dynamic> item) async {
     final actor = item['actor'] as Map;
     final kind = item['kind'] as String?;
@@ -460,6 +486,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   ),
                 ],
               ),
+              if (item['kind'] == 'follow' && actor['followState'] == 'none')
+                Padding(
+                  padding: const EdgeInsets.only(top: 10, left: 58),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton(
+                      key: Key('notification-follow-back-${actor['id']}'),
+                      onPressed: () => followBack(item),
+                      child: const Text('Seguir de volta'),
+                    ),
+                  ),
+                ),
               if (request)
                 Padding(
                   padding: const EdgeInsets.only(top: 10, left: 58),

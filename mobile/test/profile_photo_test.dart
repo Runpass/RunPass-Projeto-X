@@ -129,4 +129,28 @@ void main() {
     expect(patches, isEmpty);
     expect(calls, isNot(contains('POST /uploads')));
   });
+
+  testWidgets('botao Banner nao encosta nos icones de sino e configuracoes', (
+    tester,
+  ) async {
+    // Aparelho com ilha dinamica: area segura do topo grande.
+    tester.view.physicalSize = const Size(1179, 2556);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final (gateway, _, _) = await setup(hasPhoto: true);
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(
+          size: Size(393, 852),
+          padding: EdgeInsets.only(top: 59),
+        ),
+        child: MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final banner = tester.getRect(find.byKey(const Key('change-banner')));
+    final gear = tester.getRect(find.byKey(const Key('open-settings')));
+    expect(banner.overlaps(gear), isFalse);
+    expect(banner.top - gear.bottom, greaterThanOrEqualTo(12));
+  });
 }

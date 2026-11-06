@@ -862,13 +862,13 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
   void soon(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
-  Widget cover(Map<String, dynamic> profile) => SizedBox(
-    height: 190,
+  Widget cover(Map<String, dynamic> profile, ProfileData result) => SizedBox(
+    height: 216,
     child: Stack(
       clipBehavior: Clip.none,
       children: [
         Container(
-          height: 150,
+          height: 176,
           clipBehavior: Clip.hardEdge,
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -891,7 +891,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
         ),
         Positioned(
           right: 12,
-          top: 104,
+          top: 134,
           child: InkWell(
             key: const Key('change-banner'),
             onTap: () => changeBanner(profile),
@@ -939,6 +939,19 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                 ),
               ],
             ),
+          ),
+        ),
+        // Seguidores e seguindo ao lado da foto, no formato do Instagram.
+        Positioned(
+          left: 124,
+          right: 12,
+          bottom: 4,
+          child: Row(
+            key: const Key('profile-counts'),
+            children: [
+              statBlock('${result.followers}', 'seguidores'),
+              statBlock('${result.following}', 'seguindo'),
+            ],
           ),
         ),
         Positioned(
@@ -1076,7 +1089,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
         return ListView(
           padding: EdgeInsets.zero,
           children: [
-            cover(profile),
+            cover(profile, result),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
               child: Column(
@@ -1101,16 +1114,6 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                     Text(bio),
                   ],
                   const SizedBox(height: 16),
-                  // Contadores no formato do Instagram: numero em cima, nome embaixo.
-                  Row(
-                    key: const Key('profile-counts'),
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      statBlock('${stats.completed}', 'corridas'),
-                      statBlock('${result.followers}', 'seguidores'),
-                      statBlock('${result.following}', 'seguindo'),
-                    ],
-                  ),
                   const SizedBox(height: 16),
                   Card(
                     child: Padding(

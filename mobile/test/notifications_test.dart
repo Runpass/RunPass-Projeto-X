@@ -229,4 +229,34 @@ void main() {
     expect(find.text('Publicação'), findsOneWidget);
     expect(find.byKey(const Key('share-p1')), findsOneWidget);
   });
+
+  testWidgets('aviso de novo seguidor oferece Seguir de volta', (tester) async {
+    final calls = <String>[];
+    final gateway = await gatewayWith((uri, method, headers, body) async {
+      calls.add('$method ${uri.path}');
+      if (uri.path == '/me/notifications') {
+        return JsonReply(200, {
+          'unreadCount': 0,
+          'items': [
+            {
+              'id': 'follow:b::2026',
+              'kind': 'follow',
+              'createdAt': '2026-11-06T10:00:00Z',
+              'unread': false,
+              'actor': {...who('b'), 'followState': 'none'},
+            },
+          ],
+        });
+      }
+      return const JsonReply(200, {'profileId': 'b', 'state': 'active'});
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: NotificationsScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('notification-follow-back-b')));
+    await tester.pumpAndSettle();
+    expect(calls, contains('PUT /profiles/b/follow'));
+    expect(find.byKey(const Key('notification-follow-back-b')), findsNothing);
+  });
 }
