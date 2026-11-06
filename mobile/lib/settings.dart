@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'biometrics.dart';
 import 'catalog_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
@@ -33,6 +34,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> signOut() async {
     NotificationCenter.instance.stop();
+    await BiometricPrefs.clear();
     try {
       await widget.gateway.signOut();
     } on Exception {
@@ -69,6 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     NotificationCenter.instance.stop();
+    await BiometricPrefs.clear();
     await widget.gateway.forgetSession();
     if (mounted) {
       toSignIn('Exclusão aceita. O acesso à conta foi encerrado.');
@@ -108,6 +111,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
         ),
+        const SizedBox(height: 12),
+        const Card(child: BiometricSwitch()),
         const SizedBox(height: 12),
         const Card(child: OsAlertsSwitch()),
         const SizedBox(height: 12),
@@ -159,4 +164,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ],
     ),
   );
+}
+
+/// "Entrar com biometria": so aparece se o aparelho tem biometria cadastrada.
+class BiometricSwitch extends StatefulWidget {
+  const BiometricSwitch({super.key});
+
+  @override
+  State<BiometricSwitch> createState() => _BiometricSwitchState();
+}
+
+class _BiometricSwitchState extends State<BiometricSwitch> {
+  bool? available;
+  bool value = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.wait([biometricGate.available(), BiometricPrefs.enabled()])
+        .then((r) {
+          if (mounted) {
+            setState(() {
+              available = r[0];
+              value = r[1];
+            });
+          }
+        });
+  }
+
+  Future<void> change(bool next) async {
+    if (next &&
+        !await biometricGate.authenticate('Confirme para ativar a biometria')) {
+      return;
+    }
+    await BiometricPrefs.setEnabled(next);
+    if (mounted) setState(() => value = next);
+  }
+
+  @override
+  Widget build(BuildContext context) => available == true
+      ? SwitchListTile(
+          key: const Key('biometric-switch'),
+          secondary: const Icon(Icons.fingerprint),
+          title: const Text('Entrar com biometria'),
+          subtitle: const Text(
+            'Use o rosto ou a digital do aparelho ao abrir o app, em vez da senha.',
+          ),
+          value: value,
+          onChanged: change,
+        )
+      : const SizedBox.shrink(key: Key('biometric-unavailable'));
 }

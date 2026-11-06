@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'identity_gateway.dart';
 import 'catalog_screen.dart';
+import 'biometrics.dart';
 import 'home_screen.dart';
 import 'notifications.dart';
 import 'profile_photo.dart';
@@ -143,9 +144,28 @@ class _IdentityScreenState extends State<IdentityScreen> {
     if (widget.gateway?.canRestore ?? false) restoreSession();
   }
 
+  /// Mostra "Entrar com biometria" quando a trava esta ligada e ha sessao guardada.
+  bool biometricLocked = false;
+
   Future<void> restoreSession() async {
     setState(() => restoring = true);
     try {
+      if (await BiometricPrefs.enabled()) {
+        // Trava ligada: a biometria vem antes de renovar o acesso. Falhou ou cancelou:
+        // cai na tela de entrada (senha) com o botao para tentar de novo.
+        final ok = await biometricGate.authenticate(
+          'Entrar no RunPass com a biometria',
+        );
+        if (!ok) {
+          if (mounted) {
+            setState(() {
+              restoring = false;
+              biometricLocked = true;
+            });
+          }
+          return;
+        }
+      }
       if (await widget.gateway!.restoreSession()) {
         await resume();
         if (mounted && step == Step.ready) {
@@ -184,6 +204,41 @@ class _IdentityScreenState extends State<IdentityScreen> {
       _ => Step.admission,
     };
     if (step == Step.ready && needsPhoto) step = Step.photo;
+  }
+
+  /// Uma vez, depois de entrar com "Manter conectado": oferece ligar a biometria.
+  Future<void> offerBiometrics() async {
+    if (!keepSignedIn || !(widget.gateway?.canRestore ?? false)) return;
+    if (await BiometricPrefs.asked() || !await biometricGate.available()) {
+      return;
+    }
+    await BiometricPrefs.setAsked();
+    if (!mounted) return;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Entrar com biometria?'),
+        content: const Text(
+          'Nas próximas vezes, use o rosto ou a digital do aparelho em vez de digitar a senha. Você pode mudar isso em Configurações.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('biometric-later'),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Agora não'),
+          ),
+          FilledButton(
+            key: const Key('biometric-yes'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Ativar'),
+          ),
+        ],
+      ),
+    );
+    if (yes == true &&
+        await biometricGate.authenticate('Confirme para ativar a biometria')) {
+      await BiometricPrefs.setEnabled(true);
+    }
   }
 
   void openHome() => Navigator.of(context).pushReplacement(
@@ -274,7 +329,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
     }
     // Quem entrou (ou terminou o cadastro) vai direto para o app, sem tela intermediaria.
     if (mounted && step == Step.ready && (widget.gateway?.signedIn ?? false)) {
-      openHome();
+      await offerBiometrics();
+      if (mounted) openHome();
     }
   }
 
@@ -593,6 +649,13 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     ? 'Entrar no RunPass'
                                     : 'Continuar',
                               ),
+                            ),
+                          if (step == Step.signIn && biometricLocked)
+                            OutlinedButton.icon(
+                              key: const Key('biometric-retry'),
+                              onPressed: busy ? null : restoreSession,
+                              icon: const Icon(Icons.fingerprint),
+                              label: const Text('Entrar com biometria'),
                             ),
                           if (step == Step.signIn) ...[
                             TextButton(

@@ -1,5 +1,6 @@
 package br.com.runpass.runpass
 
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 
-class MainActivity : FlutterActivity()
+// local_auth (biometria) exige FlutterFragmentActivity.
+class MainActivity : FlutterFragmentActivity()
