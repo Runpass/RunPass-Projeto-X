@@ -1,4 +1,8 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'catalog_screen.dart';
 import 'friends.dart';
@@ -295,6 +299,72 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
       ),
     );
     reload();
+  }
+
+  /// Texto da publicacao para compartilhar (WhatsApp, e-mail, Instagram, Facebook...).
+  String shareText(FeedEntry entry) {
+    final km = entry.race.kilometers;
+    final who = entry.mine ? 'Eu concluí' : '${entry.author} concluiu';
+    return [
+      '$who ${entry.title}${km == null ? '' : ' (${formatKilometers(km)})'} 🏅',
+      if (entry.comment != null && entry.comment!.isNotEmpty) entry.comment!,
+      'Veja no RunPass.',
+    ].join('\n');
+  }
+
+  /// Baixa a foto da medalha pelo link assinado; sem foto ou sem rede, compartilha so o texto.
+  Future<XFile?> shareImage(FeedEntry entry) async {
+    final id = entry.race.participation['id'] as String?;
+    if (id == null) return null;
+    try {
+      final reply = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}/image',
+      );
+      final url = Uri.tryParse(reply['url'] as String? ?? '');
+      if (url == null || url.scheme != 'https') return null;
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 8);
+      try {
+        final response = await (await client.getUrl(url))
+            .close()
+            .timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200) return null;
+        final bytes = await response.fold<List<int>>(
+          [],
+          (all, chunk) => all..addAll(chunk),
+        );
+        final type = reply['contentType'] as String? ?? 'image/jpeg';
+        return XFile.fromData(
+          Uint8List.fromList(bytes),
+          mimeType: type,
+          name: type == 'image/png' ? 'medalha.png' : 'medalha.jpg',
+        );
+      } finally {
+        client.close(force: true);
+      }
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> shareEntry(FeedEntry entry) async {
+    final box = context.findRenderObject() as RenderBox?;
+    final image = await shareImage(entry);
+    if (!mounted) return;
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          text: shareText(entry),
+          files: image == null ? null : [image],
+          fileNameOverrides: image == null ? null : [image.name],
+          sharePositionOrigin: box == null
+              ? null
+              : box.localToGlobal(Offset.zero) & box.size,
+        ),
+      );
+    } on Object {
+      soon('Não foi possível abrir o compartilhamento neste aparelho.');
+    }
   }
 
   Future<void> openDraft(DraftEntry entry) async {
@@ -732,7 +802,8 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
                 ),
                 const Spacer(),
                 InkWell(
-                  onTap: () => soon('Compartilhamento em breve.'),
+                  key: Key('share-${entry.race.participation['id']}'),
+                  onTap: () => shareEntry(entry),
                   child: const Row(
                     children: [
                       Icon(Icons.ios_share, size: 20),

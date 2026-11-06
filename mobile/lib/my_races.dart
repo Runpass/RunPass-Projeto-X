@@ -644,10 +644,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                           color: runPassOrange,
                         ),
                         statBlock(
-                          stats.kilometers == stats.kilometers.roundToDouble()
-                              ? '${stats.kilometers.toInt()}'
-                              : stats.kilometers.toStringAsFixed(1),
-                          'quilômetros\ncorridos',
+                          "${stats.kilometers == stats.kilometers.roundToDouble() ? stats.kilometers.toInt() : stats.kilometers.toStringAsFixed(1)} KM's",
+                          'Quilometrocímetro',
                           color: const Color(0xffe8b23a),
                         ),
                         statBlock(
