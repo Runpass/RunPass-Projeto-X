@@ -258,3 +258,11 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 - Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao; sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE`.
 - Verificacao feita: `/me/notifications` e `/feed` respondem 401 sem token, `/posts/{id}/like` responde 405 a GET (so aceita PUT/DELETE) e rota inexistente responde 404. **Nao** verificado com usuarios reais: curtidas, avisos, ultimo comentario, indexacao da busca no login, foto de perfil com recorte/camera/remocao, compartilhar.
 - Limites: ver `PDLC/M4/S10-amigos.md` (Rodada 2).
+
+
+## Deploy da rodada 3 de amigos no DEV - 06/11/2026
+
+- Autorizado pelo usuario ("Pode realizar o Deploy"). Change set `rodada3-061811` da stack `runpass-dev-app` (UPDATE), pacote `lambda/runpass-10344cc2a91de517.zip` (commit `17383cf`, PR #24). Anterior: `lambda/runpass-29c579665fbcbcbe.zip` (volta por troca da chave `ArtifactKey`).
+- Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao; sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- Verificacao feita: `/profiles/{id}/banner` e `/me/notifications` respondem 401 sem token; `GET /me/notifications/{id}` responde 405 e `DELETE` 401 (a rota existe); rota inexistente 404. **Nao** verificado com usuarios reais: banner, apagar aviso, pedidos no topo, manter conectado, compartilhar, modo escuro.
+- Limites: ver `PDLC/M4/S10-amigos.md` (Rodada 3).
