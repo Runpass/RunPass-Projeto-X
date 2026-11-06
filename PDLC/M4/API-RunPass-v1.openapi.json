@@ -4677,6 +4677,112 @@
         },
         "x-requires-beta-admission": true
       }
+    },
+    "/me/notifications/{id}": {
+      "delete": {
+        "operationId": "deleteMyNotification",
+        "tags": [
+          "Social"
+        ],
+        "description": "Apaga um aviso da lista (deslizar). Pedidos para seguir nao se apagam: aceite ou recuse.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Apagado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "dismissed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "dismissed"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/profiles/{id}/banner": {
+      "get": {
+        "operationId": "getProfileBanner",
+        "summary": "Link temporario e assinado para a foto de perfil; so o dono ou quem pode ver o perfil. Nunca serve o original.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true,
+        "description": "Link assinado e curto do banner do perfil, so para quem pode ver o perfil."
+      }
     }
   },
   "components": {
@@ -5525,6 +5631,11 @@
           "followingCount": {
             "type": "integer",
             "minimum": 0
+          },
+          "bannerReference": {
+            "type": "string",
+            "nullable": true,
+            "description": "Imagem do banner do perfil (mesmo envio de imagens); nulo remove."
           }
         },
         "additionalProperties": false
@@ -5578,6 +5689,11 @@
           "isPrivate": {
             "type": "boolean",
             "description": "Liga ou desliga o perfil privado."
+          },
+          "bannerReference": {
+            "type": "string",
+            "nullable": true,
+            "description": "Imagem do banner do perfil (mesmo envio de imagens); nulo remove."
           }
         },
         "description": "Somente campos enviados mudam; null limpa opcionais. Username ASCII normalizado em minúsculas e reservado atomicamente. Nome não pode ser apenas whitespace. Versão obrigatória; não altera idade, admissão ou papéis."

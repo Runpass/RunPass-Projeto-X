@@ -54,3 +54,22 @@ Ajustes pedidos depois do teste humano e como ficaram.
 | "Beta" vira "periodo de avaliacao" | Textos do app trocados. Rotas e nomes internos (`/beta/...`) continuam, por serem contrato. |
 
 Testes: 161 do backend (3 novos em `test_social.py`) e 59 do app (UTF-8, avisos, configuracoes, foto de perfil, feed com ultimo comentario). Falta teste humano das novidades e o deploy desta rodada (nao executado).
+
+## Rodada 3 (teste no iPhone, 06/11/2026)
+
+| Pedido | Resultado |
+| --- | --- |
+| Compartilhar nao funcionava como pedido | Cartao do feed foi para `post_card.dart`. O compartilhamento agora **sempre leva uma imagem**: a foto da medalha (link assinado) ou, sem foto/sem rede/demora de 6 s, um cartao PNG desenhado no app (trofeu, corrida, distancia/tempo, RunPass). Instagram e Facebook so aparecem na folha do sistema quando ha imagem; antes, sem foto, ia so texto. Mostra "Preparando..." e, se o anexo falhar, tenta so com texto; se tudo falhar, mostra o tipo do erro. Teste automatizado com a folha do sistema substituida (texto, imagem PNG, fallback). **Causa do relato nao confirmada em aparelho**: provavel ausencia de imagem; precisa de teste no iPhone. |
+| Avisos: entrar na postagem | Toque abre a tela **Publicacao** (`GET /posts/{id}`) com cartao completo, curtir, comentar, compartilhar e perfil do autor. |
+| Pedidos de amizade em destaque, primeiro, com Aceitar | Pedidos pendentes vem **sempre primeiro**, em cartao destacado com borda e titulo "Pedidos para seguir", **sem expirar** pelos 30 dias e fora do limite de 50. Aceitar/Recusar no proprio aviso. Pedido so existe para perfil **privado**; perfil publico gera aviso "comecou a seguir voce". |
+| Tirar "Avisos no celular" da tela de avisos | Fica so em Configuracoes. |
+| Apagar aviso arrastando para a esquerda | `Dismissible` + `DELETE /me/notifications/{id}`; ids apagados ficam em `NOTIFSTATE.dismissed` (ultimos 300). Pedido nao desliza (aceite ou recuse). |
+| Manter conectado | Caixa "Manter conectado" (marcada) na entrada. Guarda **so o token de renovacao do Cognito** (30 dias) no Keychain/Keystore (`flutter_secure_storage`); nunca a senha. Ao abrir, renova o acesso e entra no Inicio; o acesso de 60 min e renovado sozinho no 401. Sair (GlobalSignOut), excluir conta ou token recusado limpam. Sem mudanca de infraestrutura (`ALLOW_REFRESH_TOKEN_AUTH` ja existia). |
+| Foto da postagem abre o perfil | Avatar e nome do autor abrem o perfil publico (com Seguir/solicitar); nos meus posts, o meu perfil. |
+| Tirar "Mais uma medalha para o medalheiro!" | Removido dos cartoes. |
+| Banner do perfil com imagem da galeria | Botao "Banner" no Perfil: camera/galeria, recorte 16:7, remover. `bannerReference` no perfil (mesmo envio de imagens; troca ajusta referencias) e `GET /profiles/{id}/banner` com a mesma regra de visibilidade da foto. Aparece tambem no perfil publico de quem pode ver. |
+| Seguidores e seguindo no formato do Instagram | Linha "corridas / seguidores / seguindo" (numero em cima) no Perfil. **Nao** abre lista de seguidores/seguindo ainda. |
+| Medalhas: quilometros | Numero em destaque e "km's corridos" embaixo, como os demais. |
+| **Modo escuro** | Chave em Configuracoes, lembrada entre aberturas. Tema escuro vale para todo o app: textos, icones, cartoes, campos, chips, destaques (comentario, pedido, avisos) e logotipo trocam de cor via paleta do tema. Formato escolhido: **chave liga/desliga** com texto explicando o efeito (padrao dos apps); fica de fora "seguir o celular" (automatico). Sem revisao visual em aparelho: telas de detalhe de corrida e rascunho foram ajustadas por busca de cores fixas e precisam de olhar humano. |
+
+Testes: 164 no backend e 72 no app. Falta deploy (nao executado) e teste humano.

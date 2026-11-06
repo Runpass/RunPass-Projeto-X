@@ -264,6 +264,66 @@ class SocialTests(unittest.TestCase):
         )
         blobs.write_derived(reference, b"jpg", "image/jpeg", actor.subject)
 
+    def test_banner_is_separate_from_photo_and_follows_visibility(self):
+        blobs = MemoryBlobStore()
+        uploads = UploadService(
+            self.identity, blobs, may_view_profile=self.social.may_view_profile_photo
+        )
+        self.valid_image(self.ana, "ban1", blobs)
+        profile = self.identity.profile(self.ana)
+        saved = self.identity.patch_profile(
+            self.ana, "b1", {"expectedVersion": profile["version"], "bannerReference": "ban1"}
+        )
+        self.assertEqual(saved["bannerReference"], "ban1")
+        self.assertNotIn("photoReference", saved)
+        self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#ban1"))["refs"], 1)
+        self.assertIn("url", uploads.profile_photo(self.bia, "ana", "bannerReference"))
+        with self.assertRaises(Problem):
+            uploads.profile_photo(self.bia, "ana")  # sem foto de perfil
+        self.private(self.ana)
+        with self.assertRaises(Problem):
+            uploads.profile_photo(self.caio, "ana", "bannerReference")
+        current = self.identity.profile(self.ana)
+        cleared = self.identity.patch_profile(
+            self.ana, "b2", {"expectedVersion": current["version"], "bannerReference": None}
+        )
+        self.assertNotIn("bannerReference", cleared)
+        self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#ban1"))["refs"], 0)
+
+    def test_follow_requests_stay_first_and_old_ones_never_expire(self):
+        self.private(self.ana)
+        self.social.follow(self.caio, "ana", "f1")
+        # Pedido antigo (mais de 30 dias) continua aparecendo.
+        row_key = ("identity", "USER#ana", "FOLLOWER#caio")
+        row = self.store.get(row_key)
+        self.store.commit({row_key: row}, {row_key: {**row, "at": "2026-01-01T00:00:00Z"}})
+        self.complete(self.bia, "p2", "2026-11-06T09:00:00Z")
+        self.social.follow(self.ana, "bia", "f2")
+        items = self.social.notifications(self.ana)["items"]
+        self.assertEqual([i["kind"] for i in items], ["follow_request", "post"])
+
+    def test_notification_can_be_dismissed_but_requests_cannot(self):
+        self.complete(self.ana, "p1", "2026-11-05T10:00:00Z")
+        self.social.like(self.bia, "p1", "l1")
+        self.social.follow(self.caio, "ana", "f1")
+        first = self.social.notifications(self.ana)["items"]
+        like = next(i for i in first if i["kind"] == "like")
+        self.assertEqual(
+            self.social.dismiss_notification(self.ana, like["id"], "d1")["dismissed"], True
+        )
+        after = self.social.notifications(self.ana)["items"]
+        self.assertEqual(sorted(i["kind"] for i in after), ["follow"])
+        self.private(self.bia)
+        self.social.follow(self.caio, "bia", "f9")
+        with self.assertRaises(Problem) as nope:
+            self.social.dismiss_notification(self.bia, "follow_request:caio::x", "d2")
+        self.assertEqual(nope.exception.code, "NOTIFICATION_NOT_DISMISSIBLE")
+        # marcar como lido nao apaga a lista de apagados
+        self.social.mark_notifications_read(self.ana, "r1")
+        self.assertEqual(
+            sorted(i["kind"] for i in self.social.notifications(self.ana)["items"]), ["follow"]
+        )
+
     def test_profile_photo_needs_my_valid_image_and_follows_visibility(self):
         blobs = MemoryBlobStore()
         uploads = UploadService(

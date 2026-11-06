@@ -391,12 +391,12 @@ class SocialService:
     NOTIFICATION_LIMIT = 50
     NOTIFICATION_POSTS = 20
 
-    def _notification_items(self, actor, since):
+    def _notification_items(self, actor, since, dismissed=()):
         me = actor.subject
         items = []
 
-        def add(kind, at, who, post=None, extra=None):
-            if at < since:
+        def add(kind, at, who, post=None, extra=None, pinned=False):
+            if at < since and not pinned:
                 return
             profile = self._active_profile(self.store.get, who)
             if not profile:
@@ -416,7 +416,8 @@ class SocialService:
 
         for sk, row in self._list("identity", "USER#" + me, "FOLLOWER#"):
             who = sk.split("#", 1)[1]
-            add("follow_request" if row["state"] == "pending" else "follow", row["at"], who)
+            pending = row["state"] == "pending"
+            add("follow_request" if pending else "follow", row["at"], who, pinned=pending)
         mine = [p for p in self._completed(me) if p.get("publishToFeed")]
         for part in mine[: self.NOTIFICATION_POSTS]:
             for sk, row in self._like_rows(part["id"]):
@@ -433,8 +434,12 @@ class SocialService:
                     )
         for part in self._feed_posts(actor, mine=False)[: self.NOTIFICATION_POSTS]:
             add("post", part.get("completedAt", ""), part["owner"], part)
+        # Pedidos para seguir sempre primeiro (e nunca saem por idade ou limite); o resto, novo primeiro.
+        items = [i for i in items if i["id"] not in dismissed]
         items.sort(key=lambda i: i["createdAt"], reverse=True)
-        return items[: self.NOTIFICATION_LIMIT]
+        requests = [i for i in items if i["kind"] == "follow_request"]
+        others = [i for i in items if i["kind"] != "follow_request"]
+        return requests + others[: self.NOTIFICATION_LIMIT]
 
     def notifications(self, actor):
         self.identity.authorize(actor, admitted=True)
@@ -444,7 +449,7 @@ class SocialService:
         since = stamp(now - timedelta(days=self.NOTIFICATION_DAYS))
         state = self.store.get(("identity", "USER#" + actor.subject, "NOTIFSTATE")) or {}
         read_at = state.get("readAt", "")
-        items = self._notification_items(actor, since)
+        items = self._notification_items(actor, since, set(state.get("dismissed", [])))
         for item in items:
             item["unread"] = item["createdAt"] > read_at
         return {"items": items, "unreadCount": sum(1 for i in items if i["unread"])}
@@ -452,10 +457,29 @@ class SocialService:
     def mark_notifications_read(self, actor, key):
         def work(read, write, account, now, replay):
             row_key = ("identity", "USER#" + actor.subject, "NOTIFSTATE")
-            write(row_key, {"readAt": stamp(now)})
+            write(row_key, {**(read(row_key) or {}), "readAt": stamp(now)})
             return {"readAt": stamp(now)}, {}
 
         return self.identity.transact(actor, "markNotificationsRead", key, {}, work, admitted=True)
+
+    MAX_DISMISSED = 300
+
+    def dismiss_notification(self, actor, notification_id, key):
+        """Apagar um aviso (deslizar na tela). Pedidos para seguir se resolvem aceitando ou recusando."""
+        if notification_id.startswith("follow_request:"):
+            raise Problem(422, "NOTIFICATION_NOT_DISMISSIBLE")
+
+        def work(read, write, account, now, replay):
+            row_key = ("identity", "USER#" + actor.subject, "NOTIFSTATE")
+            row = read(row_key) or {}
+            dismissed = [i for i in row.get("dismissed", []) if i != notification_id]
+            dismissed.append(notification_id)
+            write(row_key, {**row, "dismissed": dismissed[-self.MAX_DISMISSED :]})
+            return {"id": notification_id, "dismissed": True}, {}
+
+        return self.identity.transact(
+            actor, "deleteMyNotification", key, {"id": notification_id}, work, admitted=True
+        )
 
     def comment(self, actor, post_id, key, text):
         text = text.strip()

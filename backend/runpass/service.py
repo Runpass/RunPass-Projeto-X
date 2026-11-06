@@ -128,6 +128,7 @@ class IdentityService:
                 "city",
                 "bio",
                 "photoReference",
+                "bannerReference",
                 "isPrivate",
             )
             if k in profile
@@ -187,10 +188,10 @@ class IdentityService:
         return self.transact(principal, "createOwnProfile", key, payload, work)
 
     @staticmethod
-    def _swap_profile_photo(read, write, subject, profile, payload):
-        """The photo must be a valid image uploaded by this runner; reference counts follow."""
-        reference = payload["photoReference"]
-        if reference == profile.get("photoReference"):
+    def _swap_profile_photo(read, write, subject, profile, payload, field="photoReference"):
+        """The image must be valid and uploaded by this runner; reference counts follow."""
+        reference = payload[field]
+        if reference == profile.get(field):
             return
         if reference is not None:
             new_key = ("operations", "USER#" + subject, "IMAGE#" + reference)
@@ -198,7 +199,7 @@ class IdentityService:
             if not new or new.get("state") != "valid" or new.get("owner") != subject:
                 raise Problem(422, "IMAGE_NOT_VALID")
             write(new_key, {**new, "refs": new.get("refs", 0) + 1})
-        previous = profile.get("photoReference")
+        previous = profile.get(field)
         if previous:
             old_key = ("operations", "USER#" + subject, "IMAGE#" + previous)
             old = read(old_key)
@@ -217,8 +218,11 @@ class IdentityService:
                 return self.public_profile(profile), {}
             if profile["version"] != payload["expectedVersion"]:
                 raise Problem(409, "VERSION_CONFLICT")
-            if "photoReference" in payload:
-                self._swap_profile_photo(read, write, principal.subject, profile, payload)
+            for field in ("photoReference", "bannerReference"):
+                if field in payload:
+                    self._swap_profile_photo(
+                        read, write, principal.subject, profile, payload, field
+                    )
             new_username = payload.get("username", profile["username"]).lower()
             if new_username != profile["username"]:
                 new = ("identity", "USERNAME#" + new_username, "CLAIM")

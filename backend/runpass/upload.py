@@ -103,16 +103,16 @@ class UploadService:
             lambda read, actor, owner: owner == actor.subject
         )
 
-    def profile_photo(self, actor, subject):
-        """Short-lived signed link to a runner's profile photo, when the viewer may see it."""
+    def profile_photo(self, actor, subject, field="photoReference"):
+        """Short-lived signed link to a runner's profile photo or banner, when the viewer may."""
 
         def work(read, write, account, now, replay):
             profile = read(("identity", "USER#" + subject, "PROFILE"))
-            if not profile or not profile.get("photoReference"):
+            if not profile or not profile.get(field):
                 raise Problem(404, "IMAGE_NOT_AVAILABLE")
             if not self.may_view_profile(read, actor, subject):
                 raise Problem(404, "IMAGE_NOT_AVAILABLE")
-            return {"reference": profile["photoReference"], "now": now}, {}
+            return {"reference": profile[field], "now": now}, {}
 
         found = self.identity.transact(actor, "getProfilePhoto", None, {}, work, admitted=True)
         link = self.blobs.view_url(subject, found["reference"])

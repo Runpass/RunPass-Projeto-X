@@ -30,6 +30,7 @@ class PatchProfile(Input):
     city: Annotated[str, Field(max_length=100)] | None = None
     bio: Annotated[str, Field(max_length=500)] | None = None
     photoReference: str | None = None
+    bannerReference: str | None = None
     isPrivate: bool | None = None
 
     @model_validator(mode="after")

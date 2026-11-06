@@ -325,6 +325,10 @@ def create_app(
     def list_notifications(actor: Actor):
         return friends().notifications(actor)
 
+    @app.delete("/me/notifications/{id}", operation_id="deleteMyNotification")
+    def delete_notification(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().dismiss_notification(actor, id, idempotency_key)
+
     @app.post("/me/notifications/read", operation_id="markMyNotificationsRead")
     def read_notifications(actor: Actor, idempotency_key: IdempotencyKey):
         return friends().mark_notifications_read(actor, idempotency_key)
@@ -351,6 +355,12 @@ def create_app(
         if uploads is None:
             raise Unavailable()
         return uploads.profile_photo(actor, id)
+
+    @app.get("/profiles/{id}/banner", operation_id="getProfileBanner")
+    def profile_banner(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.profile_photo(actor, id, "bannerReference")
 
     @app.get("/participations/{id}/image", operation_id="getParticipationImage")
     def participation_image(id: str, actor: Actor):
