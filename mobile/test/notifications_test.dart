@@ -81,7 +81,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Pessoa b quer seguir você.'), findsOneWidget);
       expect(find.text('Pessoa c curtiu sua publicação.'), findsOneWidget);
-      expect(find.byKey(const Key('os-alerts-switch')), findsOneWidget);
+      // O aviso no celular fica so nas configuracoes.
+      expect(find.byKey(const Key('os-alerts-switch')), findsNothing);
+      expect(find.byKey(const Key('requests-title')), findsOneWidget);
       expect(calls, contains('POST /me/notifications/read'));
 
       await tester.tap(find.byKey(const Key('notification-approve-b')));
@@ -135,5 +137,96 @@ void main() {
     expect(find.byKey(const Key('os-alerts-switch')), findsOneWidget);
     expect(find.byKey(const Key('sign-out')), findsOneWidget);
     expect(find.byKey(const Key('delete-account')), findsOneWidget);
+  });
+
+  testWidgets('deslizar para a esquerda apaga o aviso; pedido nao desliza', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    final gateway = await gatewayWith((uri, method, headers, body) async {
+      calls.add('$method ${uri.path}');
+      if (uri.path == '/me/notifications') {
+        return JsonReply(200, {
+          'unreadCount': 0,
+          'items': [
+            {
+              'id': 'follow_request:b::2026',
+              'kind': 'follow_request',
+              'createdAt': '2026-11-06T10:00:00Z',
+              'unread': false,
+              'actor': who('b'),
+            },
+            {
+              'id': 'like:c:p1:2026',
+              'kind': 'like',
+              'createdAt': '2026-11-06T09:00:00Z',
+              'unread': false,
+              'actor': who('c'),
+              'postId': 'p1',
+            },
+          ],
+        });
+      }
+      return const JsonReply(200, {'id': 'x', 'dismissed': true});
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: NotificationsScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    // Pedido primeiro e em destaque, sem Dismissible.
+    expect(find.byType(Dismissible), findsOneWidget);
+    await tester.drag(find.byType(Dismissible), const Offset(-600, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('Pessoa c curtiu sua publicação.'), findsNothing);
+    expect(find.text('Pessoa b quer seguir você.'), findsOneWidget);
+    expect(calls, contains('DELETE /me/notifications/like%3Ac%3Ap1%3A2026'));
+  });
+
+  testWidgets('tocar num aviso de curtida abre a publicacao', (tester) async {
+    final calls = <String>[];
+    final gateway = await gatewayWith((uri, method, headers, body) async {
+      calls.add('$method ${uri.path}');
+      if (uri.path == '/me/notifications') {
+        return JsonReply(200, {
+          'unreadCount': 0,
+          'items': [
+            {
+              'id': 'like:c:p1:2026',
+              'kind': 'like',
+              'createdAt': '2026-11-06T09:00:00Z',
+              'unread': false,
+              'actor': who('c'),
+              'postId': 'p1',
+            },
+          ],
+        });
+      }
+      if (uri.path == '/posts/p1') {
+        return JsonReply(200, {
+          'id': 'p1',
+          'author': who('me'),
+          'participation': {
+            'id': 'p1',
+            'editionId': 'E1',
+            'distanceId': '10k',
+            'state': 'completed',
+          },
+          'publishedAt': '2026-11-05T10:00:00Z',
+          'commentCount': 0,
+          'likeCount': 1,
+          'likedByMe': false,
+        });
+      }
+      return const JsonReply(200, {'id': 'me', 'items': []});
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: NotificationsScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pessoa c curtiu sua publicação.'));
+    await tester.pumpAndSettle();
+    expect(calls, contains('GET /posts/p1'));
+    expect(find.text('Publicação'), findsOneWidget);
+    expect(find.byKey(const Key('share-p1')), findsOneWidget);
   });
 }

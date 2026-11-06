@@ -134,6 +134,9 @@ void forgetMedalPhoto(String participationId) => _photoLinks.remove(
   '/participations/${Uri.encodeComponent(participationId)}/image',
 );
 
+void forgetBanner(String profileId) =>
+    _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/banner');
+
 void forgetProfilePhoto(String profileId) =>
     _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/photo');
 
@@ -468,8 +471,12 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
-        color: Colors.white,
-        border: Border.all(color: const Color(0xffeadfd8)),
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(
+          color: context.isDark
+              ? const Color(0xff3a3330)
+              : const Color(0xffeadfd8),
+        ),
         boxShadow: const [
           BoxShadow(
             color: Color(0x14000000),
@@ -509,7 +516,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.black54, fontSize: 10),
+            style: TextStyle(color: context.muted, fontSize: 10),
           ),
         ],
       ),
@@ -644,8 +651,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                           color: runPassOrange,
                         ),
                         statBlock(
-                          "${stats.kilometers == stats.kilometers.roundToDouble() ? stats.kilometers.toInt() : stats.kilometers.toStringAsFixed(1)} KM's",
-                          'Quilometrocímetro',
+                          stats.kilometers == stats.kilometers.roundToDouble()
+                              ? '${stats.kilometers.toInt()}'
+                              : stats.kilometers.toStringAsFixed(1),
+                          "km's\ncorridos",
                           color: const Color(0xffe8b23a),
                         ),
                         statBlock(
@@ -699,16 +708,25 @@ class ProfileData {
   final Map<String, dynamic> profile;
   final List<RaceRecord> races;
   final List<Map<String, dynamic>> wishlist;
-  const ProfileData(this.profile, this.races, this.wishlist);
+  final int followers, following;
+  const ProfileData(
+    this.profile,
+    this.races,
+    this.wishlist, [
+    this.followers = 0,
+    this.following = 0,
+  ]);
 }
 
 class RunnerProfileScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final ProfilePhotoPicker photoPicker;
+  final ProfilePhotoPicker bannerPicker;
   const RunnerProfileScreen({
     super.key,
     required this.gateway,
     this.photoPicker = pickProfilePhoto,
+    this.bannerPicker = pickBannerPhoto,
   });
 
   @override
@@ -771,6 +789,41 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     }
   }
 
+  Future<void> changeBanner(Map<String, dynamic> profile) async {
+    final choice = await askPhotoChoice(
+      context,
+      canRemove: profile['bannerReference'] != null,
+    );
+    if (choice == null || !mounted) return;
+    try {
+      String? reference;
+      if (choice != PhotoChoice.remove) {
+        final bytes = await widget.bannerPicker(context, choice);
+        if (bytes == null) return;
+        soon('Enviando o banner...');
+        reference = await uploadProfilePhoto(widget.gateway, bytes);
+      }
+      await widget.gateway.request(
+        '/me',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': profile['version'],
+          'bannerReference': reference,
+        },
+      );
+      forgetBanner(profile['id'] as String);
+      if (mounted) {
+        setState(() {
+          data = load();
+        });
+      }
+    } on IdentityIssue catch (issue) {
+      soon(photoError(issue));
+    } on Exception catch (error) {
+      soon(photoError(error));
+    }
+  }
+
   Future<ProfileData> load() async {
     final profile = await widget.gateway.request('/me');
     var races = const <RaceRecord>[];
@@ -790,7 +843,20 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     } on Exception {
       // The wishlist is optional; its section shows an empty message.
     }
-    return ProfileData(profile, races, wishlist);
+    var followers = 0, following = 0;
+    final myId = profile['id'] as String?;
+    if (myId != null) {
+      try {
+        final me = await widget.gateway.request(
+          '/profiles/${Uri.encodeComponent(myId)}',
+        );
+        followers = (me['followersCount'] as num?)?.toInt() ?? 0;
+        following = (me['followingCount'] as num?)?.toInt() ?? 0;
+      } on Exception {
+        // Sem contagem: mostra zero.
+      }
+    }
+    return ProfileData(profile, races, wishlist, followers, following);
   }
 
   void soon(String text) =>
@@ -803,11 +869,50 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
       children: [
         Container(
           height: 150,
+          clipBehavior: Clip.hardEdge,
           decoration: const BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+            ),
+          ),
+          child: profile['bannerReference'] == null
+              ? null
+              : SizedBox.expand(
+                  child: SignedPhoto(
+                    key: ValueKey('banner-${profile['bannerReference']}'),
+                    gateway: widget.gateway,
+                    endpoint:
+                        '/profiles/${Uri.encodeComponent(profile['id'] as String)}/banner',
+                    fallback: const SizedBox.shrink(),
+                  ),
+                ),
+        ),
+        Positioned(
+          right: 12,
+          top: 104,
+          child: InkWell(
+            key: const Key('change-banner'),
+            onTap: () => changeBanner(profile),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.image_outlined, size: 16, color: Colors.white),
+                  SizedBox(width: 6),
+                  Text(
+                    'Banner',
+                    style: TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -844,7 +949,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
             children: [
               CircleAvatar(
                 radius: 46,
-                backgroundColor: Colors.white,
+                backgroundColor: Theme.of(context).colorScheme.surface,
                 child: ProfileAvatar(
                   key: ValueKey('avatar-${profile['photoReference']}'),
                   radius: 42,
@@ -930,18 +1035,12 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                   if (date != null)
                     Text(
                       displayDate(date),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.black54,
-                      ),
+                      style: TextStyle(fontSize: 12, color: context.muted),
                     ),
                   if (edition['city'] != null)
                     Text(
                       '${edition['city']}${edition['state'] == null ? '' : ' - ${edition['state']}'}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.black54,
-                      ),
+                      style: TextStyle(fontSize: 12, color: context.muted),
                     ),
                 ],
               ),
@@ -995,12 +1094,23 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       '@${profile['username'] ?? ''}',
                       if (city != null && city.isNotEmpty) city,
                     ].join('  •  '),
-                    style: const TextStyle(color: Colors.black54),
+                    style: TextStyle(color: context.muted),
                   ),
                   if (bio != null && bio.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     Text(bio),
                   ],
+                  const SizedBox(height: 16),
+                  // Contadores no formato do Instagram: numero em cima, nome embaixo.
+                  Row(
+                    key: const Key('profile-counts'),
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      statBlock('${stats.completed}', 'corridas'),
+                      statBlock('${result.followers}', 'seguidores'),
+                      statBlock('${result.following}', 'seguindo'),
+                    ],
+                  ),
                   const SizedBox(height: 16),
                   Card(
                     child: Padding(

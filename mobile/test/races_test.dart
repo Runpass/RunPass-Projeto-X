@@ -90,8 +90,7 @@ void main() {
       expect(find.text('Corrida B'), findsOneWidget);
       // Two completed races in two cities; the draft is not a medal.
       expect(find.text('medalhas'), findsOneWidget);
-      expect(find.text('Quilometrocímetro'), findsOneWidget);
-      expect(find.textContaining("KM's"), findsOneWidget);
+      expect(find.text("km's\ncorridos"), findsOneWidget);
       expect(find.text('cidades\nvisitadas'), findsOneWidget);
       expect(find.text('países\nvisitados'), findsOneWidget);
       // Medalhas e cidades valem 2; edicoes sem pais contam como Brasil (1 pais).
@@ -161,6 +160,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Corredor Teste'), findsOneWidget);
     expect(find.text('@teste  •  Santos'), findsOneWidget);
+    expect(find.byKey(const Key('profile-counts')), findsOneWidget);
+    expect(find.text('seguidores'), findsOneWidget);
+    expect(find.text('seguindo'), findsOneWidget);
     expect(find.text('provas\nconcluídas'), findsOneWidget);
     expect(find.text('corridas\n5K'), findsOneWidget);
     expect(find.text('corridas\n10K'), findsOneWidget);

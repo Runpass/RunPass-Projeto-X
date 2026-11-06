@@ -5,6 +5,7 @@ import 'friends.dart';
 import 'identity_gateway.dart';
 import 'main.dart' show IdentityScreen;
 import 'notifications.dart';
+import 'runpass_theme.dart';
 
 /// Configuracoes da conta (engrenagem do Perfil): privacidade, avisos, sair e excluir conta.
 class SettingsScreen extends StatefulWidget {
@@ -68,7 +69,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     NotificationCenter.instance.stop();
-    widget.gateway.clearSession();
+    await widget.gateway.forgetSession();
     if (mounted) {
       toSignIn('Exclusão aceita. O acesso à conta foi encerrado.');
     }
@@ -109,6 +110,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 12),
         const Card(child: OsAlertsSwitch()),
+        const SizedBox(height: 12),
+        Card(
+          child: ValueListenableBuilder<bool>(
+            valueListenable: ThemeController.dark,
+            builder: (context, dark, _) => SwitchListTile(
+              key: const Key('dark-mode-switch'),
+              secondary: const Icon(Icons.dark_mode_outlined),
+              title: const Text('Modo escuro'),
+              subtitle: const Text(
+                'Fundo escuro em todo o app, mais confortável à noite e em lugares com pouca luz.',
+              ),
+              value: dark,
+              onChanged: ThemeController.set,
+            ),
+          ),
+        ),
         const SizedBox(height: 12),
         Card(
           child: Column(

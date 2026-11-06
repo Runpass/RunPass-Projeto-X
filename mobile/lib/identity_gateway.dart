@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
 class IdentityIssue implements Exception {
   final String code;
   const IdentityIssue(this.code);
@@ -115,6 +117,62 @@ Future<JsonReply> sendJson(
   }
 }
 
+/// Guarda o token de renovacao do Cognito (30 dias) para "manter conectado". So o token de
+/// renovacao e gravado, nunca a senha.
+abstract class TokenStore {
+  Future<String?> read();
+  Future<void> write(String token);
+  Future<void> clear();
+}
+
+/// iOS Keychain / Android Keystore.
+class SecureTokenStore implements TokenStore {
+  static const _key = 'runpass-refresh-token';
+  final _storage = const FlutterSecureStorage(
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock_this_device,
+    ),
+  );
+
+  @override
+  Future<String?> read() async {
+    try {
+      return await _storage.read(key: _key);
+    } on Object {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> write(String token) async {
+    try {
+      await _storage.write(key: _key, value: token);
+    } on Object {
+      // Sem armazenamento seguro: a pessoa so precisa entrar de novo na proxima vez.
+    }
+  }
+
+  @override
+  Future<void> clear() async {
+    try {
+      await _storage.delete(key: _key);
+    } on Object {
+      // Nada a limpar.
+    }
+  }
+}
+
+/// Memoria apenas; usado nos testes.
+class MemoryTokenStore implements TokenStore {
+  String? value;
+  @override
+  Future<String?> read() async => value;
+  @override
+  Future<void> write(String token) async => value = token;
+  @override
+  Future<void> clear() async => value = null;
+}
+
 class IdentityGateway {
   final Uri cognito;
   final Uri api;
@@ -122,7 +180,9 @@ class IdentityGateway {
   final JsonTransport transport;
   final ByteTransport byteTransport;
   final Sleeper sleeper;
+  final TokenStore? tokenStore;
   String? _accessToken;
+  String? _refreshToken;
   String? _pendingCommand;
   String? _pendingKey;
 
@@ -133,6 +193,7 @@ class IdentityGateway {
     this.transport = sendJson,
     this.byteTransport = sendBytes,
     this.sleeper = wait,
+    this.tokenStore,
   }) {
     if (cognito.scheme != 'https' ||
         api.scheme != 'https' ||
@@ -146,6 +207,9 @@ class IdentityGateway {
   }
 
   bool get signedIn => _accessToken != null;
+
+  /// Ha onde guardar a sessao (app real); nos testes nao ha.
+  bool get canRestore => tokenStore != null;
 
   Future<Map<String, dynamic>> _cognito(
     String operation,
@@ -204,7 +268,11 @@ class IdentityGateway {
     });
   }
 
-  Future<void> signIn(String email, String password) async {
+  Future<void> signIn(
+    String email,
+    String password, {
+    bool keepSignedIn = false,
+  }) async {
     clearSession();
     final response = await _cognito('InitiateAuth', {
       'AuthFlow': 'USER_PASSWORD_AUTH',
@@ -220,6 +288,60 @@ class IdentityGateway {
       throw const IdentityIssue('INVALID_TOKEN');
     }
     _accessToken = token;
+    final refresh =
+        (response['AuthenticationResult']
+            as Map<String, dynamic>?)?['RefreshToken'];
+    if (refresh is String && refresh.isNotEmpty) {
+      _refreshToken = refresh;
+      if (keepSignedIn) {
+        await tokenStore?.write(refresh);
+      } else {
+        await tokenStore?.clear();
+      }
+    }
+  }
+
+  /// Renova o acesso com o token guardado. Falso se nao ha token ou o Cognito o recusou
+  /// (expirado, revogado); falha de rede lanca `IdentityIssue` e mantem o token guardado.
+  Future<bool> restoreSession() async {
+    final stored = _refreshToken ?? await tokenStore?.read();
+    if (stored == null || stored.isEmpty) return false;
+    final result = await transport(
+      cognito,
+      'POST',
+      {
+        'Content-Type': 'application/x-amz-json-1.1',
+        'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth',
+      },
+      {
+        'ClientId': clientId,
+        'AuthFlow': 'REFRESH_TOKEN_AUTH',
+        'AuthParameters': {'REFRESH_TOKEN': stored},
+      },
+    );
+    final token =
+        (result.body['AuthenticationResult']
+            as Map<String, dynamic>?)?['AccessToken'];
+    if (result.status >= 200 &&
+        result.status < 300 &&
+        token is String &&
+        token.isNotEmpty) {
+      _accessToken = token;
+      _refreshToken = stored;
+      return true;
+    }
+    if (result.status >= 500 || result.status == 429) {
+      throw const IdentityIssue('SERVICE_UNAVAILABLE');
+    }
+    await forgetSession();
+    return false;
+  }
+
+  /// Esquece a sessao neste aparelho, inclusive a guardada para "manter conectado".
+  Future<void> forgetSession() async {
+    clearSession();
+    _refreshToken = null;
+    await tokenStore?.clear();
   }
 
   Future<Map<String, dynamic>> request(
@@ -227,6 +349,14 @@ class IdentityGateway {
     String method = 'GET',
     Map<String, dynamic>? body,
     Map<String, String>? query,
+  }) => _request(path, method: method, body: body, query: query, retry: true);
+
+  Future<Map<String, dynamic>> _request(
+    String path, {
+    String method = 'GET',
+    Map<String, dynamic>? body,
+    Map<String, String>? query,
+    required bool retry,
   }) async {
     if (_accessToken == null) throw const IdentityIssue('INVALID_TOKEN');
     final command = '$method:$path:${jsonEncode(body)}';
@@ -255,11 +385,27 @@ class IdentityGateway {
       body,
     );
     if (result.status == 401) {
+      // O acesso vale 60 minutos; com "manter conectado" renova uma vez e repete a chamada.
+      if (retry && _refreshToken != null) {
+        try {
+          if (await restoreSession()) {
+            return await _request(
+              path,
+              method: method,
+              body: body,
+              query: query,
+              retry: false,
+            );
+          }
+        } on IdentityIssue {
+          // Sem rede para renovar: cai na regra abaixo.
+        }
+      }
       clearSession();
       throw const IdentityIssue('INVALID_TOKEN');
     }
     if (result.status == 403 && result.body['code'] == 'ACCOUNT_UNAVAILABLE') {
-      clearSession();
+      await forgetSession();
     }
     if (result.status < 200 || result.status >= 300) {
       throw IdentityIssue(
@@ -325,7 +471,7 @@ class IdentityGateway {
 
   Future<void> signOut() async {
     final token = _accessToken;
-    clearSession();
+    await forgetSession();
     if (token == null) return;
     // GlobalSignOut has no ClientId parameter.
     await transport(

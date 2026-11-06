@@ -55,10 +55,18 @@ typedef ProfilePhotoPicker = Future<List<int>?> Function(
   PhotoChoice choice,
 );
 
-Future<List<int>?> pickProfilePhoto(
+Future<List<int>?> pickProfilePhoto(BuildContext context, PhotoChoice choice) =>
+    _pick(context, choice, banner: false);
+
+/// Imagem do banner do perfil: recorte retangular (largo).
+Future<List<int>?> pickBannerPhoto(BuildContext context, PhotoChoice choice) =>
+    _pick(context, choice, banner: true);
+
+Future<List<int>?> _pick(
   BuildContext context,
-  PhotoChoice choice,
-) async {
+  PhotoChoice choice, {
+  required bool banner,
+}) async {
   final file = await ImagePicker().pickImage(
     source: choice == PhotoChoice.camera
         ? ImageSource.camera
@@ -74,7 +82,7 @@ Future<List<int>?> pickProfilePhoto(
   return Navigator.of(context).push<List<int>>(
     MaterialPageRoute(
       fullscreenDialog: true,
-      builder: (_) => ProfilePhotoCropScreen(image: bytes),
+      builder: (_) => ProfilePhotoCropScreen(image: bytes, banner: banner),
     ),
   );
 }
@@ -105,7 +113,12 @@ String photoError(Object error) => error is IdentityIssue
 
 class ProfilePhotoCropScreen extends StatefulWidget {
   final Uint8List image;
-  const ProfilePhotoCropScreen({super.key, required this.image});
+  final bool banner;
+  const ProfilePhotoCropScreen({
+    super.key,
+    required this.image,
+    this.banner = false,
+  });
 
   @override
   State<ProfilePhotoCropScreen> createState() => _ProfilePhotoCropScreenState();
@@ -136,25 +149,27 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
     appBar: AppBar(
       backgroundColor: Colors.black,
       foregroundColor: Colors.white,
-      title: const Text('Recortar foto'),
+      title: Text(widget.banner ? 'Recortar banner' : 'Recortar foto'),
     ),
     body: SafeArea(
       child: Column(
         children: [
-          const Padding(
-            padding: EdgeInsets.all(12),
+          Padding(
+            padding: const EdgeInsets.all(12),
             child: Text(
-              'Arraste e use dois dedos para ampliar. Deixe só o rosto dentro do círculo.',
+              widget.banner
+                  ? 'Arraste e use dois dedos para ampliar. A parte dentro do quadro será o banner.'
+                  : 'Arraste e use dois dedos para ampliar. Deixe só o rosto dentro do círculo.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70),
+              style: const TextStyle(color: Colors.white70),
             ),
           ),
           Expanded(
             child: Crop(
               image: widget.image,
               controller: controller,
-              aspectRatio: 1,
-              withCircleUi: true,
+              aspectRatio: widget.banner ? 16 / 7 : 1,
+              withCircleUi: !widget.banner,
               interactive: true,
               fixCropRect: true,
               baseColor: Colors.black,

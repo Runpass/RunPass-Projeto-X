@@ -375,12 +375,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           for (final edition in items)
             Card(
-              color: edition['status'] == 'archived'
-                  ? const Color(0xffe6e8eb)
-                  : null,
+              color: edition['status'] == 'archived' ? context.panelCard : null,
               child: ListTile(
                 textColor: edition['status'] == 'archived'
-                    ? const Color(0xff7a808a)
+                    ? context.archivedText
                     : null,
                 contentPadding: const EdgeInsets.all(16),
                 leading: Container(
@@ -388,7 +386,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   height: 48,
                   decoration: BoxDecoration(
                     color: edition['status'] == 'archived'
-                        ? const Color(0xffcdd1d6)
+                        ? context.panelStrong
                         : runPassOrange.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(14),
                   ),
@@ -397,7 +395,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         ? Icons.inventory_2_outlined
                         : Icons.directions_run,
                     color: edition['status'] == 'archived'
-                        ? const Color(0xff7a808a)
+                        ? context.archivedText
                         : runPassOrange,
                   ),
                 ),
@@ -684,7 +682,7 @@ class _EditionScreenState extends State<EditionScreen> {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: archived ? const Color(0xffd5d8dd) : const Color(0xffe9ecf1),
+        color: archived ? context.panelStrong : context.panel,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -715,10 +713,10 @@ class _EditionScreenState extends State<EditionScreen> {
                     style: TextStyle(
                       fontWeight: FontWeight.w700,
                       color: archived
-                          ? const Color(0xff7a808a)
+                          ? context.archivedText
                           : selectedDistance == distance['id']
                           ? Colors.white
-                          : Colors.black87,
+                          : context.onSurfaceText,
                     ),
                   ),
                 ),
@@ -908,7 +906,7 @@ class _EditionScreenState extends State<EditionScreen> {
               value: (value ?? 0) / 5,
               minHeight: 7,
               color: runPassOrange,
-              backgroundColor: const Color(0xffeceff3),
+              backgroundColor: context.track,
             ),
           ),
         ),
@@ -990,7 +988,7 @@ class _EditionScreenState extends State<EditionScreen> {
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xffe6f6ec),
+                color: context.greenFill,
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Column(
@@ -1036,9 +1034,9 @@ class _EditionScreenState extends State<EditionScreen> {
           children: [
             Row(
               children: [
-                const CircleAvatar(
+                CircleAvatar(
                   radius: 20,
-                  backgroundColor: Color(0xffffe4dc),
+                  backgroundColor: context.softFill,
                   child: Icon(Icons.person, color: runPassOrange),
                 ),
                 const SizedBox(width: 10),
@@ -1057,9 +1055,9 @@ class _EditionScreenState extends State<EditionScreen> {
                             const SizedBox(width: 8),
                             Text(
                               timeAgo(created),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.black54,
+                                color: context.muted,
                               ),
                             ),
                           ],
@@ -1129,7 +1127,7 @@ class _EditionScreenState extends State<EditionScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 48, color: Colors.black26),
+          Icon(icon, size: 48, color: context.muted),
           const SizedBox(height: 12),
           Text(text, textAlign: TextAlign.center),
         ],
@@ -1182,12 +1180,12 @@ class _EditionScreenState extends State<EditionScreen> {
               child: Column(
                 children: [
                   hero(body),
-                  const Material(
+                  Material(
                     color: Colors.white,
                     child: TabBar(
                       labelColor: runPassOrange,
                       indicatorColor: runPassOrange,
-                      unselectedLabelColor: Colors.black87,
+                      unselectedLabelColor: context.onSurfaceText,
                       tabs: [
                         Tab(text: 'Sobre'),
                         Tab(text: 'Avaliações'),
@@ -1826,7 +1824,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: ColoredBox(
-                  color: const Color(0xffffe4dc),
+                  color: context.softFill,
                   child: MedalPhoto(
                     key: ValueKey('medal-photo-$photoRevision'),
                     gateway: widget.gateway,
@@ -1945,7 +1943,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               key: const Key('upcoming-notice'),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xfffff3e0),
+                color: context.warnFill,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(

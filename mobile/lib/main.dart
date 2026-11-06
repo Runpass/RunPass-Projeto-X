@@ -9,7 +9,9 @@ import 'notifications.dart';
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ThemeController.load();
   const api = String.fromEnvironment('RUNPASS_API_URL');
   const cognito = String.fromEnvironment('RUNPASS_COGNITO_URL');
   const client = String.fromEnvironment('RUNPASS_COGNITO_CLIENT_ID');
@@ -20,6 +22,7 @@ void main() {
         api: Uri.parse(api),
         cognito: Uri.parse(cognito),
         clientId: client,
+        tokenStore: SecureTokenStore(),
       );
     } on ArgumentError {
       gateway = null;
@@ -41,40 +44,45 @@ class MainApp extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'RunPass',
-    navigatorObservers: [runPassRouteObserver],
-    // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
-    builder: (context, shell) {
-      final child = GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
-        child: shell!,
-      );
-      return !demonstration
-          ? child
-          : Column(
-              children: [
-                SafeArea(
-                  bottom: false,
-                  child: Material(
-                    color: Colors.amber.shade100,
-                    child: const Padding(
-                      padding: EdgeInsets.all(8),
-                      child: Text(
-                        'DEMONSTRAÇÃO LOCAL · Dados fictícios\nUse e-mail .test · Código: 123456',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.black, fontSize: 12),
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+    valueListenable: ThemeController.dark,
+    builder: (context, dark, _) => MaterialApp(
+      title: 'RunPass',
+      navigatorObservers: [runPassRouteObserver],
+      // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
+      builder: (context, shell) {
+        final child = GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: shell!,
+        );
+        return !demonstration
+            ? child
+            : Column(
+                children: [
+                  SafeArea(
+                    bottom: false,
+                    child: Material(
+                      color: Colors.amber.shade100,
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Text(
+                          'DEMONSTRAÇÃO LOCAL · Dados fictícios\nUse e-mail .test · Código: 123456',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.black, fontSize: 12),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                Expanded(child: child),
-              ],
-            );
-    },
-    theme: runPassTheme(),
-    home: IdentityScreen(gateway: gateway, photoPicker: photoPicker),
+                  Expanded(child: child),
+                ],
+              );
+      },
+      theme: runPassTheme(),
+      darkTheme: runPassDarkTheme(),
+      themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+      home: IdentityScreen(gateway: gateway, photoPicker: photoPicker),
+    ),
   );
 }
 
@@ -122,12 +130,33 @@ class _IdentityScreenState extends State<IdentityScreen> {
   String? displayName;
   // Cadastro novo ainda sem foto: a foto de perfil e obrigatoria antes de entrar.
   bool needsPhoto = false;
+  // "Manter conectado": guarda so o token de renovacao, nunca a senha.
+  bool keepSignedIn = true;
+  // Entrando com a sessao guardada: mostra um indicador em vez do formulario.
+  bool restoring = false;
   List<int>? chosenPhoto;
 
   @override
   void initState() {
     super.initState();
     message = widget.notice;
+    if (widget.gateway?.canRestore ?? false) restoreSession();
+  }
+
+  Future<void> restoreSession() async {
+    setState(() => restoring = true);
+    try {
+      if (await widget.gateway!.restoreSession()) {
+        await resume();
+        if (mounted && step == Step.ready) {
+          openHome();
+          return;
+        }
+      }
+    } on Exception {
+      // Sem rede ou falha: cai na tela de entrada; a sessao guardada continua valendo.
+    }
+    if (mounted) setState(() => restoring = false);
   }
 
   @override
@@ -253,7 +282,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
     final gateway = widget.gateway!;
     switch (step) {
       case Step.signIn:
-        await gateway.signIn(email.text.trim(), password.text);
+        await gateway.signIn(
+          email.text.trim(),
+          password.text,
+          keepSignedIn: keepSignedIn,
+        );
         password.clear();
         await resume();
       case Step.signUp:
@@ -382,6 +415,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
                   ? const Text(
                       'O RunPass ainda não está disponível neste ambiente.',
                     )
+                  : restoring
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 80),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
                   : Form(
                       key: form,
                       child: Column(
@@ -422,7 +460,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             style: Theme.of(context).textTheme.headlineSmall
                                 ?.copyWith(
                                   fontWeight: FontWeight.w800,
-                                  color: runPassNavy,
+                                  color: context.isDark
+                                      ? Colors.white
+                                      : runPassNavy,
                                 ),
                           ),
                           const SizedBox(height: 24),
@@ -433,6 +473,19 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             Step.reset,
                           ].contains(step))
                             field(password, 'Senha', secret: true),
+                          if (step == Step.signIn)
+                            CheckboxListTile(
+                              key: const Key('keep-signed-in'),
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              value: keepSignedIn,
+                              onChanged: busy
+                                  ? null
+                                  : (value) => setState(
+                                      () => keepSignedIn = value ?? true,
+                                    ),
+                              title: const Text('Manter conectado'),
+                            ),
                           if ([Step.confirm, Step.reset].contains(step))
                             field(code, 'Código recebido'),
                           if (step == Step.profile) ...[
@@ -486,7 +539,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                 onTap: busy ? null : choosePhoto,
                                 child: CircleAvatar(
                                   radius: 64,
-                                  backgroundColor: const Color(0xffffe4dc),
+                                  backgroundColor: context.softFill,
                                   backgroundImage: chosenPhoto == null
                                       ? null
                                       : MemoryImage(

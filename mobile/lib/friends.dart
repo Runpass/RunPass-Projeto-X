@@ -41,7 +41,7 @@ class ProfileAvatar extends StatelessWidget {
         gateway != null && id != null && profile?['photoReference'] != null;
     return CircleAvatar(
       radius: radius,
-      backgroundColor: const Color(0xffffe4dc),
+      backgroundColor: context.softFill,
       child: photo
           ? ClipOval(
               child: SizedBox(
@@ -278,6 +278,22 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                if (canView && p['bannerReference'] != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: AspectRatio(
+                      aspectRatio: 16 / 7,
+                      child: SignedPhoto(
+                        key: ValueKey('banner-${p['bannerReference']}'),
+                        gateway: widget.gateway,
+                        endpoint:
+                            '/profiles/${Uri.encodeComponent(widget.profileId)}/banner',
+                        fallback: const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 Row(
                   children: [
                     ProfileAvatar(
@@ -395,7 +411,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         value,
         style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
       ),
-      Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+      Text(label, style: TextStyle(fontSize: 12, color: context.muted)),
     ],
   );
 }

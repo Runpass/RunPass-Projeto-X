@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'catalog_screen.dart' show timeAgo;
 import 'friends.dart';
 import 'identity_gateway.dart';
+import 'post_card.dart';
 import 'runpass_theme.dart';
 
 /// Texto de um aviso, igual na tela e no aviso do celular.
@@ -335,27 +336,32 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     await load();
   }
 
+  /// Deslizar para a esquerda apaga o aviso (pedidos para seguir nao: aceite ou recuse).
+  Future<void> dismiss(Map<String, dynamic> item) async {
+    setState(() => items?.remove(item));
+    try {
+      await widget.gateway.request(
+        '/me/notifications/${Uri.encodeComponent(item['id'] as String)}',
+        method: 'DELETE',
+      );
+    } on Exception {
+      if (mounted) {
+        setState(
+          () => error = 'Não foi possível apagar o aviso. Tente de novo.',
+        );
+      }
+      await load();
+    }
+  }
+
   Future<void> open(Map<String, dynamic> item) async {
     final actor = item['actor'] as Map;
     final kind = item['kind'] as String?;
     final postId = item['postId'] as String?;
     if (postId != null && kind != 'follow' && kind != 'follow_request') {
-      String? myId;
-      try {
-        myId = (await widget.gateway.request('/me'))['id'] as String?;
-      } on Exception {
-        myId = null;
-      }
-      if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => CommentsScreen(
-            gateway: widget.gateway,
-            postId: postId,
-            title: 'publicação',
-            myId: myId,
-            postIsMine: kind == 'like' || kind == 'comment',
-          ),
+          builder: (_) => PostScreen(gateway: widget.gateway, postId: postId),
         ),
       );
     } else {
@@ -379,7 +385,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final request = item['kind'] == 'follow_request';
     return Card(
       key: Key('notification-${item['id']}'),
-      color: unread ? const Color(0xffffeee6) : null,
+      color: request
+          ? (Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xff3a2216)
+                : const Color(0xffffe4d6))
+          : unread
+          ? (Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xff2a2018)
+                : const Color(0xffffeee6))
+          : null,
+      shape: request
+          ? RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: runPassOrange, width: 1.5),
+            )
+          : null,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: () => open(item),
@@ -430,9 +450,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         if (created != null)
                           Text(
                             timeAgo(created),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: Colors.black54,
+                              color: Theme.of(context).hintColor,
                             ),
                           ),
                       ],
@@ -475,8 +495,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16),
         children: [
-          const Card(child: OsAlertsSwitch()),
-          const SizedBox(height: 12),
           if (error != null)
             Text(error!, key: const Key('notifications-error')),
           if (items == null && error == null)
@@ -490,8 +508,34 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 textAlign: TextAlign.center,
               ),
             ),
+          if ((items ?? const []).any((i) => i['kind'] == 'follow_request'))
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Pedidos para seguir',
+                key: Key('requests-title'),
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
+            ),
           for (final item in items ?? const <Map<String, dynamic>>[]) ...[
-            row(item),
+            if (item['kind'] == 'follow_request')
+              row(item)
+            else
+              Dismissible(
+                key: Key('dismiss-${item['id']}'),
+                direction: DismissDirection.endToStart,
+                background: Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 24),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Icon(Icons.delete_outline, color: Colors.white),
+                ),
+                onDismissed: (_) => dismiss(item),
+                child: row(item),
+              ),
             const SizedBox(height: 8),
           ],
         ],
