@@ -121,7 +121,7 @@ class Stars extends StatelessWidget {
               ? Icons.star_half
               : Icons.star_border,
           size: size,
-          color: runPassOrange,
+          color: runPassGold,
         ),
     ],
   );

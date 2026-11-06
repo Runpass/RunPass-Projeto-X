@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 const runPassOrange = Color(0xfffc5426);
+const runPassGold = Color(0xffe8b23a);
 const runPassNavy = Color(0xff101b2b);
 const runPassMist = Color(0xfff5f7fa);
 

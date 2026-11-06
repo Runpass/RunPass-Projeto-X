@@ -60,6 +60,41 @@ Future<void> reveal(
   await tester.pumpAndSettle();
 }
 
+const ratingLabels = [
+  'Organização',
+  'Percurso',
+  'Kit',
+  'Medalha',
+  'Hidratação',
+  'Estrutura',
+  'Segurança',
+  'Custo-benefício',
+];
+
+Future<void> rateAll(WidgetTester tester, {int stars = 5, String? skip}) async {
+  final list = find.byType(Scrollable).first;
+  for (final label in ratingLabels) {
+    if (label == skip) continue;
+    final star = find.byKey(Key('rating-$label-$stars'));
+    if (star.evaluate().isEmpty) {
+      // A lista e preguicosa: procura para cima e, se nao achar, para baixo.
+      try {
+        await tester.scrollUntilVisible(star, -200, scrollable: list);
+      } on StateError {
+        await tester.scrollUntilVisible(star, 200, scrollable: list);
+      }
+    }
+    await tester.ensureVisible(star);
+    await tester.tap(star);
+    await tester.pump();
+  }
+}
+
+Future<void> openSearch(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   test('query parameters preserve stage and encode filters without leaking into path', () async {
     final gateway = await signed((uri, method, headers, body) async {
@@ -96,6 +131,7 @@ void main() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
+      await openSearch(tester);
       await reveal(
         tester,
         find.text('Nenhuma corrida nesta página. Continue a busca.'),
@@ -144,6 +180,8 @@ void main() {
     });
     await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
+    expect(find.text('Encontre sua próxima conquista'), findsNothing);
+    await openSearch(tester);
     await tester.enterText(
       find.widgetWithText(TextFormField, 'Cidade'),
       'Santos',
@@ -404,15 +442,44 @@ void main() {
 
       final declaration = find.text('Declaro que concluí esta corrida');
       final list = find.byType(Scrollable).first;
+      final finish = find.text('Concluir participação');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      // Estrelas comecam vazias: sem notas, concluir fica desabilitado.
+      expect(
+        find.text(
+          'Dê uma nota de 1 a 5 estrelas em todos os critérios para concluir.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Concluir participação'),
+            )
+            .onPressed,
+        isNull,
+      );
+      await rateAll(tester, skip: 'Segurança');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Concluir participação'),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(find.byKey(const Key('rating-Segurança-4')));
+      await tester.pump();
       await tester.scrollUntilVisible(declaration, 200, scrollable: list);
       await tester.tap(declaration);
       await tester.pumpAndSettle();
-      final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tester.tap(finish);
       await tester.pumpAndSettle();
 
       expect(completion?['declaredCompleted'], true);
+      expect((completion?['ratings'] as Map)['safety'], 4);
       expect((completion?['ratings'] as Map).length, 8);
       expect(completion?['medalImageReference'], 'img-valid');
       expect(find.textContaining('Participação concluída'), findsWidgets);
@@ -626,6 +693,12 @@ void main() {
       await tester.scrollUntilVisible(
         find.byKey(const Key('rating-Kit-2')),
         200,
+        scrollable: list,
+      );
+      await rateAll(tester, skip: 'Kit');
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('rating-Kit-2')),
+        -200,
         scrollable: list,
       );
       await tester.tap(find.byKey(const Key('rating-Kit-2')));
