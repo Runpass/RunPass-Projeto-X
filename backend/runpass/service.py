@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from .profile_index import index_keys, shared_keys
 from .store import Conflict
 
 
@@ -109,6 +110,8 @@ class IdentityService:
             result = read(("identity", "USER#" + principal.subject, "PROFILE"))
             if not result:
                 raise Problem(404, "PROFILE_NOT_FOUND")
+            # Profiles created before search existed are indexed the next time their owner opens.
+            self._sync_index(read, write, principal.subject, result)
             return self.public_profile(result), {}
 
         return self.transact(principal, "getOwnProfile", None, {}, work)
@@ -117,9 +120,32 @@ class IdentityService:
     def public_profile(profile):
         return {
             k: profile[k]
-            for k in ("id", "displayName", "username", "version", "city", "bio", "photoReference")
+            for k in (
+                "id",
+                "displayName",
+                "username",
+                "version",
+                "city",
+                "bio",
+                "photoReference",
+                "isPrivate",
+            )
             if k in profile
         }
+
+    @staticmethod
+    def _sync_index(read, write, subject, profile):
+        """Keep the search rows and the owner's SEARCHIDX pointer equal to the profile."""
+        pointer = ("identity", "USER#" + subject, "SEARCHIDX")
+        old = {tuple(k) for k in (read(pointer) or {}).get("sharedKeys", [])}
+        new = index_keys(subject, profile["username"], profile["displayName"])
+        if old == new:
+            return
+        for key in old - new:
+            write(key, None)
+        for key in new - old:
+            write(key, {"owner": subject})
+        write(pointer, {"sharedKeys": shared_keys(new)})
 
     def authorize(self, principal, admitted=False):
         # A read-only optimistic transaction makes account/erasure checks one atomic boundary.
@@ -155,6 +181,7 @@ class IdentityService:
             write(claim, {"owner": principal.subject})
             write(("identity", pk, "ACCOUNT"), {"state": "active", "admitted": False})
             write(profile_key, profile)
+            self._sync_index(read, write, principal.subject, profile)
             return self.public_profile(profile), {}
 
         return self.transact(principal, "createOwnProfile", key, payload, work)
@@ -194,6 +221,7 @@ class IdentityService:
             profile["username"] = new_username
             profile["version"] += 1
             write(pkey, profile)
+            self._sync_index(read, write, principal.subject, profile)
             return self.public_profile(profile), {}
 
         return self.transact(principal, "patchOwnProfile", key, payload, work, admitted=True)

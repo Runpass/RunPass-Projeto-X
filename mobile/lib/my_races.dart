@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
+import 'friends.dart';
 import 'identity_gateway.dart';
 import 'main.dart' show IdentityScreen;
 import 'runpass_theme.dart';
@@ -123,9 +124,14 @@ class MedalPhoto extends StatefulWidget {
   State<MedalPhoto> createState() => _MedalPhotoState();
 }
 
+/// Links valem 5 minutos; reaproveita enquanto a tela esta aberta.
+final Map<String, ({String url, DateTime expires})> _medalLinks = {};
+
+/// Esquece o link guardado, por exemplo depois de trocar a foto da medalha.
+void forgetMedalPhoto(String participationId) =>
+    _medalLinks.remove(participationId);
+
 class _MedalPhotoState extends State<MedalPhoto> {
-  /// Links valem 5 minutos; reaproveita enquanto a tela esta aberta.
-  static final Map<String, ({String url, DateTime expires})> links = {};
   String? url;
 
   @override
@@ -137,7 +143,7 @@ class _MedalPhotoState extends State<MedalPhoto> {
   Future<void> load() async {
     final id = widget.participationId;
     if (id == null) return;
-    final cached = links[id];
+    final cached = _medalLinks[id];
     if (cached != null && cached.expires.isAfter(DateTime.now())) {
       url = cached.url;
       return;
@@ -149,7 +155,7 @@ class _MedalPhotoState extends State<MedalPhoto> {
       final link = reply['url'];
       final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
       if (link is String && link.startsWith('https://')) {
-        links[id] = (
+        _medalLinks[id] = (
           url: link,
           expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
               .subtract(const Duration(seconds: 30)),
@@ -971,13 +977,43 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                     ),
                   ],
                   const SizedBox(height: 12),
-                  const Card(
-                    child: ListTile(
-                      leading: Icon(Icons.lock_outline),
-                      title: Text('Resultados e fotos privados'),
-                      subtitle: Text(
-                        'Nesta versão de teste, seus resultados, fotos e avaliações ficam no ambiente de teste do RunPass e só você os vê.',
-                      ),
+                  Card(
+                    child: Column(
+                      children: [
+                        PrivacyTile(gateway: widget.gateway, profile: profile),
+                        const Divider(height: 1),
+                        ListTile(
+                          key: const Key('find-friends-profile'),
+                          leading: const Icon(Icons.person_search_rounded),
+                          title: const Text('Buscar amigos'),
+                          subtitle: const Text(
+                            'Procure pessoas por nome ou usuário e siga.',
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  FriendSearchScreen(gateway: widget.gateway),
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          key: const Key('follow-requests'),
+                          leading: const Icon(Icons.how_to_reg_outlined),
+                          title: const Text('Pedidos para seguir'),
+                          subtitle: const Text(
+                            'Aceite ou recuse quem quer seguir seu perfil privado.',
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  FollowRequestsScreen(gateway: widget.gateway),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 12),

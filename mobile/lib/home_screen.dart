@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
+import 'friends.dart';
 import 'identity_gateway.dart';
 import 'runpass_theme.dart';
 
@@ -98,7 +99,8 @@ bool feedFilterMatches(FeedFilter filter, FeedEntry entry) => switch (filter) {
     (entry.race.edition?['city'] as String? ?? '').toLowerCase().contains(
       'são paulo',
     ),
-  FeedFilter.friends || FeedFilter.trails => false,
+  FeedFilter.friends => !entry.mine,
+  FeedFilter.trails => false,
 };
 
 /// Published posts first come from the API; the runner's own completed races
@@ -256,6 +258,35 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
       });
       soon('Não foi possível atualizar a curtida.');
     }
+  }
+
+  Future<void> openComments(FeedEntry entry) async {
+    final id = entry.postId;
+    if (id == null) {
+      soon(
+        'Publique a conquista ao concluir a corrida para receber comentários.',
+      );
+      return;
+    }
+    String? myId;
+    try {
+      myId = (await widget.gateway.request('/me'))['id'] as String?;
+    } on Exception {
+      myId = null;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CommentsScreen(
+          gateway: widget.gateway,
+          postId: id,
+          title: entry.title,
+          myId: myId,
+          postIsMine: entry.mine,
+        ),
+      ),
+    );
+    reload();
   }
 
   Future<void> openDraft(DraftEntry entry) async {
@@ -628,7 +659,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
                 ),
                 const SizedBox(width: 22),
                 InkWell(
-                  onTap: () => soon('Comentários em breve.'),
+                  onTap: () => openComments(entry),
                   child: Row(
                     children: [
                       const Icon(Icons.chat_bubble_outline),
@@ -661,6 +692,16 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     appBar: AppBar(
       title: const RunPassWordmark(compact: true),
       actions: [
+        IconButton(
+          key: const Key('find-friends'),
+          tooltip: 'Buscar amigos',
+          icon: const Icon(Icons.person_search_rounded),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => FriendSearchScreen(gateway: widget.gateway),
+            ),
+          ),
+        ),
         IconButton(
           tooltip: 'Buscar corridas',
           icon: const Icon(Icons.search_rounded),

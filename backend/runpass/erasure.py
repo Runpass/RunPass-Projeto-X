@@ -5,6 +5,8 @@ from copy import deepcopy
 from .service import Problem, stamp
 from .store import Conflict, iter_partition
 
+MAX_ROWS = 90
+
 
 class ErasureProcessor:
     """`external` holds destinations with delete_owner(owner), such as the identity directory."""
@@ -114,13 +116,23 @@ class ErasureProcessor:
             if self.audit is not None:
                 for key, item in candidates:
                     self._delete_audit_object(key, item)
-            expected = {key: item for key, item in candidates}
-            writes = {key: None for key, _ in candidates}
+            expected, writes = {}, {}
             for key, item in candidates:
+                # One commit holds at most 100 rows; leftovers are picked up by the next step.
+                if expected and len(expected) + 1 + len(item.get("sharedKeys", [])) > MAX_ROWS:
+                    break
+                expected[key] = item
+                writes[key] = None
                 if key[0] == "history" and key[2].endswith("#PART") and item.get("id"):
                     reverse = ("history", "PARTICIPATION#" + item["id"], "OWNER")
                     expected[reverse] = self.store.get(reverse)
                     writes[reverse] = None
+                # Rows owned by this account but stored elsewhere (search index, the other side
+                # of a follow, comments): removed in the same commit as the pointer row.
+                for shared in map(tuple, item.get("sharedKeys", [])):
+                    if shared not in expected:
+                        expected[shared] = self.store.get(shared)
+                        writes[shared] = None
             try:
                 self.store.commit(expected, writes)
             except Conflict as error:

@@ -14,6 +14,7 @@ from .catalog import CatalogFilters
 from .identity import AuthFailure
 from .models import (
     CompleteParticipation,
+    CreateComment,
     CreateParticipation,
     CreateProfile,
     Eligibility,
@@ -31,7 +32,9 @@ IdempotencyKey = Annotated[
 ]
 
 
-def create_app(service=None, verifier=None, catalog=None, participations=None, uploads=None):
+def create_app(
+    service=None, verifier=None, catalog=None, participations=None, uploads=None, social=None
+):
     # Runtime schema is a subset; the versioned full contract remains the canonical OpenAPI.
     app = FastAPI(
         title="RunPass S03", version="0.8.0", docs_url=None, redoc_url=None, openapi_url=None
@@ -251,6 +254,81 @@ def create_app(service=None, verifier=None, catalog=None, participations=None, u
         if uploads is None:
             raise Unavailable()
         return uploads.finalize(actor, id, idempotency_key)
+
+    def friends():
+        if social is None:
+            raise Unavailable()
+        return social
+
+    @app.get("/profiles", operation_id="searchProfiles")
+    def search_profiles(
+        actor: Actor,
+        q: str = Query(..., min_length=1, max_length=80),
+        limit: int = Query(20, ge=1, le=50),
+    ):
+        return friends().search(actor, q, limit)
+
+    @app.get("/profiles/{id}", operation_id="getPublicProfile")
+    def public_profile(id: str, actor: Actor):
+        return friends().profile_view(actor, id)
+
+    @app.get("/profiles/{id}/participations", operation_id="listPublicParticipations")
+    def public_participations(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().public_participations(actor, id, limit, cursor)
+
+    @app.put("/profiles/{id}/follow", operation_id="putFollow")
+    def put_follow(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().follow(actor, id, idempotency_key)
+
+    @app.delete("/profiles/{id}/follow", operation_id="deleteFollow")
+    def delete_follow(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().unfollow(actor, id, idempotency_key)
+
+    @app.get("/me/follow-requests", operation_id="listMyFollowRequests")
+    def follow_requests(actor: Actor):
+        return friends().requests(actor)
+
+    @app.put("/me/follow-requests/{id}", operation_id="approveFollowRequest")
+    def approve_request(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().decide(actor, id, True, idempotency_key)
+
+    @app.delete("/me/follow-requests/{id}", operation_id="declineFollowRequest")
+    def decline_request(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().decide(actor, id, False, idempotency_key)
+
+    @app.get("/feed", operation_id="getFeed")
+    def get_feed(
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().feed(actor, limit, cursor)
+
+    @app.get("/posts/{id}", operation_id="getPost")
+    def get_post(id: str, actor: Actor):
+        return friends().post(actor, id)
+
+    @app.get("/posts/{id}/comments", operation_id="listPostComments")
+    def list_comments(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().comments(actor, id, limit, cursor)
+
+    @app.post("/posts/{id}/comments", status_code=201, operation_id="createPostComment")
+    def create_comment(id: str, body: CreateComment, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().comment(actor, id, idempotency_key, body.text)
+
+    @app.delete("/comments/{id}", operation_id="deleteOwnComment")
+    def delete_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().delete_comment(actor, id, idempotency_key)
 
     @app.get("/participations/{id}/image", operation_id="getParticipationImage")
     def participation_image(id: str, actor: Actor):

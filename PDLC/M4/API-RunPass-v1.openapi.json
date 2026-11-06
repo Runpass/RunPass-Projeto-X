@@ -4445,6 +4445,127 @@
           }
         ]
       }
+    },
+    "/me/follow-requests": {
+      "get": {
+        "operationId": "listMyFollowRequests",
+        "summary": "Pedidos pendentes para seguir meu perfil privado",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Pedidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowRequestPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/me/follow-requests/{id}": {
+      "put": {
+        "operationId": "approveFollowRequest",
+        "summary": "Aprova um pedido para me seguir",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Relacao resultante",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Relationship"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      },
+      "delete": {
+        "operationId": "declineFollowRequest",
+        "summary": "Recusa um pedido ou remove um seguidor",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Relacao resultante",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Relationship"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
     }
   },
   "components": {
@@ -5261,6 +5382,32 @@
           "version": {
             "type": "integer",
             "minimum": 1
+          },
+          "isPrivate": {
+            "type": "boolean",
+            "description": "Perfil privado exige aprovacao do dono para seguir. Padrao: publico."
+          },
+          "followState": {
+            "type": "string",
+            "enum": [
+              "self",
+              "none",
+              "pending",
+              "active"
+            ],
+            "description": "Relacao de quem consulta com este perfil."
+          },
+          "canView": {
+            "type": "boolean",
+            "description": "False quando o perfil e privado e quem consulta nao e seguidor aceito; contagens e corridas ficam ocultas."
+          },
+          "followersCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "followingCount": {
+            "type": "integer",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -5310,6 +5457,10 @@
             "type": "string",
             "nullable": true,
             "maxLength": 500
+          },
+          "isPrivate": {
+            "type": "boolean",
+            "description": "Liga ou desliga o perfil privado."
           }
         },
         "description": "Somente campos enviados mudam; null limpa opcionais. Username ASCII normalizado em minúsculas e reservado atomicamente. Nome não pode ser apenas whitespace. Versão obrigatória; não altera idade, admissão ou papéis."
@@ -5574,6 +5725,10 @@
           },
           "likedByMe": {
             "type": "boolean"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Texto do autor sobre a corrida."
           }
         },
         "required": [
@@ -5651,6 +5806,14 @@
           },
           "active": {
             "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pending",
+              "active"
+            ]
           }
         },
         "required": [
@@ -7155,6 +7318,10 @@
           },
           "medalImageReference": {
             "type": "string"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         },
         "description": "Histórico público autorizado: nunca rascunho, solicitação privada ou bib. Tempo/pace/colocação omitidos conforme visibilidade atual; schema não substitui autorização."
@@ -7200,6 +7367,35 @@
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "FollowRequestPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "profile",
+                "requestedAt"
+              ],
+              "properties": {
+                "profile": {
+                  "$ref": "#/components/schemas/PublicProfile"
+                },
+                "requestedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
           }
         }
       }

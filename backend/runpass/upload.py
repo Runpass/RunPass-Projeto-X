@@ -96,19 +96,21 @@ VIEW_SECONDS = 5 * 60
 class UploadService:
     def __init__(self, identity, blobs, may_view=None):
         self.identity, self.store, self.blobs = identity, identity.store, blobs
-        # may_view(read, actor, owner_subject) -> bool. Default: only the owner sees the photo.
+        # may_view(read, actor, owner_subject, participation) -> bool. Default: only the owner.
         # The social module injects follow/visibility rules here without touching this service.
-        self.may_view = may_view or (lambda read, actor, owner: owner == actor.subject)
+        self.may_view = may_view or (lambda read, actor, owner, part: owner == actor.subject)
 
     def medal_image(self, actor, participation_id):
         """Short-lived signed link to the sanitized medal photo; never the original."""
 
         def work(read, write, account, now, replay):
             owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
-            if not owner or not self.may_view(read, actor, owner.get("owner")):
+            if not owner:
                 raise Problem(404, "IMAGE_NOT_AVAILABLE")
             subject = owner["owner"]
             part = read(("history", "USER#" + subject, "P#" + participation_id + "#PART"))
+            if not part or not self.may_view(read, actor, subject, part):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
             medal = read(("history", "USER#" + subject, "P#" + participation_id + "#MEDAL"))
             if not part or part.get("state") != "completed" or not medal:
                 raise Problem(404, "IMAGE_NOT_AVAILABLE")
