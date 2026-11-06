@@ -87,11 +87,15 @@ Future<JsonReply> sendJson(
     if (body != null) {
       // Bytes UTF-8 explicitos: acentos e emojis nao podem depender do charset padrao.
       final bytes = utf8.encode(jsonEncode(body));
-      request.headers.contentType = ContentType(
-        'application',
-        'json',
-        charset: 'utf-8',
-      );
+      // So a API usa application/json; o Cognito exige application/x-amz-json-1.1 e nao pode
+      // ser trocado.
+      if (headers['Content-Type'] == 'application/json') {
+        request.headers.contentType = ContentType(
+          'application',
+          'json',
+          charset: 'utf-8',
+        );
+      }
       request.contentLength = bytes.length;
       request.add(bytes);
     }
