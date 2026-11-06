@@ -250,3 +250,11 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 - Mudancas: apenas codigo das Lambdas (Api, Publisher, ScoreConsumer, AuditConsumer, Maintenance) e re-vinculo da integracao/regra/permissao; sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE`.
 - Verificacao feita: rotas novas (`/profiles`, `/feed`, `/me/follow-requests`) respondem 401 sem token e rota inexistente responde 404, ou seja, as rotas existem no deploy. **Nao** verificado ainda com usuarios reais: busca, seguir, aprovacao de perfil privado, comentarios, foto de perfil e troca de foto da medalha. Isso depende do teste humano com duas contas.
 - Limites: ver `PDLC/M4/S10-amigos.md`.
+
+
+## Deploy da rodada 2 de amigos no DEV - 06/11/2026
+
+- Autorizado pelo usuario ("Pode realizar o deploy"). Change set `rodada2-061652` da stack `runpass-dev-app` (UPDATE), pacote `lambda/runpass-29c579665fbcbcbe.zip` (commit `6ce5621`, PR #24). Anterior: `lambda/runpass-bd7ed408252e0dfe.zip` (volta por troca da chave `ArtifactKey`).
+- Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao; sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- Verificacao feita: `/me/notifications` e `/feed` respondem 401 sem token, `/posts/{id}/like` responde 405 a GET (so aceita PUT/DELETE) e rota inexistente responde 404. **Nao** verificado com usuarios reais: curtidas, avisos, ultimo comentario, indexacao da busca no login, foto de perfil com recorte/camera/remocao, compartilhar.
+- Limites: ver `PDLC/M4/S10-amigos.md` (Rodada 2).
