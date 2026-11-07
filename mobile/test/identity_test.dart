@@ -18,7 +18,7 @@ void main() {
         return const JsonReply(200, {});
       },
     );
-    await gateway.signUp('synthetic@example.test', 'Synthetic_password1!');
+    await gateway.signUp('synthetic@example.test');
     await gateway.confirm('synthetic@example.test', '123456');
     await gateway.forgot('synthetic@example.test');
     await gateway.reset(
@@ -33,6 +33,55 @@ void main() {
       'ConfirmForgotPassword',
     ]);
     expect(gateway.signedIn, false);
+  });
+
+  test('sign-up asks for a password only after the e-mail is confirmed, via a hidden temporary password', () async {
+    final operations = <String>[];
+    final bodies = <String, Map<String, dynamic>>{};
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.example'),
+      api: Uri.parse('https://api.example'),
+      clientId: 'synthetic',
+      transport: (uri, method, headers, body) async {
+        final operation = headers['X-Amz-Target']!.split('.').last;
+        operations.add(operation);
+        bodies[operation] = body!;
+        if (operation == 'InitiateAuth') {
+          return const JsonReply(200, {
+            'AuthenticationResult': {'AccessToken': 'synthetic-session'},
+          });
+        }
+        return const JsonReply(200, {});
+      },
+    );
+    await gateway.signUp('synthetic@example.test');
+    expect(gateway.signedIn, false);
+    await gateway.confirm('synthetic@example.test', '123456');
+    expect(gateway.signedIn, false);
+    await gateway.setPassword('synthetic@example.test', 'Synthetic_password1!');
+    expect(operations, [
+      'SignUp',
+      'ConfirmSignUp',
+      'InitiateAuth',
+      'ChangePassword',
+    ]);
+    // A senha temporaria nunca aparece fora do gateway; so a pessoa define a senha real.
+    expect(bodies['SignUp']!['Password'], isNot('Synthetic_password1!'));
+    expect(
+      bodies['InitiateAuth']!['AuthParameters']['PASSWORD'],
+      bodies['SignUp']!['Password'],
+    );
+    expect(
+      bodies['ChangePassword']!['PreviousPassword'],
+      bodies['SignUp']!['Password'],
+    );
+    expect(
+      bodies['ChangePassword']!['ProposedPassword'],
+      'Synthetic_password1!',
+    );
+    // ChangePassword e autenticado por AccessToken; o Cognito rejeita ClientId nela.
+    expect(bodies['ChangePassword']!.containsKey('ClientId'), false);
+    expect(gateway.signedIn, true);
   });
 
   test(
@@ -192,6 +241,64 @@ void main() {
       expect(find.byType(RunPassHomeScreen), findsOneWidget);
       expect(find.byType(TextFormField), findsNothing);
       expect(find.text('Excluir minha conta'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'password reset rejects a weak password before contacting Cognito',
+    (tester) async {
+      final operations = <String>[];
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          operations.add(headers['X-Amz-Target']!.split('.').last);
+          return const JsonReply(200, {});
+        },
+      );
+      await tester.pumpWidget(MainApp(gateway: gateway));
+      await tester.ensureVisible(find.text('Esqueci minha senha'));
+      await tester.tap(find.text('Esqueci minha senha'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'E-mail'),
+        'synthetic@example.test',
+      );
+      await tester.ensureVisible(find.text('Continuar'));
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      expect(find.text('Defina uma nova senha'), findsOneWidget);
+      expect(operations, ['ForgotPassword']);
+
+      // Senha fraca: bloqueada na propria tela, sem chamar o Cognito.
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Código recebido'),
+        '123456',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Senha'),
+        '123456',
+      );
+      await tester.ensureVisible(find.text('Continuar'));
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Essa senha é muito fácil de adivinhar. Escolha outra.'),
+        findsOneWidget,
+      );
+      expect(operations, ['ForgotPassword']);
+
+      // Senha aceita: segue para o Cognito normalmente.
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Senha'),
+        'uma-senha-nova',
+      );
+      await tester.ensureVisible(find.text('Continuar'));
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      expect(operations, ['ForgotPassword', 'ConfirmForgotPassword']);
+      expect(find.text('Entre no RunPass'), findsOneWidget);
     },
   );
 

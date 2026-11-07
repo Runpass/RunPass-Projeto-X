@@ -55,10 +55,12 @@ void main() {
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Data de nascimento (AAAA-MM-DD)'),
-        '1990-01-01',
-      );
+      await tester.ensureVisible(find.byKey(const Key('birth-date-field')));
+      await tester.tap(find.byKey(const Key('birth-date-field')));
+      await tester.pumpAndSettle();
+      // Aceita a data padrao do seletor (hoje menos 18 anos), que ja e elegivel.
+      await tester.tap(find.byKey(const Key('birth-date-done')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byType(CheckboxListTile));
       await tester.tap(find.byType(CheckboxListTile));
       await tester.pumpAndSettle();
@@ -115,9 +117,12 @@ void main() {
     'demo signup and confirmation never contact a network service',
     () async {
       final gateway = demoGateway(DemoTransport());
-      await gateway.signUp('new@runpass.test', 'RunpassDemo123!');
+      await gateway.signUp('new@runpass.test');
       await gateway.confirm('new@runpass.test', '123456');
-      await gateway.signIn('new@runpass.test', 'RunpassDemo123!');
+      // setPassword ja entra com a senha temporaria e troca pela senha real; a sessao
+      // segue autenticada, como num signIn comum.
+      await gateway.setPassword('new@runpass.test', 'RunpassDemo123!');
+      expect(gateway.signedIn, true);
       expect(
         (await gateway.request('/beta/status'))['myStatus'],
         'not_admitted',

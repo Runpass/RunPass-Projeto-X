@@ -32,11 +32,11 @@
         "MfaConfiguration": "OFF",
         "Policies": {
           "PasswordPolicy": {
-            "MinimumLength": 12,
-            "RequireLowercase": true,
-            "RequireUppercase": true,
-            "RequireNumbers": true,
-            "RequireSymbols": true
+            "MinimumLength": 6,
+            "RequireLowercase": false,
+            "RequireUppercase": false,
+            "RequireNumbers": false,
+            "RequireSymbols": false
           }
         },
         "AccountRecoverySetting": {

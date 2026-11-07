@@ -211,19 +211,22 @@ class IdentityGateway {
   /// Ha onde guardar a sessao (app real); nos testes nao ha.
   bool get canRestore => tokenStore != null;
 
+  /// Chamada Cognito autenticada por ClientId (SignUp, InitiateAuth, ...).
   Future<Map<String, dynamic>> _cognito(
     String operation,
     Map<String, dynamic> body,
+  ) => _cognitoCall(operation, {'ClientId': clientId, ...body});
+
+  /// Chamada Cognito sem ClientId (operacoes autenticadas por AccessToken, como
+  /// ChangePassword e GlobalSignOut, que rejeitam o parametro).
+  Future<Map<String, dynamic>> _cognitoCall(
+    String operation,
+    Map<String, dynamic> body,
   ) async {
-    final result = await transport(
-      cognito,
-      'POST',
-      {
-        'Content-Type': 'application/x-amz-json-1.1',
-        'X-Amz-Target': 'AWSCognitoIdentityProviderService.$operation',
-      },
-      {'ClientId': clientId, ...body},
-    );
+    final result = await transport(cognito, 'POST', {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityProviderService.$operation',
+    }, body);
     if (result.status < 200 || result.status >= 300) {
       // Provider messages can contain identifiers; only a stable error code reaches the UI.
       throw IdentityIssue(
@@ -235,7 +238,30 @@ class IdentityGateway {
     return result.body;
   }
 
-  Future<void> signUp(String email, String password) async {
+  // Senha gerada na conta no momento do SignUp, nunca mostrada; a pessoa define a senha real
+  // so depois de confirmar o e-mail (tela de senha separada), trocada com ChangePassword.
+  String? _temporaryPassword;
+
+  String _generateTemporaryPassword() {
+    final random = Random.secure();
+    const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lower = 'abcdefghijkmnopqrstuvwxyz';
+    const digits = '23456789';
+    const symbols = '!@#%^&*-_=+?';
+    String pick(String chars, int count) =>
+        List.generate(count, (_) => chars[random.nextInt(chars.length)]).join();
+    final parts = [
+      pick(upper, 5),
+      pick(lower, 5),
+      pick(digits, 5),
+      pick(symbols, 5),
+    ];
+    parts.shuffle(random);
+    return parts.join();
+  }
+
+  Future<void> signUp(String email) async {
+    final password = _generateTemporaryPassword();
     await _cognito('SignUp', {
       'Username': email,
       'Password': password,
@@ -243,6 +269,7 @@ class IdentityGateway {
         {'Name': 'email', 'Value': email},
       ],
     });
+    _temporaryPassword = password;
   }
 
   Future<void> confirm(String email, String code) async {
@@ -250,6 +277,20 @@ class IdentityGateway {
       'Username': email,
       'ConfirmationCode': code,
     });
+  }
+
+  /// So depois do e-mail confirmado: entra com a senha temporaria do SignUp e troca pela
+  /// senha escolhida pela pessoa. Ao final a sessao fica autenticada, como num signIn comum.
+  Future<void> setPassword(String email, String newPassword) async {
+    final temporary = _temporaryPassword;
+    if (temporary == null) throw const IdentityIssue('INVALID_INPUT');
+    await signIn(email, temporary);
+    await _cognitoCall('ChangePassword', {
+      'AccessToken': _accessToken,
+      'PreviousPassword': temporary,
+      'ProposedPassword': newPassword,
+    });
+    _temporaryPassword = null;
   }
 
   Future<void> resendConfirmation(String email) async {

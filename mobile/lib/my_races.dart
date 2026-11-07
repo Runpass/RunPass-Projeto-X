@@ -8,6 +8,22 @@ import 'profile_photo.dart';
 import 'runpass_theme.dart';
 import 'settings.dart';
 
+/// "15/03/1995 • 18 anos", so quando GET /me devolve birthDate (so para o proprio
+/// titular; nunca em perfil publico). Nulo se ausente ou mal formatada.
+String? birthDateLabel(String? isoBirthDate) {
+  final birth = isoBirthDate == null ? null : DateTime.tryParse(isoBirthDate);
+  if (birth == null) return null;
+  final today = DateTime.now();
+  var age = today.year - birth.year;
+  if (today.month < birth.month ||
+      (today.month == birth.month && today.day < birth.day)) {
+    age--;
+  }
+  final formatted =
+      '${birth.day.toString().padLeft(2, '0')}/${birth.month.toString().padLeft(2, '0')}/${birth.year}';
+  return '$formatted  •  $age anos';
+}
+
 /// A completed participation joined with the official edition it refers to.
 class RaceRecord {
   final Map<String, dynamic> participation;
@@ -1082,6 +1098,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
         final distances = stats.byDistance.keys.toList()..sort();
         final city = profile['city'] as String?;
         final bio = profile['bio'] as String?;
+        final birthLabel = birthDateLabel(profile['birthDate'] as String?);
         final badges = achievementsOf(stats);
         final cities = {
           for (final race in result.races)
@@ -1113,6 +1130,23 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                   if (bio != null && bio.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     Text(bio),
+                  ],
+                  if (birthLabel != null) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.cake_outlined,
+                          size: 16,
+                          color: context.muted,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          birthLabel,
+                          style: TextStyle(color: context.muted, fontSize: 13),
+                        ),
+                      ],
+                    ),
                   ],
                   const SizedBox(height: 16),
                   const SizedBox(height: 16),

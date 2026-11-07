@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'identity_gateway.dart';
@@ -7,6 +8,7 @@ import 'catalog_screen.dart';
 import 'biometrics.dart';
 import 'home_screen.dart';
 import 'notifications.dart';
+import 'password_policy.dart';
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 
@@ -92,6 +94,7 @@ enum Step {
   signIn,
   signUp,
   confirm,
+  setPassword,
   forgot,
   reset,
   profile,
@@ -124,10 +127,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
   final code = TextEditingController();
   final name = TextEditingController();
   final username = TextEditingController();
-  final birth = TextEditingController();
   final form = GlobalKey<FormState>();
   Step step = Step.signIn;
   bool busy = false, adult = false, full = false;
+  // Seletor nativo de rolagem (dia/mes/ano), igual ao Instagram; sem campo de texto livre.
+  DateTime? birthDate;
   String? message;
   String? displayName;
   // Cadastro novo ainda sem foto: a foto de perfil e obrigatoria antes de entrar.
@@ -137,6 +141,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
   // Entrando com a sessao guardada: mostra um indicador em vez do formulario.
   bool restoring = false;
   List<int>? chosenPhoto;
+  // "Crie sua senha": o olho mostra/oculta em vez de um campo de confirmacao.
+  bool showPassword = false;
 
   @override
   void initState() {
@@ -182,7 +188,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
 
   @override
   void dispose() {
-    for (final field in [email, password, code, name, username, birth]) {
+    for (final field in [email, password, code, name, username]) {
       field.dispose();
     }
     super.dispose();
@@ -248,6 +254,48 @@ class _IdentityScreenState extends State<IdentityScreen> {
     ),
   );
 
+  /// Seletor nativo de rolagem (dia/mes/ano), igual ao Instagram: evita erro de formato,
+  /// mas o servidor segue como a unica fonte confiavel da idade (contrato BetaAdmissionInput).
+  Future<void> pickBirthDate() async {
+    final now = DateTime.now();
+    var selected = birthDate ?? DateTime(now.year - 18, now.month, now.day);
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: 300,
+          child: Column(
+            children: [
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  key: const Key('birth-date-done'),
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Concluído'),
+                ),
+              ),
+              Expanded(
+                child: CupertinoDatePicker(
+                  mode: CupertinoDatePickerMode.date,
+                  initialDateTime: selected,
+                  minimumYear: now.year - 100,
+                  maximumDate: now,
+                  onDateTimeChanged: (value) => selected = value,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() {
+        birthDate = selected;
+        message = null;
+      });
+    }
+  }
+
   Future<void> choosePhoto() async {
     final choice = await askPhotoChoice(context);
     if (choice == null || !mounted) return;
@@ -305,7 +353,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
         'UsernameExistsException' =>
           'Já existe uma conta com esse e-mail. Entre ou recupere sua senha.',
         'USERNAME_TAKEN' => 'Esse nome de usuário já está em uso.',
-        'InvalidPasswordException' => 'Use ao menos 12 caracteres, com maiúscula, minúscula, número e símbolo.',
+        'InvalidPasswordException' =>
+          'Use pelo menos $minimumPasswordLength caracteres.',
         'CodeMismatchException' || 'ExpiredCodeException' =>
           'Confira o código recebido ou solicite outro.',
         'NOT_ELIGIBLE' => 'O período de avaliação é destinado a pessoas com 18 anos completos ou mais.',
@@ -347,18 +396,35 @@ class _IdentityScreenState extends State<IdentityScreen> {
         password.clear();
         await resume();
       case Step.signUp:
-        await gateway.signUp(email.text.trim(), password.text);
-        password.clear();
+        await gateway.signUp(email.text.trim());
         step = Step.confirm;
       case Step.confirm:
         await gateway.confirm(email.text.trim(), code.text.trim());
         code.clear();
-        step = Step.signIn;
-        message = 'E-mail confirmado. Entre na sua conta.';
+        step = Step.setPassword;
+        message = 'E-mail confirmado. Agora crie sua senha.';
+      case Step.setPassword:
+        final weakReason = weakPasswordReason(password.text, email.text.trim());
+        if (weakReason != null) {
+          message = weakReason;
+          return;
+        }
+        await gateway.setPassword(email.text.trim(), password.text);
+        password.clear();
+        showPassword = false;
+        await resume();
       case Step.forgot:
         await gateway.forgot(email.text.trim());
         step = Step.reset;
       case Step.reset:
+        final weakResetReason = weakPasswordReason(
+          password.text,
+          email.text.trim(),
+        );
+        if (weakResetReason != null) {
+          message = weakResetReason;
+          return;
+        }
         await gateway.reset(email.text.trim(), code.text.trim(), password.text);
         password.clear();
         code.clear();
@@ -393,6 +459,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
         chosenPhoto = null;
         step = Step.ready;
       case Step.admission:
+        final birth = birthDate;
+        if (birth == null) {
+          message = 'Selecione sua data de nascimento.';
+          return;
+        }
         if (!adult) {
           message = 'Confirme que tem 18 anos completos ou mais.';
           return;
@@ -400,9 +471,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
         await gateway.request(
           full ? '/beta/waitlist' : '/beta/admissions',
           method: 'POST',
-          body: {'birthDate': birth.text, 'declaresAdult': adult},
+          body: {'birthDate': isoBirthDate(birth), 'declaresAdult': adult},
         );
-        birth.clear();
+        birthDate = null;
         await status();
       case Step.ready || Step.waiting || Step.closed:
         break;
@@ -415,11 +486,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
     bool secret = false,
     int? maxLength,
     String? Function(String)? check,
+    Widget? suffixIcon,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: TextFormField(
       controller: controller,
-      decoration: InputDecoration(labelText: label),
+      decoration: InputDecoration(labelText: label, suffixIcon: suffixIcon),
       obscureText: secret,
       autocorrect: !secret,
       enableSuggestions: !secret,
@@ -443,6 +515,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.signIn,
       Step.signUp,
       Step.confirm,
+      Step.setPassword,
       Step.forgot,
       Step.reset,
     ].contains(step);
@@ -450,6 +523,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.signIn => 'Entre no RunPass',
       Step.signUp => 'Crie sua conta',
       Step.confirm => 'Confirme seu e-mail',
+      Step.setPassword => 'Crie sua senha',
       Step.forgot => 'Recupere sua senha',
       Step.reset => 'Defina uma nova senha',
       Step.profile => 'Seu perfil de corredor',
@@ -526,10 +600,31 @@ class _IdentityScreenState extends State<IdentityScreen> {
                           if (initial) field(email, 'E-mail'),
                           if ([
                             Step.signIn,
-                            Step.signUp,
+                            Step.setPassword,
                             Step.reset,
                           ].contains(step))
-                            field(password, 'Senha', secret: true),
+                            field(
+                              password,
+                              step == Step.setPassword
+                                  ? 'Crie uma senha'
+                                  : 'Senha',
+                              // Sem campo de confirmacao: o olho mostra/oculta a senha digitada.
+                              secret: step == Step.setPassword
+                                  ? !showPassword
+                                  : true,
+                              suffixIcon: step == Step.setPassword
+                                  ? IconButton(
+                                      icon: Icon(
+                                        showPassword
+                                            ? Icons.visibility_off
+                                            : Icons.visibility,
+                                      ),
+                                      onPressed: () => setState(
+                                        () => showPassword = !showPassword,
+                                      ),
+                                    )
+                                  : null,
+                            ),
                           if (step == Step.signIn)
                             CheckboxListTile(
                               key: const Key('keep-signed-in'),
@@ -564,15 +659,36 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   ? 'A lista de espera não garante vaga ou posição.'
                                   : 'Período de avaliação gratuito para maiores de 18 anos.',
                             ),
-                            field(
-                              birth,
-                              'Data de nascimento (AAAA-MM-DD)',
-                              check: (value) =>
-                                  RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)
-                                  ? null
-                                  : 'Informe no formato AAAA-MM-DD.',
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: InkWell(
+                                key: const Key('birth-date-field'),
+                                onTap: busy ? null : pickBirthDate,
+                                child: InputDecorator(
+                                  decoration: const InputDecoration(
+                                    labelText: 'Data de nascimento',
+                                  ),
+                                  child: Text(
+                                    birthDate == null
+                                        ? 'Selecionar data de nascimento'
+                                        : formatBirthDate(birthDate!),
+                                  ),
+                                ),
+                              ),
                             ),
-                            const Text('Sua data de nascimento é privada.'),
+                            if (birthDate != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: Text(
+                                  '${ageInYears(birthDate!)} anos',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            // Visivel so para o proprio titular (perfil); nunca publica.
+                            const Text(
+                              'Sua data de nascimento não é pública. Você pode vê-la depois no seu perfil.',
+                            ),
                             CheckboxListTile(
                               value: adult,
                               onChanged: busy
@@ -716,7 +832,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               onPressed: busy
                                   ? null
                                   : () => change(Step.signIn),
-                              child: const Text('Voltar para entrar'),
+                              child: const Text('Voltar'),
                             ),
                         ],
                       ),
@@ -727,4 +843,21 @@ class _IdentityScreenState extends State<IdentityScreen> {
       ),
     );
   }
+}
+
+String isoBirthDate(DateTime date) =>
+    '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+String formatBirthDate(DateTime date) =>
+    '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+
+/// So para mostrar na tela (ex.: "18 anos"); o servidor e a unica fonte confiavel da idade.
+int ageInYears(DateTime birth, {DateTime? today}) {
+  final now = today ?? DateTime.now();
+  var age = now.year - birth.year;
+  if (now.month < birth.month ||
+      (now.month == birth.month && now.day < birth.day)) {
+    age--;
+  }
+  return age;
 }
