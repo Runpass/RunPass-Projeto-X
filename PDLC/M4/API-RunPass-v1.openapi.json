@@ -5836,12 +5836,92 @@
         "additionalProperties": false
       },
       "OwnProfile": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/PublicProfile"
-          }
+        "type": "object",
+        "required": [
+          "id",
+          "displayName",
+          "username",
+          "version"
         ],
-        "description": "Owner projection currently uses only public profile fields. Private account fields require a separate explicit schema; do not append email or birth date to this response."
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "username": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 30,
+            "pattern": "^[a-z0-9_]{3,30}$",
+            "description": "ASCII letras/dígitos/underscore, 3–30 caracteres. Entrada sem espaços/acentos; converter letras para minúsculas antes da reserva única e da representação."
+          },
+          "photoReference": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "bio": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "participationCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "medalCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "isPrivate": {
+            "type": "boolean",
+            "description": "Perfil privado exige aprovacao do dono para seguir. Padrao: publico."
+          },
+          "followState": {
+            "type": "string",
+            "enum": [
+              "self",
+              "none",
+              "pending",
+              "active"
+            ],
+            "description": "Relacao de quem consulta com este perfil."
+          },
+          "canView": {
+            "type": "boolean",
+            "description": "False quando o perfil e privado e quem consulta nao e seguidor aceito; contagens e corridas ficam ocultas."
+          },
+          "followersCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "followingCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bannerReference": {
+            "type": "string",
+            "nullable": true,
+            "description": "Imagem do banner do perfil (mesmo envio de imagens); nulo remove."
+          },
+          "birthDate": {
+            "type": "string",
+            "format": "date",
+            "description": "Presente so depois da admissao gravar a data. Visivel apenas para o proprio titular em GET /me; nunca retornada por GetPublicProfile, busca, feed ou qualquer outra rota, nem logada."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Owner projection of the profile. Fields are the same as PublicProfile plus the owner's own private birthDate (decision 2026-11-06: visible only to the account holder, like the app's date-of-birth disclosure model). Do not append email or any other private account field here without an explicit decision; this schema intentionally does not reuse PublicProfile via allOf because additionalProperties:false on that schema would reject the extra birthDate field."
       },
       "PatchOwnProfile": {
         "type": "object",

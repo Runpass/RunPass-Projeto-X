@@ -34,7 +34,8 @@ class LocalApiTests(unittest.TestCase):
             admitted = {"Authorization": "Bearer " + runtime.tokens["runnerToken"]}
             page = client.get("/editions", headers=admitted).json()
             self.assertEqual(len(page["items"]), 5)
-            self.assertNotIn("birthDate", client.get("/me", headers=admitted).json())
+            # So no GET /me do proprio titular, depois da admissao gravar a data.
+            self.assertEqual(client.get("/me", headers=admitted).json()["birthDate"], "1990-01-01")
 
     def test_tokens_are_ephemeral_and_default_application_has_no_bypass(self):
         first, second = create_runtime(), create_runtime()

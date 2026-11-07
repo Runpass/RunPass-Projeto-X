@@ -162,6 +162,11 @@ class SocialTests(unittest.TestCase):
         self.assertEqual(self.social.unfollow(self.bia, "ana", "u1")["state"], "none")
         self.assertEqual(self.social.profile_view(self.bia, "ana")["followersCount"], 0)
 
+    def test_birth_date_never_appears_on_a_public_profile(self):
+        # Decisao 06/11/2026: data de nascimento so em GET /me, nunca no cartao publico.
+        self.assertEqual(self.identity.profile(self.ana)["birthDate"], "1990-01-01")
+        self.assertNotIn("birthDate", self.social.profile_view(self.bia, "ana"))
+
     def test_cannot_follow_self_or_unknown(self):
         with self.assertRaises(Problem) as me:
             self.social.follow(self.ana, "ana", "f")

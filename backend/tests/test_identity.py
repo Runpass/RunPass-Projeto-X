@@ -47,14 +47,16 @@ class ServiceTests(unittest.TestCase):
         key = ("identity", "BETA#v1", "CONTROL")
         self.store.commit({key: self.store.get(key)}, {key: {"count": count}})
 
-    def test_bootstrap_is_not_admission_and_private_fields_absent(self):
+    def test_bootstrap_is_not_admission_and_birth_date_is_owner_only(self):
         self.create("u1")
         self.assertEqual(self.service.status(self.actor)["myStatus"], "not_admitted")
         with self.assertRaises(Problem) as e:
             self.service.authorize(self.actor, admitted=True)
         self.assertEqual(e.exception.code, "BETA_ADMISSION_REQUIRED")
-        self.service.admit(self.actor, "admit", ADULT)
         self.assertNotIn("birthDate", self.service.profile(self.actor))
+        self.service.admit(self.actor, "admit", ADULT)
+        # So depois da admissao, e so para o proprio titular via GET /me (decisao 06/11/2026).
+        self.assertEqual(self.service.profile(self.actor)["birthDate"], ADULT["birthDate"])
         self.assertNotIn("email", self.service.profile(self.actor))
 
     def test_same_username_concurrently_casefolds_without_partial_account(self):
