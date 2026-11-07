@@ -112,7 +112,13 @@ class IdentityService:
                 raise Problem(404, "PROFILE_NOT_FOUND")
             # Profiles created before search existed are indexed the next time their owner opens.
             self._sync_index(read, write, principal.subject, result)
-            return self.public_profile(result), {}
+            body = self.public_profile(result)
+            # Data de nascimento: so no GET /me do proprio titular (decisao 06/11/2026);
+            # public_profile() e as demais rotas nunca recebem esse campo.
+            private = read(("identity", "USER#" + principal.subject, "PRIVATE"))
+            if private and private.get("birthDate"):
+                body["birthDate"] = private["birthDate"]
+            return body, {}
 
         return self.transact(principal, "getOwnProfile", None, {}, work)
 

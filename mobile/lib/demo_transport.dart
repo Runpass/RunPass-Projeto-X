@@ -295,6 +295,17 @@ class DemoTransport {
         case 'GlobalSignOut':
           sessions.remove(data['AccessToken']);
           return const JsonReply(200, {});
+        case 'ChangePassword':
+          final sessionEmail = sessions[data['AccessToken']];
+          final sessionAccount = accounts[sessionEmail];
+          if (sessionAccount == null) return failure('NotAuthorizedException');
+          final newPassword = data['ProposedPassword'] as String;
+          // RunnerPool: minimo 6 caracteres, sem exigir composicao (igual ao Instagram).
+          if (newPassword.length < 6) {
+            return failure('InvalidPasswordException');
+          }
+          sessionAccount['password'] = newPassword;
+          return const JsonReply(200, {});
       }
       return failure('INVALID_INPUT');
     }
@@ -380,6 +391,8 @@ class DemoTransport {
       }
       if (full && account['admitted'] != true) return failure('BETA_FULL', 409);
       account['admitted'] = true;
+      // So no GET /me do proprio titular (decisao 06/11/2026), nunca em perfil publico.
+      (account['profile'] as Map?)?['birthDate'] = data['birthDate'];
       return const JsonReply(201, {'admitted': true});
     }
     if (uri.path == '/me/waitlist' && method == 'DELETE') {
