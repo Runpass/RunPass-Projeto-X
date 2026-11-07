@@ -225,3 +225,7 @@ extension RunPassPalette on BuildContext {
   Color get track => isDark ? const Color(0xff33363b) : const Color(0xffeceff3);
   Color get onSurfaceText => Theme.of(this).colorScheme.onSurface;
 }
+
+/// Navegador global: permite abrir uma tela a partir de um toque no aviso do celular.
+final GlobalKey<NavigatorState> runPassNavigatorKey =
+    GlobalKey<NavigatorState>();

@@ -80,3 +80,10 @@ Testes: 164 no backend e 72 no app. Falta deploy (nao executado) e teste humano.
 - **Perfil:** seguidores e seguindo ao lado da foto (corridas saiu); botao Banner abaixo da area dos icones; aviso de novo seguidor com "Seguir de volta".
 - **Biometria:** Face ID, Touch ID e digital como trava de abertura sobre o "manter conectado" (oferta unica apos o primeiro login; chave em Configuracoes). Falha ou cancelamento caem na senha. So a logica e testada automaticamente; o hardware precisa de teste no aparelho.
 - **Catalogo:** ver S03 e `docs/catalogo-corridas.md`.
+
+### Avisos no celular: correcao e botoes (06/11/2026, apos teste no iPhone)
+- O aviso local **chegou no iPhone** apos a correcao do `AppDelegate` (confirmado pelo usuario).
+- Defeito achado por leitura do codigo: conta com historico de avisos vazio na primeira checagem engolia o primeiro aviso real como "ponto de partida". Agora o ponto de partida vazio vale `""` e qualquer aviso futuro aparece. Teste automatizado.
+- **Pedido para seguir no proprio aviso do celular:** categoria iOS `follow_request` com **Aceitar** e **Recusar** (acoes que abrem o app) e acoes equivalentes no Android; payload carrega o id de quem pediu. Se o app ainda nao entrou na conta, a decisao espera na fila e e aplicada ao entrar. O aviso so e gerado enquanto o app esta aberto ou recem-minimizado (push remoto continua fora).
+- Conferencia no DEV (somente leitura): a conta `theco` (privada) tinha 2 pedidos pendentes, entao a tela de avisos do app deve listar Aceitar/Recusar no topo.
+- Configuracoes ganhou o estado da permissao do sistema e dois testes: "Testar agora" (app aberto) e "Testar em 10 s" (agendado no sistema, vale com o app fechado). O app tambem confere avisos ao voltar para o primeiro plano.

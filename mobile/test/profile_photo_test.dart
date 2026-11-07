@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:runpass/friends.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/my_races.dart';
 import 'package:runpass/profile_photo.dart';
@@ -153,4 +154,27 @@ void main() {
     expect(banner.overlaps(gear), isFalse);
     expect(banner.top - gear.bottom, greaterThanOrEqualTo(12));
   });
+
+  testWidgets(
+    'seguidores e seguindo ficam abaixo do banner e ao lado da foto',
+    (tester) async {
+      tester.view.physicalSize = const Size(1179, 2556);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (gateway, _, _) = await setup(hasPhoto: true);
+      await tester.pumpWidget(
+        MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      final banner = tester.getRect(find.byKey(const Key('profile-banner')));
+      final counts = tester.getRect(find.byKey(const Key('profile-counts')));
+      final avatar = tester.getRect(find.byType(ProfileAvatar).first);
+      expect(
+        counts.top,
+        greaterThanOrEqualTo(banner.bottom),
+      ); // nunca sobre o banner
+      expect(counts.left, greaterThan(avatar.right)); // ao lado da foto
+      expect(counts.center.dy, greaterThan(banner.bottom));
+    },
+  );
 }

@@ -51,6 +51,7 @@ class MainApp extends StatelessWidget {
     valueListenable: ThemeController.dark,
     builder: (context, dark, _) => MaterialApp(
       title: 'RunPass',
+      navigatorKey: runPassNavigatorKey,
       navigatorObservers: [runPassRouteObserver],
       // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
       builder: (context, shell) {

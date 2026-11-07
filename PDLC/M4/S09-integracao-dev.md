@@ -266,3 +266,20 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 - Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao; sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE`.
 - Verificacao feita: `/profiles/{id}/banner` e `/me/notifications` respondem 401 sem token; `GET /me/notifications/{id}` responde 405 e `DELETE` 401 (a rota existe); rota inexistente 404. **Nao** verificado com usuarios reais: banner, apagar aviso, pedidos no topo, manter conectado, compartilhar, modo escuro.
 - Limites: ver `PDLC/M4/S10-amigos.md` (Rodada 3).
+
+
+## Deploy da rodada 4 no DEV - 06/11/2026
+
+- Autorizado pelo usuario ("Faca o deploy em dev"). Change set `rodada4-061909` da stack `runpass-dev-app` (UPDATE), pacote `lambda/runpass-bfd97498ae44c795.zip` (commit `39271ea`, PR #24). Anterior: `lambda/runpass-10344cc2a91de517.zip` (volta por troca da chave `ArtifactKey`).
+- Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao; sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- Verificacao feita: `PUT /comments/{id}/like` responde 401 sem token e `GET` na mesma rota 405 (a rota existe); `/editions` com os filtros novos responde 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: curtir e responder comentarios, avisos de curtida e resposta, filtros novos do catalogo.
+- Catalogo real de Sao Paulo **nao carregado** (sem CSV autorizado nem credenciais das APIs). Ver `docs/catalogo-corridas.md`.
+
+
+## Deploy da rodada 5 no DEV (identidade + Lambdas) - 07/11/2026
+
+- Autorizado pelo usuario ("Sim decisao nossa, pode seguir com o deploy e atualizacao"): a politica de senha de 6 caracteres sem composicao do pool de corredores e **decisao de produto dos dois responsaveis** (PR #25 do Rafael).
+- **Stack `runpass-dev-identity`** (UPDATE), change set `senha-070109`: uma unica mudanca, `Modify` em `RunnerPool` com `Replacement: False` (nenhum usuario afetado). Antes: minimo 12 com maiuscula, minuscula, numero e simbolo. Agora: minimo 6, sem composicao (conferido por `describe-user-pool`). Pool do operador inalterado (12 caracteres, MFA ligado). Resultado: `UPDATE_COMPLETE`.
+- **Stack `runpass-dev-app`** (UPDATE), change set `rodada5-070110`, pacote `lambda/runpass-df5a24695b6be5c0.zip` (inclui o merge de `dev` com o PR #25: `GET /me` devolve `birthDate` so ao titular). Anterior: `lambda/runpass-bfd97498ae44c795.zip`. Somente codigo das Lambdas e re-vinculos; sem IAM, sem recursos novos. Resultado: `UPDATE_COMPLETE`.
+- Verificacao: `/me` e `/feed` respondem 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: cadastro novo com senha depois do e-mail confirmado, troca de senha de 6 caracteres, data de nascimento.
+- Observacao: nesta sessao o `aws` do PATH era a versao 1.32 (nao le credenciais do `aws login`); a 2.39 fica em `~/.local/bin`.
