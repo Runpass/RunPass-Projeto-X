@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/notifications.dart';
+import 'package:runpass/runpass_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Map<String, dynamic> item(String id, String at, {bool unread = true}) => {
@@ -175,5 +176,81 @@ void main() {
         expect(calls, contains('PUT /me/follow-requests/dora'));
       },
     );
+  });
+
+  group('toque no aviso do celular', () {
+    Future<IdentityGateway> signedGateway() async {
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'a'},
+            });
+          }
+          return const JsonReply(200, {'items': [], 'unreadCount': 0});
+        },
+      );
+      await gateway.signIn('a@x.test', 's');
+      return gateway;
+    }
+
+    const body = NotificationResponse(
+      notificationResponseType: NotificationResponseType.selectedNotification,
+      payload: '{"kind":"like"}',
+    );
+
+    testWidgets('abre a tela de avisos', (tester) async {
+      NotificationCenter.active = true;
+      addTearDown(() {
+        NotificationCenter.active = false;
+        NotificationCenter.instance.stop();
+      });
+      final gateway = await signedGateway();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: runPassNavigatorKey,
+          home: const Scaffold(body: Text('inicio')),
+        ),
+      );
+      NotificationCenter.instance.start(gateway);
+      await NotificationCenter.instance.handleResponse(body);
+      await tester.pumpAndSettle();
+      expect(find.byType(NotificationsScreen), findsOneWidget);
+      // Segundo toque com a tela ja aberta nao empilha outra.
+      await NotificationCenter.instance.handleResponse(body);
+      await tester.pumpAndSettle();
+      expect(find.byType(NotificationsScreen), findsOneWidget);
+      NotificationCenter.instance
+          .stop(); // o teste de widget exige nenhum timer pendente
+    });
+
+    testWidgets('app aberto pelo aviso antes de entrar: abre ao entrar', (
+      tester,
+    ) async {
+      NotificationCenter.active = true;
+      addTearDown(() {
+        NotificationCenter.active = false;
+        NotificationCenter.instance.stop();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: runPassNavigatorKey,
+          home: const Scaffold(body: Text('inicio')),
+        ),
+      );
+      await NotificationCenter.instance.handleResponse(
+        body,
+      ); // sem sessao ainda
+      await tester.pumpAndSettle();
+      expect(find.byType(NotificationsScreen), findsNothing);
+      final gateway = await signedGateway();
+      NotificationCenter.instance.start(gateway);
+      await tester.pumpAndSettle();
+      expect(find.byType(NotificationsScreen), findsOneWidget);
+      NotificationCenter.instance.stop();
+    });
   });
 }

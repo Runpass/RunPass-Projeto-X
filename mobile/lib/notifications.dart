@@ -354,9 +354,37 @@ class NotificationCenter with WidgetsBindingObserver {
     });
     refresh(gateway);
     flushDecisions();
+    // Abriu pelo aviso antes de entrar na conta: agora a tela de avisos pode abrir.
+    if (_openPending) {
+      WidgetsBinding.instance
+        ..addPostFrameCallback((_) => openNotificationsScreen())
+        ..scheduleFrame(); // garante um quadro, mesmo com a tela parada
+    }
   }
 
   final _decisions = <({String actorId, bool approve})>[];
+  bool _openPending = false;
+  bool _screenOpen = false;
+
+  /// Abre a tela de avisos. Se o app ainda nao entrou na conta (abriu pelo aviso), espera.
+  void openNotificationsScreen() {
+    final gateway = _gateway;
+    final navigator = runPassNavigatorKey.currentState;
+    if (gateway == null || !gateway.signedIn || navigator == null) {
+      _openPending = true;
+      return;
+    }
+    _openPending = false;
+    if (_screenOpen) return;
+    _screenOpen = true;
+    navigator
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) => NotificationsScreen(gateway: gateway),
+          ),
+        )
+        .whenComplete(() => _screenOpen = false);
+  }
 
   /// Toque num botao do aviso do celular (Aceitar/Recusar). Se o app ainda nao entrou na conta,
   /// a decisao espera na fila e e aplicada assim que houver sessao.
@@ -364,6 +392,8 @@ class NotificationCenter with WidgetsBindingObserver {
     final action = response.actionId;
     if (action != LocalAlerts.acceptAction &&
         action != LocalAlerts.declineAction) {
+      // Toque no corpo do aviso: leva para a tela de avisos.
+      openNotificationsScreen();
       return;
     }
     try {
@@ -411,6 +441,10 @@ class NotificationCenter with WidgetsBindingObserver {
   }
 
   void stop() {
+    // Sair da conta: nada de tela de avisos aberta nem abertura pendente de outra sessao.
+    _screenOpen = false;
+    _openPending = false;
+    _decisions.clear();
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _timer = null;
@@ -787,14 +821,23 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   padding: const EdgeInsets.only(top: 10, left: 58),
                   child: Row(
                     children: [
+                      // O tema do app deixa FilledButton com largura minima infinita (feito
+                      // para botoes de largura total); numa Row isso quebrava o layout e o
+                      // botao nao aparecia. Largura propria aqui.
                       FilledButton(
                         key: Key('notification-approve-${actor['id']}'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(110, 44),
+                        ),
                         onPressed: () => decide(item, true),
                         child: const Text('Aceitar'),
                       ),
                       const SizedBox(width: 10),
                       OutlinedButton(
                         key: Key('notification-decline-${actor['id']}'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(110, 44),
+                        ),
                         onPressed: () => decide(item, false),
                         child: const Text('Recusar'),
                       ),

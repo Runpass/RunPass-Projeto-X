@@ -863,11 +863,12 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
   Widget cover(Map<String, dynamic> profile, ProfileData result) => SizedBox(
-    height: 216,
+    height: 232,
     child: Stack(
       clipBehavior: Clip.none,
       children: [
         Container(
+          key: const Key('profile-banner'),
           height: 176,
           clipBehavior: Clip.hardEdge,
           decoration: const BoxDecoration(
@@ -941,11 +942,11 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
             ),
           ),
         ),
-        // Seguidores e seguindo ao lado da foto, no formato do Instagram.
+        // Seguidores e seguindo ao lado da foto, ABAIXO do banner (formato do Instagram).
         Positioned(
           left: 124,
           right: 12,
-          bottom: 4,
+          top: 188,
           child: Row(
             key: const Key('profile-counts'),
             children: [
