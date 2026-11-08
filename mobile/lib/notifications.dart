@@ -17,7 +17,8 @@ String notificationText(Map<String, dynamic> item) {
   final actor = item['actor'] as Map? ?? const {};
   final name = actor['displayName'] as String? ?? 'Alguém';
   return switch (item['kind']) {
-    'follow_request' => '$name quer seguir você.',
+    'friend_request' => '$name quer ser seu amigo.',
+    'friend' => 'Você e $name agora são amigos.',
     'follow' => '$name começou a seguir você.',
     'like' => '$name curtiu sua publicação.',
     'comment' => '$name comentou: “${item['text'] ?? ''}”',
@@ -29,7 +30,8 @@ String notificationText(Map<String, dynamic> item) {
 }
 
 IconData notificationIcon(String? kind) => switch (kind) {
-  'follow_request' => Icons.person_add_alt_1_rounded,
+  'friend_request' => Icons.person_add_alt_1_rounded,
+  'friend' => Icons.how_to_reg_rounded,
   'follow' => Icons.person_rounded,
   'like' => Icons.favorite_rounded,
   'comment' => Icons.chat_bubble_rounded,
@@ -44,7 +46,7 @@ IconData notificationIcon(String? kind) => switch (kind) {
 class LocalAlerts {
   static final _plugin = FlutterLocalNotificationsPlugin();
   static bool _ready = false;
-  static const requestCategory = 'follow_request';
+  static const requestCategory = 'friend_request';
   static const acceptAction = 'accept';
   static const declineAction = 'decline';
   static const _enabledKey = 'os-alerts-enabled';
@@ -199,13 +201,13 @@ class LocalAlerts {
     }
   }
 
-  /// Aviso de pedido para seguir: com os botoes Aceitar e Recusar.
+  /// Aviso de pedido de amizade: com os botoes Aceitar e Recusar.
   static const _requestDetails = NotificationDetails(
     android: AndroidNotificationDetails(
       'runpass-social',
       'Amigos e interações',
       channelDescription:
-          'Pedidos para seguir, curtidas, comentários e publicações de amigos.',
+          'Pedidos de amizade, curtidas, comentários e publicações de amigos.',
       importance: Importance.high,
       priority: Priority.high,
       actions: [
@@ -284,14 +286,14 @@ class LocalAlerts {
       if (fresh.isEmpty) return;
       if (newest != null) await prefs.setString(_lastKey, newest);
       for (final i in fresh.take(3)) {
-        final request = i['kind'] == 'follow_request';
+        final request = i['kind'] == 'friend_request';
         await present(
           i['id'].hashCode & 0x7fffffff,
           notificationText(i),
           request: request,
           payload: request
               ? jsonEncode({
-                  'kind': 'follow_request',
+                  'kind': 'friend_request',
                   'actorId': (i['actor'] as Map?)?['id'],
                 })
               : null,
@@ -418,7 +420,7 @@ class NotificationCenter with WidgetsBindingObserver {
       final next = _decisions.first;
       try {
         await gateway.request(
-          '/me/follow-requests/${Uri.encodeComponent(next.actorId)}',
+          '/me/friend-requests/${Uri.encodeComponent(next.actorId)}',
           method: next.approve ? 'PUT' : 'DELETE',
         );
       } on Exception {
@@ -616,6 +618,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   List<Map<String, dynamic>>? items;
   String? error;
 
+  int get pendingFriendRequests =>
+      (items ?? const []).where((i) => i['kind'] == 'friend_request').length;
+
   @override
   void initState() {
     super.initState();
@@ -646,23 +651,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  Future<void> decide(Map<String, dynamic> item, bool approve) async {
-    final actor = item['actor'] as Map;
-    try {
-      await widget.gateway.request(
-        '/me/follow-requests/${Uri.encodeComponent(actor['id'] as String)}',
-        method: approve ? 'PUT' : 'DELETE',
-      );
-    } on Exception {
-      if (mounted) {
-        setState(() => error = friendsError(const IdentityIssue('')));
-      }
-      return;
-    }
-    await load();
-  }
-
-  /// Deslizar para a esquerda apaga o aviso (pedidos para seguir nao: aceite ou recuse).
+  /// Deslizar para a esquerda apaga o aviso.
   Future<void> dismiss(Map<String, dynamic> item) async {
     setState(() => items?.remove(item));
     try {
@@ -702,7 +691,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final actor = item['actor'] as Map;
     final kind = item['kind'] as String?;
     final postId = item['postId'] as String?;
-    if (postId != null && kind != 'follow' && kind != 'follow_request') {
+    if (postId != null &&
+        kind != 'follow' &&
+        kind != 'friend' &&
+        kind != 'friend_request') {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => PostScreen(gateway: widget.gateway, postId: postId),
@@ -726,23 +718,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final actor = item['actor'] as Map;
     final created = DateTime.tryParse(item['createdAt'] as String? ?? '');
     final unread = item['unread'] == true;
-    final request = item['kind'] == 'follow_request';
     return Card(
       key: Key('notification-${item['id']}'),
-      color: request
-          ? (Theme.of(context).brightness == Brightness.dark
-                ? const Color(0xff3a2216)
-                : const Color(0xffffe4d6))
-          : unread
+      color: unread
           ? (Theme.of(context).brightness == Brightness.dark
                 ? const Color(0xff2a2018)
                 : const Color(0xffffeee6))
-          : null,
-      shape: request
-          ? RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: const BorderSide(color: runPassOrange, width: 1.5),
-            )
           : null,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
@@ -816,34 +797,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     ),
                   ),
                 ),
-              if (request)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10, left: 58),
-                  child: Row(
-                    children: [
-                      // O tema do app deixa FilledButton com largura minima infinita (feito
-                      // para botoes de largura total); numa Row isso quebrava o layout e o
-                      // botao nao aparecia. Largura propria aqui.
-                      FilledButton(
-                        key: Key('notification-approve-${actor['id']}'),
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size(110, 44),
-                        ),
-                        onPressed: () => decide(item, true),
-                        child: const Text('Aceitar'),
-                      ),
-                      const SizedBox(width: 10),
-                      OutlinedButton(
-                        key: Key('notification-decline-${actor['id']}'),
-                        style: OutlinedButton.styleFrom(
-                          minimumSize: const Size(110, 44),
-                        ),
-                        onPressed: () => decide(item, false),
-                        child: const Text('Recusar'),
-                      ),
-                    ],
-                  ),
-                ),
             ],
           ),
         ),
@@ -868,39 +821,51 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             const Padding(
               padding: EdgeInsets.all(24),
               child: Text(
-                'Nada por aqui ainda. Pedidos para seguir, curtidas, comentários e publicações de amigos aparecem neste lugar.',
+                'Nada por aqui ainda. Pedidos de amizade, curtidas, comentários e publicações de amigos aparecem neste lugar.',
                 key: Key('no-notifications'),
                 textAlign: TextAlign.center,
               ),
             ),
-          if ((items ?? const []).any((i) => i['kind'] == 'follow_request'))
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: Text(
-                'Pedidos para seguir',
-                key: Key('requests-title'),
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+          // Sempre visível, mesmo com zero pedidos pendentes.
+          Card(
+            child: ListTile(
+              key: const Key('friend-requests-section'),
+              leading: const Icon(
+                Icons.how_to_reg_rounded,
+                color: runPassOrange,
               ),
-            ),
-          for (final item in items ?? const <Map<String, dynamic>>[]) ...[
-            if (item['kind'] == 'follow_request')
-              row(item)
-            else
-              Dismissible(
-                key: Key('dismiss-${item['id']}'),
-                direction: DismissDirection.endToStart,
-                background: Container(
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.only(right: 24),
-                  decoration: BoxDecoration(
-                    color: Colors.red,
-                    borderRadius: BorderRadius.circular(16),
+              title: Text('Pedidos de amizade ($pendingFriendRequests)'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        FriendRequestsScreen(gateway: widget.gateway),
                   ),
-                  child: const Icon(Icons.delete_outline, color: Colors.white),
+                );
+                if (mounted) load();
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (final item in (items ?? const <Map<String, dynamic>>[]).where(
+            (i) => i['kind'] != 'friend_request',
+          )) ...[
+            Dismissible(
+              key: Key('dismiss-${item['id']}'),
+              direction: DismissDirection.endToStart,
+              background: Container(
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 24),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                onDismissed: (_) => dismiss(item),
-                child: row(item),
+                child: const Icon(Icons.delete_outline, color: Colors.white),
               ),
+              onDismissed: (_) => dismiss(item),
+              child: row(item),
+            ),
             const SizedBox(height: 8),
           ],
         ],

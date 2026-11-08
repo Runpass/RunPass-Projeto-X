@@ -124,7 +124,7 @@ void main() {
       find.widgetWithText(TextFormField, 'Senha'),
       'Senha_forte_1!',
     );
-    await tester.tap(find.text('Entrar no RunPass'));
+    await tester.tap(find.text('Entrar'));
     // O indicador de "entrando" gira atras do dialogo: nao ha como "assentar".
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));

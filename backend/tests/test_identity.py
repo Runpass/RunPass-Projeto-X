@@ -21,7 +21,7 @@ from runpass.identity import (
     require_operator,
 )
 from runpass.service import IdentityService, Problem
-from runpass.store import DynamoStore, MemoryStore
+from runpass.store import DynamoStore, MemoryStore, Unavailable
 
 NOW = datetime(2026, 10, 28, 15, tzinfo=timezone.utc)
 ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
@@ -159,6 +159,38 @@ class ServiceTests(unittest.TestCase):
         job = self.store.get(("operations", "USER#u1", "JOB#" + receipt["operationId"]))
         self.assertEqual(job["dueAt"], "2026-11-04T15:00:00Z")
 
+    def test_deletion_frees_the_cognito_identity_right_away_so_the_email_can_sign_up_again(self):
+        removed = []
+        service = IdentityService(
+            self.store,
+            b"synthetic-erasure-key-not-a-secret!",
+            lambda: self.now,
+            account_remover=Mock(delete_owner=lambda owner: removed.append(owner)),
+        )
+        actor = Principal("u1", True)
+        service.create_profile(actor, "create", {"displayName": "u1", "username": "run_u1"})
+        service.admit(actor, "admit", ADULT)
+        service.delete_account(actor, "delete")
+        # Nao espera o job assincrono: o Cognito ja foi chamado na mesma requisicao de exclusao.
+        self.assertEqual(removed, ["u1"])
+
+    def test_deletion_still_accepted_even_if_the_immediate_cognito_removal_fails(self):
+        remover = Mock()
+        remover.delete_owner.side_effect = Unavailable()
+        service = IdentityService(
+            self.store,
+            b"synthetic-erasure-key-not-a-secret!",
+            lambda: self.now,
+            account_remover=remover,
+        )
+        actor = Principal("u1", True)
+        service.create_profile(actor, "create", {"displayName": "u1", "username": "run_u1"})
+        service.admit(actor, "admit", ADULT)
+        # A tentativa imediata falha (rede etc.), mas o pedido continua aceito; o job assincrono
+        # de erasure ainda remove o usuario do Cognito mais tarde, como ja acontecia antes.
+        receipt = service.delete_account(actor, "delete")
+        self.assertTrue(receipt["accessBlocked"])
+
     def test_waitlist_voluntary_unique_and_replay_after_removal_does_not_rejoin(self):
         self.create("u1")
         self.seed_count(1000)
@@ -185,10 +217,10 @@ class ServiceTests(unittest.TestCase):
         self.now = datetime(2026, 10, 29, 1, tzinfo=timezone.utc)  # still 28th in São Paulo
         with self.assertRaises(Problem):
             self.service.admit(
-                self.actor, "young", {"birthDate": "2008-10-29", "declaresAdult": True}
+                self.actor, "young", {"birthDate": "2013-10-29", "declaresAdult": True}
             )
         result = self.service.admit(
-            self.actor, "adult", {"birthDate": "2008-10-28", "declaresAdult": True}
+            self.actor, "adult", {"birthDate": "2013-10-28", "declaresAdult": True}
         )
         self.assertTrue(result["admitted"])
 
@@ -462,6 +494,56 @@ class ApiTests(unittest.TestCase):
             self.client.get("/me", headers={"Authorization": "Bearer bad"}).status_code, 401
         )
         self.assertEqual(TestClient(create_app()).get("/beta/status").status_code, 503)
+
+    def test_state_accepts_only_a_two_letter_uf_code(self):
+        self.client.put(
+            "/me", json={"displayName": "Thiago", "username": "thiago"}, headers=self.headers
+        )
+        self.client.post("/beta/admissions", json=ADULT, headers=self.headers)
+        for bad in ("sp", "SPX", "S", ""):
+            response = self.client.patch(
+                "/me",
+                json={"expectedVersion": 1, "state": bad, "city": "Taboão da Serra"},
+                headers=self.headers,
+            )
+            self.assertEqual(response.status_code, 422)
+        response = self.client.patch(
+            "/me",
+            json={"expectedVersion": 1, "state": "SP", "city": "Taboão da Serra"},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.schema("OwnProfile", response.json())
+        self.assertEqual(
+            (response.json()["state"], response.json()["city"]), ("SP", "Taboão da Serra")
+        )
+
+    def test_latitude_and_longitude_accompany_state_and_city(self):
+        self.client.put(
+            "/me", json={"displayName": "Thiago", "username": "thiago"}, headers=self.headers
+        )
+        self.client.post("/beta/admissions", json=ADULT, headers=self.headers)
+        response = self.client.patch(
+            "/me",
+            json={
+                "expectedVersion": 1,
+                "state": "SP",
+                "city": "Taboão da Serra",
+                "latitude": -23.6028,
+                "longitude": -46.7922,
+            },
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.schema("OwnProfile", response.json())
+        self.assertEqual(
+            (response.json()["latitude"], response.json()["longitude"]), (-23.6028, -46.7922)
+        )
+        for bad in ({"latitude": 91}, {"longitude": -181}):
+            response = self.client.patch(
+                "/me", json={"expectedVersion": 2, **bad}, headers=self.headers
+            )
+            self.assertEqual(response.status_code, 422)
 
     def test_other_subject_cannot_read_or_patch_owner(self):
         self.client.put(

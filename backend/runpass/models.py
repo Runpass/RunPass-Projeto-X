@@ -28,6 +28,11 @@ class PatchProfile(Input):
     displayName: Annotated[str, Field(min_length=1, max_length=80)] | None = None
     username: Username | None = None
     city: Annotated[str, Field(max_length=100)] | None = None
+    state: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] | None = None
+    # Centroide da cidade escolhida (app manda os dois juntos, derivados da lista do IBGE; sem
+    # GPS do aparelho). So para o raio de proximidade do filtro "Minha Cidade".
+    latitude: Annotated[float, Field(ge=-90, le=90)] | None = None
+    longitude: Annotated[float, Field(ge=-180, le=180)] | None = None
     bio: Annotated[str, Field(max_length=500)] | None = None
     photoReference: str | None = None
     bannerReference: str | None = None

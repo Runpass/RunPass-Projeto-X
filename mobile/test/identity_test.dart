@@ -235,7 +235,7 @@ void main() {
         find.widgetWithText(TextFormField, 'Senha'),
         'Synthetic_password1!',
       );
-      await tester.tap(find.text('Entrar no RunPass'));
+      await tester.tap(find.text('Entrar'));
       await tester.pumpAndSettle();
       // Sem tela intermediaria: quem ja tem cadastro entra direto no app.
       expect(find.byType(RunPassHomeScreen), findsOneWidget);

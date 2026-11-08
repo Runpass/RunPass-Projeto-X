@@ -346,7 +346,15 @@ class DemoTransport {
         if (data['expectedVersion'] != profile['version']) {
           return failure('VERSION_CONFLICT', 409);
         }
-        for (final name in ['photoReference', 'isPrivate', 'displayName']) {
+        for (final name in [
+          'photoReference',
+          'isPrivate',
+          'displayName',
+          'state',
+          'city',
+          'latitude',
+          'longitude',
+        ]) {
           if (data.containsKey(name)) {
             if (data[name] == null) {
               profile.remove(name);
@@ -378,7 +386,7 @@ class DemoTransport {
     if (uri.path == '/beta/admissions' || uri.path == '/beta/waitlist') {
       final birth = DateTime.tryParse(data['birthDate'] as String? ?? '');
       final now = DateTime.now();
-      final cutoff = DateTime(now.year - 18, now.month, now.day);
+      final cutoff = DateTime(now.year - 13, now.month, now.day);
       if (birth == null ||
           birth.isAfter(cutoff) ||
           data['declaresAdult'] != true) {

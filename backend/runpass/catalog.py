@@ -605,7 +605,7 @@ class CatalogImporter:
 def seed_synthetic(catalog, path):
     if not isinstance(catalog.store, MemoryStore):
         raise ValueError("Synthetic seed requires MemoryStore")
-    entries = json.loads(path.read_text(), parse_float=Decimal)
+    entries = json.loads(path.read_text(encoding="utf-8"), parse_float=Decimal)
     importer = CatalogImporter(catalog)
     for entry in entries:
         importer.put(entry, expected_version=0, origin="synthetic-fixture", synthetic=True)

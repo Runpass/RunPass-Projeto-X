@@ -299,25 +299,34 @@ def create_app(
     def delete_follow(id: str, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().unfollow(actor, id, idempotency_key)
 
-    @app.get("/me/follow-requests", operation_id="listMyFollowRequests")
-    def follow_requests(actor: Actor):
-        return friends().requests(actor)
+    @app.put("/profiles/{id}/friend", operation_id="putFriendRequest")
+    def put_friend(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().add_friend(actor, id, idempotency_key)
 
-    @app.put("/me/follow-requests/{id}", operation_id="approveFollowRequest")
-    def approve_request(id: str, actor: Actor, idempotency_key: IdempotencyKey):
-        return friends().decide(actor, id, True, idempotency_key)
+    @app.delete("/profiles/{id}/friend", operation_id="deleteFriend")
+    def delete_friend(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().remove_friend(actor, id, idempotency_key)
 
-    @app.delete("/me/follow-requests/{id}", operation_id="declineFollowRequest")
-    def decline_request(id: str, actor: Actor, idempotency_key: IdempotencyKey):
-        return friends().decide(actor, id, False, idempotency_key)
+    @app.get("/me/friend-requests", operation_id="listMyFriendRequests")
+    def friend_requests(actor: Actor):
+        return friends().friend_requests(actor)
+
+    @app.put("/me/friend-requests/{id}", operation_id="approveFriendRequest")
+    def approve_friend_request(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().decide_friend(actor, id, True, idempotency_key)
+
+    @app.delete("/me/friend-requests/{id}", operation_id="declineFriendRequest")
+    def decline_friend_request(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().decide_friend(actor, id, False, idempotency_key)
 
     @app.get("/feed", operation_id="getFeed")
     def get_feed(
         actor: Actor,
         limit: int = Query(20, ge=1, le=50),
         cursor: str | None = Query(None, min_length=1, max_length=512),
+        scope: str = Query("all", pattern="^(all|friends|network)$"),
     ):
-        return friends().feed(actor, limit, cursor)
+        return friends().feed(actor, limit, cursor, scope)
 
     @app.get("/posts/{id}", operation_id="getPost")
     def get_post(id: str, actor: Actor):

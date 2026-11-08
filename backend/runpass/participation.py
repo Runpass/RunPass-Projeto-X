@@ -239,6 +239,24 @@ class ParticipationService:
             )
             write(image_key, {**image, "refs": image.get("refs", 0) + 1})
             write(claim_key, {"participationId": participation_id, "version": item["version"]})
+            if payload["publishToFeed"]:
+                # Ponteiro global para o feed "Todos" (social.py:_public_feed), sem Scan: a
+                # visibilidade de verdade é sempre reconferida na leitura via can_view.
+                feed_key = (
+                    "history",
+                    "FEED#PUBLIC",
+                    f"T#{item['completedAt']}#{participation_id}",
+                )
+                feed_ref_key = ("history", pk, "FEEDREF#" + participation_id)
+                write(
+                    feed_key,
+                    {
+                        "owner": actor.subject,
+                        "id": participation_id,
+                        "completedAt": item["completedAt"],
+                    },
+                )
+                write(feed_ref_key, {"sharedKeys": [list(feed_key)]})
             return self.projection(item), {"id": participation_id}
 
         return self.identity.transact(

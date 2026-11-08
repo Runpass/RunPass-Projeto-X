@@ -66,6 +66,7 @@ Resources:
           RUNPASS_ENV: !Ref Environment
           RUNPASS_RUNNER_ISSUER: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${RunnerUserPoolId}'
           RUNPASS_RUNNER_CLIENT_ID: !Ref RunnerClientId
+          RUNPASS_RUNNER_USER_POOL_ID: !Ref RunnerUserPoolId
           RUNPASS_ERASURE_HMAC_PARAM: !Ref ErasureHmacParameter
           RUNPASS_IDENTITY_TABLE:
             Fn::ImportValue: !Sub '${DataStack}-IdentityTable'
@@ -166,6 +167,10 @@ Resources:
                     - 'arn:${AWS::Partition}:s3:::${Name}'
                     - Name:
                         Fn::ImportValue: !Sub '${DataStack}-MedalBucket'
+              - Sid: EraseRunnerIdentityOnDeleteRequest
+                Effect: Allow
+                Action: cognito-idp:AdminDeleteUser
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${RunnerUserPoolId}'
               - Sid: ReadSecretsAtStartup
                 Effect: Allow
                 Action: ssm:GetParameter

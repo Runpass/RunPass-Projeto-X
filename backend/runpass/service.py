@@ -9,7 +9,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .profile_index import index_keys, shared_keys
-from .store import Conflict
+from .store import Conflict, Unavailable
 
 
 class Problem(Exception):
@@ -33,12 +33,17 @@ class IdentityService:
         clock=utc_now,
         environment="local",
         identity_namespace="local-runner",
+        account_remover=None,
     ):
         if len(erasure_key) < 32:
             raise ValueError("Erasure HMAC key requires at least 32 bytes")
         self.store, self.clock, self.erasure_key = store, clock, erasure_key
         self.environment = environment
         self.identity_namespace = identity_namespace
+        # Libera o e-mail/username no Cognito na hora do pedido de exclusao (delete_account),
+        # em vez de esperar o job assincrono de limpeza de dados. Opcional: sem ele (local/testes),
+        # so o job assincrono cuida da remocao, como antes.
+        self.account_remover = account_remover
 
     def erasure(self, subject):
         digest = hmac.new(
@@ -132,6 +137,9 @@ class IdentityService:
                 "username",
                 "version",
                 "city",
+                "state",
+                "latitude",
+                "longitude",
                 "bio",
                 "photoReference",
                 "bannerReference",
@@ -282,7 +290,7 @@ class IdentityService:
         birth = datetime.strptime(payload["birthDate"], "%Y-%m-%d").date()
         today = now.astimezone(ZoneInfo("America/Sao_Paulo")).date()
         age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
-        if birth > today or age < 18 or payload["declaresAdult"] is not True:
+        if birth > today or age < 13 or payload["declaresAdult"] is not True:
             raise Problem(422, "NOT_ELIGIBLE")
 
     def admit(self, principal, key, payload, waitlist=False):
@@ -413,4 +421,13 @@ class IdentityService:
                 "publiclyHidden": True,
             }, {}
 
-        return self.transact(principal, "deleteOwnAccount", key, {}, work)
+        result = self.transact(principal, "deleteOwnAccount", key, {}, work)
+        if self.account_remover is not None:
+            # Melhor esforco, fora da transacao: o email/username libera para um novo cadastro
+            # na hora. Se falhar (rede, etc.), o job assincrono de erasure ainda remove o usuario
+            # do Cognito mais tarde (ErasureProcessor ja chama o mesmo destino no fim da limpeza).
+            try:
+                self.account_remover.delete_owner(principal.subject)
+            except Unavailable:
+                pass
+        return result
