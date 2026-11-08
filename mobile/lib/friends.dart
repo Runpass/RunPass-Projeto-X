@@ -406,8 +406,28 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                   children: [
                     if (canView)
                       _count('${p['participationCount'] ?? 0}', 'Corridas'),
-                    _count('${p['followersCount'] ?? 0}', 'Seguidores'),
-                    _count('${p['followingCount'] ?? 0}', 'Seguindo'),
+                    _count(
+                      '${p['friendsCount'] ?? 0}',
+                      'Amigos',
+                      onTap: () =>
+                          openRelationList(RelationListKind.friends, 'Amigos'),
+                    ),
+                    _count(
+                      '${p['followersCount'] ?? 0}',
+                      'Seguidores',
+                      onTap: () => openRelationList(
+                        RelationListKind.followers,
+                        'Seguidores',
+                      ),
+                    ),
+                    _count(
+                      '${p['followingCount'] ?? 0}',
+                      'Seguindo',
+                      onTap: () => openRelationList(
+                        RelationListKind.following,
+                        'Seguindo',
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -460,14 +480,253 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     );
   }
 
-  Widget _count(String value, String label) => Column(
-    children: [
-      Text(
-        value,
-        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+  Widget _count(String value, String label, {VoidCallback? onTap}) {
+    final column = Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+        ),
+        Text(label, style: TextStyle(fontSize: 12, color: context.muted)),
+      ],
+    );
+    return onTap == null
+        ? column
+        : InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: column,
+            ),
+          );
+  }
+
+  void openRelationList(RelationListKind kind, String title) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RelationListScreen(
+          gateway: widget.gateway,
+          profileId: widget.profileId,
+          kind: kind,
+          title: title,
+          ownList: profile?['followState'] == 'self',
+        ),
       ),
-      Text(label, style: TextStyle(fontSize: 12, color: context.muted)),
-    ],
+    );
+  }
+}
+
+/// Toque em "amigos"/"seguidores"/"seguindo" (perfil próprio ou de outra pessoa) abre a lista
+/// de pessoas, no estilo Instagram: cada linha tem o botão certo para o contexto (amizade na
+/// lista de amigos; seguir — com "Seguir de volta" quando é a minha própria lista de
+/// seguidores — nas outras duas).
+enum RelationListKind { followers, following, friends }
+
+String _compactFriendLabel(String? state) => switch (state) {
+  'friends' => 'Amigo',
+  'pending_out' => 'Solicitado',
+  'pending_in' => 'Responder',
+  _ => 'Adicionar',
+};
+
+class RelationListScreen extends StatefulWidget {
+  final IdentityGateway gateway;
+  final String profileId;
+  final RelationListKind kind;
+  final String title;
+
+  /// Se a lista é das próprias relações do usuário logado (não de outra pessoa).
+  final bool ownList;
+  const RelationListScreen({
+    super.key,
+    required this.gateway,
+    required this.profileId,
+    required this.kind,
+    required this.title,
+    required this.ownList,
+  });
+
+  @override
+  State<RelationListScreen> createState() => _RelationListScreenState();
+}
+
+class _RelationListScreenState extends State<RelationListScreen> {
+  List<Map<String, dynamic>>? items;
+  String? nextCursor;
+  String? error;
+  bool loadingMore = false;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  String get _path => switch (widget.kind) {
+    RelationListKind.followers => 'followers',
+    RelationListKind.following => 'following',
+    RelationListKind.friends => 'friends',
+  };
+
+  Future<void> load({bool more = false}) async {
+    if (more) {
+      if (loadingMore || nextCursor == null) return;
+      setState(() => loadingMore = true);
+    }
+    try {
+      final page = await widget.gateway.request(
+        '/profiles/${Uri.encodeComponent(widget.profileId)}/$_path',
+        query: {'limit': '30', if (more) 'cursor': nextCursor!},
+      );
+      final pageItems = (page['items'] as List).cast<Map<String, dynamic>>();
+      if (!mounted) return;
+      setState(() {
+        items = more ? [...(items ?? const []), ...pageItems] : pageItems;
+        nextCursor = page['nextCursor'] as String?;
+        error = null;
+      });
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = friendsError(issue));
+    } on Exception {
+      if (mounted)
+        setState(() => error = friendsError(const IdentityIssue('')));
+    } finally {
+      if (more && mounted) setState(() => loadingMore = false);
+    }
+  }
+
+  Future<void> toggleFollow(Map<String, dynamic> item) async {
+    final state = item['followState'] as String? ?? 'none';
+    try {
+      final result = await widget.gateway.request(
+        '/profiles/${Uri.encodeComponent(item['id'] as String)}/follow',
+        method: state == 'none' ? 'PUT' : 'DELETE',
+      );
+      if (mounted) setState(() => item['followState'] = result['state']);
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = friendsError(issue));
+    } on Exception {
+      if (mounted)
+        setState(() => error = friendsError(const IdentityIssue('')));
+    }
+  }
+
+  /// Mesma regra de PublicProfileScreen.toggleFriend: um pedido recebido (pending_in) e aceito
+  /// direto aqui.
+  Future<void> toggleFriend(Map<String, dynamic> item) async {
+    final state = item['friendState'] as String? ?? 'none';
+    try {
+      final result = state == 'pending_in'
+          ? await widget.gateway.request(
+              '/me/friend-requests/${Uri.encodeComponent(item['id'] as String)}',
+              method: 'PUT',
+            )
+          : await widget.gateway.request(
+              '/profiles/${Uri.encodeComponent(item['id'] as String)}/friend',
+              method: state == 'none' ? 'PUT' : 'DELETE',
+            );
+      if (mounted) setState(() => item['friendState'] = result['state']);
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = friendsError(issue));
+    } on Exception {
+      if (mounted)
+        setState(() => error = friendsError(const IdentityIssue('')));
+    }
+  }
+
+  void open(Map<String, dynamic> profile) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PublicProfileScreen(
+          gateway: widget.gateway,
+          profileId: profile['id'] as String,
+          initial: profile,
+        ),
+      ),
+    );
+  }
+
+  Widget? _action(Map<String, dynamic> profile) {
+    if (profile['followState'] == 'self') return null;
+    if (widget.kind == RelationListKind.friends) {
+      return OutlinedButton(
+        key: Key('relation-friend-${profile['id']}'),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 34),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          textStyle: const TextStyle(fontSize: 13),
+        ),
+        onPressed: () => toggleFriend(profile),
+        child: Text(_compactFriendLabel(profile['friendState'] as String?)),
+      );
+    }
+    final state = profile['followState'] as String? ?? 'none';
+    final label =
+        widget.kind == RelationListKind.followers &&
+            widget.ownList &&
+            state == 'none'
+        ? 'Seguir de volta'
+        : followLabel(state);
+    return OutlinedButton(
+      key: Key('relation-follow-${profile['id']}'),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 34),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        textStyle: const TextStyle(fontSize: 13),
+      ),
+      onPressed: () => toggleFollow(profile),
+      child: Text(label),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(widget.title)),
+    body: items == null
+        ? (error != null
+              ? Center(child: Text(error!, key: const Key('relation-error')))
+              : const Center(child: CircularProgressIndicator()))
+        : items!.isEmpty
+        ? const Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Nada por aqui ainda.',
+              key: Key('relation-empty'),
+              textAlign: TextAlign.center,
+            ),
+          )
+        : ListView.builder(
+            padding: const EdgeInsets.all(12),
+            itemCount: items!.length + (nextCursor != null ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index == items!.length) {
+                // Nao chamar load() direto aqui: itemBuilder roda durante o layout, e setState
+                // nessa hora quebra o Flutter. Agenda para depois do frame atual.
+                WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => load(more: true),
+                );
+                return const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final profile = items![index];
+              return Card(
+                child: ListTile(
+                  key: Key('relation-${profile['id']}'),
+                  leading: ProfileAvatar(
+                    gateway: widget.gateway,
+                    profile: profile,
+                  ),
+                  title: Text(profile['displayName'] as String? ?? ''),
+                  subtitle: Text('@${profile['username']}'),
+                  trailing: _action(profile),
+                  onTap: () => open(profile),
+                ),
+              );
+            },
+          ),
   );
 }
 

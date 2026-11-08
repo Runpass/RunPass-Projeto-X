@@ -427,8 +427,9 @@ Widget statBlock(
   String label, {
   Color? color,
   Color? labelColor,
-}) => Expanded(
-  child: Column(
+  VoidCallback? onTap,
+}) {
+  final column = Column(
     children: [
       Text(
         value,
@@ -445,8 +446,17 @@ Widget statBlock(
         style: TextStyle(fontSize: 11, color: labelColor),
       ),
     ],
-  ),
-);
+  );
+  return Expanded(
+    child: onTap == null
+        ? column
+        : InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: column,
+          ),
+  );
+}
 
 Widget loadMessage(String text) => Center(
   child: Padding(padding: const EdgeInsets.all(24), child: Text(text)),
@@ -840,6 +850,24 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     }
   }
 
+  void openRelationList(
+    Map<String, dynamic> profile,
+    RelationListKind kind,
+    String title,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RelationListScreen(
+          gateway: widget.gateway,
+          profileId: profile['id'] as String,
+          kind: kind,
+          title: title,
+          ownList: true,
+        ),
+      ),
+    );
+  }
+
   Future<void> editLocation(Map<String, dynamic> profile) async {
     final picked = await pickBrLocation(
       context,
@@ -1042,9 +1070,33 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
           child: Row(
             key: const Key('profile-counts'),
             children: [
-              statBlock('${result.friends}', 'amigos'),
-              statBlock('${result.followers}', 'seguidores'),
-              statBlock('${result.following}', 'seguindo'),
+              statBlock(
+                '${result.friends}',
+                'amigos',
+                onTap: () => openRelationList(
+                  profile,
+                  RelationListKind.friends,
+                  'Amigos',
+                ),
+              ),
+              statBlock(
+                '${result.followers}',
+                'seguidores',
+                onTap: () => openRelationList(
+                  profile,
+                  RelationListKind.followers,
+                  'Seguidores',
+                ),
+              ),
+              statBlock(
+                '${result.following}',
+                'seguindo',
+                onTap: () => openRelationList(
+                  profile,
+                  RelationListKind.following,
+                  'Seguindo',
+                ),
+              ),
             ],
           ),
         ),

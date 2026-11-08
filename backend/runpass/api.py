@@ -291,6 +291,33 @@ def create_app(
     ):
         return friends().public_participations(actor, id, limit, cursor)
 
+    @app.get("/profiles/{id}/followers", operation_id="listProfileFollowers")
+    def profile_followers(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().list_followers(actor, id, limit, cursor)
+
+    @app.get("/profiles/{id}/following", operation_id="listProfileFollowing")
+    def profile_following(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().list_following(actor, id, limit, cursor)
+
+    @app.get("/profiles/{id}/friends", operation_id="listProfileFriends")
+    def profile_friends(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().list_friends(actor, id, limit, cursor)
+
     @app.put("/profiles/{id}/follow", operation_id="putFollow")
     def put_follow(id: str, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().follow(actor, id, idempotency_key)

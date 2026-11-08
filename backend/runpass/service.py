@@ -57,7 +57,13 @@ class IdentityService:
         if principal.audience != "runner":
             raise Problem(403, "RUNNER_REQUIRED")
         fingerprint = hashlib.sha256(
-            json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            json.dumps(
+                body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                default=str,
+            ).encode()
         ).hexdigest()
         pk = "USER#" + principal.subject
         cmd = (

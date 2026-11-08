@@ -166,6 +166,44 @@ class SocialTests(unittest.TestCase):
         self.assertEqual(self.social.profile_view(self.caio, "ana")["friendsCount"], 1)
         self.assertEqual(self.social.profile_view(self.caio, "bia")["friendsCount"], 1)
 
+    # ---- listas de amigos/seguidores/seguindo (toque nos numeros do Perfil) ----
+    def test_followers_following_and_friends_lists_are_always_public_with_context(self):
+        self.private(self.caio)
+        self.social.follow(self.ana, "caio", "f1")
+        self.social.follow(self.bia, "caio", "f2")
+        self.social.add_friend(self.ana, "caio", "af1")
+        self.social.decide_friend(self.caio, "ana", True, "d1")
+
+        followers = self.social.list_followers(self.caio, "caio")["items"]
+        self.assertEqual({p["username"] for p in followers}, {"ana_runs", "bia_lima"})
+        # Do ponto de vista de quem pediu (caio), o followState de cada item reflete caio, nao
+        # a propria pessoa listada: caio nao segue nenhum dos dois de volta ainda.
+        self.assertEqual(
+            {p["username"]: p["followState"] for p in followers},
+            {"ana_runs": "none", "bia_lima": "none"},
+        )
+
+        following = self.social.list_following(self.bia, "ana")["items"]
+        self.assertEqual([p["username"] for p in following], ["caio"])
+
+        friends = self.social.list_friends(self.bia, "caio")["items"]
+        self.assertEqual([p["username"] for p in friends], ["ana_runs"])
+        self.assertEqual(friends[0]["friendState"], "none")
+
+    def test_followers_following_and_friends_lists_paginate_and_reject_unknown_profile(self):
+        self.social.follow(self.ana, "caio", "f1")
+        self.social.follow(self.bia, "caio", "f2")
+        page = self.social.list_followers(self.ana, "caio", limit=1)
+        self.assertEqual(len(page["items"]), 1)
+        self.assertIn("nextCursor", page)
+        rest = self.social.list_followers(self.ana, "caio", limit=1, cursor=page["nextCursor"])
+        self.assertEqual(len(rest["items"]), 1)
+        self.assertNotIn("nextCursor", rest)
+        self.assertNotEqual(page["items"][0]["id"], rest["items"][0]["id"])
+        with self.assertRaises(Problem) as missing:
+            self.social.list_followers(self.ana, "ghost")
+        self.assertEqual(missing.exception.status, 404)
+
     # ---- follow ----
     def test_public_profile_is_followed_immediately_and_unfollowed(self):
         self.assertEqual(self.social.follow(self.bia, "ana", "f1")["state"], "active")

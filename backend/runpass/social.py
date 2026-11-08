@@ -179,6 +179,56 @@ class SocialService:
             card["participationCount"] = len(self._completed(subject))
         return card
 
+    def _relation_subjects(self, subject, prefix, state="active"):
+        """Ids under `prefix` (FOLLOWER#/FOLLOWING#/FRIEND#) in `state`, sorted for stable
+        pagination (cursor is just the last id returned, not a ciphered token: this data is
+        always public, same as the counts)."""
+        return sorted(
+            sk.split("#", 1)[1]
+            for sk, row in self._list("identity", "USER#" + subject, prefix)
+            if row["state"] == state
+        )
+
+    def _relation_page(self, actor, ids, limit, cursor):
+        after = next((i for i, v in enumerate(ids) if v == cursor), -1) + 1 if cursor else 0
+        page = ids[after : after + limit]
+        items = []
+        for target in page:
+            profile = self._active_profile(self.store.get, target)
+            if profile:
+                items.append(self._card(profile, actor.subject))
+        result = {"items": items}
+        if after + limit < len(ids):
+            result["nextCursor"] = page[-1]
+        return result
+
+    def list_followers(self, actor, subject, limit=20, cursor=None):
+        """Quem segue `subject`. Sempre publico, como o contador (decisao de 08/11/2026)."""
+        self.identity.authorize(actor, admitted=True)
+        if not self._active_profile(self.store.get, subject):
+            raise Problem(404, "PROFILE_NOT_FOUND")
+        return self._relation_page(
+            actor, self._relation_subjects(subject, "FOLLOWER#"), limit, cursor
+        )
+
+    def list_following(self, actor, subject, limit=20, cursor=None):
+        """Quem `subject` segue. Sempre publico, como o contador (decisao de 08/11/2026)."""
+        self.identity.authorize(actor, admitted=True)
+        if not self._active_profile(self.store.get, subject):
+            raise Problem(404, "PROFILE_NOT_FOUND")
+        return self._relation_page(
+            actor, self._relation_subjects(subject, "FOLLOWING#"), limit, cursor
+        )
+
+    def list_friends(self, actor, subject, limit=20, cursor=None):
+        """Amigos aceitos de `subject`. Sempre publico, como o contador (decisao de 08/11/2026)."""
+        self.identity.authorize(actor, admitted=True)
+        if not self._active_profile(self.store.get, subject):
+            raise Problem(404, "PROFILE_NOT_FOUND")
+        return self._relation_page(
+            actor, self._relation_subjects(subject, "FRIEND#"), limit, cursor
+        )
+
     def public_participations(self, actor, subject, limit=20, cursor=None):
         self.identity.authorize(actor, admitted=True)
         if not self.can_view(self.store.get, actor.subject, subject):

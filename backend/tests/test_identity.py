@@ -20,6 +20,7 @@ from runpass.identity import (
     Principal,
     require_operator,
 )
+from runpass.models import PatchProfile
 from runpass.service import IdentityService, Problem
 from runpass.store import DynamoStore, MemoryStore, Unavailable
 
@@ -560,6 +561,37 @@ class ApiTests(unittest.TestCase):
 
 
 class DynamoAdapterTests(unittest.TestCase):
+    def test_patch_profile_coordinates_encode_for_real_dynamodb_not_only_memorystore(self):
+        """Regressao: MemoryStore (usado no resto dos testes) nunca serializa para o DynamoDB,
+        entao um campo gravado como `float` em vez de `Decimal` passa limpo nos testes e so
+        quebra (TypeError: Float types are not supported) contra o DynamoDB de verdade. Visto
+        em producao no DEV em 08/11/2026: PATCH /me com latitude/longitude (a maioria das
+        cidades da lista do IBGE tem coordenada) sempre retornava 500."""
+        import boto3
+
+        patch = PatchProfile(
+            expectedVersion=1,
+            state="SP",
+            city="Taboão da Serra",
+            latitude=-23.6028,
+            longitude=-46.7922,
+        )
+        profile = {"id": "u1", "username": "u1", "displayName": "U1", "version": 1}
+        for name, value in patch.model_dump(exclude_unset=True).items():
+            if name != "expectedVersion":
+                profile[name] = value
+
+        client = boto3.client(
+            "dynamodb",
+            region_name="sa-east-1",
+            aws_access_key_id="synthetic",
+            aws_secret_access_key="synthetic",
+        )
+        adapter = DynamoStore(client, {"identity": "test-identity"})
+        encoded = adapter.encode(profile)
+        self.assertIn("N", encoded["latitude"])
+        self.assertIn("N", encoded["longitude"])
+
     def test_dynamo_reads_strongly_and_writes_expected_version_in_single_action(self):
         import boto3
 
