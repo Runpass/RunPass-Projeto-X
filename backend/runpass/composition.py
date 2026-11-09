@@ -29,9 +29,10 @@ class AwsSettings:
     cursor_encryption_key: bytes | None = None
     history_table: str | None = None
     projections_table: str | None = None
+    runner_user_pool_id: str | None = None
 
 
-def _identity_service(settings: AwsSettings, dynamodb_client):
+def _identity_service(settings: AwsSettings, dynamodb_client, account_remover=None):
     store = DynamoStore(
         dynamodb_client,
         {
@@ -48,6 +49,7 @@ def _identity_service(settings: AwsSettings, dynamodb_client):
         settings.erasure_hmac_key,
         environment=settings.environment,
         identity_namespace=settings.runner_issuer,
+        account_remover=account_remover,
     )
 
 
@@ -58,7 +60,14 @@ def create_aws_app(settings: AwsSettings, dynamodb_client, cognito_client, blob_
         JwksProvider(settings.runner_issuer, settings.region),
         CognitoDirectory(cognito_client),
     )
-    service = _identity_service(settings, dynamodb_client)
+    # Com o pool configurado, DELETE /me libera o email/username no Cognito na hora do pedido,
+    # em vez de so no proximo ciclo da manutencao (ver ErasureProcessor).
+    account_remover = (
+        CognitoAccountRemover(cognito_client, settings.runner_user_pool_id)
+        if settings.runner_user_pool_id
+        else None
+    )
+    service = _identity_service(settings, dynamodb_client, account_remover)
     catalog = None
     participations = None
     if settings.catalog_table and settings.cursor_encryption_key:

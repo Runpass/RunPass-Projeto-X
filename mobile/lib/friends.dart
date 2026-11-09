@@ -9,6 +9,8 @@ String friendsError(IdentityIssue issue) => switch (issue.code) {
   'QUERY_TOO_SHORT' => 'Digite pelo menos 2 letras do nome ou do usuário.',
   'PROFILE_NOT_FOUND' => 'Esse perfil não existe mais ou está indisponível.',
   'CANNOT_FOLLOW_SELF' => 'Você não pode seguir o próprio perfil.',
+  'CANNOT_FRIEND_SELF' =>
+    'Você não pode adicionar o próprio perfil como amigo.',
   'FOLLOW_LIMIT_REACHED' =>
     'Você chegou ao limite de pessoas que pode seguir nesta versão.',
   'POST_NOT_FOUND' => 'Essa publicação não está disponível. Ela pode ter sido removida ou o perfil é privado.',
@@ -18,8 +20,14 @@ String friendsError(IdentityIssue issue) => switch (issue.code) {
 
 String followLabel(String? state) => switch (state) {
   'active' => 'Seguindo',
-  'pending' => 'Solicitado',
   _ => 'Seguir',
+};
+
+String friendLabel(String? state) => switch (state) {
+  'friends' => 'Remover amigo',
+  'pending_out' => 'Solicitado amizade (toque para cancelar)',
+  'pending_in' => 'Responder pedido',
+  _ => 'Adicionar amigo',
 };
 
 class ProfileAvatar extends StatelessWidget {
@@ -163,7 +171,9 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
                 '@${profile['username']}'
                 '${profile['isPrivate'] == true ? ' · perfil privado' : ''}',
               ),
-              trailing: profile['followState'] == 'none'
+              trailing: profile['friendState'] == 'friends'
+                  ? const Chip(label: Text('Amigo'))
+                  : profile['followState'] == 'none'
                   ? null
                   : Chip(
                       label: Text(
@@ -199,6 +209,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   List<RaceRecord> races = const [];
   String? error;
   bool busy = false;
+  bool busyFriend = false;
 
   @override
   void initState() {
@@ -259,10 +270,39 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     }
   }
 
+  /// Adicionar amigo / cancelar pedido / remover amizade. Um pedido recebido (pending_in) e
+  /// resolvido aqui mesmo, aceitando direto (a tela de pedidos cobre o fluxo detalhado).
+  Future<void> toggleFriend() async {
+    final state = profile?['friendState'] as String? ?? 'none';
+    setState(() => busyFriend = true);
+    try {
+      if (state == 'pending_in') {
+        await widget.gateway.request(
+          '/me/friend-requests/${Uri.encodeComponent(widget.profileId)}',
+          method: 'PUT',
+        );
+      } else {
+        await widget.gateway.request(
+          '/profiles/${Uri.encodeComponent(widget.profileId)}/friend',
+          method: state == 'none' ? 'PUT' : 'DELETE',
+        );
+      }
+      await load();
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = friendsError(issue));
+    } on Exception {
+      if (mounted)
+        setState(() => error = friendsError(const IdentityIssue('')));
+    } finally {
+      if (mounted) setState(() => busyFriend = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = profile;
     final state = p?['followState'] as String? ?? 'none';
+    final friendState = p?['friendState'] as String? ?? 'none';
     final canView = p?['canView'] == true;
     return Scaffold(
       appBar: AppBar(title: Text(p == null ? 'Perfil' : '@${p['username']}')),
@@ -278,7 +318,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                if (canView && p['bannerReference'] != null) ...[
+                if (p['bannerReference'] != null) ...[
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: AspectRatio(
@@ -325,49 +365,84 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                   Text(p['bio'] as String),
                 ],
                 const SizedBox(height: 14),
-                if (state != 'self')
-                  FilledButton.icon(
+                if (state != 'self') ...[
+                  OutlinedButton.icon(
                     key: const Key('follow-button'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                    ),
                     onPressed: busy ? null : toggleFollow,
                     icon: Icon(
                       state == 'active'
-                          ? Icons.check_rounded
-                          : state == 'pending'
-                          ? Icons.hourglass_empty_rounded
+                          ? Icons.how_to_reg_rounded
                           : Icons.person_add_alt_1_rounded,
                     ),
-                    label: Text(
-                      state == 'pending'
-                          ? 'Solicitado (toque para cancelar)'
-                          : followLabel(state),
-                    ),
+                    label: Text(followLabel(state)),
                   ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    key: const Key('friend-button'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                    ),
+                    onPressed: busyFriend ? null : toggleFriend,
+                    icon: Icon(
+                      friendState == 'friends'
+                          ? Icons.how_to_reg_rounded
+                          : Icons.group_add_rounded,
+                    ),
+                    label: Text(friendLabel(friendState)),
+                  ),
+                ],
                 if (error != null) ...[
                   const SizedBox(height: 8),
                   Text(error!, key: const Key('profile-error')),
                 ],
                 const SizedBox(height: 14),
+                // Seguidores/seguindo e as publicações (feed) são sempre públicos; só o resumo
+                // de corridas (contagem e lista) fica atrás da amizade quando o perfil é privado.
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    if (canView)
+                      _count('${p['participationCount'] ?? 0}', 'Corridas'),
+                    _count(
+                      '${p['friendsCount'] ?? 0}',
+                      'Amigos',
+                      onTap: () =>
+                          openRelationList(RelationListKind.friends, 'Amigos'),
+                    ),
+                    _count(
+                      '${p['followersCount'] ?? 0}',
+                      'Seguidores',
+                      onTap: () => openRelationList(
+                        RelationListKind.followers,
+                        'Seguidores',
+                      ),
+                    ),
+                    _count(
+                      '${p['followingCount'] ?? 0}',
+                      'Seguindo',
+                      onTap: () => openRelationList(
+                        RelationListKind.following,
+                        'Seguindo',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 if (!canView)
                   const Card(
                     child: ListTile(
                       key: Key('private-profile'),
                       leading: Icon(Icons.lock_outline),
-                      title: Text('Este perfil é privado'),
+                      title: Text('Resumo de corridas privado'),
                       subtitle: Text(
-                        'Peça para seguir. Quando a pessoa aprovar, você vê as corridas e medalhas dela.',
+                        'Adicione como amigo. Quando a pessoa aceitar, você vê as corridas e medalhas dela.',
                       ),
                     ),
                   )
                 else ...[
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _count('${p['participationCount'] ?? 0}', 'Corridas'),
-                      _count('${p['followersCount'] ?? 0}', 'Seguidores'),
-                      _count('${p['followingCount'] ?? 0}', 'Seguindo'),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
                   if (races.isEmpty)
                     const Text(
                       'Ainda não há corridas concluídas para mostrar.',
@@ -405,27 +480,266 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     );
   }
 
-  Widget _count(String value, String label) => Column(
-    children: [
-      Text(
-        value,
-        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+  Widget _count(String value, String label, {VoidCallback? onTap}) {
+    final column = Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+        ),
+        Text(label, style: TextStyle(fontSize: 12, color: context.muted)),
+      ],
+    );
+    return onTap == null
+        ? column
+        : InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: column,
+            ),
+          );
+  }
+
+  void openRelationList(RelationListKind kind, String title) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RelationListScreen(
+          gateway: widget.gateway,
+          profileId: widget.profileId,
+          kind: kind,
+          title: title,
+          ownList: profile?['followState'] == 'self',
+        ),
       ),
-      Text(label, style: TextStyle(fontSize: 12, color: context.muted)),
-    ],
+    );
+  }
+}
+
+/// Toque em "amigos"/"seguidores"/"seguindo" (perfil próprio ou de outra pessoa) abre a lista
+/// de pessoas, no estilo Instagram: cada linha tem o botão certo para o contexto (amizade na
+/// lista de amigos; seguir — com "Seguir de volta" quando é a minha própria lista de
+/// seguidores — nas outras duas).
+enum RelationListKind { followers, following, friends }
+
+String _compactFriendLabel(String? state) => switch (state) {
+  'friends' => 'Amigo',
+  'pending_out' => 'Solicitado',
+  'pending_in' => 'Responder',
+  _ => 'Adicionar',
+};
+
+class RelationListScreen extends StatefulWidget {
+  final IdentityGateway gateway;
+  final String profileId;
+  final RelationListKind kind;
+  final String title;
+
+  /// Se a lista é das próprias relações do usuário logado (não de outra pessoa).
+  final bool ownList;
+  const RelationListScreen({
+    super.key,
+    required this.gateway,
+    required this.profileId,
+    required this.kind,
+    required this.title,
+    required this.ownList,
+  });
+
+  @override
+  State<RelationListScreen> createState() => _RelationListScreenState();
+}
+
+class _RelationListScreenState extends State<RelationListScreen> {
+  List<Map<String, dynamic>>? items;
+  String? nextCursor;
+  String? error;
+  bool loadingMore = false;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  String get _path => switch (widget.kind) {
+    RelationListKind.followers => 'followers',
+    RelationListKind.following => 'following',
+    RelationListKind.friends => 'friends',
+  };
+
+  Future<void> load({bool more = false}) async {
+    if (more) {
+      if (loadingMore || nextCursor == null) return;
+      setState(() => loadingMore = true);
+    }
+    try {
+      final page = await widget.gateway.request(
+        '/profiles/${Uri.encodeComponent(widget.profileId)}/$_path',
+        query: {'limit': '30', if (more) 'cursor': nextCursor!},
+      );
+      final pageItems = (page['items'] as List).cast<Map<String, dynamic>>();
+      if (!mounted) return;
+      setState(() {
+        items = more ? [...(items ?? const []), ...pageItems] : pageItems;
+        nextCursor = page['nextCursor'] as String?;
+        error = null;
+      });
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = friendsError(issue));
+    } on Exception {
+      if (mounted)
+        setState(() => error = friendsError(const IdentityIssue('')));
+    } finally {
+      if (more && mounted) setState(() => loadingMore = false);
+    }
+  }
+
+  Future<void> toggleFollow(Map<String, dynamic> item) async {
+    final state = item['followState'] as String? ?? 'none';
+    try {
+      final result = await widget.gateway.request(
+        '/profiles/${Uri.encodeComponent(item['id'] as String)}/follow',
+        method: state == 'none' ? 'PUT' : 'DELETE',
+      );
+      if (mounted) setState(() => item['followState'] = result['state']);
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = friendsError(issue));
+    } on Exception {
+      if (mounted)
+        setState(() => error = friendsError(const IdentityIssue('')));
+    }
+  }
+
+  /// Mesma regra de PublicProfileScreen.toggleFriend: um pedido recebido (pending_in) e aceito
+  /// direto aqui.
+  Future<void> toggleFriend(Map<String, dynamic> item) async {
+    final state = item['friendState'] as String? ?? 'none';
+    try {
+      final result = state == 'pending_in'
+          ? await widget.gateway.request(
+              '/me/friend-requests/${Uri.encodeComponent(item['id'] as String)}',
+              method: 'PUT',
+            )
+          : await widget.gateway.request(
+              '/profiles/${Uri.encodeComponent(item['id'] as String)}/friend',
+              method: state == 'none' ? 'PUT' : 'DELETE',
+            );
+      if (mounted) setState(() => item['friendState'] = result['state']);
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = friendsError(issue));
+    } on Exception {
+      if (mounted)
+        setState(() => error = friendsError(const IdentityIssue('')));
+    }
+  }
+
+  void open(Map<String, dynamic> profile) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PublicProfileScreen(
+          gateway: widget.gateway,
+          profileId: profile['id'] as String,
+          initial: profile,
+        ),
+      ),
+    );
+  }
+
+  Widget? _action(Map<String, dynamic> profile) {
+    if (profile['followState'] == 'self') return null;
+    if (widget.kind == RelationListKind.friends) {
+      return OutlinedButton(
+        key: Key('relation-friend-${profile['id']}'),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 34),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          textStyle: const TextStyle(fontSize: 13),
+        ),
+        onPressed: () => toggleFriend(profile),
+        child: Text(_compactFriendLabel(profile['friendState'] as String?)),
+      );
+    }
+    final state = profile['followState'] as String? ?? 'none';
+    final label =
+        widget.kind == RelationListKind.followers &&
+            widget.ownList &&
+            state == 'none'
+        ? 'Seguir de volta'
+        : followLabel(state);
+    return OutlinedButton(
+      key: Key('relation-follow-${profile['id']}'),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 34),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        textStyle: const TextStyle(fontSize: 13),
+      ),
+      onPressed: () => toggleFollow(profile),
+      child: Text(label),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(widget.title)),
+    body: items == null
+        ? (error != null
+              ? Center(child: Text(error!, key: const Key('relation-error')))
+              : const Center(child: CircularProgressIndicator()))
+        : items!.isEmpty
+        ? const Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Nada por aqui ainda.',
+              key: Key('relation-empty'),
+              textAlign: TextAlign.center,
+            ),
+          )
+        : ListView.builder(
+            padding: const EdgeInsets.all(12),
+            itemCount: items!.length + (nextCursor != null ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index == items!.length) {
+                // Nao chamar load() direto aqui: itemBuilder roda durante o layout, e setState
+                // nessa hora quebra o Flutter. Agenda para depois do frame atual.
+                WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => load(more: true),
+                );
+                return const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final profile = items![index];
+              return Card(
+                child: ListTile(
+                  key: Key('relation-${profile['id']}'),
+                  leading: ProfileAvatar(
+                    gateway: widget.gateway,
+                    profile: profile,
+                  ),
+                  title: Text(profile['displayName'] as String? ?? ''),
+                  subtitle: Text('@${profile['username']}'),
+                  trailing: _action(profile),
+                  onTap: () => open(profile),
+                ),
+              );
+            },
+          ),
   );
 }
 
-/// Pedidos pendentes para seguir o meu perfil privado.
-class FollowRequestsScreen extends StatefulWidget {
+/// Pedidos de amizade recebidos, ainda nao respondidos.
+class FriendRequestsScreen extends StatefulWidget {
   final IdentityGateway gateway;
-  const FollowRequestsScreen({super.key, required this.gateway});
+  const FriendRequestsScreen({super.key, required this.gateway});
 
   @override
-  State<FollowRequestsScreen> createState() => _FollowRequestsScreenState();
+  State<FriendRequestsScreen> createState() => _FriendRequestsScreenState();
 }
 
-class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
+class _FriendRequestsScreenState extends State<FriendRequestsScreen> {
   List<Map<String, dynamic>>? items;
   String? error;
 
@@ -437,7 +751,7 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
 
   Future<void> load() async {
     try {
-      final page = await widget.gateway.request('/me/follow-requests');
+      final page = await widget.gateway.request('/me/friend-requests');
       if (mounted) {
         setState(() {
           items = (page['items'] as List).cast<Map<String, dynamic>>();
@@ -453,7 +767,7 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
   Future<void> decide(String id, bool approve) async {
     try {
       await widget.gateway.request(
-        '/me/follow-requests/${Uri.encodeComponent(id)}',
+        '/me/friend-requests/${Uri.encodeComponent(id)}',
         method: approve ? 'PUT' : 'DELETE',
       );
     } on Exception {
@@ -465,7 +779,7 @@ class _FollowRequestsScreenState extends State<FollowRequestsScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Pedidos para seguir')),
+    appBar: AppBar(title: const Text('Pedidos de amizade')),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -891,8 +1205,8 @@ class _PrivacyTileState extends State<PrivacyTile> {
         title: const Text('Perfil privado'),
         subtitle: Text(
           isPrivate
-              ? 'Só quem você aceitar vê suas corridas, medalhas e comentários.'
-              : 'Público: qualquer pessoa pode seguir você e ver suas publicações.',
+              ? 'Suas publicações continuam visíveis para todos. Só quem você aceitar como amigo vê o resumo das suas corridas no seu perfil.'
+              : 'Público: qualquer pessoa pode seguir você e ver suas publicações e seu perfil.',
         ),
         value: isPrivate,
         onChanged: saving ? null : change,

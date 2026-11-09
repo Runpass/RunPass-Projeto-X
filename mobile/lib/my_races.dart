@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'catalog_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
+import 'location_picker.dart';
 import 'notifications.dart';
+import 'post_card.dart' show FeedEntry, PostCard, entryFromPost;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 import 'settings.dart';
@@ -425,8 +427,9 @@ Widget statBlock(
   String label, {
   Color? color,
   Color? labelColor,
-}) => Expanded(
-  child: Column(
+  VoidCallback? onTap,
+}) {
+  final column = Column(
     children: [
       Text(
         value,
@@ -443,8 +446,17 @@ Widget statBlock(
         style: TextStyle(fontSize: 11, color: labelColor),
       ),
     ],
-  ),
-);
+  );
+  return Expanded(
+    child: onTap == null
+        ? column
+        : InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: column,
+          ),
+  );
+}
 
 Widget loadMessage(String text) => Center(
   child: Padding(padding: const EdgeInsets.all(24), child: Text(text)),
@@ -724,14 +736,47 @@ class ProfileData {
   final Map<String, dynamic> profile;
   final List<RaceRecord> races;
   final List<Map<String, dynamic>> wishlist;
-  final int followers, following;
+  final List<FeedEntry> myPosts;
+  final int followers, following, friends;
   const ProfileData(
     this.profile,
     this.races,
     this.wishlist, [
     this.followers = 0,
     this.following = 0,
+    this.myPosts = const [],
+    this.friends = 0,
   ]);
+}
+
+/// As publicações do próprio usuário (corridas com `publishToFeed=true`), mais recente
+/// primeiro, já no formato completo do cartão do Feed (curtidas, comentários).
+Future<List<FeedEntry>> loadMyPosts(
+  IdentityGateway gateway,
+  List<RaceRecord> races,
+  String? myId,
+) async {
+  final published =
+      [
+        for (final race in races)
+          if (race.participation['publishToFeed'] == true) race,
+      ]..sort(
+        (a, b) => (b.participation['completedAt'] as String? ?? '').compareTo(
+          a.participation['completedAt'] as String? ?? '',
+        ),
+      );
+  final entries = <FeedEntry>[];
+  for (final race in published) {
+    final id = race.participation['id'] as String?;
+    if (id == null) continue;
+    try {
+      final post = await gateway.request('/posts/${Uri.encodeComponent(id)}');
+      entries.add(entryFromPost(post, race.edition, myId));
+    } on Exception {
+      // Uma publicacao que falhar ao carregar simplesmente nao aparece na lista.
+    }
+  }
+  return entries;
 }
 
 class RunnerProfileScreen extends StatefulWidget {
@@ -805,6 +850,50 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     }
   }
 
+  void openRelationList(
+    Map<String, dynamic> profile,
+    RelationListKind kind,
+    String title,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RelationListScreen(
+          gateway: widget.gateway,
+          profileId: profile['id'] as String,
+          kind: kind,
+          title: title,
+          ownList: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> editLocation(Map<String, dynamic> profile) async {
+    final picked = await pickBrLocation(
+      context,
+      initialUf: profile['state'] as String?,
+      initialCity: profile['city'] as String?,
+    );
+    if (picked == null || !mounted) return;
+    try {
+      await widget.gateway.request(
+        '/me',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': profile['version'],
+          ...brLocationPatch(picked.$1, picked.$2, picked.$3, picked.$4),
+        },
+      );
+      if (mounted) {
+        setState(() {
+          data = load();
+        });
+      }
+    } on Exception {
+      soon('Não foi possível salvar. Tente de novo.');
+    }
+  }
+
   Future<void> changeBanner(Map<String, dynamic> profile) async {
     final choice = await askPhotoChoice(
       context,
@@ -859,7 +948,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     } on Exception {
       // The wishlist is optional; its section shows an empty message.
     }
-    var followers = 0, following = 0;
+    var followers = 0, following = 0, friends = 0;
     final myId = profile['id'] as String?;
     if (myId != null) {
       try {
@@ -868,11 +957,26 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
         );
         followers = (me['followersCount'] as num?)?.toInt() ?? 0;
         following = (me['followingCount'] as num?)?.toInt() ?? 0;
+        friends = (me['friendsCount'] as num?)?.toInt() ?? 0;
       } on Exception {
         // Sem contagem: mostra zero.
       }
     }
-    return ProfileData(profile, races, wishlist, followers, following);
+    var myPosts = const <FeedEntry>[];
+    try {
+      myPosts = await loadMyPosts(widget.gateway, races, myId);
+    } on Exception {
+      // A secao de publicacoes so fica vazia.
+    }
+    return ProfileData(
+      profile,
+      races,
+      wishlist,
+      followers,
+      following,
+      myPosts,
+      friends,
+    );
   }
 
   void soon(String text) =>
@@ -966,8 +1070,33 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
           child: Row(
             key: const Key('profile-counts'),
             children: [
-              statBlock('${result.followers}', 'seguidores'),
-              statBlock('${result.following}', 'seguindo'),
+              statBlock(
+                '${result.friends}',
+                'amigos',
+                onTap: () => openRelationList(
+                  profile,
+                  RelationListKind.friends,
+                  'Amigos',
+                ),
+              ),
+              statBlock(
+                '${result.followers}',
+                'seguidores',
+                onTap: () => openRelationList(
+                  profile,
+                  RelationListKind.followers,
+                  'Seguidores',
+                ),
+              ),
+              statBlock(
+                '${result.following}',
+                'seguindo',
+                onTap: () => openRelationList(
+                  profile,
+                  RelationListKind.following,
+                  'Seguindo',
+                ),
+              ),
             ],
           ),
         ),
@@ -1104,6 +1233,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
           for (final race in result.races)
             if (race.edition?['city'] != null) race.edition!['city'] as String,
         }.toList();
+        final myPosts = result.myPosts;
         return ListView(
           padding: EdgeInsets.zero,
           children: [
@@ -1149,6 +1279,19 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                     ),
                   ],
                   const SizedBox(height: 16),
+                  Card(
+                    child: ListTile(
+                      key: const Key('edit-profile'),
+                      leading: const Icon(Icons.edit_outlined),
+                      title: const Text('Editar perfil'),
+                      subtitle: Text(
+                        brLocationLabel(profile) ??
+                            'Toque para informar seu estado e cidade',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => editLocation(profile),
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   Card(
                     child: Padding(
@@ -1188,6 +1331,25 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       wishTile(entry),
                       const SizedBox(height: 8),
                     ],
+                  sectionTitle('Minhas publicações'),
+                  if (myPosts.isEmpty)
+                    const Text(
+                      'Suas corridas publicadas aparecerão aqui.',
+                      key: Key('no-my-posts'),
+                    )
+                  else
+                    // Mesmo cartão do Feed, uma publicação abaixo da outra — não em grade.
+                    for (final entry in myPosts) ...[
+                      PostCard(
+                        key: Key('my-post-${entry.postId}'),
+                        gateway: widget.gateway,
+                        entry: entry,
+                        onChanged: () {
+                          if (mounted) setState(() => data = load());
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                    ],
                   const SizedBox(height: 8),
                   Card(
                     child: ListTile(
@@ -1220,44 +1382,6 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       ],
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  Card(
-                    child: Column(
-                      children: [
-                        ListTile(
-                          key: const Key('find-friends-profile'),
-                          leading: const Icon(Icons.person_search_rounded),
-                          title: const Text('Buscar amigos'),
-                          subtitle: const Text(
-                            'Procure pessoas por nome ou usuário e siga.',
-                          ),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  FriendSearchScreen(gateway: widget.gateway),
-                            ),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        ListTile(
-                          key: const Key('follow-requests'),
-                          leading: const Icon(Icons.how_to_reg_outlined),
-                          title: const Text('Pedidos para seguir'),
-                          subtitle: const Text(
-                            'Aceite ou recuse quem quer seguir seu perfil privado.',
-                          ),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  FollowRequestsScreen(gateway: widget.gateway),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             ),

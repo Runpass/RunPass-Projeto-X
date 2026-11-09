@@ -23,7 +23,13 @@ Map<String, dynamic> edition(
   ],
 };
 
-Map<String, dynamic> done(String id, String editionId, {int? seconds}) => {
+Map<String, dynamic> done(
+  String id,
+  String editionId, {
+  int? seconds,
+  bool published = false,
+  String? completedAt,
+}) => {
   'id': id,
   'editionId': editionId,
   'distanceId': 'd',
@@ -31,6 +37,8 @@ Map<String, dynamic> done(String id, String editionId, {int? seconds}) => {
   'version': 2,
   'timeSeconds': ?seconds,
   if (seconds != null) 'paceSecondsPerKm': seconds ~/ 5,
+  'publishToFeed': published,
+  'completedAt': ?completedAt,
 };
 
 Future<IdentityGateway> runner({bool noRaces = false}) async {
@@ -166,5 +174,115 @@ void main() {
     expect(find.text('provas\nconcluídas'), findsOneWidget);
     expect(find.text('corridas\n5K'), findsOneWidget);
     expect(find.text('corridas\n10K'), findsOneWidget);
+    // Nenhuma das corridas de teste foi publicada no feed: secao vazia.
+    expect(find.byKey(const Key('no-my-posts')), findsOneWidget);
   });
+
+  testWidgets(
+    'minhas publicações: só corridas publicadas, como cartões do Feed, mais recente primeiro',
+    (tester) async {
+      tester.view.physicalSize = const Size(1179, 4000);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final paths = <String>[];
+      final editions = {
+        'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+        'b': edition(
+          'b',
+          'Corrida B',
+          '2025-05-01',
+          'Rio de Janeiro',
+          'RJ',
+          10,
+        ),
+      };
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          paths.add(uri.path);
+          if (uri.path == '/me') {
+            return const JsonReply(200, {
+              'id': 'eu',
+              'displayName': 'Corredor Teste',
+              'username': 'teste',
+              'version': 1,
+            });
+          }
+          if (uri.path == '/me/participations') {
+            return JsonReply(200, {
+              'items': [
+                done(
+                  'p1',
+                  'a',
+                  published: true,
+                  completedAt: '2026-09-02T10:00:00Z',
+                ),
+                done(
+                  'p2',
+                  'b',
+                  published: true,
+                  completedAt: '2025-05-02T10:00:00Z',
+                ),
+                done('p3', 'a'), // nao publicada: fica de fora da secao
+              ],
+            });
+          }
+          final post = {
+            'p1': ('a', '2026-09-02T10:00:00Z'),
+            'p2': ('b', '2025-05-02T10:00:00Z'),
+          }[uri.pathSegments.last];
+          if (uri.path.startsWith('/posts/') && post != null) {
+            final (editionId, publishedAt) = post;
+            return JsonReply(200, {
+              'id': uri.pathSegments.last,
+              'author': {
+                'id': 'eu',
+                'displayName': 'Corredor Teste',
+                'username': 'teste',
+                'version': 1,
+              },
+              'participation': {
+                'id': uri.pathSegments.last,
+                'editionId': editionId,
+                'distanceId': 'd',
+                'state': 'completed',
+              },
+              'publishedAt': publishedAt,
+              'commentCount': 0,
+              'likeCount': 0,
+              'likedByMe': false,
+            });
+          }
+          final match = editions[uri.pathSegments.last];
+          return match == null
+              ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
+              : JsonReply(200, match);
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('no-my-posts')), findsNothing);
+      // Mesmo cartao do Feed (PostCard), um abaixo do outro — nao em grade.
+      expect(find.byKey(const Key('my-post-p1')), findsOneWidget);
+      expect(find.byKey(const Key('my-post-p2')), findsOneWidget);
+      expect(find.byKey(const Key('my-post-p3')), findsNothing);
+      expect(paths, containsAll(['/posts/p1', '/posts/p2']));
+      // Mais recente primeiro: p1 (set/2026) acima de p2 (mai/2025).
+      final p1Top = tester.getTopLeft(find.byKey(const Key('my-post-p1'))).dy;
+      final p2Top = tester.getTopLeft(find.byKey(const Key('my-post-p2'))).dy;
+      expect(p1Top, lessThan(p2Top));
+      expect(find.text('concluiu Corrida A'), findsOneWidget);
+      expect(find.text('concluiu Corrida B'), findsOneWidget);
+    },
+  );
 }

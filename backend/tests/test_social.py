@@ -49,6 +49,12 @@ class SocialTests(unittest.TestCase):
                 **({"comment": comment} if comment else {}),
             },
         }
+        if publish:
+            # Espelha o ponteiro que ParticipationService.complete() grava de verdade, para que
+            # o feed "Todos" (social.py:_public_feed) enxergue estas publicações sintéticas.
+            feed_key = ("history", "FEED#PUBLIC", f"T#{at}#{pid}")
+            rows[feed_key] = {"owner": actor.subject, "id": pid, "completedAt": at}
+            rows[("history", pk, "FEEDREF#" + pid)] = {"sharedKeys": [list(feed_key)]}
         self.store.commit({k: None for k in rows}, rows)
 
     def private(self, actor):
@@ -122,12 +128,13 @@ class SocialTests(unittest.TestCase):
         self.assertEqual(self.social.post(self.bia, "p1")["likeCount"], 1)
         self.assertIn("Parabéns! 🎉 ção", [c["text"] for c in listed])
 
-    def test_notifications_cover_follow_requests_likes_comments_and_friend_posts(self):
+    def test_notifications_cover_friend_requests_follows_likes_comments_and_followed_posts(self):
         self.private(self.ana)
         self.complete(self.ana, "p1", "2026-11-05T10:00:00Z")
         self.social.follow(self.bia, "ana", "f1")
-        self.social.decide(self.ana, "bia", True, "d1")
-        self.social.follow(self.caio, "ana", "f2")
+        self.social.add_friend(self.bia, "ana", "a1")
+        self.social.decide_friend(self.ana, "bia", True, "d1")
+        self.social.add_friend(self.caio, "ana", "a2")
         self.social.like(self.bia, "p1", "l1")
         self.social.comment(self.bia, "p1", "c1", "Show")
         self.social.like(self.ana, "p1", "l2")
@@ -140,15 +147,62 @@ class SocialTests(unittest.TestCase):
             [
                 ("comment", "bia_lima"),
                 ("follow", "bia_lima"),
-                ("follow_request", "caio"),
+                ("friend", "bia_lima"),
+                ("friend_request", "caio"),
                 ("like", "bia_lima"),
                 ("post", "bia_lima"),
             ],
         )
-        self.assertEqual(mine["unreadCount"], 5)
+        self.assertEqual(mine["unreadCount"], 6)
         self.social.mark_notifications_read(self.ana, "r1")
         self.assertEqual(self.social.notifications(self.ana)["unreadCount"], 0)
         self.assertEqual(self.social.notifications(self.caio)["items"], [])
+
+    def test_friends_count_is_always_public_like_followers_and_following(self):
+        self.private(self.ana)
+        self.assertEqual(self.social.profile_view(self.bia, "ana")["friendsCount"], 0)
+        self.social.add_friend(self.bia, "ana", "f1")
+        self.social.decide_friend(self.ana, "bia", True, "d1")
+        self.assertEqual(self.social.profile_view(self.caio, "ana")["friendsCount"], 1)
+        self.assertEqual(self.social.profile_view(self.caio, "bia")["friendsCount"], 1)
+
+    # ---- listas de amigos/seguidores/seguindo (toque nos numeros do Perfil) ----
+    def test_followers_following_and_friends_lists_are_always_public_with_context(self):
+        self.private(self.caio)
+        self.social.follow(self.ana, "caio", "f1")
+        self.social.follow(self.bia, "caio", "f2")
+        self.social.add_friend(self.ana, "caio", "af1")
+        self.social.decide_friend(self.caio, "ana", True, "d1")
+
+        followers = self.social.list_followers(self.caio, "caio")["items"]
+        self.assertEqual({p["username"] for p in followers}, {"ana_runs", "bia_lima"})
+        # Do ponto de vista de quem pediu (caio), o followState de cada item reflete caio, nao
+        # a propria pessoa listada: caio nao segue nenhum dos dois de volta ainda.
+        self.assertEqual(
+            {p["username"]: p["followState"] for p in followers},
+            {"ana_runs": "none", "bia_lima": "none"},
+        )
+
+        following = self.social.list_following(self.bia, "ana")["items"]
+        self.assertEqual([p["username"] for p in following], ["caio"])
+
+        friends = self.social.list_friends(self.bia, "caio")["items"]
+        self.assertEqual([p["username"] for p in friends], ["ana_runs"])
+        self.assertEqual(friends[0]["friendState"], "none")
+
+    def test_followers_following_and_friends_lists_paginate_and_reject_unknown_profile(self):
+        self.social.follow(self.ana, "caio", "f1")
+        self.social.follow(self.bia, "caio", "f2")
+        page = self.social.list_followers(self.ana, "caio", limit=1)
+        self.assertEqual(len(page["items"]), 1)
+        self.assertIn("nextCursor", page)
+        rest = self.social.list_followers(self.ana, "caio", limit=1, cursor=page["nextCursor"])
+        self.assertEqual(len(rest["items"]), 1)
+        self.assertNotIn("nextCursor", rest)
+        self.assertNotEqual(page["items"][0]["id"], rest["items"][0]["id"])
+        with self.assertRaises(Problem) as missing:
+            self.social.list_followers(self.ana, "ghost")
+        self.assertEqual(missing.exception.status, 404)
 
     # ---- follow ----
     def test_public_profile_is_followed_immediately_and_unfollowed(self):
@@ -175,51 +229,89 @@ class SocialTests(unittest.TestCase):
             self.social.follow(self.ana, "ghost", "f2")
         self.assertEqual(unknown.exception.status, 404)
 
-    def test_private_profile_needs_approval_and_hides_content_until_then(self):
+    def test_follow_never_needs_approval_even_for_a_private_profile(self):
+        self.private(self.ana)
+        self.assertEqual(self.social.follow(self.bia, "ana", "f1")["state"], "active")
+        view = self.social.profile_view(self.bia, "ana")
+        # Seguir nao desbloqueia perfil privado: so amizade aceita faz isso.
+        self.assertEqual((view["followState"], view["canView"]), ("active", False))
+
+    def test_private_profile_restricts_only_the_race_summary_not_the_post(self):
         self.private(self.ana)
         self.complete(self.ana, "p1", "2026-11-01T10:00:00Z", comment="Foi lindo")
-        self.assertEqual(self.social.follow(self.bia, "ana", "f1")["state"], "pending")
+        self.assertEqual(self.social.add_friend(self.bia, "ana", "a1")["state"], "pending_out")
         hidden = self.social.profile_view(self.bia, "ana")
-        self.assertEqual((hidden["followState"], hidden["canView"]), ("pending", False))
-        self.assertNotIn("followersCount", hidden)
-        with self.assertRaises(Problem):
-            self.social.post(self.bia, "p1")
+        self.assertEqual((hidden["friendState"], hidden["canView"]), ("pending_out", False))
+        # Decisao de 08/11/2026: posts, seguidores e seguindo sao sempre publicos; so o resumo
+        # de corridas (contagem e lista) fica atras da amizade.
+        self.assertEqual((hidden["followersCount"], hidden["followingCount"]), (0, 0))
+        self.assertNotIn("participationCount", hidden)
+        self.assertEqual(self.social.post(self.bia, "p1")["comment"], "Foi lindo")
         with self.assertRaises(Problem):
             self.social.public_participations(self.bia, "ana")
         self.assertEqual(
-            [r["profile"]["id"] for r in self.social.requests(self.ana)["items"]], ["bia"]
+            [r["profile"]["id"] for r in self.social.friend_requests(self.ana)["items"]], ["bia"]
         )
-        self.social.decide(self.ana, "bia", True, "d1")
-        self.assertEqual(self.social.post(self.bia, "p1")["comment"], "Foi lindo")
-        self.assertEqual(self.social.requests(self.ana)["items"], [])
-        self.assertEqual(self.social.profile_view(self.bia, "ana")["followersCount"], 1)
+        self.social.decide_friend(self.ana, "bia", True, "d1")
+        self.assertEqual(self.social.friend_requests(self.ana)["items"], [])
+        after = self.social.profile_view(self.bia, "ana")
+        self.assertEqual(after["friendState"], "friends")
+        self.assertEqual(after["participationCount"], 1)
+        self.assertEqual(
+            [p["id"] for p in self.social.public_participations(self.bia, "ana")["items"]], ["p1"]
+        )
 
-    def test_decline_removes_the_request_and_nobody_else_can_decide(self):
+    def test_decline_removes_the_friend_request_and_nobody_else_can_decide(self):
         self.private(self.ana)
-        self.social.follow(self.bia, "ana", "f1")
+        self.social.add_friend(self.bia, "ana", "f1")
         with self.assertRaises(Problem) as other:
-            self.social.decide(self.caio, "bia", True, "x")
+            self.social.decide_friend(self.caio, "bia", True, "x")
         self.assertEqual(other.exception.status, 404)
-        self.social.decide(self.ana, "bia", False, "d1")
-        self.assertEqual(self.social.profile_view(self.bia, "ana")["followState"], "none")
+        self.social.decide_friend(self.ana, "bia", False, "d1")
+        self.assertEqual(self.social.profile_view(self.bia, "ana")["friendState"], "none")
+
+    def test_a_mutual_friend_request_is_accepted_right_away(self):
+        self.social.add_friend(self.caio, "ana", "f1")
+        self.assertEqual(self.social.add_friend(self.ana, "caio", "f2")["state"], "friends")
+        self.assertEqual(self.social.profile_view(self.ana, "caio")["friendState"], "friends")
+        self.assertEqual(self.social.friend_requests(self.caio)["items"], [])
 
     # ---- feed ----
-    def test_feed_has_mine_and_followed_posts_newest_first_and_skips_unpublished(self):
+    def test_feed_scope_all_shows_public_posts_from_anyone_newest_first(self):
         self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
         self.complete(self.ana, "p2", "2026-11-03T10:00:00Z", publish=False)
         self.complete(self.bia, "p3", "2026-11-02T10:00:00Z")
         self.complete(self.caio, "p4", "2026-11-04T10:00:00Z")
-        self.assertEqual([p["id"] for p in self.social.feed(self.ana)["items"]], ["p1"])
-        self.social.follow(self.ana, "bia", "f")
-        page = self.social.feed(self.ana, limit=1)
-        self.assertEqual([p["id"] for p in page["items"]], ["p3"])
-        more = self.social.feed(self.ana, limit=1, cursor=page["nextCursor"])
+        self.assertEqual([p["id"] for p in self.social.feed(self.ana)["items"]], ["p4", "p3", "p1"])
+        page = self.social.feed(self.ana, limit=2)
+        self.assertEqual([p["id"] for p in page["items"]], ["p4", "p3"])
+        more = self.social.feed(self.ana, limit=2, cursor=page["nextCursor"])
         self.assertEqual([p["id"] for p in more["items"]], ["p1"])
         self.assertNotIn("nextCursor", more)
         # time is hidden from others unless the owner allows it
         self.assertNotIn("timeSeconds", page["items"][0]["participation"])
+
+    def test_feed_scope_network_only_has_followed_posts_not_mine(self):
+        # Decisao de 08/11/2026: "Seguindo" nao mostra minhas proprias publicacoes.
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        self.complete(self.bia, "p3", "2026-11-02T10:00:00Z")
+        self.complete(self.caio, "p4", "2026-11-04T10:00:00Z")
+        self.assertEqual(self.social.feed(self.ana, scope="network")["items"], [])
+        self.social.follow(self.ana, "bia", "f")
         self.assertEqual(
-            self.social.feed(self.bia)["items"][0]["participation"]["timeSeconds"], 3000
+            [p["id"] for p in self.social.feed(self.ana, scope="network")["items"]], ["p3"]
+        )
+
+    def test_feed_scope_friends_only_has_accepted_friends_posts_not_mine(self):
+        # Decisao de 08/11/2026: "Amigos" nao mostra minhas proprias publicacoes.
+        self.private(self.bia)
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        self.complete(self.bia, "p3", "2026-11-02T10:00:00Z")
+        self.assertEqual(self.social.feed(self.ana, scope="friends")["items"], [])
+        self.social.add_friend(self.ana, "bia", "f1")
+        self.social.decide_friend(self.bia, "ana", True, "d1")
+        self.assertEqual(
+            [p["id"] for p in self.social.feed(self.ana, scope="friends")["items"]], ["p3"]
         )
 
     # ---- comments ----
@@ -239,22 +331,21 @@ class SocialTests(unittest.TestCase):
         self.social.delete_comment(self.ana, made["id"], "d1")
         self.assertEqual(self.social.comments(self.ana, "p1")["items"], [])
 
-    def test_private_post_cannot_be_commented_by_non_followers(self):
+    def test_private_post_can_still_be_commented_by_anyone(self):
+        # Decisao de 08/11/2026: publicacoes sao sempre publicas, perfil privado ou nao.
         self.private(self.ana)
         self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
-        with self.assertRaises(Problem):
-            self.social.comment(self.bia, "p1", "c", "oi")
-        with self.assertRaises(Problem):
-            self.social.comments(self.bia, "p1")
+        made = self.social.comment(self.bia, "p1", "c", "oi")
+        self.assertEqual(
+            [c["id"] for c in self.social.comments(self.bia, "p1")["items"]], [made["id"]]
+        )
 
-    def test_photo_rule_allows_owner_and_authorized_viewers_of_published_posts_only(self):
+    def test_photo_rule_allows_owner_and_anyone_on_a_published_post(self):
         self.private(self.ana)
         part = {"publishToFeed": True}
         read = self.store.get
         self.assertTrue(self.social.may_view_photo(read, self.ana, "ana", part))
-        self.assertFalse(self.social.may_view_photo(read, self.bia, "ana", part))
-        self.social.follow(self.bia, "ana", "f")
-        self.social.decide(self.ana, "bia", True, "d")
+        # Sem amizade alguma: a foto do post continua visivel, pois publicacoes sao publicas.
         self.assertTrue(self.social.may_view_photo(read, self.bia, "ana", part))
         self.assertFalse(
             self.social.may_view_photo(read, self.bia, "ana", {"publishToFeed": False})
@@ -269,7 +360,7 @@ class SocialTests(unittest.TestCase):
         )
         blobs.write_derived(reference, b"jpg", "image/jpeg", actor.subject)
 
-    def test_banner_is_separate_from_photo_and_follows_visibility(self):
+    def test_banner_is_separate_from_photo_and_always_public(self):
         blobs = MemoryBlobStore()
         uploads = UploadService(
             self.identity, blobs, may_view_profile=self.social.may_view_profile_photo
@@ -286,8 +377,8 @@ class SocialTests(unittest.TestCase):
         with self.assertRaises(Problem):
             uploads.profile_photo(self.bia, "ana")  # sem foto de perfil
         self.private(self.ana)
-        with self.assertRaises(Problem):
-            uploads.profile_photo(self.caio, "ana", "bannerReference")
+        # Decisao de 08/11/2026: avatar e banner sao sempre publicos, mesmo sem amizade.
+        self.assertIn("url", uploads.profile_photo(self.caio, "ana", "bannerReference"))
         current = self.identity.profile(self.ana)
         cleared = self.identity.patch_profile(
             self.ana, "b2", {"expectedVersion": current["version"], "bannerReference": None}
@@ -295,17 +386,17 @@ class SocialTests(unittest.TestCase):
         self.assertNotIn("bannerReference", cleared)
         self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#ban1"))["refs"], 0)
 
-    def test_follow_requests_stay_first_and_old_ones_never_expire(self):
+    def test_friend_requests_stay_first_and_old_ones_never_expire(self):
         self.private(self.ana)
-        self.social.follow(self.caio, "ana", "f1")
+        self.social.add_friend(self.caio, "ana", "f1")
         # Pedido antigo (mais de 30 dias) continua aparecendo.
-        row_key = ("identity", "USER#ana", "FOLLOWER#caio")
+        row_key = ("identity", "USER#ana", "FRIEND#caio")
         row = self.store.get(row_key)
         self.store.commit({row_key: row}, {row_key: {**row, "at": "2026-01-01T00:00:00Z"}})
         self.complete(self.bia, "p2", "2026-11-06T09:00:00Z")
         self.social.follow(self.ana, "bia", "f2")
         items = self.social.notifications(self.ana)["items"]
-        self.assertEqual([i["kind"] for i in items], ["follow_request", "post"])
+        self.assertEqual([i["kind"] for i in items], ["friend_request", "post"])
 
     def test_notification_can_be_dismissed_but_requests_cannot(self):
         self.complete(self.ana, "p1", "2026-11-05T10:00:00Z")
@@ -319,9 +410,9 @@ class SocialTests(unittest.TestCase):
         after = self.social.notifications(self.ana)["items"]
         self.assertEqual(sorted(i["kind"] for i in after), ["follow"])
         self.private(self.bia)
-        self.social.follow(self.caio, "bia", "f9")
+        self.social.add_friend(self.caio, "bia", "f9")
         with self.assertRaises(Problem) as nope:
-            self.social.dismiss_notification(self.bia, "follow_request:caio::x", "d2")
+            self.social.dismiss_notification(self.bia, "friend_request:caio::x", "d2")
         self.assertEqual(nope.exception.code, "NOTIFICATION_NOT_DISMISSIBLE")
         # marcar como lido nao apaga a lista de apagados
         self.social.mark_notifications_read(self.ana, "r1")
@@ -329,7 +420,7 @@ class SocialTests(unittest.TestCase):
             sorted(i["kind"] for i in self.social.notifications(self.ana)["items"]), ["follow"]
         )
 
-    def test_profile_photo_needs_my_valid_image_and_follows_visibility(self):
+    def test_profile_photo_needs_my_valid_image_and_is_always_public(self):
         blobs = MemoryBlobStore()
         uploads = UploadService(
             self.identity, blobs, may_view_profile=self.social.may_view_profile_photo
@@ -356,8 +447,8 @@ class SocialTests(unittest.TestCase):
         self.assertEqual(self.store.get(("operations", "USER#ana", "IMAGE#img1"))["refs"], 1)
         self.assertIn("url", uploads.profile_photo(self.bia, "ana"))
         self.private(self.ana)
-        with self.assertRaises(Problem):
-            uploads.profile_photo(self.caio, "ana")
+        # Decisao de 08/11/2026: avatar e sempre publico, mesmo sem amizade.
+        self.assertIn("url", uploads.profile_photo(self.caio, "ana"))
         self.assertIn("url", uploads.profile_photo(self.ana, "ana"))
         # clearing releases the image
         current = self.identity.profile(self.ana)
@@ -389,8 +480,16 @@ class SocialTests(unittest.TestCase):
         self.assertEqual(leftovers, [])
         self.assertEqual(self.social.profile_view(self.caio, "ana")["followingCount"], 1)
 
+    def test_erasing_the_post_owner_removes_the_public_feed_pointer(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        self.assertEqual([p["id"] for p in self.social.feed(self.bia)["items"]], ["p1"])
+        self.identity.delete_account(self.ana, "del-ana")
+        ErasureProcessor(self.identity).run_pending()
+        self.assertEqual(self.social.feed(self.bia)["items"], [])
+        self.assertIsNone(self.store.get(("history", "FEED#PUBLIC", "T#2026-11-01T10:00:00Z#p1")))
+
     # ---- curtir e responder comentarios ----
-    def test_comment_likes_count_once_and_follow_post_visibility(self):
+    def test_comment_likes_count_once(self):
         self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
         made = self.social.comment(self.bia, "p1", "c1", "Show")
         cid = made["id"]
@@ -408,8 +507,8 @@ class SocialTests(unittest.TestCase):
             self.social.like_comment(self.caio, "nao-existe", "l5")
         self.assertEqual(missing.exception.code, "COMMENT_NOT_FOUND")
         self.private(self.ana)
-        with self.assertRaises(Problem):
-            self.social.like_comment(self.caio, cid, "l6")  # nao segue o perfil privado
+        # Decisao de 08/11/2026: perfil privado nao impede curtir comentario de um post publico.
+        self.assertEqual(self.social.like_comment(self.caio, cid, "l6")["likedByMe"], True)
 
     def test_replies_nest_under_the_main_comment_and_go_with_it(self):
         self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")

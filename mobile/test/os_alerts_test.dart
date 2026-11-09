@@ -88,19 +88,19 @@ void main() {
   });
 
   test(
-    'pedido para seguir vai ao celular com botoes e o id de quem pediu',
+    'pedido de amizade vai ao celular com botoes e o id de quem pediu',
     () async {
       await LocalAlerts.announce([], present: present);
       await LocalAlerts.announce([
         {
-          'id': 'follow_request:b::x',
-          'kind': 'follow_request',
+          'id': 'friend_request:b::x',
+          'kind': 'friend_request',
           'createdAt': '2026-11-06T10:00:00Z',
           'unread': true,
           'actor': {'id': 'b', 'displayName': 'Bia'},
         },
       ], present: present);
-      expect(shown.single, startsWith('Bia quer seguir você.|'));
+      expect(shown.single, startsWith('Bia quer ser seu amigo.|'));
       expect(shown.single, contains('"actorId":"b"'));
     },
   );
@@ -131,7 +131,7 @@ void main() {
           notificationResponseType:
               NotificationResponseType.selectedNotificationAction,
           actionId: action,
-          payload: '{"kind":"follow_request","actorId":"$actor"}',
+          payload: '{"kind":"friend_request","actorId":"$actor"}',
         );
 
     test('Aceitar chama PUT e Recusar chama DELETE', () async {
@@ -144,8 +144,8 @@ void main() {
       NotificationCenter.instance.start(gateway);
       await NotificationCenter.instance.handleResponse(tap('accept', 'bia'));
       await NotificationCenter.instance.handleResponse(tap('decline', 'caio'));
-      expect(calls, contains('PUT /me/follow-requests/bia'));
-      expect(calls, contains('DELETE /me/follow-requests/caio'));
+      expect(calls, contains('PUT /me/friend-requests/bia'));
+      expect(calls, contains('DELETE /me/friend-requests/caio'));
     });
 
     test('toque no corpo do aviso (sem botao) nao decide nada', () async {
@@ -157,7 +157,7 @@ void main() {
       final (gateway, calls) = await signed();
       NotificationCenter.instance.start(gateway);
       await NotificationCenter.instance.handleResponse(tap(null));
-      expect(calls.where((c) => c.contains('follow-requests')), isEmpty);
+      expect(calls.where((c) => c.contains('friend-requests')), isEmpty);
     });
 
     test(
@@ -173,7 +173,7 @@ void main() {
         final (gateway, calls) = await signed();
         NotificationCenter.instance.start(gateway);
         await Future<void>.delayed(const Duration(milliseconds: 50));
-        expect(calls, contains('PUT /me/follow-requests/dora'));
+        expect(calls, contains('PUT /me/friend-requests/dora'));
       },
     );
   });

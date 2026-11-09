@@ -46,3 +46,11 @@ Ambiente Python isolado já utilizado na S01, `/private/tmp/runpass-s01-validati
 ## Aceite humano — 03/11/2026
 
 Aceita pelo usuário como aceite local, com as ressalvas e pendências registradas em `implementation-slices.md` (seção "Aceite humano de S02, S03 e S04"). Integração real permanece na S09.
+
+## Exclusão de conta libera o e-mail na hora (07/11/2026)
+
+Achado em teste humano no DEV: depois de excluir a conta, não era possível criar uma nova com o mesmo e-mail logo em seguida. Causa: `DELETE /me` só agendava a remoção do usuário no Cognito como última etapa do job assíncrono de limpeza (`ErasureProcessor`), que só roda a cada 5 minutos (Lambda de manutenção) e só chega lá depois de apagar todas as linhas de dados da conta no DynamoDB — para uma conta com atividade, isso pode levar mais de um ciclo.
+
+Correção: `IdentityService` recebe um `account_remover` opcional (`CognitoAccountRemover`, já existente e testado); `delete_account` chama `account_remover.delete_owner(subject)` **na própria requisição**, logo após a transação que marca a conta como "deleting", sem esperar o job assíncrono. Falha nessa chamada imediata (rede etc.) não derruba o pedido de exclusão — o job assíncrono continua existindo como rede de segurança e tenta de novo depois. Limpeza dos demais dados (posts, histórico, etc.) continua assíncrona, como já era.
+
+Infra: `ApiFunction` ganhou a variável `RUNPASS_RUNNER_USER_POOL_ID` e a permissão IAM `cognito-idp:AdminDeleteUser` no pool do runner (mesmo padrão já usado pela Lambda de manutenção). Testes novos em `test_identity.py` cobrem a remoção imediata e a tolerância a falha da chamada síncrona. Implantado no DEV em 07/11/2026 (ver `S09-integracao-dev.md`, "Deploy da rodada 6"); ainda sem teste humano confirmando que o e-mail libera na hora.

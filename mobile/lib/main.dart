@@ -2,11 +2,13 @@ import 'dart:typed_data';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'identity_gateway.dart';
 import 'catalog_screen.dart';
 import 'biometrics.dart';
 import 'home_screen.dart';
+import 'location_picker.dart';
 import 'notifications.dart';
 import 'password_policy.dart';
 import 'profile_photo.dart';
@@ -85,6 +87,14 @@ class MainApp extends StatelessWidget {
       theme: runPassTheme(),
       darkTheme: runPassDarkTheme(),
       themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+      // pt_BR para o seletor nativo de data (dia/mes/ano) seguir o formato brasileiro.
+      locale: const Locale('pt', 'BR'),
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('pt', 'BR')],
       home: IdentityScreen(gateway: gateway, photoPicker: photoPicker),
     ),
   );
@@ -98,6 +108,7 @@ enum Step {
   forgot,
   reset,
   profile,
+  location,
   admission,
   photo,
   ready,
@@ -132,6 +143,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
   bool busy = false, adult = false, full = false;
   // Seletor nativo de rolagem (dia/mes/ano), igual ao Instagram; sem campo de texto livre.
   DateTime? birthDate;
+  // Estado e cidade: so por rolagem (lista fechada do IBGE), igual a data de nascimento.
+  String? selectedUf;
+  String? selectedCity;
+  double? selectedLat;
+  double? selectedLon;
   String? message;
   String? displayName;
   // Cadastro novo ainda sem foto: a foto de perfil e obrigatoria antes de entrar.
@@ -204,6 +220,30 @@ class _IdentityScreenState extends State<IdentityScreen> {
   Future<void> status() async {
     final response = await widget.gateway!.request('/beta/status');
     full = response['admissionsOpen'] != true;
+    // Estado/cidade escolhidos no cadastro (Step.location) so podem ser salvos depois da
+    // admissao: PATCH /me exige conta admitida. Enviar aqui, na primeira vez que o status
+    // acusar admissao, cobre tanto o caso comum (admissao imediata) quanto quem ficou na
+    // lista de espera e foi admitido depois, numa checagem de status futura.
+    if (response['myStatus'] == 'admitted' &&
+        selectedUf != null &&
+        selectedCity != null) {
+      final current = await widget.gateway!.request('/me');
+      await widget.gateway!.request(
+        '/me',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': current['version'],
+          ...brLocationPatch(
+            selectedUf!,
+            selectedCity!,
+            selectedLat,
+            selectedLon,
+          ),
+        },
+      );
+      selectedUf = null;
+      selectedCity = null;
+    }
     step = switch (response['myStatus']) {
       'admitted' => Step.ready,
       'waiting' => Step.waiting,
@@ -254,43 +294,198 @@ class _IdentityScreenState extends State<IdentityScreen> {
     ),
   );
 
-  /// Seletor nativo de rolagem (dia/mes/ano), igual ao Instagram: evita erro de formato,
-  /// mas o servidor segue como a unica fonte confiavel da idade (contrato BetaAdmissionInput).
+  static const _monthNames = [
+    'Jan',
+    'Fev',
+    'Mar',
+    'Abr',
+    'Mai',
+    'Jun',
+    'Jul',
+    'Ago',
+    'Set',
+    'Out',
+    'Nov',
+    'Dez',
+  ];
+
+  static int _daysInMonth(int year, int month) =>
+      DateTime(year, month + 1, 0).day;
+
+  /// Tres rolagens independentes (dia, mes e ano), igual ao Instagram: evita erro de
+  /// formato, mas o servidor segue como a unica fonte confiavel da idade (contrato
+  /// BetaAdmissionInput).
   Future<void> pickBirthDate() async {
     final now = DateTime.now();
-    var selected = birthDate ?? DateTime(now.year - 18, now.month, now.day);
-    final confirmed = await showModalBottomSheet<bool>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: SizedBox(
-          height: 300,
-          child: Column(
-            children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  key: const Key('birth-date-done'),
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Concluído'),
-                ),
-              ),
-              Expanded(
-                child: CupertinoDatePicker(
-                  mode: CupertinoDatePickerMode.date,
-                  initialDateTime: selected,
-                  minimumYear: now.year - 100,
-                  maximumDate: now,
-                  onDateTimeChanged: (value) => selected = value,
-                ),
-              ),
-            ],
+    final initial = birthDate ?? DateTime(now.year - 13, now.month, now.day);
+    var day = initial.day;
+    var month = initial.month;
+    var year = initial.year;
+    final minYear = now.year - 100;
+    final maxYear = now.year;
+
+    final dayController = FixedExtentScrollController(initialItem: day - 1);
+    final monthController = FixedExtentScrollController(initialItem: month - 1);
+    final yearController = FixedExtentScrollController(
+      initialItem: maxYear - year,
+    );
+
+    Widget wheelColumn({
+      required String label,
+      required FixedExtentScrollController controller,
+      required int itemCount,
+      required String Function(int index) text,
+      required ValueChanged<int> onChanged,
+    }) => Expanded(
+      child: Column(
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+              color: context.muted,
+            ),
           ),
-        ),
+          const SizedBox(height: 6),
+          Expanded(
+            child: CupertinoPicker(
+              scrollController: controller,
+              itemExtent: 40,
+              onSelectedItemChanged: onChanged,
+              selectionOverlay: Container(
+                decoration: BoxDecoration(
+                  color: runPassOrange.withValues(alpha: .08),
+                  border: const Border.symmetric(
+                    horizontal: BorderSide(color: runPassOrange, width: 1.2),
+                  ),
+                ),
+              ),
+              children: List.generate(
+                itemCount,
+                (i) => Center(
+                  child: Text(
+                    text(i),
+                    style: TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w600,
+                      color: context.isDark ? Colors.white : runPassNavy,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
+
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          void clampDay() {
+            final maxDay = _daysInMonth(year, month);
+            if (day > maxDay) {
+              day = maxDay;
+              dayController.jumpToItem(day - 1);
+            }
+          }
+
+          return SafeArea(
+            top: false,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Theme.of(sheetContext).scaffoldBackgroundColor,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
+              ),
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: sheetContext.track,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Data de nascimento',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                          color: sheetContext.isDark
+                              ? Colors.white
+                              : runPassNavy,
+                        ),
+                      ),
+                      TextButton(
+                        key: const Key('birth-date-done'),
+                        onPressed: () => Navigator.pop(sheetContext, true),
+                        child: const Text('Concluído'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    height: 210,
+                    child: Row(
+                      children: [
+                        wheelColumn(
+                          label: 'Dia',
+                          controller: dayController,
+                          itemCount: _daysInMonth(year, month),
+                          text: (i) => '${i + 1}'.padLeft(2, '0'),
+                          onChanged: (i) => day = i + 1,
+                        ),
+                        wheelColumn(
+                          label: 'Mês',
+                          controller: monthController,
+                          itemCount: 12,
+                          text: (i) => _monthNames[i],
+                          onChanged: (i) => setSheetState(() {
+                            month = i + 1;
+                            clampDay();
+                          }),
+                        ),
+                        wheelColumn(
+                          label: 'Ano',
+                          controller: yearController,
+                          itemCount: maxYear - minYear + 1,
+                          text: (i) => '${maxYear - i}',
+                          onChanged: (i) => setSheetState(() {
+                            year = maxYear - i;
+                            clampDay();
+                          }),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    dayController.dispose();
+    monthController.dispose();
+    yearController.dispose();
     if (confirmed == true && mounted) {
+      final chosen = DateTime(year, month, day);
       setState(() {
-        birthDate = selected;
+        birthDate = chosen.isAfter(now) ? now : chosen;
         message = null;
       });
     }
@@ -357,7 +552,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
           'Use pelo menos $minimumPasswordLength caracteres.',
         'CodeMismatchException' || 'ExpiredCodeException' =>
           'Confira o código recebido ou solicite outro.',
-        'NOT_ELIGIBLE' => 'O período de avaliação é destinado a pessoas com 18 anos completos ou mais.',
+        'NOT_ELIGIBLE' => 'O período de avaliação é destinado a pessoas com 13 anos completos ou mais.',
         'BETA_FULL' => 'As vagas do período de avaliação foram preenchidas. Você pode entrar na lista de espera.',
         'IMAGE_TYPE_INVALID' ||
         'IMAGE_NOT_VALID' ||
@@ -438,6 +633,13 @@ class _IdentityScreenState extends State<IdentityScreen> {
         );
         displayName = profile['displayName'] as String?;
         needsPhoto = true;
+        step = Step.location;
+      case Step.location:
+        if (selectedUf == null || selectedCity == null) {
+          message = 'Selecione seu estado e cidade.';
+          return;
+        }
+        // So fica guardado aqui; o envio ao servidor espera a admissao (ver status()).
         await status();
       case Step.photo:
         final photo = chosenPhoto;
@@ -465,7 +667,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
           return;
         }
         if (!adult) {
-          message = 'Confirme que tem 18 anos completos ou mais.';
+          message = 'Confirme que tem 13 anos completos ou mais.';
           return;
         }
         await gateway.request(
@@ -527,8 +729,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.forgot => 'Recupere sua senha',
       Step.reset => 'Defina uma nova senha',
       Step.profile => 'Seu perfil de corredor',
-      Step.admission =>
-        full ? 'Lista de espera' : 'Participe do período de avaliação',
+      Step.location => 'De onde você é?',
+      Step.admission => full ? 'Lista de espera' : 'Qual a sua idade?',
       Step.photo => 'Sua foto de perfil',
       Step.ready => 'Entrando, ${displayName ?? 'corredor'}…',
       Step.waiting => 'Você está na lista de espera',
@@ -653,12 +855,48 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   : 'Use de 3 a 30 letras sem acento, números ou _.',
                             ),
                           ],
-                          if (step == Step.admission) ...[
-                            Text(
-                              full
-                                  ? 'A lista de espera não garante vaga ou posição.'
-                                  : 'Período de avaliação gratuito para maiores de 18 anos.',
+                          if (step == Step.location) ...[
+                            const Text(
+                              'Ajuda a conectar você com corredores perto de você.',
                             ),
+                            const SizedBox(height: 12),
+                            InkWell(
+                              key: const Key('location-field'),
+                              onTap: busy
+                                  ? null
+                                  : () async {
+                                      final picked = await pickBrLocation(
+                                        context,
+                                        initialUf: selectedUf,
+                                        initialCity: selectedCity,
+                                      );
+                                      if (picked != null && mounted) {
+                                        setState(() {
+                                          selectedUf = picked.$1;
+                                          selectedCity = picked.$2;
+                                          selectedLat = picked.$3;
+                                          selectedLon = picked.$4;
+                                          message = null;
+                                        });
+                                      }
+                                    },
+                              child: InputDecorator(
+                                decoration: const InputDecoration(
+                                  labelText: 'Estado e cidade',
+                                ),
+                                child: Text(
+                                  selectedUf == null || selectedCity == null
+                                      ? 'Selecionar estado e cidade'
+                                      : '$selectedUf - $selectedCity',
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (step == Step.admission) ...[
+                            if (full)
+                              const Text(
+                                'A lista de espera não garante vaga ou posição.',
+                              ),
                             Padding(
                               padding: const EdgeInsets.only(bottom: 12),
                               child: InkWell(
@@ -679,10 +917,43 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             if (birthDate != null)
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 12),
-                                child: Text(
-                                  '${ageInYears(birthDate!)} anos',
-                                  style: Theme.of(context).textTheme.bodyMedium
-                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: context.softFill,
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.baseline,
+                                    textBaseline: TextBaseline.alphabetic,
+                                    children: [
+                                      Text(
+                                        '${ageInYears(birthDate!)}',
+                                        style: TextStyle(
+                                          fontSize: 34,
+                                          fontWeight: FontWeight.w800,
+                                          height: 1,
+                                          color: runPassOrange,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'anos',
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                          color: context.isDark
+                                              ? Colors.white
+                                              : runPassNavy,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             // Visivel so para o proprio titular (perfil); nunca publica.
@@ -696,7 +967,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   : (value) =>
                                         setState(() => adult = value ?? false),
                               title: const Text(
-                                'Declaro ter 18 anos completos ou mais.',
+                                'Declaro ter 13 anos completos ou mais.',
                               ),
                             ),
                           ],
@@ -763,7 +1034,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     : step == Step.admission && full
                                     ? 'Entrar na lista de espera'
                                     : step == Step.signIn
-                                    ? 'Entrar no RunPass'
+                                    ? 'Entrar'
                                     : 'Continuar',
                               ),
                             ),

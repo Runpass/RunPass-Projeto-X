@@ -44,7 +44,7 @@ O usuário deverá conseguir criar conta e perfil, encontrar uma edição, decla
 
 Persona de referência do PRD inicial: corredor recreativo de 25 a 45 anos, com 4 a 12 provas por ano, principalmente de 5 km, 10 km e 21 km, que valoriza conquistas e pesquisa eventos. Essas características orientam recrutamento e descoberta; não são restrições de elegibilidade.
 
-O beta será gratuito e destinado a maiores de 18 anos, com instalação pelas lojas oficiais e admissão dos primeiros 1.000 usuários elegíveis. Após atingir o teto, oferecer lista de espera dentro do aplicativo, sem acesso automático ao beta. Essa revisão substitui o acesso por convite. A forma de verificar a elegibilidade será especificada antes da abertura.
+O beta será gratuito e destinado a maiores de 13 anos (revisão explícita de 07/11/2026, alinhada à prática do Instagram), com instalação pelas lojas oficiais e admissão dos primeiros 1.000 usuários elegíveis. Após atingir o teto, oferecer lista de espera dentro do aplicativo, sem acesso automático ao beta. Essa revisão substitui o acesso por convite. A forma de verificar a elegibilidade será especificada antes da abertura.
 
 ## 4. Conceitos e regras centrais
 
@@ -193,8 +193,11 @@ Salvar e remover edições futuras por “Quero correr”, exibindo prova, cidad
 
 - Feed no MVP, voltado à conclusão de corridas e imagens de medalhas.
 - Publicação visível por padrão, com opção de ocultar durante o registro ou após a publicação. Ocultar o post não exclui a participação. Não gerar posts independentes de medalha ou marcos automaticamente.
-- O usuário poderá visualizar publicações de outros usuários, sem depender de seguir alguém ou ter edições em comum. O feed inicial pode apresentar conquistas recentes de corridas de São Paulo capital.
-- Ao seguir um corredor, suas publicações passam a ter prioridade na ordenação. A relação relevante é quem o usuário segue, não quem o segue. Seguir não restringe o acesso às demais publicações públicas.
+- O usuário poderá visualizar publicações de outros usuários, sem depender de seguir alguém ou ter edições em comum, desde que o autor tenha perfil público. O feed inicial pode apresentar conquistas recentes de corridas de São Paulo capital.
+- Decisão de produto de 07/11/2026: dois vínculos sociais distintos. Seguir (`follow`) é unidirecional e sempre imediato (mesmo para perfil privado); alimenta o filtro "Seguindo". Amizade (`friend`) é bidirecional, com pedido e aprovação explícita; alimenta o filtro "Amigos".
+- Decisão de produto de 08/11/2026: a tela Início oferece quatro recortes do feed, recência dentro de cada um: "Todos" (padrão; qualquer autor com conta ativa, inclui as minhas publicações), "Amigos" (ex-"Amigos", agora corrigido: nunca mostra as minhas; sem nenhum amigo aceito, convida a buscar pessoas em vez do aviso genérico), "Seguindo" (ex-"Minha rede", renomeado; nunca mostra as minhas; mesmo convite quando vazio) e "Minha Cidade" (ex-"São Paulo"; recorta "Todos" pela cidade/estado do perfil do usuário, pedindo esse cadastro uma única vez se faltar). Estado e cidade vêm de lista fechada do IBGE, por rolagem, sem digitação; coletados num passo dedicado no cadastro de novos usuários e editáveis a qualquer momento em "Editar perfil".
+- Decisão de produto de 08/11/2026: "Minha Cidade" prioriza publicações da mesma cidade; sem nenhuma, passa a considerar cidades vizinhas num raio de 50 km (centroide a centroide, dataset público derivado do IBGE). Perfil passa a guardar também a latitude/longitude da cidade escolhida, só para esse cálculo.
+- Decisão de produto de 08/11/2026 (substitui a de 07/11/2026 sobre o que fica restrito): publicações, curtidas, comentários, fotos de post, avatar, banner e as contagens de seguidores/seguindo são **sempre públicos**, perfil privado ou não, nos três recortes do feed. Perfil privado restringe só o **resumo consolidado de corridas** (contagem de participações e a lista de corridas concluídas) na tela de perfil, liberado apenas para quem é amigo aceito (ou o próprio dono) — seguir sozinho não libera esse resumo.
 - Edições concluídas ou salvas podem orientar relevância, mas não limitam todo o conteúdo disponível.
 - Curtidas e comentários nas publicações.
 - Editar participação atualiza o post existente sem duplicação, preservando curtidas e comentários.
@@ -296,9 +299,9 @@ Métricas secundárias: aquisição, ativação, abandono da avaliação, regist
 
 ## 19. Beta e critérios de sucesso
 
-- Elegibilidade etária confirmada na revisão técnica: 18 anos completos ou mais durante o beta, por autodeclaração com preenchimento da data de nascimento. Validar idade no cadastro e manter a data privada, sem exposição no perfil público. Não foi definida exigência de documento. A idade mínima poderá ser redefinida em evolução futura, mediante revisão explícita.
+- Elegibilidade etária confirmada na revisão técnica: 13 anos completos ou mais durante o beta (redefinido em 07/11/2026, revisão explícita, alinhado à prática do Instagram), por autodeclaração com preenchimento da data de nascimento. Validar idade no cadastro e manter a data privada, sem exposição no perfil público. Não foi definida exigência de documento.
 
-- Beta gratuito para os primeiros usuários elegíveis maiores de 18 anos que se cadastrarem pelo aplicativo instalado nas lojas oficiais, sem convite. Meta de recrutamento e limite máximo: 1.000 usuários durante todo o período. Ao atingir o teto, oferecer lista de espera dentro do app; seus integrantes não contam como admitidos nem recebem acesso automático. Exclusões não liberam novas vagas automaticamente.
+- Beta gratuito para os primeiros usuários elegíveis maiores de 13 anos que se cadastrarem pelo aplicativo instalado nas lojas oficiais, sem convite. Meta de recrutamento e limite máximo: 1.000 usuários durante todo o período. Ao atingir o teto, oferecer lista de espera dentro do app; seus integrantes não contam como admitidos nem recebem acesso automático. Exclusões não liberam novas vagas automaticamente.
 - Avaliação por 60 dias a partir da entrada dos primeiros 50 usuários; registrar esse marco como início da janela. A data final não será adiada até completar 1.000.
 - O foco do beta será medir adesão ao aplicativo, interações, disponibilidade durante o uso e feedbacks dos usuários.
 - Registrar data de entrada e tempo de exposição de cada participante, separando recrutamento de uso. O denominador da ativação será o total de usuários únicos efetivamente admitidos no beta até o encerramento dos 60 dias, incluindo os primeiros 50 que iniciam a janela, e não a meta fixa de 1.000. Convites sem adesão não contam como usuários admitidos. Apresentar recrutamento separadamente.
@@ -324,7 +327,7 @@ O cumprimento das metas apoia a avaliação humana do valor do MVP; não represe
 
 ### P0 — MVP
 
-- Conta, autenticação, admissão dos primeiros 1.000 usuários elegíveis maiores de 18 anos e lista de espera no aplicativo após atingir o teto.
+- Conta, autenticação, admissão dos primeiros 1.000 usuários elegíveis maiores de 13 anos e lista de espera no aplicativo após atingir o teto.
 - Perfil público, busca de corredores e seguir perfis.
 - Catálogo, busca, detalhes por edição e wishlist.
 - Solicitação de prova, revisão humana, rascunhos e comunicação do resultado.
@@ -354,7 +357,7 @@ Não há ordem pós-MVP aprovada. Site, integrações, recursos sociais adiciona
 7. Omitir publicação mantém participação e medalha no perfil, mas não cria post no feed.
 8. Atualizar participação não duplica post e preserva interações; excluí-la remove vínculos e atualiza agregados.
 9. Ocultar tempo também oculta pace em todas as superfícies controladas pelo produto; colocação segue a escolha por participação.
-10. Feed permite publicações públicas de outros corredores, prioriza quem o usuário segue sem restringir o conteúdo às edições em comum e respeita ocultações, bloqueios e moderação.
+10. Feed permite publicações de qualquer corredor, perfil privado ou não (filtro "Todos", sem restringir às edições em comum) e oferece "Amigos"/"Minha rede" como recortes por amizade/seguir; perfil privado só restringe o resumo de corridas na tela de perfil; respeita ocultações, bloqueios e moderação.
 11. Links abrem no app ou direcionam à loja, conforme validação técnica do mecanismo.
 12. Analytics permite calcular as três metas do beta sem contar rascunhos ou duplicar usuários.
 13. Avaliação invalidada pela moderação sai da exibição pública e do RunScore sem excluir participação, medalha ou publicação; só retorna após revisão da correção.

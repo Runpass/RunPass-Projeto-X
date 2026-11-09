@@ -1,10 +1,14 @@
-"""Friends: profile search, follow (immediate for public profiles, approval for private ones),
-feed of completed races and comments.
+"""Friends: profile search, follow (unidirectional, always immediate), friend requests
+(bidirectional, require approval), feed of completed races and comments.
 
-Visibility rule used everywhere: a profile is public unless its owner turned `isPrivate` on; a
-private profile is seen in full only by its owner and by accepted followers. Rows that belong to
-an account but live in a shared partition (follower side, comments, search index) are listed in
-a `sharedKeys` pointer in the owner's partition so account erasure removes them too.
+Visibility rule (decision of 08/11/2026): publications (posts, likes, comments, post photos,
+avatar, banner) and follower/following counts are always public, `isPrivate` or not. A private
+profile only restricts its consolidated race summary — participation count and the list of
+completed races — to its owner and accepted friends; following alone never unlocks it. See
+`can_view` (restricted summary) vs. `_author_active` (everything else). Rows that belong to an
+account but live in a shared partition (follower/friend side, comments, search index, the
+global public-feed pointer) are listed in a `sharedKeys` pointer in the owner's partition so
+account erasure removes them too.
 """
 
 import base64
@@ -53,23 +57,53 @@ class SocialService:
         row = read(("identity", "USER#" + target, "FOLLOWER#" + viewer))
         return row["state"] if row else "none"
 
+    def _friend_row(self, read, viewer, target):
+        return read(("identity", "USER#" + viewer, "FRIEND#" + target))
+
+    def _friend_state(self, read, viewer, target):
+        """none | pending_out | pending_in | friends | self, from `viewer`'s point of view."""
+        if viewer == target:
+            return "self"
+        row = self._friend_row(read, viewer, target)
+        if not row:
+            return "none"
+        if row["state"] == "active":
+            return "friends"
+        return "pending_out" if row.get("requestedBy") == viewer else "pending_in"
+
+    def _author_active(self, read, author):
+        """Whether `author` has an active, admitted account — the only gate on publications
+        (feed posts, likes, comments, post photos, avatar, banner): these are always public,
+        decisão de produto de 08/11/2026, independente de `isPrivate`."""
+        return bool(self._active_profile(read, author))
+
     def can_view(self, read, viewer, author):
-        """Whether `viewer` may see the posts, photos and counts of `author`."""
+        """Whether `viewer` may see `author`'s consolidated race summary (participation count
+        and the list of completed races) on the profile screen.
+
+        A public profile is open to anyone admitted. A private profile opens this summary only
+        to its owner and to accepted friends (not mere followers: following never grants
+        access). Posts, likes, comments, photos, avatar, banner and the follower/following
+        counts are never gated by this — see `_author_active`.
+        """
         profile = self._active_profile(read, author)
         if not profile:
             return False
         if viewer == author or not profile.get("isPrivate", False):
             return True
-        return self._follow_state(read, viewer, author) == "active"
+        row = self._friend_row(read, viewer, author)
+        return bool(row and row["state"] == "active")
 
     def may_view_photo(self, read, actor, owner, part):
-        """Photo rule for UploadService: owner always; others only for published, visible posts."""
+        """Photo rule for UploadService: owner always; others for any published post of an
+        active account (publications are always public)."""
         if owner == actor.subject:
             return True
-        return bool(part.get("publishToFeed")) and self.can_view(read, actor.subject, owner)
+        return bool(part.get("publishToFeed")) and self._author_active(read, owner)
 
     def may_view_profile_photo(self, read, actor, owner):
-        return owner == actor.subject or self.can_view(read, actor.subject, owner)
+        """Avatar and banner are always public for an active account (same rule as posts)."""
+        return owner == actor.subject or self._author_active(read, owner)
 
     def _list(self, table, pk, prefix, limit=1000):
         rows, after = [], None
@@ -93,6 +127,7 @@ class SocialService:
         card = IdentityService.public_profile(profile)
         card["isPrivate"] = bool(profile.get("isPrivate", False))
         card["followState"] = self._follow_state(self.store.get, viewer, profile["id"])
+        card["friendState"] = self._friend_state(self.store.get, viewer, profile["id"])
         return card
 
     # ---- search and profiles -------------------------------------------------------------
@@ -126,20 +161,73 @@ class SocialService:
         if not profile:
             raise Problem(404, "PROFILE_NOT_FOUND")
         card = self._card(profile, actor.subject)
+        # Seguidores/seguindo sao sempre publicos (decisao de produto de 08/11/2026); so o
+        # resumo de corridas (contagem e lista) fica atras de canView.
+        card["followersCount"] = sum(
+            1
+            for _, row in self._list("identity", "USER#" + subject, "FOLLOWER#")
+            if row["state"] == "active"
+        )
+        card["followingCount"] = sum(
+            1
+            for _, row in self._list("identity", "USER#" + subject, "FOLLOWING#")
+            if row["state"] == "active"
+        )
+        card["friendsCount"] = len(self._friend_ids(subject))
         card["canView"] = self.can_view(self.store.get, actor.subject, subject)
         if card["canView"]:
-            card["followersCount"] = sum(
-                1
-                for _, row in self._list("identity", "USER#" + subject, "FOLLOWER#")
-                if row["state"] == "active"
-            )
-            card["followingCount"] = sum(
-                1
-                for _, row in self._list("identity", "USER#" + subject, "FOLLOWING#")
-                if row["state"] == "active"
-            )
             card["participationCount"] = len(self._completed(subject))
         return card
+
+    def _relation_subjects(self, subject, prefix, state="active"):
+        """Ids under `prefix` (FOLLOWER#/FOLLOWING#/FRIEND#) in `state`, sorted for stable
+        pagination (cursor is just the last id returned, not a ciphered token: this data is
+        always public, same as the counts)."""
+        return sorted(
+            sk.split("#", 1)[1]
+            for sk, row in self._list("identity", "USER#" + subject, prefix)
+            if row["state"] == state
+        )
+
+    def _relation_page(self, actor, ids, limit, cursor):
+        after = next((i for i, v in enumerate(ids) if v == cursor), -1) + 1 if cursor else 0
+        page = ids[after : after + limit]
+        items = []
+        for target in page:
+            profile = self._active_profile(self.store.get, target)
+            if profile:
+                items.append(self._card(profile, actor.subject))
+        result = {"items": items}
+        if after + limit < len(ids):
+            result["nextCursor"] = page[-1]
+        return result
+
+    def list_followers(self, actor, subject, limit=20, cursor=None):
+        """Quem segue `subject`. Sempre publico, como o contador (decisao de 08/11/2026)."""
+        self.identity.authorize(actor, admitted=True)
+        if not self._active_profile(self.store.get, subject):
+            raise Problem(404, "PROFILE_NOT_FOUND")
+        return self._relation_page(
+            actor, self._relation_subjects(subject, "FOLLOWER#"), limit, cursor
+        )
+
+    def list_following(self, actor, subject, limit=20, cursor=None):
+        """Quem `subject` segue. Sempre publico, como o contador (decisao de 08/11/2026)."""
+        self.identity.authorize(actor, admitted=True)
+        if not self._active_profile(self.store.get, subject):
+            raise Problem(404, "PROFILE_NOT_FOUND")
+        return self._relation_page(
+            actor, self._relation_subjects(subject, "FOLLOWING#"), limit, cursor
+        )
+
+    def list_friends(self, actor, subject, limit=20, cursor=None):
+        """Amigos aceitos de `subject`. Sempre publico, como o contador (decisao de 08/11/2026)."""
+        self.identity.authorize(actor, admitted=True)
+        if not self._active_profile(self.store.get, subject):
+            raise Problem(404, "PROFILE_NOT_FOUND")
+        return self._relation_page(
+            actor, self._relation_subjects(subject, "FRIEND#"), limit, cursor
+        )
 
     def public_participations(self, actor, subject, limit=20, cursor=None):
         self.identity.authorize(actor, admitted=True)
@@ -172,7 +260,7 @@ class SocialService:
             item["placement"] = part["placement"]
         return item
 
-    # ---- follow --------------------------------------------------------------------------
+    # ---- follow (unidirecional, sempre imediato, sem aprovação) --------------------------
 
     @staticmethod
     def _relation(target, state):
@@ -195,11 +283,10 @@ class SocialService:
                 self._list("identity", "USER#" + actor.subject, "FOLLOWING#", MAX_FOLLOWING)
             ) >= (MAX_FOLLOWING):
                 raise Problem(409, "FOLLOW_LIMIT_REACHED")
-            state = "pending" if profile.get("isPrivate", False) else "active"
             at = stamp(now)
-            write(mine, {"state": state, "at": at, "sharedKeys": [list(theirs)]})
-            write(theirs, {"state": state, "at": at, "sharedKeys": [list(mine)]})
-            return self._relation(target, state), {}
+            write(mine, {"state": "active", "at": at, "sharedKeys": [list(theirs)]})
+            write(theirs, {"state": "active", "at": at, "sharedKeys": [list(mine)]})
+            return self._relation(target, "active"), {}
 
         return self.identity.transact(actor, "putFollow", key, {"id": target}, work, admitted=True)
 
@@ -217,11 +304,82 @@ class SocialService:
             actor, "deleteFollow", key, {"id": target}, work, admitted=True
         )
 
-    def requests(self, actor):
+    # ---- friend (bidirecional, com pedido e aprovação) ------------------------------------
+
+    @staticmethod
+    def _friend_relation(target, state):
+        return {"profileId": target, "state": state}
+
+    def add_friend(self, actor, target, key):
+        if target == actor.subject:
+            raise Problem(422, "CANNOT_FRIEND_SELF")
+
+        def work(read, write, account, now, replay):
+            profile = self._active_profile(read, target)
+            if not profile:
+                raise Problem(404, "PROFILE_NOT_FOUND")
+            mine = ("identity", "USER#" + actor.subject, "FRIEND#" + target)
+            theirs = ("identity", "USER#" + target, "FRIEND#" + actor.subject)
+            existing = read(mine)
+            if existing:
+                if existing["state"] == "active":
+                    return self._friend_relation(target, "friends"), {}
+                if existing.get("requestedBy") == actor.subject:
+                    return self._friend_relation(target, "pending_out"), {}
+                # O outro já tinha me pedido amizade: aceitar direto em vez de duplicar o pedido.
+                other = read(theirs)
+                if not other:
+                    raise Problem(503, "FRIEND_INTEGRITY_FAILURE")
+                write(mine, {**existing, "state": "active"})
+                write(theirs, {**other, "state": "active"})
+                return self._friend_relation(target, "friends"), {}
+            at = stamp(now)
+            write(
+                mine,
+                {
+                    "state": "pending",
+                    "requestedBy": actor.subject,
+                    "at": at,
+                    "sharedKeys": [list(theirs)],
+                },
+            )
+            write(
+                theirs,
+                {
+                    "state": "pending",
+                    "requestedBy": actor.subject,
+                    "at": at,
+                    "sharedKeys": [list(mine)],
+                },
+            )
+            return self._friend_relation(target, "pending_out"), {}
+
+        return self.identity.transact(
+            actor, "putFriendRequest", key, {"id": target}, work, admitted=True
+        )
+
+    def remove_friend(self, actor, target, key):
+        """Cancela um pedido enviado ou desfaz uma amizade existente."""
+
+        def work(read, write, account, now, replay):
+            mine = ("identity", "USER#" + actor.subject, "FRIEND#" + target)
+            theirs = ("identity", "USER#" + target, "FRIEND#" + actor.subject)
+            if read(mine):
+                write(mine, None)
+            if read(theirs):
+                write(theirs, None)
+            return self._friend_relation(target, "none"), {}
+
+        return self.identity.transact(
+            actor, "deleteFriend", key, {"id": target}, work, admitted=True
+        )
+
+    def friend_requests(self, actor):
+        """Pedidos de amizade recebidos, ainda não respondidos."""
         self.identity.authorize(actor, admitted=True)
         items = []
-        for sk, row in self._list("identity", "USER#" + actor.subject, "FOLLOWER#"):
-            if row["state"] != "pending":
+        for sk, row in self._list("identity", "USER#" + actor.subject, "FRIEND#"):
+            if row["state"] != "pending" or row.get("requestedBy") == actor.subject:
                 continue
             profile = self._active_profile(self.store.get, sk.split("#", 1)[1])
             if profile:
@@ -231,29 +389,28 @@ class SocialService:
         items.sort(key=lambda i: i["requestedAt"])
         return {"items": items}
 
-    def decide(self, actor, requester, approve, key):
+    def decide_friend(self, actor, requester, approve, key):
         def work(read, write, account, now, replay):
-            theirs = ("identity", "USER#" + requester, "FOLLOWING#" + actor.subject)
-            mine = ("identity", "USER#" + actor.subject, "FOLLOWER#" + requester)
+            theirs = ("identity", "USER#" + requester, "FRIEND#" + actor.subject)
+            mine = ("identity", "USER#" + actor.subject, "FRIEND#" + requester)
             row = read(mine)
-            if not row:
-                raise Problem(404, "FOLLOW_REQUEST_NOT_FOUND")
+            if not row or row["state"] != "pending" or row.get("requestedBy") != requester:
+                raise Problem(404, "FRIEND_REQUEST_NOT_FOUND")
             if approve:
-                if row["state"] == "pending":
-                    other = read(theirs)
-                    if not other:
-                        raise Problem(503, "FOLLOW_INTEGRITY_FAILURE")
-                    write(mine, {**row, "state": "active"})
-                    write(theirs, {**other, "state": "active"})
-                return self._relation(requester, "active"), {}
+                other = read(theirs)
+                if not other:
+                    raise Problem(503, "FRIEND_INTEGRITY_FAILURE")
+                write(mine, {**row, "state": "active"})
+                write(theirs, {**other, "state": "active"})
+                return self._friend_relation(requester, "friends"), {}
             write(mine, None)
             if read(theirs):
                 write(theirs, None)
-            return self._relation(requester, "none"), {}
+            return self._friend_relation(requester, "none"), {}
 
         return self.identity.transact(
             actor,
-            "approveFollow" if approve else "declineFollow",
+            "approveFriend" if approve else "declineFriend",
             key,
             {"id": requester},
             work,
@@ -290,6 +447,8 @@ class SocialService:
         return post
 
     def _authorized_post(self, read, viewer, post_id):
+        """`viewer` is kept in the signature even though posts are always public (same shape
+        as before, and the parameter documents intent at call sites)."""
         owner = read(("history", "PARTICIPATION#" + post_id, "OWNER"))
         if not owner:
             raise Problem(404, "POST_NOT_FOUND")
@@ -298,7 +457,7 @@ class SocialService:
             not part
             or part.get("state") != "completed"
             or not part.get("publishToFeed")
-            or not self.can_view(read, viewer, owner["owner"])
+            or not self._author_active(read, owner["owner"])
         ):
             raise Problem(404, "POST_NOT_FOUND")
         return {**part, "owner": owner["owner"]}
@@ -309,15 +468,23 @@ class SocialService:
             self._authorized_post(self.store.get, actor.subject, post_id), actor.subject
         )
 
-    def _feed_posts(self, actor, after=None, mine=True):
-        authors = ([actor.subject] if mine else []) + [
+    def _friend_ids(self, subject):
+        return [
             sk.split("#", 1)[1]
-            for sk, row in self._list("identity", "USER#" + actor.subject, "FOLLOWING#")
+            for sk, row in self._list("identity", "USER#" + subject, "FRIEND#")
             if row["state"] == "active"
-        ][: MAX_FEED_AUTHORS - 1]
+        ]
+
+    def _friends_of(self, actor):
+        return self._friend_ids(actor.subject)
+
+    def _authors_feed(self, actor, after, authors):
+        """Posts publicados pelos `authors` indicados (decisão de 08/11/2026: não inclui o
+        próprio ator — "Amigos" e "Seguindo" mostram só quem está na lista; as minhas
+        publicações aparecem em "Todos")."""
         posts = []
-        for author in authors:
-            if not self.can_view(self.store.get, actor.subject, author):
+        for author in authors[:MAX_FEED_AUTHORS]:
+            if not self._author_active(self.store.get, author):
                 continue
             for part in self._completed(author):
                 if part.get("publishToFeed"):
@@ -327,10 +494,52 @@ class SocialService:
         posts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
         return posts
 
-    def feed(self, actor, limit=20, cursor=None):
-        """My posts plus those of people I follow, newest first."""
+    PUBLIC_FEED_SCAN = 2000
+
+    def _public_feed(self, actor, after, limit):
+        """Publicações de qualquer autor com conta ativa, mais recentes primeiro — posts são
+        sempre públicos, perfil privado ou não (decisão de produto de 08/11/2026). Usa o
+        ponteiro global `FEED#PUBLIC` (sem Scan: é uma Query por PK fixa); a conta do autor é
+        sempre reconferida na leitura, então uma conta apagada some do feed de todo mundo.
+        Como `_completed`, assume volume pequeno de publicações na beta (sem paginação reversa
+        no Store); crescer além disso pede um índice por tempo de verdade."""
+        posts, seen_owners = [], {}
+        for _, pointer in self._list("history", "FEED#PUBLIC", "T#", self.PUBLIC_FEED_SCAN):
+            key = (pointer.get("completedAt", ""), pointer["id"])
+            if after is not None and key >= tuple(after):
+                continue
+            owner = pointer["owner"]
+            if owner not in seen_owners:
+                seen_owners[owner] = self._author_active(self.store.get, owner)
+            if not seen_owners[owner]:
+                continue
+            part = self.store.get(("history", "USER#" + owner, "P#" + pointer["id"] + "#PART"))
+            if part and part.get("state") == "completed" and part.get("publishToFeed"):
+                posts.append({**part, "owner": owner})
+        posts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
+        return posts
+
+    def feed(self, actor, limit=20, cursor=None, scope="all"):
+        """Feed de publicações, mais recentes primeiro.
+
+        `scope`: "all" (padrão) traz publicações de qualquer autor com conta ativa — posts são
+        sempre públicos, perfil privado ou não; "friends" só de amigos aceitos; "network" só de
+        quem eu sigo (nos três casos, as publicações em si nunca ficam restritas por privacidade;
+        só o resumo de corridas na tela de perfil fica, ver `can_view`).
+        """
         self.identity.authorize(actor, admitted=True)
-        posts = self._feed_posts(actor, _cursor_decode(cursor) if cursor else None)
+        after = _cursor_decode(cursor) if cursor else None
+        if scope == "friends":
+            posts = self._authors_feed(actor, after, self._friends_of(actor))
+        elif scope == "network":
+            following = [
+                sk.split("#", 1)[1]
+                for sk, row in self._list("identity", "USER#" + actor.subject, "FOLLOWING#")
+                if row["state"] == "active"
+            ]
+            posts = self._authors_feed(actor, after, following)
+        else:
+            posts = self._public_feed(actor, after, limit)
         page = posts[:limit]
         result = {"items": [self._post_view(p, actor.subject) for p in page]}
         if len(posts) > limit:
@@ -468,9 +677,12 @@ class SocialService:
             items.append(item)
 
         for sk, row in self._list("identity", "USER#" + me, "FOLLOWER#"):
+            add("follow", row["at"], sk.split("#", 1)[1])
+        for sk, row in self._list("identity", "USER#" + me, "FRIEND#"):
             who = sk.split("#", 1)[1]
-            pending = row["state"] == "pending"
-            add("follow_request" if pending else "follow", row["at"], who, pinned=pending)
+            pending = row["state"] == "pending" and row.get("requestedBy") != me
+            if row["state"] == "active" or pending:
+                add("friend_request" if pending else "friend", row["at"], who, pinned=pending)
         mine = [p for p in self._completed(me) if p.get("publishToFeed")]
         for part in mine[: self.NOTIFICATION_POSTS]:
             for sk, row in self._like_rows(part["id"]):
@@ -486,13 +698,19 @@ class SocialService:
                         {"text": row["text"][:140]},
                     )
         self._comment_notifications(actor, add)
-        for part in self._feed_posts(actor, mine=False)[: self.NOTIFICATION_POSTS]:
-            add("post", part.get("completedAt", ""), part["owner"], part)
-        # Pedidos para seguir sempre primeiro (e nunca saem por idade ou limite); o resto, novo primeiro.
+        following = [
+            sk.split("#", 1)[1]
+            for sk, row in self._list("identity", "USER#" + me, "FOLLOWING#")
+            if row["state"] == "active"
+        ]
+        for part in self._authors_feed(actor, None, following)[: self.NOTIFICATION_POSTS]:
+            if part["owner"] != me:
+                add("post", part.get("completedAt", ""), part["owner"], part)
+        # Pedidos de amizade sempre primeiro (e nunca saem por idade ou limite); o resto, novo primeiro.
         items = [i for i in items if i["id"] not in dismissed]
         items.sort(key=lambda i: i["createdAt"], reverse=True)
-        requests = [i for i in items if i["kind"] == "follow_request"]
-        others = [i for i in items if i["kind"] != "follow_request"]
+        requests = [i for i in items if i["kind"] == "friend_request"]
+        others = [i for i in items if i["kind"] != "friend_request"]
         return requests + others[: self.NOTIFICATION_LIMIT]
 
     def _comment_notifications(self, actor, add):
@@ -552,8 +770,8 @@ class SocialService:
     MAX_REPLIES = 20
 
     def dismiss_notification(self, actor, notification_id, key):
-        """Apagar um aviso (deslizar na tela). Pedidos para seguir se resolvem aceitando ou recusando."""
-        if notification_id.startswith("follow_request:"):
+        """Apagar um aviso (deslizar na tela). Pedidos de amizade se resolvem aceitando ou recusando."""
+        if notification_id.startswith("friend_request:"):
             raise Problem(422, "NOTIFICATION_NOT_DISMISSIBLE")
 
         def work(read, write, account, now, replay):

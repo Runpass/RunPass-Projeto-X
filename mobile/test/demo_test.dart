@@ -41,8 +41,8 @@ void main() {
         find.widgetWithText(TextFormField, 'Senha'),
         'RunpassDemo123!',
       );
-      await tester.ensureVisible(find.text('Entrar no RunPass'));
-      await tester.tap(find.text('Entrar no RunPass'));
+      await tester.ensureVisible(find.text('Entrar'));
+      await tester.tap(find.text('Entrar'));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Nome de exibição'),
@@ -52,6 +52,15 @@ void main() {
         find.widgetWithText(TextFormField, 'Nome de usuário'),
         'corredor_demo',
       );
+      await tester.ensureVisible(find.text('Continuar'));
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('location-field')));
+      await tester.tap(find.byKey(const Key('location-field')));
+      await tester.pumpAndSettle();
+      // Aceita o estado/cidade padrao do seletor (primeiro da lista: Acre/Acrelândia).
+      await tester.tap(find.byKey(const Key('location-done')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();

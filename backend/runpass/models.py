@@ -1,5 +1,6 @@
 import re
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -28,10 +29,28 @@ class PatchProfile(Input):
     displayName: Annotated[str, Field(min_length=1, max_length=80)] | None = None
     username: Username | None = None
     city: Annotated[str, Field(max_length=100)] | None = None
+    state: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] | None = None
+    # Centroide da cidade escolhida (app manda os dois juntos, derivados da lista do IBGE; sem
+    # GPS do aparelho). So para o raio de proximidade do filtro "Minha Cidade". Decimal, nao
+    # float: o DynamoDB nao grava float (mesma razao de ImportDistance/ImportEdition).
+    latitude: Decimal | None = Field(default=None, ge=-90, le=90, max_digits=12, decimal_places=7)
+    longitude: Decimal | None = Field(
+        default=None, ge=-180, le=180, max_digits=12, decimal_places=7
+    )
     bio: Annotated[str, Field(max_length=500)] | None = None
     photoReference: str | None = None
     bannerReference: str | None = None
     isPrivate: bool | None = None
+
+    @field_validator("latitude", "longitude", mode="before")
+    @classmethod
+    def decimal_coordinate(cls, value):
+        if value is None or isinstance(value, Decimal):
+            return value
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError("Coordenada invalida") from error
 
     @model_validator(mode="after")
     def fields(self):

@@ -33,7 +33,8 @@ void main() {
   test('o texto de cada tipo de aviso', () {
     String text(String kind, [String? extra]) =>
         notificationText({'kind': kind, 'actor': who('a'), 'text': extra});
-    expect(text('follow_request'), 'Pessoa a quer seguir você.');
+    expect(text('friend_request'), 'Pessoa a quer ser seu amigo.');
+    expect(text('friend'), 'Você e Pessoa a agora são amigos.');
     expect(text('follow'), 'Pessoa a começou a seguir você.');
     expect(text('like'), 'Pessoa a curtiu sua publicação.');
     expect(text('comment', 'Show'), 'Pessoa a comentou: “Show”');
@@ -41,7 +42,7 @@ void main() {
   });
 
   testWidgets(
-    'tela de avisos: aceitar pedido, marcar como lidos e abrir o perfil',
+    'tela de avisos: secao de pedidos de amizade com contagem, marca como lido',
     (tester) async {
       final calls = <String>[];
       var accepted = false;
@@ -52,8 +53,8 @@ void main() {
             'unreadCount': 2,
             'items': [
               {
-                'id': accepted ? 'follow:b' : 'follow_request:b',
-                'kind': accepted ? 'follow' : 'follow_request',
+                'id': accepted ? 'friend:b' : 'friend_request:b',
+                'kind': accepted ? 'friend' : 'friend_request',
                 'createdAt': '2026-11-06T10:00:00Z',
                 'unread': true,
                 'actor': who('b'),
@@ -69,9 +70,21 @@ void main() {
             ],
           });
         }
-        if (uri.path == '/me/follow-requests/b') {
+        if (uri.path == '/me/friend-requests') {
+          return JsonReply(200, {
+            'items': accepted
+                ? []
+                : [
+                    {
+                      'profile': who('b'),
+                      'requestedAt': '2026-11-06T10:00:00Z',
+                    },
+                  ],
+          });
+        }
+        if (uri.path == '/me/friend-requests/b') {
           accepted = true;
-          return const JsonReply(200, {'profileId': 'b', 'state': 'active'});
+          return const JsonReply(200, {'profileId': 'b', 'state': 'friends'});
         }
         return const JsonReply(200, {'readAt': '2026-11-06T11:00:00Z'});
       });
@@ -79,18 +92,24 @@ void main() {
         MaterialApp(home: NotificationsScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Pessoa b quer seguir você.'), findsOneWidget);
+      // Pedido de amizade nao aparece solto na lista, so no resumo com contagem.
+      expect(find.text('Pessoa b quer ser seu amigo.'), findsNothing);
+      expect(find.text('Pedidos de amizade (1)'), findsOneWidget);
       expect(find.text('Pessoa c curtiu sua publicação.'), findsOneWidget);
       // O aviso no celular fica so nas configuracoes.
       expect(find.byKey(const Key('os-alerts-switch')), findsNothing);
-      expect(find.byKey(const Key('requests-title')), findsOneWidget);
       expect(calls, contains('POST /me/notifications/read'));
 
-      await tester.tap(find.byKey(const Key('notification-approve-b')));
+      await tester.tap(find.byKey(const Key('friend-requests-section')));
       await tester.pumpAndSettle();
-      expect(calls, contains('PUT /me/follow-requests/b'));
-      expect(find.text('Pessoa b começou a seguir você.'), findsOneWidget);
-      expect(find.byKey(const Key('notification-approve-b')), findsNothing);
+      await tester.tap(find.byKey(const Key('approve-b')));
+      await tester.pumpAndSettle();
+      expect(calls, contains('PUT /me/friend-requests/b'));
+      expect(find.byKey(const Key('no-requests')), findsOneWidget);
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Pedidos de amizade (1)'), findsNothing);
     },
   );
 
@@ -104,6 +123,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('no-notifications')), findsOneWidget);
+    // Fica sempre visível, mesmo sem nenhum pedido pendente.
+    expect(find.byKey(const Key('friend-requests-section')), findsOneWidget);
+    expect(find.text('Pedidos de amizade (0)'), findsOneWidget);
   });
 
   testWidgets('perfil privado fica nas configuracoes', (tester) async {
@@ -150,8 +172,8 @@ void main() {
           'unreadCount': 0,
           'items': [
             {
-              'id': 'follow_request:b::2026',
-              'kind': 'follow_request',
+              'id': 'friend_request:b::2026',
+              'kind': 'friend_request',
               'createdAt': '2026-11-06T10:00:00Z',
               'unread': false,
               'actor': who('b'),
@@ -173,12 +195,12 @@ void main() {
       MaterialApp(home: NotificationsScreen(gateway: gateway)),
     );
     await tester.pumpAndSettle();
-    // Pedido primeiro e em destaque, sem Dismissible.
+    // Pedido de amizade fica so no resumo com contagem, nunca como Dismissible solto.
     expect(find.byType(Dismissible), findsOneWidget);
     await tester.drag(find.byType(Dismissible), const Offset(-600, 0));
     await tester.pumpAndSettle();
     expect(find.text('Pessoa c curtiu sua publicação.'), findsNothing);
-    expect(find.text('Pessoa b quer seguir você.'), findsOneWidget);
+    expect(find.text('Pedidos de amizade (1)'), findsOneWidget);
     expect(calls, contains('DELETE /me/notifications/like%3Ac%3Ap1%3A2026'));
   });
 

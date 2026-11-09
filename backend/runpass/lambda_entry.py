@@ -62,6 +62,7 @@ def _settings(with_cursor_key=False):
         ),
         history_table=os.environ["RUNPASS_HISTORY_TABLE"],
         projections_table=os.environ["RUNPASS_PROJECTIONS_TABLE"],
+        runner_user_pool_id=os.environ["RUNPASS_RUNNER_USER_POOL_ID"],
     )
 
 

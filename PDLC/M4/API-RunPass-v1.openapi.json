@@ -1430,6 +1430,219 @@
         "x-requires-beta-admission": true
       }
     },
+    "/profiles/{id}/followers": {
+      "get": {
+        "operationId": "listProfileFollowers",
+        "description": "Who follows this profile. Always public, same as followersCount, regardless of isPrivate.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Profiles"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
+    "/profiles/{id}/following": {
+      "get": {
+        "operationId": "listProfileFollowing",
+        "description": "Who this profile follows. Always public, same as followingCount, regardless of isPrivate.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Profiles"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
+    "/profiles/{id}/friends": {
+      "get": {
+        "operationId": "listProfileFriends",
+        "description": "Accepted friends of this profile. Always public, same as friendsCount, regardless of isPrivate.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Profiles"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
     "/profiles/{id}/medals": {
       "get": {
         "operationId": "listPublicMedals",
@@ -1813,7 +2026,7 @@
         "tags": [
           "Feed"
         ],
-        "description": "Followed authors first, other eligible public authors second; newest original publishedAt first within each group, stable tie-breaker. Cursor must preserve group/filter/user context. Recheck visibility, deletion, account status and bilateral blocks. Do not restrict all content to shared editions. No algorithmic ranking approved.",
+        "description": "scope=all (default): every post the caller may see, newest publishedAt first (any public author plus private friends, no following required). scope=friends: only accepted friends' posts (plus the caller's own). scope=network: only followed authors' posts (plus the caller's own). Cursor must preserve scope/user context. Recheck visibility, deletion and account status on every read. Do not restrict all content to shared editions. No algorithmic ranking approved.",
         "responses": {
           "200": {
             "description": "Authorized result",
@@ -1863,6 +2076,19 @@
             "in": "query",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "friends",
+                "network"
+              ],
+              "default": "all"
             }
           }
         ],
@@ -1994,7 +2220,7 @@
         "tags": [
           "Social"
         ],
-        "description": "Idempotent follow, at most one active relation per actor/target. Reject self-follow and any bilateral block; recheck concurrently with block commands. Confirmed block removes follow in both directions. Retry never recreates a blocked relation or duplicates notifications/counters; unblock requires explicit new follow.",
+        "description": "Idempotent follow, unidirectional and always immediate (no approval, even for a private target profile); at most one active relation per actor/target. Reject self-follow and any bilateral block; recheck concurrently with block commands. Confirmed block removes follow in both directions. Retry never recreates a blocked relation or duplicates notifications/counters; unblock requires explicit new follow.",
         "responses": {
           "200": {
             "description": "Authorized result",
@@ -2057,6 +2283,118 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Relationship"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
+    "/profiles/{id}/friend": {
+      "put": {
+        "operationId": "putFriendRequest",
+        "tags": [
+          "Social"
+        ],
+        "description": "Bidirectional friend request. Creates a pending request awaiting the target's approval; if the target had already requested the caller, accepts it right away instead of duplicating. Idempotent: replays the current state.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FriendRelationship"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "x-requires-beta-admission": true
+      },
+      "delete": {
+        "operationId": "deleteFriend",
+        "tags": [
+          "Social"
+        ],
+        "description": "Idempotently cancels a pending outgoing request or ends an existing friendship, either side.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FriendRelationship"
                 }
               }
             }
@@ -4498,10 +4836,10 @@
         ]
       }
     },
-    "/me/follow-requests": {
+    "/me/friend-requests": {
       "get": {
-        "operationId": "listMyFollowRequests",
-        "summary": "Pedidos pendentes para seguir meu perfil privado",
+        "operationId": "listMyFriendRequests",
+        "summary": "Pedidos de amizade pendentes recebidos",
         "parameters": [],
         "responses": {
           "200": {
@@ -4509,7 +4847,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FollowRequestPage"
+                  "$ref": "#/components/schemas/FriendRequestPage"
                 }
               }
             }
@@ -4533,10 +4871,10 @@
         "x-requires-beta-admission": true
       }
     },
-    "/me/follow-requests/{id}": {
+    "/me/friend-requests/{id}": {
       "put": {
-        "operationId": "approveFollowRequest",
-        "summary": "Aprova um pedido para me seguir",
+        "operationId": "approveFriendRequest",
+        "summary": "Aceita um pedido de amizade",
         "parameters": [
           {
             "name": "id",
@@ -4553,7 +4891,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Relationship"
+                  "$ref": "#/components/schemas/FriendRelationship"
                 }
               }
             }
@@ -4577,8 +4915,8 @@
         "x-requires-beta-admission": true
       },
       "delete": {
-        "operationId": "declineFollowRequest",
-        "summary": "Recusa um pedido ou remove um seguidor",
+        "operationId": "declineFriendRequest",
+        "summary": "Recusa um pedido de amizade",
         "parameters": [
           {
             "name": "id",
@@ -4595,7 +4933,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Relationship"
+                  "$ref": "#/components/schemas/FriendRelationship"
                 }
               }
             }
@@ -5785,6 +6123,22 @@
             "type": "string",
             "maxLength": 100
           },
+          "state": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "description": "Sigla da UF (lista fechada do IBGE no app; so formato validado aqui)."
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+            "description": "Centroide da cidade escolhida; usado so pelo raio de proximidade do filtro \"Minha Cidade\"."
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180
+          },
           "bio": {
             "type": "string",
             "maxLength": 500
@@ -5803,27 +6157,41 @@
           },
           "isPrivate": {
             "type": "boolean",
-            "description": "Perfil privado exige aprovacao do dono para seguir. Padrao: publico."
+            "description": "Perfil privado: so o dono e amigos aceitos veem corridas, medalhas e contagens. Seguir nunca exige aprovacao nem desbloqueia um perfil privado. Padrao: publico."
           },
           "followState": {
             "type": "string",
             "enum": [
               "self",
               "none",
-              "pending",
               "active"
             ],
-            "description": "Relacao de quem consulta com este perfil."
+            "description": "Relacao de seguir (unidirecional, sempre imediata) de quem consulta com este perfil."
+          },
+          "friendState": {
+            "type": "string",
+            "enum": [
+              "self",
+              "none",
+              "pending_out",
+              "pending_in",
+              "friends"
+            ],
+            "description": "Relacao de amizade (bidirecional, com pedido e aprovacao) de quem consulta com este perfil. So 'friends' desbloqueia um perfil privado."
           },
           "canView": {
             "type": "boolean",
-            "description": "False quando o perfil e privado e quem consulta nao e seguidor aceito; contagens e corridas ficam ocultas."
+            "description": "False quando o perfil e privado e quem consulta nao e amigo aceito; contagens e corridas ficam ocultas."
           },
           "followersCount": {
             "type": "integer",
             "minimum": 0
           },
           "followingCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "friendsCount": {
             "type": "integer",
             "minimum": 0
           },
@@ -5867,6 +6235,22 @@
             "type": "string",
             "maxLength": 100
           },
+          "state": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "description": "Sigla da UF (lista fechada do IBGE no app; so formato validado aqui)."
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+            "description": "Centroide da cidade escolhida; usado so pelo raio de proximidade do filtro \"Minha Cidade\"."
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180
+          },
           "bio": {
             "type": "string",
             "maxLength": 500
@@ -5885,27 +6269,41 @@
           },
           "isPrivate": {
             "type": "boolean",
-            "description": "Perfil privado exige aprovacao do dono para seguir. Padrao: publico."
+            "description": "Perfil privado: so o dono e amigos aceitos veem corridas, medalhas e contagens. Seguir nunca exige aprovacao nem desbloqueia um perfil privado. Padrao: publico."
           },
           "followState": {
             "type": "string",
             "enum": [
               "self",
               "none",
-              "pending",
               "active"
             ],
-            "description": "Relacao de quem consulta com este perfil."
+            "description": "Relacao de seguir (unidirecional, sempre imediata) de quem consulta com este perfil."
+          },
+          "friendState": {
+            "type": "string",
+            "enum": [
+              "self",
+              "none",
+              "pending_out",
+              "pending_in",
+              "friends"
+            ],
+            "description": "Relacao de amizade (bidirecional, com pedido e aprovacao) de quem consulta com este perfil. So 'friends' desbloqueia um perfil privado."
           },
           "canView": {
             "type": "boolean",
-            "description": "False quando o perfil e privado e quem consulta nao e seguidor aceito; contagens e corridas ficam ocultas."
+            "description": "False quando o perfil e privado e quem consulta nao e amigo aceito; contagens e corridas ficam ocultas."
           },
           "followersCount": {
             "type": "integer",
             "minimum": 0
           },
           "followingCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "friendsCount": {
             "type": "integer",
             "minimum": 0
           },
@@ -5955,6 +6353,25 @@
             "type": "string",
             "nullable": true,
             "maxLength": 100
+          },
+          "state": {
+            "type": "string",
+            "nullable": true,
+            "pattern": "^[A-Z]{2}$",
+            "description": "Sigla da UF; app so envia a partir da lista fechada do IBGE."
+          },
+          "latitude": {
+            "type": "number",
+            "nullable": true,
+            "minimum": -90,
+            "maximum": 90,
+            "description": "Centroide da cidade escolhida (app deriva da lista do IBGE); so para o raio de proximidade de \"Minha Cidade\"."
+          },
+          "longitude": {
+            "type": "number",
+            "nullable": true,
+            "minimum": -180,
+            "maximum": 180
           },
           "bio": {
             "type": "string",
@@ -6331,6 +6748,30 @@
         "required": [
           "profileId",
           "active"
+        ]
+      },
+      "FriendRelationship": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Resultado de um pedido/decisao de amizade (bidirecional, com aprovacao); distinto de Relationship, que e sempre sobre seguir.",
+        "properties": {
+          "profileId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pending_out",
+              "pending_in",
+              "friends"
+            ]
+          }
+        },
+        "required": [
+          "profileId",
+          "state"
         ]
       },
       "LikeState": {
@@ -8020,7 +8461,7 @@
           }
         }
       },
-      "FollowRequestPage": {
+      "FriendRequestPage": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -8060,7 +8501,8 @@
           "kind": {
             "type": "string",
             "enum": [
-              "follow_request",
+              "friend_request",
+              "friend",
               "follow",
               "like",
               "comment",

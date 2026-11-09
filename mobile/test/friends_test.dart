@@ -24,6 +24,7 @@ Future<IdentityGateway> gatewayWith(JsonTransport handler) async {
 Map<String, dynamic> person(
   String id, {
   String state = 'none',
+  String friendState = 'none',
   bool priv = false,
 }) => {
   'id': id,
@@ -32,6 +33,7 @@ Map<String, dynamic> person(
   'version': 1,
   'isPrivate': priv,
   'followState': state,
+  'friendState': friendState,
 };
 
 void main() {
@@ -106,30 +108,41 @@ void main() {
     },
   );
 
-  testWidgets('a private profile hides content until the follow is accepted', (
-    tester,
-  ) async {
-    final gateway = await gatewayWith((uri, method, headers, body) async {
-      if (uri.path == '/profiles/bia') {
-        return JsonReply(200, {
-          ...person('bia', state: 'pending', priv: true),
-          'canView': false,
-        });
-      }
-      return const JsonReply(404, {'code': 'PROFILE_NOT_FOUND'});
-    });
-    await tester.pumpWidget(
-      MaterialApp(
-        home: PublicProfileScreen(gateway: gateway, profileId: 'bia'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('private-profile')), findsOneWidget);
-    expect(find.textContaining('Solicitado'), findsOneWidget);
-    expect(find.text('Seguidores'), findsNothing);
-  });
+  testWidgets(
+    'following a private profile does not unlock it; a friend request does',
+    (tester) async {
+      final gateway = await gatewayWith((uri, method, headers, body) async {
+        if (uri.path == '/profiles/bia') {
+          return JsonReply(200, {
+            ...person(
+              'bia',
+              state: 'active',
+              friendState: 'pending_out',
+              priv: true,
+            ),
+            'canView': false,
+            'followersCount': 3,
+            'followingCount': 5,
+          });
+        }
+        return const JsonReply(404, {'code': 'PROFILE_NOT_FOUND'});
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PublicProfileScreen(gateway: gateway, profileId: 'bia'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Decisao de 08/11/2026: seguidores/seguindo sao sempre publicos; so o resumo de
+      // corridas (contagem e lista) fica atras da amizade quando o perfil e privado.
+      expect(find.byKey(const Key('private-profile')), findsOneWidget);
+      expect(find.textContaining('Solicitado'), findsOneWidget);
+      expect(find.text('Seguidores'), findsOneWidget);
+      expect(find.text('Corridas'), findsNothing);
+    },
+  );
 
-  testWidgets('follow requests can be accepted', (tester) async {
+  testWidgets('friend requests can be accepted', (tester) async {
     final calls = <String>[];
     var pending = true;
     final gateway = await gatewayWith((uri, method, headers, body) async {
@@ -147,15 +160,15 @@ void main() {
         });
       }
       pending = false;
-      return const JsonReply(200, {'profileId': 'caio', 'active': true});
+      return const JsonReply(200, {'profileId': 'caio', 'state': 'friends'});
     });
     await tester.pumpWidget(
-      MaterialApp(home: FollowRequestsScreen(gateway: gateway)),
+      MaterialApp(home: FriendRequestsScreen(gateway: gateway)),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('approve-caio')));
     await tester.pumpAndSettle();
-    expect(calls, contains('PUT /me/follow-requests/caio'));
+    expect(calls, contains('PUT /me/friend-requests/caio'));
     expect(find.byKey(const Key('no-requests')), findsOneWidget);
   });
 

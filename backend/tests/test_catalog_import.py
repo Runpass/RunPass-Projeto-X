@@ -175,11 +175,23 @@ class CatalogImportTests(unittest.TestCase):
             for e in self.listed(registrationStatus="unknown", state="SP", dateFrom="2027-01-01")
         ]
         self.assertEqual(unknown, ["csv-sp-example-001"])
+        # O fixture sintetico agora tambem carrega coordenadas de Sao Paulo (decisao de
+        # 08/11/2026, para testar o raio de proximidade de "Minha Cidade" no app), entao as
+        # edicoes sinteticas de SP passam a bater nas duas buscas por raio abaixo.
+        synthetic_sp = [
+            "synthetic-sp-2024",
+            "synthetic-sp-2025",
+            "synthetic-sp-2026",
+            "synthetic-archived",
+        ]
         near_sp = self.listed(lat=-23.55, lon=-46.63, radiusKm=30)
-        self.assertEqual([e["id"] for e in near_sp], ["csv-sp-example-001"])
+        self.assertEqual(
+            sorted(e["id"] for e in near_sp), sorted(["csv-sp-example-001", *synthetic_sp])
+        )
         wide = self.listed(lat=-23.55, lon=-46.63, radiusKm=200)
         self.assertEqual(
-            sorted(e["id"] for e in wide), ["csv-sp-example-001", "csv-sp-example-002"]
+            sorted(e["id"] for e in wide),
+            sorted(["csv-sp-example-001", "csv-sp-example-002", *synthetic_sp]),
         )
         with self.assertRaises(ValueError):
             CatalogFilters(lat=-23.5, lon=-46.6)  # raio incompleto
