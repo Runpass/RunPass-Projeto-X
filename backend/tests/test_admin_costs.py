@@ -4,7 +4,7 @@ import json
 import unittest
 from datetime import datetime, timezone
 
-from runpass.admin_costs import AwsCosts, OpenAiUsage
+from runpass.admin_costs import AwsCosts, OpenAiOrg, OpenAiUsage
 from runpass.store import Unavailable
 
 NOW = datetime(2026, 11, 10, 15, tzinfo=timezone.utc)
@@ -178,3 +178,119 @@ class OpenAiUsageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeOpenAi:
+    """API de administracao falsa: costs e usage/completions em 2 dias, mais as chaves do projeto."""
+
+    def __init__(self):
+        self.calls, self.status = [], 200
+
+    def __call__(self, path, params, key):
+        self.calls.append((path, params, key))
+        if self.status != 200:
+            return self.status, {}
+        d1, d2 = 1_793_836_800, 1_793_923_200  # 2026-11-05 e 2026-11-06 (UTC)
+        if path == "/v1/organization/costs":
+            return 200, {
+                "data": [
+                    {
+                        "start_time": d1,
+                        "results": [
+                            {
+                                "amount": {"value": 0.42, "currency": "usd"},
+                                "line_item": "gpt, input",
+                            }
+                        ],
+                    },
+                    {
+                        "start_time": d2,
+                        "results": [
+                            {
+                                "amount": {"value": 1.5, "currency": "usd"},
+                                "line_item": "gpt, input",
+                            },
+                            {
+                                "amount": {"value": 0.5, "currency": "usd"},
+                                "line_item": "web search",
+                            },
+                        ],
+                    },
+                ],
+                "has_more": False,
+            }
+        if path == "/v1/organization/usage/completions":
+            return 200, {
+                "data": [
+                    {
+                        "start_time": d2,
+                        "results": [
+                            {
+                                "num_model_requests": 100,
+                                "input_tokens": 1_000_000,
+                                "output_tokens": 50_000,
+                                "api_key_id": "key_1",
+                                "model": "m1",
+                            },
+                            {
+                                "num_model_requests": 76,
+                                "input_tokens": 2_000_000,
+                                "output_tokens": 334_579,
+                                "api_key_id": "key_2",
+                                "model": "m2",
+                            },
+                        ],
+                    }
+                ],
+                "has_more": False,
+            }
+        if path.endswith("/api_keys"):
+            return 200, {"data": [{"id": "key_1", "name": "catalogo-busca-dev"}]}
+        return 404, {}
+
+
+class OpenAiOrgTests(unittest.TestCase):
+    def setUp(self):
+        self.now = NOW.timestamp()
+        self.api = FakeOpenAi()
+        self.org = OpenAiOrg(lambda: "sk-admin-teste", lambda: self.now, "proj_abc", 10, self.api)
+
+    def test_replica_a_pagina_usage_do_console(self):
+        r = self.org.report()
+        self.assertEqual((r["month"], r["totalUsd"], r["limitUsd"]), ("2026-11", 2.42, 10))
+        self.assertEqual((r["totalRequests"], r["totalTokens"]), (176, 3_384_579))
+        self.assertEqual(
+            [(d["date"], d["usd"], d["requests"]) for d in r["daily"]],
+            [("2026-11-05", 0.42, 0), ("2026-11-06", 2.0, 176)],
+        )
+        self.assertEqual(
+            r["byApiKey"][0], {"name": "catalogo-busca-dev", "requests": 100, "tokens": 1_050_000}
+        )
+        self.assertEqual(r["byApiKey"][1]["name"], "key_2")  # sem nome conhecido: mostra o id
+        self.assertEqual([x["name"] for x in r["byModel"]], ["m2", "m1"])
+        self.assertEqual(r["byLineItem"][0], {"name": "gpt, input", "usd": 1.92})
+        costs = self.api.calls[0]
+        self.assertEqual(costs[0], "/v1/organization/costs")
+        self.assertEqual(costs[1]["project_ids"], ["proj_abc"])
+        self.assertEqual(costs[1]["start_time"], 1_793_491_200)  # 01/11/2026 00:00 UTC
+        self.assertEqual(costs[2], "sk-admin-teste")
+
+    def test_erro_da_openai_ou_da_leitura_da_chave_vira_indisponivel(self):
+        self.api.status = 401
+        with self.assertRaises(Unavailable):
+            self.org.report()
+
+        def sem_acesso():
+            raise RuntimeError("AccessDenied")
+
+        with self.assertRaises(Unavailable):
+            OpenAiOrg(sem_acesso, lambda: self.now, "", None, self.api).report()
+        with self.assertRaises(Unavailable):
+            OpenAiOrg(None, lambda: self.now).report()  # sem chave configurada
+
+    def test_cache_e_a_chave_nao_aparece_no_resultado(self):
+        r = self.org.report()
+        n = len(self.api.calls)
+        self.org.report()
+        self.assertEqual(len(self.api.calls), n)
+        self.assertNotIn("sk-admin", json.dumps(r))

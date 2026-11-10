@@ -40,6 +40,16 @@ Parameters:
     Type: String
     Default: ''
     Description: Bucket de relatorios do catalogo (RunPass-Catalogo), de onde saem as imagens candidatas. Vazio = sem lista de candidatas
+  OpenAiAdminKeyParameter:
+    Type: String
+    Default: ''
+    AllowedPattern: '^(/.+)?$'
+    Description: Nome do parametro SSM (SecureString) com a chave de ADMINISTRADOR da OpenAI. Vazio = o painel usa so a estimativa pelos logs
+  OpenAiProjectId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^(proj_[A-Za-z0-9]+)?$'
+    Description: Projeto da OpenAI a mostrar (proj_...), o mesmo filtro do console. Vazio = toda a organizacao
   AwsMonthlyBudgetUsd:
     Type: Number
     Default: 54.61
@@ -72,6 +82,7 @@ Parameters:
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   HasCatalogFunction: !Not [!Equals [!Ref CatalogFunctionName, '']]
+  HasOpenAiAdminKey: !Not [!Equals [!Ref OpenAiAdminKeyParameter, '']]
   HasReportBucket: !Not [!Equals [!Ref CatalogReportBucket, '']]
 
 Resources:
@@ -196,6 +207,13 @@ Resources:
                   Condition:
                     StringLike: {s3:prefix: ['semanal/*']}
                 - !Ref AWS::NoValue
+              - !If
+                - HasOpenAiAdminKey
+                - Sid: LerChaveAdminDaOpenAi
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${OpenAiAdminKeyParameter}'
+                - !Ref AWS::NoValue
               - Sid: LerCustosDaConta
                 Effect: Allow
                 Action: [ce:GetCostAndUsage, ce:GetCostForecast]
@@ -242,6 +260,8 @@ Resources:
           RUNPASS_MEDAL_BUCKET: {Fn::ImportValue: !Sub '${DataStack}-MedalBucket'}
           RUNPASS_CATALOG_REPORT_BUCKET: !Ref CatalogReportBucket
           RUNPASS_AWS_BUDGET_USD: !Ref AwsMonthlyBudgetUsd
+          RUNPASS_OPENAI_ADMIN_KEY_PARAM: !Ref OpenAiAdminKeyParameter
+          RUNPASS_OPENAI_PROJECT_ID: !Ref OpenAiProjectId
           RUNPASS_OPENAI_LIMIT_USD: !Ref OpenAiMonthlyLimitUsd
           RUNPASS_OPENAI_PRICE_IN_PER_MTOK: !Ref OpenAiPriceInPerMTok
           RUNPASS_OPENAI_PRICE_OUT_PER_MTOK: !Ref OpenAiPriceOutPerMTok

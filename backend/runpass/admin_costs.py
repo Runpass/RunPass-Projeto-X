@@ -9,6 +9,9 @@
 
 import json
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -197,3 +200,144 @@ class OpenAiUsage:
                 if d[:7] == this_month
             ],
         }
+
+
+OPENAI_HOST = "https://api.openai.com"
+
+
+def openai_transport(path, params, key, timeout=15):
+    """GET so em api.openai.com (host fixo; so o caminho e os parametros variam). Devolve (status, json)."""
+    url = f"{OPENAI_HOST}{path}?{urllib.parse.urlencode(params, doseq=True)}"
+    request = urllib.request.Request(  # noqa: S310 - host fixo https
+        url, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            return response.status, json.loads(response.read(5_000_000))
+    except urllib.error.HTTPError as error:
+        return error.code, {}
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0, {}
+
+
+class OpenAiOrg:
+    """Gasto e uso reais da OpenAI pela API de administracao (a mesma fonte da pagina Usage do console).
+
+    Exige uma chave de ADMINISTRADOR (`sk-admin-...`), guardada no SSM e lida so aqui; ela nunca sai da funcao
+    nem e registrada. Sem a chave configurada, o painel usa a estimativa pelos logs (`OpenAiUsage`)."""
+
+    def __init__(
+        self, key_loader, clock, project_id="", monthly_limit_usd=None, transport=openai_transport
+    ):
+        self.key_loader, self.clock, self.project = key_loader, clock, project_id
+        self.limit, self.transport = monthly_limit_usd, transport
+        self._cache = None
+
+    @property
+    def configured(self):
+        return self.key_loader is not None
+
+    def _pages(self, path, params, key):
+        buckets, page = [], None
+        for _ in range(10):
+            query = dict(params, **({"page": page} if page else {}))
+            status, body = self.transport(path, query, key)
+            if status != 200:
+                raise Unavailable()
+            buckets += body.get("data", [])
+            page = body.get("next_page") if body.get("has_more") else None
+            if not page:
+                break
+        return buckets
+
+    def report(self):
+        if not self.configured:
+            raise Unavailable()
+        now = self.clock()
+        if self._cache and now - self._cache[0] < CACHE_TTL:
+            return self._cache[1]
+        try:
+            key = self.key_loader()
+        except Exception as error:  # noqa: BLE001 - sem permissao ou parametro: cai para a estimativa
+            raise Unavailable() from error
+        if not key:
+            raise Unavailable()
+        today = datetime.fromtimestamp(now, timezone.utc).date()
+        start = _month_start(today)
+        start_ts = int(
+            datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp()
+        )
+        base = {"start_time": start_ts, "bucket_width": "1d", "limit": 31}
+        if self.project:
+            base["project_ids"] = [self.project]
+        costs = self._pages("/v1/organization/costs", {**base, "group_by": ["line_item"]}, key)
+        usage = self._pages(
+            "/v1/organization/usage/completions", {**base, "group_by": ["api_key_id", "model"]}, key
+        )
+        days, items, keys, models = {}, {}, {}, {}
+
+        def day(bucket):
+            iso = datetime.fromtimestamp(bucket["start_time"], timezone.utc).date().isoformat()
+            return days.setdefault(
+                iso, {"date": iso, "usd": 0.0, "requests": 0, "inputTokens": 0, "outputTokens": 0}
+            )
+
+        for bucket in costs:
+            row = day(bucket)
+            for r in bucket.get("results", []):
+                value = float((r.get("amount") or {}).get("value") or 0)
+                row["usd"] += value
+                name = r.get("line_item") or "outros"
+                items[name] = items.get(name, 0.0) + value
+        for bucket in usage:
+            row = day(bucket)
+            for r in bucket.get("results", []):
+                req, tin, tout = (
+                    int(r.get(k) or 0)
+                    for k in ("num_model_requests", "input_tokens", "output_tokens")
+                )
+                row["requests"] += req
+                row["inputTokens"] += tin
+                row["outputTokens"] += tout
+                for table, ident in ((keys, r.get("api_key_id")), (models, r.get("model"))):
+                    entry = table.setdefault(ident or "—", {"requests": 0, "tokens": 0})
+                    entry["requests"] += req
+                    entry["tokens"] += tin + tout
+        names = self._key_names(key)
+        daily = [dict(d, usd=round(d["usd"], 4)) for _, d in sorted(days.items())]
+        result = {
+            "month": start.isoformat()[:7],
+            "totalUsd": round(sum(d["usd"] for d in daily), 2),
+            "limitUsd": self.limit,
+            "totalRequests": sum(d["requests"] for d in daily),
+            "totalTokens": sum(d["inputTokens"] + d["outputTokens"] for d in daily),
+            "inputTokens": sum(d["inputTokens"] for d in daily),
+            "outputTokens": sum(d["outputTokens"] for d in daily),
+            "daily": daily,
+            "byApiKey": sorted(
+                ({"name": names.get(k, k[:12]), **v} for k, v in keys.items()),
+                key=lambda x: -x["requests"],
+            ),
+            "byModel": sorted(
+                ({"name": k, **v} for k, v in models.items()), key=lambda x: -x["tokens"]
+            ),
+            "byLineItem": sorted(
+                ({"name": k, "usd": round(v, 4)} for k, v in items.items() if v),
+                key=lambda x: -x["usd"],
+            ),
+        }
+        self._cache = (now, result)
+        return result
+
+    def _key_names(self, key):
+        """Nome de cada chave do projeto (so quando o projeto esta configurado); sem nome, mostra o inicio do id."""
+        if not self.project:
+            return {}
+        status, body = self.transport(
+            f"/v1/organization/projects/{urllib.parse.quote(self.project)}/api_keys",
+            {"limit": 100},
+            key,
+        )
+        if status != 200:
+            return {}
+        return {k["id"]: k.get("name") or k["id"][:12] for k in body.get("data", []) if "id" in k}

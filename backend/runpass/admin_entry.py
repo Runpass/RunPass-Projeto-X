@@ -12,8 +12,26 @@ def _number(name):
     return float(value) if value else None
 
 
+def _openai_key_loader():
+    """Chave de administrador da OpenAI (opcional): le do SSM so quando o painel precisa e a guarda em memoria."""
+    name = os.environ.get("RUNPASS_OPENAI_ADMIN_KEY_PARAM", "").strip()
+    if not name:
+        return None
+    cache = {}
+
+    def load():
+        if "key" not in cache:
+            ssm = _boto_client("ssm")
+            cache["key"] = ssm.get_parameter(Name=name, WithDecryption=True)["Parameter"]["Value"]
+        return cache["key"]
+
+    return load
+
+
 def _costs_config():
     return {
+        "openai_key_loader": _openai_key_loader(),
+        "openai_project": os.environ.get("RUNPASS_OPENAI_PROJECT_ID", "").strip(),
         # O Cost Explorer so existe em us-east-1, qualquer que seja a regiao da conta.
         "ce": _boto_client("ce", region_name="us-east-1"),
         "budget": _number("RUNPASS_AWS_BUDGET_USD"),

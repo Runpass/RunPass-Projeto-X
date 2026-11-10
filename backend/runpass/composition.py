@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from .admin_api import MfaPolicy, create_admin_app, find_portal_dir
 from .admin_banners import BannerAdmin
-from .admin_costs import AwsCosts, OpenAiUsage
+from .admin_costs import AwsCosts, OpenAiOrg, OpenAiUsage
 from .admin_users import AdminUsers, CatalogRunner, CatalogSchedules
 from .api import create_app
 from .aws_adapters import CognitoAccountRemover, S3AuditSink, S3BlobStore
@@ -164,6 +164,12 @@ def create_admin_aws_app(
         users=AdminUsers(service.store, cognito_client, runner_pool_id, operator_pool_id, clock),
         runner=CatalogRunner(service.store, lambda_client, catalog_function, clock, logs_client),
         banners=_banner_admin(service, catalog, clock, media),
+        openai_org=OpenAiOrg(
+            (costs or {}).get("openai_key_loader"),
+            clock,
+            (costs or {}).get("openai_project", ""),
+            (costs or {}).get("limit"),
+        ),
         schedules=CatalogSchedules(scheduler_client, catalog_function, clock),
         aws_costs=AwsCosts((costs or {}).get("ce"), clock, (costs or {}).get("budget")),
         openai_usage=OpenAiUsage(

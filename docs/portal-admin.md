@@ -41,6 +41,21 @@ implantado**: hospedagem em S3 + CloudFront e API própria exigem o aval de cust
   (por outro responsável, como as demais).
 - Quem tem `user_admin` pode conceder qualquer permissão: trate como acesso de administrador.
 
+## Custos reais da OpenAI (opcional)
+A aba Custos replica a página Usage do console da OpenAI (gasto por dia, limite do mês, tokens, requisições, por
+chave de API, por modelo, categorias) quando há uma **chave de administrador** (`sk-admin-...`) configurada;
+sem ela, mostra só a estimativa pelos logs. A API de custos e de uso da OpenAI exige esse tipo de chave.
+- **Risco a aceitar:** a chave de administrador gerencia a organização inteira (membros, chaves, projetos), não só
+  lê custos. Por isso ela só é lida pela Lambda do portal, do SSM (SecureString), nunca é registrada nem enviada
+  a outro host que não `api.openai.com`, e a página nunca a vê. Crie-a só se aceitar esse risco; revogue no
+  console da OpenAI se houver suspeita.
+- **Como habilitar:** (1) no console da OpenAI (Settings > Organization > Admin keys; só o dono da organização),
+  crie a chave; (2) com o perfil de administrador da AWS, grave-a no SSM Parameter Store como SecureString
+  (pelo console da AWS, para o valor não ficar no histórico do terminal), por exemplo `/runpass/dev/openai-admin-key`;
+  (3) rode o deploy do portal com `OPENAI_ADMIN_KEY_PARAM=/runpass/dev/openai-admin-key` e, para filtrar o mesmo
+  projeto do console, `OPENAI_PROJECT_ID=proj_...`.
+- Dias em UTC; cache de 15 min; só uso de completions/respostas (imagens, embeddings etc. não entram).
+
 ## Peças
 - `portal/` página estática sem build (`index.html`, `app.js`, `lib.js`, `cognito.js`, `style.css`); testes da
   lógica pura: `make portal-test` (Node). O `config.js` é gerado pela API (região e client id públicos).

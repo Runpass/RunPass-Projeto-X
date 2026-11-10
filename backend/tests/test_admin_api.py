@@ -164,6 +164,8 @@ class FakeScheduler:
 
 
 class FakeCosts:
+    configured = True
+
     def __init__(self, value=None):
         self.value = value
 
@@ -210,6 +212,8 @@ class AdminApiTests(unittest.TestCase):
         self.sched = FakeScheduler()
         self.s3, self.blobs = FakeS3(), MemoryBlobStore()
         self.pages = {}
+        self.openai_org = FakeCosts({})
+        self.openai_org.configured = False
         self.aws_costs, self.openai_costs = (
             FakeCosts({"totalUsd": 5}),
             FakeCosts({"month": "2026-11"}),
@@ -259,6 +263,7 @@ class AdminApiTests(unittest.TestCase):
                 ),
                 aws_costs=self.aws_costs,
                 openai_usage=self.openai_costs,
+                openai_org=self.openai_org,
                 site={
                     "directory": self.portal_dir,
                     "region": "sa-east-1",
@@ -628,11 +633,32 @@ class AdminApiTests(unittest.TestCase):
         r = self.client.get("/admin/costs", headers=h)
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(
-            r.json(), {"aws": {"totalUsd": 5}, "openai": {"month": "2026-11"}, "errors": []}
+            r.json(),
+            {
+                "aws": {"totalUsd": 5},
+                "openai": {"month": "2026-11"},
+                "openaiOrg": None,
+                "openaiOrgStatus": "not_configured",
+                "errors": [],
+            },
         )
         self.openai_costs.value = None
         r = self.client.get("/admin/costs", headers=h).json()
         self.assertEqual((r["aws"], r["openai"], r["errors"]), ({"totalUsd": 5}, None, ["openai"]))
+
+    def test_custos_com_chave_de_administrador_usam_os_dados_reais_e_caem_para_a_estimativa(self):
+        h = self.auth(token("fin"))
+        self.openai_org.configured, self.openai_org.value = True, {"totalUsd": 2.42}
+        r = self.client.get("/admin/costs", headers=h).json()
+        self.assertEqual(
+            (r["openaiOrg"], r["openaiOrgStatus"], r["errors"]), ({"totalUsd": 2.42}, "ok", [])
+        )
+        self.openai_org.value = (
+            None  # chave invalida ou OpenAI fora do ar: segue com a estimativa pelos logs
+        )
+        r = self.client.get("/admin/costs", headers=h).json()
+        self.assertEqual((r["openaiOrg"], r["openaiOrgStatus"]), (None, "error"))
+        self.assertEqual(r["openai"], {"month": "2026-11"})
 
     def operadores(self):
         """adm (administrador de usuarios) e dois operadores no pool falso, cada um com ACCESS."""

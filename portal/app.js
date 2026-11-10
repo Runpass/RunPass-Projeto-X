@@ -280,26 +280,13 @@ async function carregarCustos() {
         el('p', { class: 'meta' }, 'Valores em dólar, sem converter. Dados do Cost Explorer podem atrasar até 1 dia; a consulta é cobrada pela AWS e fica em cache por 15 minutos.'),
       );
     }
-    const o = r.openai;
-    partes.push(el('h2', {}, 'OpenAI (estimativa)'));
-    if (!o) {
-      partes.push(el('p', { class: 'meta' }, 'Não foi possível ler o consumo da OpenAI agora.'));
+    if (r.openaiOrg) {
+      partes.push(...secaoOpenAiReal(r.openaiOrg));
     } else {
-      const mes = o.thisMonth;
-      partes.push(
-        el(
-          'div',
-          { class: 'grade' },
-          cartaoNumero(`Custo estimado em ${mesBr(o.month)}`, o.priced ? usd(mes.estimatedUsd) : 'Preços não informados', o.limitUsd ? `Limite no console ${usd(o.limitUsd)}` : '', o.priced ? percentual(mes.estimatedUsd, o.limitUsd) : null),
-          cartaoNumero('Chamadas no mês', String(mes.chamadas), `${compacto(mes.entrada)} tokens de entrada · ${compacto(mes.saida)} de saída`),
-          cartaoNumero('Buscas na web no mês', String(mes.buscas), `Mês anterior: ${o.previousMonth.chamadas} chamadas`),
-        ),
-        o.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, o.priced ? 'Custo estimado por dia' : 'Chamadas por dia'), grafico(o.daily.map((d) => (o.priced ? d.estimatedUsd : d.chamadas)), o.daily.map((d) => d.date.slice(8) + '/' + d.date.slice(5, 7)), 'Consumo diário da OpenAI')) : '',
-        o.daily.length ? el('div', { class: 'cartao' }, tabela(['Dia', 'Chamadas', 'Entrada', 'Saída', 'Buscas', 'Custo est.'], o.daily.slice().reverse().map((d) => [d.date.split('-').reverse().join('/'), d.chamadas, compacto(d.entrada), compacto(d.saida), d.buscas, d.estimatedUsd == null ? '—' : usd(d.estimatedUsd)]), [1, 2, 3, 4, 5])) : el('p', { class: 'vazio' }, 'Nenhum consumo registrado neste mês ainda.'),
-        el('p', { class: 'meta' }, o.priced
-          ? 'Estimativa a partir das chamadas registradas pelas rotinas do catálogo e da busca por linguagem natural, com os preços configurados no portal. Não inclui testes feitos fora delas nem o consumo anterior a esta medição. A fatura da OpenAI é a referência.'
-          : 'Só o consumo medido aparece. Para estimar o custo, informe os preços da página oficial da OpenAI na implantação do portal (entrada, saída e busca). A fatura da OpenAI é a referência.'),
-      );
+      if (r.openaiOrgStatus === 'error') {
+        partes.push(el('p', { class: 'aviso erro' }, 'Não foi possível ler os dados reais da OpenAI (chave de administrador inválida ou serviço fora do ar). Mostrando a estimativa.'));
+      }
+      partes.push(...secaoOpenAiEstimativa(r.openai, r.openaiOrgStatus === 'not_configured'));
     }
     alvo.replaceChildren(...partes);
   } catch (erro) {
@@ -308,6 +295,64 @@ async function carregarCustos() {
       aviso(mensagem(erro.codigo), 'erro');
     }
   }
+}
+
+/** Réplica da página Usage do console da OpenAI (dados reais pela API de administração). */
+function secaoOpenAiReal(o) {
+  const n = (v) => Number(v).toLocaleString('pt-BR');
+  const rotulos = o.daily.map((d) => `${d.date.slice(8)}/${d.date.slice(5, 7)}`);
+  return [
+    el('h2', {}, 'OpenAI'),
+    el(
+      'div',
+      { class: 'grade' },
+      cartaoNumero(`Gasto total em ${mesBr(o.month)}`, usd(o.totalUsd), o.limitUsd ? `Limite mensal ${usd(o.limitUsd)}` : '', percentual(o.totalUsd, o.limitUsd)),
+      cartaoNumero('Total de tokens', n(o.totalTokens), `${n(o.inputTokens)} de entrada · ${n(o.outputTokens)} de saída`),
+      cartaoNumero('Total de requisições', n(o.totalRequests)),
+    ),
+    o.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Gasto por dia'), grafico(o.daily.map((d) => d.usd), rotulos, 'Gasto diário da OpenAI')) : '',
+    o.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Requisições por dia'), grafico(o.daily.map((d) => d.requests), rotulos, 'Requisições diárias da OpenAI')) : '',
+    o.daily.length
+      ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por dia'), tabela(['Dia', 'Gasto', 'Requisições', 'Entrada', 'Saída'], o.daily.slice().reverse().map((d) => [d.date.split('-').reverse().join('/'), usd(d.usd), n(d.requests), n(d.inputTokens), n(d.outputTokens)]), [1, 2, 3, 4]))
+      : el('p', { class: 'vazio' }, 'Nenhum uso neste mês ainda.'),
+    o.byApiKey.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por chave de API'), tabela(['Chave', 'Requisições', 'Tokens'], o.byApiKey.map((k) => [k.name, n(k.requests), n(k.tokens)]), [1, 2])) : '',
+    o.byModel.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por modelo'), tabela(['Modelo', 'Requisições', 'Tokens'], o.byModel.map((k) => [k.name, n(k.requests), n(k.tokens)]), [1, 2])) : '',
+    o.byLineItem.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Categorias de gasto'), tabela(['Categoria', 'Gasto'], o.byLineItem.map((k) => [k.name, usd(k.usd)]), [1])) : '',
+    el('p', { class: 'meta' }, 'Dados da API de administração da OpenAI (a mesma fonte da página Usage do console), em dólar, dias em UTC. Mostra o uso de completions/respostas; outros recursos (imagens, embeddings...) não entram aqui. Atualiza a cada 15 minutos.'),
+  ];
+}
+
+function secaoOpenAiEstimativa(o, semChave) {
+  const partes = [el('h2', {}, 'OpenAI (estimativa)')];
+  if (!o) {
+    partes.push(el('p', { class: 'meta' }, 'Não foi possível ler o consumo da OpenAI agora.'));
+    return partes;
+  }
+  const mes = o.thisMonth;
+  const rotulos = o.daily.map((d) => d.date.slice(8) + '/' + d.date.slice(5, 7));
+  partes.push(
+    el(
+      'div',
+      { class: 'grade' },
+      cartaoNumero(`Custo estimado em ${mesBr(o.month)}`, o.priced ? usd(mes.estimatedUsd) : 'Preços não informados', o.limitUsd ? `Limite no console ${usd(o.limitUsd)}` : '', o.priced ? percentual(mes.estimatedUsd, o.limitUsd) : null),
+      cartaoNumero('Chamadas no mês', String(mes.chamadas), `${compacto(mes.entrada)} tokens de entrada · ${compacto(mes.saida)} de saída`),
+      cartaoNumero('Buscas na web no mês', String(mes.buscas), `Mês anterior: ${o.previousMonth.chamadas} chamadas`),
+    ),
+    o.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, o.priced ? 'Custo estimado por dia' : 'Chamadas por dia'), grafico(o.daily.map((d) => (o.priced ? d.estimatedUsd : d.chamadas)), rotulos, 'Consumo diário da OpenAI')) : '',
+    o.daily.length
+      ? el('div', { class: 'cartao' }, tabela(['Dia', 'Chamadas', 'Entrada', 'Saída', 'Buscas', 'Custo est.'], o.daily.slice().reverse().map((d) => [d.date.split('-').reverse().join('/'), d.chamadas, compacto(d.entrada), compacto(d.saida), d.buscas, d.estimatedUsd == null ? '—' : usd(d.estimatedUsd)]), [1, 2, 3, 4, 5]))
+      : el('p', { class: 'vazio' }, 'Nenhum consumo registrado neste mês ainda.'),
+    el(
+      'p',
+      { class: 'meta' },
+      (o.priced
+        ? 'Estimativa a partir das chamadas registradas pelas rotinas do catálogo e da busca por linguagem natural, com os preços configurados no portal. Não inclui testes feitos fora delas nem o consumo anterior a esta medição. '
+        : 'Só o consumo medido aparece. Para estimar o custo, informe os preços da página oficial da OpenAI na implantação do portal. ') +
+        (semChave ? 'Para ver o gasto real por dia (como no console da OpenAI), configure a chave de administrador da OpenAI no portal. ' : '') +
+        'A fatura da OpenAI é a referência.',
+    ),
+  );
+  return partes;
 }
 
 // ---- banners --------------------------------------------------------------------------------------

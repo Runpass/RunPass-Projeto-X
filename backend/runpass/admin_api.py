@@ -170,6 +170,7 @@ def create_admin_app(
     schedules=None,
     aws_costs=None,
     openai_usage=None,
+    openai_org=None,
     banners=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
@@ -421,12 +422,27 @@ def create_admin_app(
     def costs(op: Operator):
         need(op, "cost_read")
         out = {}
+        org_status = "not_configured"
+        if openai_org is not None and openai_org.configured:
+            try:  # dados reais da OpenAI quando ha chave de administrador; senao, a estimativa pelos logs
+                out["openaiOrg"] = openai_org.report()
+                org_status = "ok"
+            except Unavailable:
+                out["openaiOrg"] = None
+                org_status = "error"
+        else:
+            out["openaiOrg"] = None
+        out["openaiOrgStatus"] = org_status
         for name, source in (("aws", aws_costs), ("openai", openai_usage)):
             try:  # uma fonte fora do ar nao esconde a outra
                 out[name] = source.report() if source else None
             except Unavailable:
                 out[name] = None
-        out["errors"] = [k for k in ("aws", "openai") if out[k] is None]
+        out["errors"] = [
+            k
+            for k in ("aws", "openai")
+            if out[k] is None and not (k == "openai" and out["openaiOrg"])
+        ]
         return out
 
     @app.post("/admin/catalog/run", status_code=202)
