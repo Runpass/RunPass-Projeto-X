@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  MODOS_CATALOGO, PERMISSOES, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -66,6 +66,9 @@ function sair(motivo) {
   $('cadastros').replaceChildren();
   $('custos').replaceChildren();
   $('operadores').replaceChildren();
+  $('banners-candidatas').replaceChildren();
+  $('banner-manual').replaceChildren();
+  $('banners-publicados').replaceChildren();
   $('senha').value = '';
   $('codigo').value = '';
   $('pedidos').replaceChildren();
@@ -307,6 +310,181 @@ async function carregarCustos() {
   }
 }
 
+// ---- banners --------------------------------------------------------------------------------------
+
+/** Busca de corrida do catálogo (a mesma busca do vínculo de pedidos). `aoEscolher(edicao)` recebe a escolhida. */
+function seletorEdicao(textoInicial, aoEscolher, idInicial = null) {
+  const lista = el('ul', { class: 'escolhas', role: 'listbox' });
+  const busca = el('input', { type: 'search', placeholder: 'Nome da corrida no catálogo', maxlength: '160', value: textoInicial || '' });
+  let espera = null;
+  let inicial = idInicial;
+  const pesquisar = async () => {
+    aoEscolher(null);
+    try {
+      const { items } = await api(`/admin/editions?q=${encodeURIComponent(busca.value.trim())}&limit=20`);
+      lista.replaceChildren(
+        ...(items.length
+          ? items.map((e) => {
+              const li = el('li', { role: 'option', 'aria-selected': 'false', tabindex: '0', 'data-id': e.id }, `${e.name} · ${e.date} · ${e.city}/${e.state}`);
+              const marcar = () => {
+                for (const outro of lista.children) outro.setAttribute('aria-selected', 'false');
+                li.setAttribute('aria-selected', 'true');
+                aoEscolher(e);
+              };
+              li.addEventListener('click', marcar);
+              li.addEventListener('keydown', (ev) => ev.key === 'Enter' && marcar());
+              return li;
+            })
+          : [el('li', {}, 'Nenhuma corrida encontrada.')]),
+      );
+      const sugerida = inicial && [...lista.children].find((li) => li.dataset.id === inicial);
+      inicial = null;
+      if (sugerida) sugerida.click();
+    } catch (erro) {
+      if (token) aviso(mensagem(erro.codigo), 'erro');
+    }
+  };
+  busca.addEventListener('input', () => {
+    clearTimeout(espera);
+    espera = setTimeout(pesquisar, 350);
+  });
+  return { caixa: el('div', {}, el('label', {}, 'Corrida do catálogo', busca), lista), pesquisar };
+}
+
+/** Formulário de aprovação: imagem (com prévia), crédito, base de autorização e confirmação. */
+function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
+  let escolhida = null;
+  let urlPrevia = null;
+  const campoUrl = imagem ? null : el('input', { type: 'url', placeholder: 'https://...', maxlength: '2000' });
+  const previa = el('div');
+  const campoCredito = el('input', { type: 'text', maxlength: '200', value: credito || '', placeholder: 'Ex.: Divulgação: Organizador' });
+  const campoNota = el('textarea', { rows: '4', maxlength: '1000' });
+  campoNota.value = notaDireitosPadrao(pagina, dataHojeIso());
+  const confirmar = el('input', { type: 'checkbox' });
+  const aprovar = el('button', { type: 'button', class: 'ok', disabled: true }, 'Aprovar e publicar');
+  const seletor = seletorEdicao(
+    edicao ? edicao.name : nomeBusca,
+    (e) => {
+      escolhida = e ? e.id : null;
+      habilitar();
+    },
+    edicao ? edicao.id : null,
+  );
+  const endereco = () => (imagem || campoUrl.value.trim());
+  const habilitar = () => {
+    aprovar.disabled = !(escolhida && endereco() && campoCredito.value.trim() && campoNota.value.trim().length >= 10 && confirmar.checked);
+  };
+  for (const c of [campoCredito, campoNota, confirmar]) c.addEventListener('input', habilitar);
+  if (campoUrl) campoUrl.addEventListener('input', habilitar);
+
+  const verPrevia = el('button', { type: 'button', class: 'sec' }, 'Ver a imagem como ficará no app');
+  verPrevia.addEventListener('click', async () => {
+    if (!endereco()) return aviso('Informe o endereço da imagem.', 'erro');
+    verPrevia.disabled = true;
+    try {
+      const r = await fetch(cfg.apiUrl + '/admin/banners/preview', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageUrl: endereco() }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 401) return sair('INVALID_TOKEN');
+        return aviso(mensagem(j.code), 'erro');
+      }
+      if (urlPrevia) URL.revokeObjectURL(urlPrevia);
+      urlPrevia = URL.createObjectURL(await r.blob());
+      previa.replaceChildren(el('img', { class: 'previa', src: urlPrevia, alt: 'Prévia do banner' }));
+    } finally {
+      verPrevia.disabled = false;
+    }
+  });
+
+  aprovar.addEventListener('click', async () => {
+    if (!window.confirm('Aprovar PUBLICA esta imagem no app, com o crédito informado. Confirmar?')) return;
+    aprovar.disabled = true;
+    try {
+      await api('/admin/banners/approve', {
+        method: 'POST',
+        body: JSON.stringify({ editionId: escolhida, imageUrl: endereco(), credit: campoCredito.value.trim(), rightsNote: campoNota.value.trim(), confirmRights: confirmar.checked }),
+      });
+      aviso('Banner publicado.', 'ok');
+      await carregarBanners();
+    } catch (erro) {
+      habilitar();
+      if (token) aviso(mensagem(erro.codigo), 'erro');
+    }
+  });
+
+  seletor.pesquisar();
+  return el(
+    'div',
+    {},
+    campoUrl ? el('label', {}, 'Endereço da imagem (https)', campoUrl) : '',
+    el('div', { class: 'acoes' }, verPrevia),
+    previa,
+    seletor.caixa,
+    el('label', {}, 'Crédito (aparece no app)', campoCredito),
+    el('label', {}, 'Base de autorização (como você obteve o direito de usar; fica só no registro interno)', campoNota),
+    el('label', { class: 'confirma' }, confirmar, ' Confirmo que a base de autorização acima é verdadeira.'),
+    aprovar,
+  );
+}
+
+async function carregarBanners() {
+  $('banners-candidatas').replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const [cand, pub] = await Promise.all([api('/admin/banners/candidates'), api('/admin/banners/published')]);
+    $('banners-candidatas').replaceChildren(
+      el('h2', {}, cand.source ? `Candidatas da coleta de ${dataBr(cand.source)}` : 'Candidatas'),
+      ...(cand.items.length
+        ? cand.items.map((c) =>
+            el(
+              'article',
+              { class: 'cartao' },
+              el('h2', {}, c.name),
+              el('div', { class: 'linha' }, `${dataBr(c.date)} · direitos: ${c.rights || 'não verificado'}`),
+              linkSeguro(c.officialPage) ? el('div', { class: 'meta' }, 'Página oficial: ', el('a', { href: linkSeguro(c.officialPage), target: '_blank', rel: 'noopener noreferrer' }, c.officialPage)) : '',
+              c.edition && c.edition.hasBanner ? el('div', { class: 'aviso' }, 'Esta corrida já tem banner; aprovar substitui.') : '',
+              formularioBanner({ imagem: c.imageUrl, credito: c.credit, pagina: c.officialPage, edicao: c.edition, nomeBusca: c.name }),
+            ),
+          )
+        : [el('p', { class: 'vazio' }, 'Nenhuma imagem candidata na última coleta.')]),
+    );
+    $('banner-manual').replaceChildren(formularioBanner({ imagem: '', credito: '', pagina: '', edicao: null, nomeBusca: '' }));
+    $('banners-publicados').replaceChildren(
+      ...(pub.items.length
+        ? pub.items.map((e) =>
+            el(
+              'article',
+              { class: 'cartao' },
+              el('h2', {}, e.name),
+              el('div', { class: 'linha' }, `${dataBr(e.date)} · ${e.city}/${e.state} · crédito: ${e.credit || '—'}`),
+              el('button', { type: 'button', class: 'perigo', onclick: () => retirarBanner(e) }, 'Retirar banner'),
+            ),
+          )
+        : [el('p', { class: 'vazio' }, 'Nenhum banner publicado.')]),
+    );
+  } catch (erro) {
+    if (token) {
+      $('banners-candidatas').replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+async function retirarBanner(e) {
+  const motivo = window.prompt(`Retirar o banner de "${e.name}". Motivo (fica registrado):`, '');
+  if (!motivo || motivo.trim().length < 5) return;
+  try {
+    await api('/admin/banners/remove', { method: 'POST', body: JSON.stringify({ editionId: e.id, reason: motivo.trim() }) });
+    aviso('Banner retirado.', 'ok');
+    await carregarBanners();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
 // ---- gestão de operadores -----------------------------------------------------------------------
 
 let meuId = '';
@@ -385,6 +563,7 @@ function mostrarAba(nome) {
   if (nome === 'catalogo') carregarUltimoDisparo();
   if (nome === 'cadastros') carregarCadastros();
   if (nome === 'custos') carregarCustos();
+  if (nome === 'banners') carregarBanners();
   if (nome === 'operadores') carregarOperadores();
 }
 
@@ -507,7 +686,7 @@ $('form-operador').addEventListener('submit', async (evento) => {
 });
 
 function prepararAbas() {
-  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin', custos: 'cost_read' };
+  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', banners: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin', custos: 'cost_read' };
   for (const [nome, perm] of Object.entries(abas)) $(`aba-${nome}`).hidden = !permissoes.includes(perm);
   $('modo-catalogo').replaceChildren(...Object.entries(MODOS_CATALOGO).map(([v, t]) => el('option', { value: v }, t)));
   $('op-permissoes').replaceChildren(
@@ -613,6 +792,7 @@ $('voltar').addEventListener('click', () => sair());
 $('sair').addEventListener('click', () => sair());
 $('atualizar').addEventListener('click', carregarPedidos);
 $('atualizar-cadastros').addEventListener('click', carregarCadastros);
+$('atualizar-banners').addEventListener('click', carregarBanners);
 $('atualizar-operadores').addEventListener('click', carregarOperadores);
 $('atualizar-custos').addEventListener('click', carregarCustos);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);

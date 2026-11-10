@@ -51,7 +51,7 @@ def security_headers(region):
     """Cabecalhos de toda resposta: scripts e estilos so do proprio site; conexoes so ao Cognito e a si."""
     return {
         "Content-Security-Policy": (
-            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
             f"connect-src 'self' https://cognito-idp.{region}.amazonaws.com; "
             "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
         ),
@@ -170,6 +170,7 @@ def create_admin_app(
     schedules=None,
     aws_costs=None,
     openai_usage=None,
+    banners=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
@@ -291,6 +292,23 @@ def create_admin_app(
         model_config = ConfigDict(extra="forbid")
         permissions: list[str] = Field(min_length=1, max_length=8)
 
+    class ImageUrl(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        imageUrl: str = Field(max_length=2000)
+
+    class BannerApproval(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        editionId: str = Field(max_length=120)
+        imageUrl: str = Field(max_length=2000)
+        credit: str = Field(max_length=200)
+        rightsNote: str = Field(max_length=1000)
+        confirmRights: bool
+
+    class BannerRemoval(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        editionId: str = Field(max_length=120)
+        reason: str = Field(max_length=200)
+
     class CatalogRun(BaseModel):
         model_config = ConfigDict(extra="forbid")
         mode: str = Field(max_length=20)
@@ -338,6 +356,45 @@ def create_admin_app(
     @app.post("/admin/operators/{subject}/reset")
     def operator_reset(subject: Subject, op: Operator):
         return users.reset_credentials(need_users(op), subject)
+
+    def need_banners(op):
+        actor = need(op, "catalog_admin")
+        if banners is None:
+            raise Unavailable()
+        return actor
+
+    @app.get("/admin/banners/candidates")
+    def banner_candidates(op: Operator):
+        need_banners(op)
+        return banners.candidates()
+
+    @app.get("/admin/banners/published")
+    def banner_published(op: Operator):
+        need_banners(op)
+        return banners.published()
+
+    @app.post("/admin/banners/preview")
+    def banner_preview(payload: ImageUrl, op: Operator):
+        need_banners(op)
+        data, kind = banners.preview(payload.imageUrl)
+        return Response(data, media_type=kind)
+
+    @app.post("/admin/banners/approve", status_code=201)
+    def banner_approve(payload: BannerApproval, op: Operator):
+        actor = need_banners(op)
+        return banners.approve(
+            actor,
+            payload.editionId,
+            payload.imageUrl,
+            payload.credit,
+            payload.rightsNote,
+            payload.confirmRights,
+        )
+
+    @app.post("/admin/banners/remove")
+    def banner_remove(payload: BannerRemoval, op: Operator):
+        actor = need_banners(op)
+        return banners.remove(actor, payload.editionId, payload.reason)
 
     @app.get("/admin/catalog/run")
     def last_run(op: Operator):

@@ -52,6 +52,7 @@
         <button role="tab" id="aba-pedidos" data-aba="pedidos" aria-selected="true">Pedidos de corrida</button>
         <button role="tab" id="aba-catalogo" data-aba="catalogo" aria-selected="false">Atualizar catálogo</button>
         <button role="tab" id="aba-cadastros" data-aba="cadastros" aria-selected="false">Cadastros no app</button>
+        <button role="tab" id="aba-banners" data-aba="banners" aria-selected="false">Banners</button>
         <button role="tab" id="aba-custos" data-aba="custos" aria-selected="false">Custos</button>
         <button role="tab" id="aba-operadores" data-aba="operadores" aria-selected="false">Operadores</button>
       </nav>
@@ -90,6 +91,20 @@
         <p class="ajuda">Quem já criou conta no aplicativo. E-mails aparecem mascarados e cada consulta fica registrada.</p>
         <p id="resumo-cadastros" class="linha"></p>
         <div id="cadastros"></div>
+      </section>
+      <section id="sec-banners" data-sec="banners" hidden>
+        <div class="barra">
+          <h1>Banners das corridas</h1>
+          <button id="atualizar-banners" type="button" class="sec">Atualizar</button>
+        </div>
+        <p class="ajuda">Aprovar publica a imagem no app, com o crédito escolhido. Nada é publicado sem você ver a imagem, informar o crédito e a base de autorização e confirmar que ela é verdadeira.</p>
+        <div id="banners-candidatas"></div>
+        <article class="cartao">
+          <h2>Outra imagem (endereço manual)</h2>
+          <div id="banner-manual"></div>
+        </article>
+        <div class="barra"><h2>Banners publicados</h2></div>
+        <div id="banners-publicados"></div>
       </section>
       <section id="sec-custos" data-sec="custos" hidden>
         <div class="barra">

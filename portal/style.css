@@ -54,3 +54,7 @@ fieldset input { width: auto; margin: 0; }
 .grafico rect { fill: var(--laranja); }
 .grafico text { fill: var(--suave); font-size: 10px; }
 .direita { text-align: right !important; }
+
+.previa { max-width: 100%; max-height: 260px; border-radius: 10px; border: 1px solid var(--linha); margin-top: 10px; display: block; }
+input[type="checkbox"] { display: inline-block; width: auto; margin: 0 8px 0 0; vertical-align: middle; }
+.confirma { color: var(--texto); }

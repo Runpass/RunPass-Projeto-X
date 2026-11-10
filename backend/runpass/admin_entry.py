@@ -44,6 +44,11 @@ def _admin():
         _boto_client("logs"),
         _boto_client("scheduler"),
         _costs_config(),
+        {
+            "s3": _boto_client("s3"),
+            "medal_bucket": os.environ["RUNPASS_MEDAL_BUCKET"],
+            "report_bucket": os.environ.get("RUNPASS_CATALOG_REPORT_BUCKET", ""),
+        },
     )
     return Mangum(app, lifespan="off")
 

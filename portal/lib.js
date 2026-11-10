@@ -15,6 +15,14 @@ export const MENSAGENS = {
   LAST_ADMIN: 'Esta ação deixaria a conta sem nenhum administrador de usuários ativo.',
   OPERATOR_NOT_FOUND: 'Operador não encontrado.',
   OPERATOR_NOT_ACTIVE: 'O acesso deste operador não está ativo. Reative-o primeiro.',
+  INVALID_IMAGE_URL: 'Endereço de imagem inválido: use https, sem usuário e senha.',
+  IMAGE_URL_BLOCKED: 'Este endereço aponta para uma rede interna e foi bloqueado.',
+  IMAGE_TOO_LARGE: 'A imagem passa de 6 MB.',
+  INVALID_IMAGE: 'O arquivo não é uma imagem JPEG, PNG ou WebP válida.',
+  IMAGE_FETCH_FAILED: 'Não foi possível baixar a imagem (site fora do ar, bloqueio ou endereço errado).',
+  RIGHTS_NOT_CONFIRMED: 'Confirme que a base de autorização informada é verdadeira.',
+  EDITION_NOT_FOUND: 'Corrida não encontrada no catálogo.',
+  NO_BANNER: 'Esta corrida não tem banner.',
   ACCESS_CONFLICT: 'A conta foi criada, mas a concessão de acesso falhou. Avise o administrador.',
   RUN_TOO_SOON: 'A rotina foi disparada há pouco. Aguarde 10 minutos entre disparos.',
   INVALID_TOKEN: 'Sua sessão expirou ou o acesso foi retirado. Entre de novo.',
@@ -206,4 +214,17 @@ export function situacaoOperador(o) {
 
 export function permissoesDe(o) {
   return (o.access && o.access.permissions) || [];
+}
+
+/** Texto inicial da base de autorização: a pessoa lê, ajusta e só então confirma que é verdadeiro. */
+export function notaDireitosPadrao(paginaOficial, hojeIso) {
+  const [a, m, d] = (hojeIso || '').split('-');
+  const data = a && m && d ? `${d}/${m}/${a}` : '';
+  const origem = paginaOficial ? ` (${paginaOficial})` : '';
+  return `Imagem de divulgação publicada pelo organizador na página oficial${origem}. Sem autorização formal; risco assumido pelo responsável do produto em ${data}. Remover a pedido do organizador.`;
+}
+
+export function dataHojeIso(agora = new Date()) {
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(agora);
+  return p;
 }

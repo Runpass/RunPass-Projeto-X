@@ -1,6 +1,7 @@
 """API do portal de administracao. Dados sinteticos; MemoryStore nao prova comportamento do DynamoDB."""
 
 import hashlib
+import io
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ import jwt
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from runpass.admin_api import MfaPolicy, admit_operator, create_admin_app
+from runpass.admin_banners import BannerAdmin
 from runpass.admin_users import AdminUsers, CatalogRunner, CatalogSchedules, next_run
 from runpass.catalog import CatalogService, seed_synthetic
 from runpass.edition_requests import EditionRequestService
@@ -17,6 +19,7 @@ from runpass.models import EditionRequestFields
 from runpass.operator_admin import grant_access
 from runpass.service import IdentityService
 from runpass.store import MemoryStore, Unavailable
+from runpass.upload import MemoryBlobStore
 
 ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 11, 10, 15, tzinfo=timezone.utc)
@@ -170,6 +173,18 @@ class FakeCosts:
         return self.value
 
 
+class FakeS3:
+    def __init__(self):
+        self.objects = {}
+
+    def list_objects_v2(self, **args):
+        keys = [{"Key": k} for k in sorted(self.objects) if k.startswith(args["Prefix"])]
+        return {"Contents": keys}
+
+    def get_object(self, Bucket, Key):
+        return {"Body": io.BytesIO(self.objects[Key].encode())}
+
+
 class FakeLambda:
     def __init__(self):
         self.calls, self.fail = [], False
@@ -193,6 +208,8 @@ class AdminApiTests(unittest.TestCase):
         self.now = NOW.timestamp()
         self.cognito, self.lam, self.logs = FakeUsers(), FakeLambda(), FakeLogs()
         self.sched = FakeScheduler()
+        self.s3, self.blobs = FakeS3(), MemoryBlobStore()
+        self.pages = {}
         self.aws_costs, self.openai_costs = (
             FakeCosts({"totalUsd": 5}),
             FakeCosts({"month": "2026-11"}),
@@ -231,6 +248,15 @@ class AdminApiTests(unittest.TestCase):
                 schedules=CatalogSchedules(
                     self.sched, "runpass-dev-catalogo-semanal", lambda: self.now
                 ),
+                banners=BannerAdmin(
+                    self.store,
+                    self.catalog,
+                    self.blobs,
+                    self.s3,
+                    "relatorios",
+                    lambda: self.now,
+                    self.fetch,
+                ),
                 aws_costs=self.aws_costs,
                 openai_usage=self.openai_costs,
                 site={
@@ -244,6 +270,10 @@ class AdminApiTests(unittest.TestCase):
         grant_access(self.store, "adm", ["user_admin"], "outro", NOW)
         grant_access(self.store, "fin", ["cost_read"], "outro", NOW)
         grant_access(self.store, "mod", ["moderation"], "outro", NOW)
+
+    def fetch(self, url):
+        """Transporte falso: so as paginas combinadas respondem."""
+        return self.pages[url]
 
     def auth(self, tok=None):
         return {"Authorization": "Bearer " + (tok or token())}
@@ -722,6 +752,104 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual((acesso["state"], acesso["permissions"]), ("active", ["catalog_admin"]))
         self.assertIn(("delete", "op@e.invalid"), self.cognito.calls)
         self.assertEqual(self.cognito.created[-1]["DesiredDeliveryMediums"], ["EMAIL"])
+
+    def png(self):
+        from PIL import Image
+
+        out = io.BytesIO()
+        Image.new("RGB", (64, 36), (200, 60, 20)).save(out, format="PNG")
+        return out.getvalue()
+
+    def test_banners_candidatas_com_a_corrida_provavel_e_so_para_catalog_admin(self):
+        h = self.auth(token("op"))
+        self.assertEqual(
+            self.client.get(
+                "/admin/banners/candidates", headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get("/admin/banners/candidates", headers=h).json(),
+            {"source": None, "items": []},
+        )
+        cab = "source_external_id,nome,data,pagina_oficial,imagem_url,tipo,tamanho_bytes,credito_sugerido,direitos,situacao,observacao,aprovada\n"
+        self.s3.objects["semanal/2026-11-09/imagens/candidatas.csv"] = "x\n"
+        self.s3.objects["semanal/2026-11-16/imagens/candidatas.csv"] = (
+            cab
+            + "a,Corrida Sintética São Paulo,2026-11-08,https://o.exemplo/p,https://o.exemplo/b.png,image/png,100,Divulgação: Org,nao_verificado,candidata,,\n"
+            + "b,Outra,2026-01-01,https://o.exemplo/p,https://o.exemplo/c.png,image/png,100,,nao_verificado,candidata,,\n"
+            + "c,Sem imagem,2026-01-01,https://o.exemplo/p,,,,,nao_verificado,sem_imagem_declarada,,\n"
+            + "d,Inseguro,2026-01-01,https://o.exemplo/p,http://o.exemplo/d.png,image/png,1,,nao_verificado,candidata,,\n"
+        )
+        r = self.client.get("/admin/banners/candidates", headers=h).json()
+        self.assertEqual(r["source"], "2026-11-16")  # a coleta mais recente
+        self.assertEqual([i["name"] for i in r["items"]], ["Corrida Sintética São Paulo", "Outra"])
+        self.assertEqual(r["items"][0]["edition"]["id"], "synthetic-sp-2026")
+        self.assertIsNone(r["items"][1]["edition"])
+
+    def test_banner_preview_aprovar_e_retirar(self):
+        h = self.auth(token("op"))
+        url = "https://o.exemplo/b.png"
+        self.pages[url] = (200, {"content-type": "image/png"}, self.png())
+        r = self.client.post("/admin/banners/preview", json={"imageUrl": url}, headers=h)
+        self.assertEqual((r.status_code, r.headers["content-type"]), (200, "image/png"))
+        self.assertEqual(
+            self.client.post(
+                "/admin/banners/preview", json={"imageUrl": "http://x"}, headers=h
+            ).status_code,
+            422,
+        )
+        corpo = {
+            "editionId": "synthetic-sp-2026",
+            "imageUrl": url,
+            "credit": "Divulgação: Org",
+            "rightsNote": "Imagem da pagina oficial; risco assumido pelo responsavel",
+            "confirmRights": True,
+        }
+        # sem confirmar, sem credito ou com nota curta: nada e publicado
+        for mudanca in ({"confirmRights": False}, {"credit": " "}, {"rightsNote": "ok"}):
+            r = self.client.post("/admin/banners/approve", json={**corpo, **mudanca}, headers=h)
+            self.assertEqual(r.status_code, 422, mudanca)
+        self.assertEqual(self.blobs.derived, {})
+        self.assertEqual(
+            self.client.post(
+                "/admin/banners/approve", json=corpo, headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        r = self.client.post("/admin/banners/approve", json=corpo, headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertTrue(r.json()["reference"].startswith("banner_"))
+        row = self.store.get(
+            ("operations", "EDITION#synthetic-sp-2026", "IMAGE#" + r.json()["reference"])
+        )
+        self.assertEqual(
+            (row["credit"], row["approvedBy"], row["origin"]), ("Divulgação: Org", "op", "admin")
+        )
+        self.assertIn("risco assumido", row["rightsNote"])
+        publicados = self.client.get("/admin/banners/published", headers=h).json()["items"]
+        self.assertEqual([p["id"] for p in publicados], ["synthetic-sp-2026"])
+        self.assertEqual(publicados[0]["credit"], "Divulgação: Org")
+        # edicao inexistente
+        r = self.client.post(
+            "/admin/banners/approve", json={**corpo, "editionId": "nao-existe"}, headers=h
+        )
+        self.assertEqual(r.status_code, 404)
+        # retirar exige motivo e so vale quando ha banner
+        rem = {"editionId": "synthetic-sp-2026", "reason": "pedido do organizador"}
+        self.assertEqual(
+            self.client.post(
+                "/admin/banners/remove", json={**rem, "reason": ""}, headers=h
+            ).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.post("/admin/banners/remove", json=rem, headers=h).status_code, 200
+        )
+        self.assertEqual(self.client.get("/admin/banners/published", headers=h).json()["items"], [])
+        self.assertEqual(
+            self.client.post("/admin/banners/remove", json=rem, headers=h).status_code, 409
+        )
 
     def test_falha_ao_disparar_nao_trava_o_intervalo(self):
         h = self.auth(token("op"))

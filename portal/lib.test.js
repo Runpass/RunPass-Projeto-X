@@ -108,3 +108,14 @@ test('operadores: situação e permissões', async () => {
   assert.deepEqual(permissoesDe({ access: null }), []);
   assert.match(mensagem('LAST_ADMIN'), /administrador/);
 });
+
+test('banners: nota de direitos padrão e data de hoje', async () => {
+  const { notaDireitosPadrao, dataHojeIso } = await import('./lib.js');
+  const nota = notaDireitosPadrao('https://o.exemplo/p', '2026-11-10');
+  assert.match(nota, /página oficial \(https:\/\/o\.exemplo\/p\)/);
+  assert.match(nota, /10\/11\/2026/);
+  assert.match(nota, /Sem autorização formal/);
+  assert.ok(notaDireitosPadrao('', '2026-11-10').length > 20);
+  assert.match(dataHojeIso(new Date('2026-11-10T15:00:00Z')), /^2026-11-10$/);
+  assert.match(mensagem('IMAGE_URL_BLOCKED'), /rede interna/);
+});
