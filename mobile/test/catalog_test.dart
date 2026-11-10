@@ -1328,6 +1328,9 @@ void main() {
           MaterialApp(home: CatalogScreen(gateway: gateway)),
         );
         await tester.pumpAndSettle();
+        // O pedido fica junto da pesquisa, na lupa: fechada, nao aparece no fim da lista.
+        expect(find.byKey(const Key('catalog-request-new')), findsNothing);
+        await openSearch(tester);
         await reveal(tester, find.byKey(const Key('catalog-request-new')));
         await tester.tap(find.byKey(const Key('catalog-request-new')));
         await tester.pumpAndSettle();
@@ -1465,5 +1468,90 @@ void main() {
         );
       },
     );
+  });
+
+  testWidgets(
+    'o campo de frase aparece sem abrir os filtros e busca pelo teclado',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <Uri>[];
+      final gateway = await signed((uri, method, headers, body) async {
+        calls.add(uri);
+        return JsonReply(200, {
+          'items': [entry('S1')],
+          if (uri.path == '/editions/search')
+            'search': {
+              'source': 'llm',
+              'filters': {'q': 'night'},
+              'applied': ['texto'],
+              'notApplied': <String>[],
+            },
+        });
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      // Sem tocar na lupa: o campo ja esta na tela, com o rotulo certo.
+      expect(find.byKey(const Key('catalog-phrase')), findsOneWidget);
+      expect(find.text('Descreva a corrida'), findsOneWidget);
+      expect(
+        find.text('Encontre sua próxima conquista'),
+        findsNothing,
+      ); // cartão de filtros fechado
+      await tester.enterText(
+        find.byKey(const Key('catalog-phrase')),
+        'night run',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+      expect(calls.last.path, '/editions/search');
+      expect(calls.last.queryParameters['phrase'], 'night run');
+      // O botao de limpar volta a lista completa.
+      await tester.tap(find.byKey(const Key('catalog-phrase-clear')));
+      await tester.pumpAndSettle();
+      expect(calls.last.path, '/editions');
+      expect(find.byKey(const Key('catalog-phrase-clear')), findsNothing);
+    },
+  );
+
+  testWidgets('sem resultado, a tela oferece pedir o cadastro direto', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await signed((uri, method, headers, body) async {
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Nenhuma corrida encontrada com esses filtros.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('catalog-request-empty')));
+    await tester.pumpAndSettle();
+    expect(find.text('Pedir cadastro da corrida'), findsWidgets);
+    expect(find.byKey(const Key('request-submit')), findsOneWidget);
+  });
+
+  testWidgets('com resultados nao ha atalho de pedido no fim da lista', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await signed((uri, method, headers, body) async {
+      return JsonReply(200, {
+        'items': [entry('A')],
+      });
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
+    expect(find.byKey(const Key('catalog-request-new')), findsNothing);
   });
 }

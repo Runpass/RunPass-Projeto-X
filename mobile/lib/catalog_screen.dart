@@ -280,6 +280,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
     return parts.isEmpty ? null : parts.join('\n');
   }
 
+  void openMyRequests() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+    ),
+  );
+
   Future<void> requestRace() async {
     final sent = await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(
@@ -353,12 +359,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
       actions: [
         IconButton(
           key: const Key('catalog-search-toggle'),
-          tooltip: showFilters ? 'Fechar pesquisa' : 'Pesquisar corridas',
+          tooltip: showFilters ? 'Fechar filtros' : 'Filtrar corridas',
           icon: Icon(showFilters ? Icons.close_rounded : Icons.search_rounded),
           onPressed: () {
             if (showFilters && activeFilters.isNotEmpty) {
-              // Ao fechar a pesquisa, volta a lista completa.
-              phrase.clear();
+              // Ao fechar os filtros, volta a lista completa (a frase digitada fica).
               for (final controller in fields.values) {
                 controller.clear();
               }
@@ -378,6 +383,41 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: TextField(
+              key: const Key('catalog-phrase'),
+              controller: phrase,
+              maxLength: 200,
+              buildCounter: (
+                _, {
+                required currentLength,
+                required isFocused,
+                maxLength,
+              }) => null,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => load(),
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Descreva a corrida',
+                hintText: 'Ex.: meia maratona em abril',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: phrase.text.isEmpty
+                    ? null
+                    : IconButton(
+                        key: const Key('catalog-phrase-clear'),
+                        tooltip: 'Limpar a frase',
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: loading
+                            ? null
+                            : () {
+                                phrase.clear();
+                                load();
+                              },
+                      ),
+              ),
+            ),
+          ),
           if (showFilters)
             Card(
               child: Padding(
@@ -396,23 +436,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: TextField(
-                          key: const Key('catalog-phrase'),
-                          controller: phrase,
-                          maxLength: 200,
-                          textInputAction: TextInputAction.search,
-                          onSubmitted: (_) => load(),
-                          decoration: const InputDecoration(
-                            labelText: 'Descreva a corrida',
-                            hintText: 'Ex.: meia maratona em abril',
-                            helperText: 'Com a frase preenchida, os campos abaixo são ignorados.',
-                            helperMaxLines: 2,
-                          ),
+                      const SizedBox(height: 4),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Se houver uma frase acima, estes filtros são ignorados.',
                         ),
                       ),
+                      const SizedBox(height: 12),
                       filter(
                         'namePrefix',
                         'Início do nome da corrida',
@@ -493,6 +524,32 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         onPressed: loading ? null : clearSearch,
                         child: const Text('Limpar busca'),
                       ),
+                      const Divider(height: 32),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Não encontrou a corrida?',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Peça o cadastro. A equipe pesquisa os pedidos periodicamente, confere a fonte e o resultado aparece em "Minhas solicitações".',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      FilledButton(
+                        key: const Key('catalog-request-new'),
+                        onPressed: loading ? null : requestRace,
+                        child: const Text('Pedir cadastro da corrida'),
+                      ),
+                      TextButton(
+                        key: const Key('catalog-request-mine'),
+                        onPressed: openMyRequests,
+                        child: const Text('Minhas solicitações'),
+                      ),
                     ],
                   ),
                 ),
@@ -520,6 +577,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
               nextCursor == null
                   ? 'Nenhuma corrida encontrada com esses filtros.'
                   : 'Nenhuma corrida nesta página. Continue a busca.',
+            ),
+          if (!loading && error == null && items.isEmpty && nextCursor == null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                key: const Key('catalog-request-empty'),
+                onPressed: requestRace,
+                child: const Text('Não encontrou? Pedir cadastro da corrida'),
+              ),
             ),
           for (final edition in items)
             Card(
@@ -582,41 +648,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
               onPressed: loading ? null : () => load(more: true),
               child: const Text('Carregar mais'),
             ),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Não encontrou a corrida?',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Peça o cadastro. A equipe pesquisa os pedidos periodicamente, confere a fonte e o resultado aparece em "Minhas solicitações".',
-                  ),
-                  const SizedBox(height: 8),
-                  FilledButton(
-                    key: const Key('catalog-request-new'),
-                    onPressed: loading ? null : requestRace,
-                    child: const Text('Pedir cadastro da corrida'),
-                  ),
-                  TextButton(
-                    key: const Key('catalog-request-mine'),
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) =>
-                            MyEditionRequestsScreen(gateway: widget.gateway),
-                      ),
-                    ),
-                    child: const Text('Minhas solicitações'),
-                  ),
-                ],
-              ),
-            ),
-          ),
         ],
       ),
     ),
