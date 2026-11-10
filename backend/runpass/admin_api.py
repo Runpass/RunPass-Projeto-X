@@ -165,6 +165,7 @@ def create_admin_app(
     site=None,
     users=None,
     runner=None,
+    schedules=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
@@ -313,6 +314,13 @@ def create_admin_app(
         if runner is None:
             raise Unavailable()
         return runner.runs()
+
+    @app.get("/admin/catalog/schedules")
+    def schedules_list(op: Operator):
+        need(op, "catalog_admin")
+        if schedules is None:
+            raise Unavailable()
+        return schedules.upcoming()
 
     @app.post("/admin/catalog/run", status_code=202)
     def start_run(payload: CatalogRun, op: Operator):

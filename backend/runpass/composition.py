@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 
 from .admin_api import MfaPolicy, create_admin_app, find_portal_dir
-from .admin_users import AdminUsers, CatalogRunner
+from .admin_users import AdminUsers, CatalogRunner, CatalogSchedules
 from .api import create_app
 from .aws_adapters import CognitoAccountRemover, S3AuditSink
 from .catalog import CatalogService
@@ -115,6 +115,7 @@ def create_admin_aws_app(
     lambda_client=None,
     catalog_function="",
     logs_client=None,
+    scheduler_client=None,
 ):
     """API do portal: so tokens do pool de operadores; o MFA do pool e conferido (ver admin_api)."""
     service = _identity_service(settings, dynamodb_client)
@@ -137,6 +138,7 @@ def create_admin_aws_app(
         clock=clock,
         users=AdminUsers(service.store, cognito_client, runner_pool_id, operator_pool_id, clock),
         runner=CatalogRunner(service.store, lambda_client, catalog_function, clock, logs_client),
+        schedules=CatalogSchedules(scheduler_client, catalog_function, clock),
         site=(
             {"directory": portal, "region": settings.region, "client_id": operator_client_id}
             if portal

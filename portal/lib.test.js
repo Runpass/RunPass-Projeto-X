@@ -68,3 +68,10 @@ test('execuções: situação, duração e acompanhamento', async () => {
   assert.ok(ativa([{ status: 'done' }, { status: 'waiting' }]));
   assert.ok(!ativa([{ status: 'done' }, { status: 'failed' }]));
 });
+
+test('agendamentos: descrição', async () => {
+  const { descreverAgendamento } = await import('./lib.js');
+  assert.equal(descreverAgendamento({ enabled: false, name: 'x', description: '' }).situacao, 'Desativado');
+  assert.equal(descreverAgendamento({ enabled: true, name: 'x', description: 'Calendário', expression: 'rate(1 day)', nextRun: null }).quando, 'Ver expressão: rate(1 day)');
+  assert.equal(descreverAgendamento({ enabled: true, name: 'n', description: '', nextRun: '2026-11-16T10:00:00Z' }).oque, 'n');
+});

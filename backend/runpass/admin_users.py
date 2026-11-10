@@ -9,8 +9,9 @@
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from .operator_admin import PERMISSIONS, grant_access
 from .service import Problem
@@ -291,3 +292,103 @@ class CatalogRunner:
             raise Unavailable() from error
         audit(self.store, actor, "catalog.run", {"mode": mode}, self.clock)
         return {"accepted": True, "mode": mode, "startedAt": record["startedAt"]}
+
+
+_DOW = {"SUN": 1, "MON": 2, "TUE": 3, "WED": 4, "THU": 5, "FRI": 6, "SAT": 7}
+_MONTH = {m: i + 1 for i, m in enumerate("JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split())}
+
+
+def _field(text, names=None, lo=0, hi=59):
+    """Campo de cron simples: '*', '?', numeros ou nomes separados por virgula. Outra forma = nao suportada."""
+    if text in ("*", "?"):
+        return None
+    values = set()
+    for part in text.split(","):
+        part = part.upper()
+        value = (names or {}).get(part, int(part) if part.isdigit() else None)
+        if value is None or not lo <= value <= hi:
+            raise ValueError(text)
+        values.add(value)
+    return values
+
+
+def next_run(expression, timezone_name, now, horizon_days=400):
+    """Proxima execucao (UTC) de `cron(...)` ou `at(...)`; None se a forma nao for suportada ou rate()."""
+    zone = ZoneInfo(timezone_name or "UTC")
+    now_local = now.astimezone(zone)
+    at = re.fullmatch(r"at\((\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\)", expression or "")
+    if at:
+        when = datetime.fromisoformat(at[1]).replace(tzinfo=zone)
+        return when.astimezone(timezone.utc) if when > now_local else None
+    cron = re.fullmatch(r"cron\(([^)]*)\)", expression or "")
+    if not cron:
+        return None
+    parts = cron[1].split()
+    if len(parts) != 6 or parts[5] != "*":
+        return None
+    try:
+        minutes = _field(parts[0], lo=0, hi=59)
+        hours = _field(parts[1], lo=0, hi=23)
+        days = _field(parts[2], lo=1, hi=31)
+        months = _field(parts[3], _MONTH, 1, 12)
+        weekdays = _field(parts[4], _DOW, 1, 7)
+    except ValueError:
+        return None
+    if minutes is None or hours is None:
+        return None
+    for offset in range(horizon_days + 1):
+        day = (now_local + timedelta(days=offset)).date()
+        if (
+            (days and day.day not in days)
+            or (months and day.month not in months)
+            or (weekdays and (day.isoweekday() % 7) + 1 not in weekdays)
+        ):
+            continue
+        for hour in sorted(hours):
+            for minute in sorted(minutes):
+                moment = datetime(day.year, day.month, day.day, hour, minute, tzinfo=zone)
+                if moment > now_local:
+                    return moment.astimezone(timezone.utc)
+    return None
+
+
+class CatalogSchedules:
+    """Agendamentos da rotina do catalogo (EventBridge Scheduler), so leitura."""
+
+    def __init__(self, scheduler_client, function_name, clock):
+        self.client, self.clock = scheduler_client, clock
+        self.prefix = function_name.rsplit("-", 1)[0] + "-" if function_name else ""
+
+    def upcoming(self):
+        if self.client is None or not self.prefix:
+            raise Unavailable()
+        try:
+            names, token = [], None
+            while True:
+                args = {"NamePrefix": self.prefix, "MaxResults": 50}
+                if token:
+                    args["NextToken"] = token
+                page = self.client.list_schedules(**args)
+                names += [x["Name"] for x in page.get("Schedules", [])]
+                token = page.get("NextToken")
+                if not token:
+                    break
+            details = [self.client.get_schedule(Name=name) for name in sorted(names)]
+        except Exception as error:  # noqa: BLE001
+            raise Unavailable() from error
+        now = _now(self.clock)
+        items = []
+        for d in details:
+            when = next_run(d.get("ScheduleExpression"), d.get("ScheduleExpressionTimezone"), now)
+            enabled = d.get("State") == "ENABLED"
+            items.append(
+                {
+                    "name": d["Name"].removeprefix(self.prefix),
+                    "description": d.get("Description", ""),
+                    "expression": d.get("ScheduleExpression", ""),
+                    "enabled": enabled,
+                    "nextRun": _iso(when) if enabled and when else None,
+                }
+            )
+        items.sort(key=lambda i: (i["nextRun"] is None, i["nextRun"] or "", i["name"]))
+        return {"items": items}

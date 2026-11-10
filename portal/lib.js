@@ -145,3 +145,14 @@ export function dataHoraBr(iso) {
 export function ativa(execucoes) {
   return execucoes.some((e) => e.status === 'waiting' || e.status === 'running');
 }
+
+/** Linha da tabela de agendamentos: quando, o que faz e a situação. */
+export function descreverAgendamento(a) {
+  let quando = 'Desativado';
+  if (a.enabled) quando = a.nextRun ? dataHoraBr(a.nextRun) : `Ver expressão: ${a.expression}`;
+  return {
+    quando,
+    oque: a.description || a.name,
+    situacao: a.enabled ? 'Ativo' : 'Desativado',
+  };
+}

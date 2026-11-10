@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  MODOS_CATALOGO, PERMISSOES, ativa, dataHoraBr, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  MODOS_CATALOGO, PERMISSOES, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -238,6 +238,27 @@ async function carregarCadastros() {
 
 let acompanhar = null;
 
+async function carregarAgendamentos() {
+  try {
+    const { items } = await api('/admin/catalog/schedules');
+    $('agendamentos').replaceChildren(
+      items.length
+        ? el(
+            'table',
+            { class: 'tabela' },
+            el('thead', {}, el('tr', {}, ['Próxima execução', 'O que faz', 'Situação'].map((t) => el('th', {}, t)))),
+            el('tbody', {}, items.map((a) => {
+              const d = descreverAgendamento(a);
+              return el('tr', {}, el('td', {}, d.quando), el('td', {}, d.oque), el('td', {}, d.situacao));
+            })),
+          )
+        : el('p', { class: 'vazio' }, 'Nenhum agendamento encontrado.'),
+    );
+  } catch (erro) {
+    if (token) $('agendamentos').replaceChildren(el('p', { class: 'meta' }, 'Não foi possível ler os agendamentos agora.'));
+  }
+}
+
 async function carregarExecucoes() {
   clearTimeout(acompanhar);
   try {
@@ -266,6 +287,7 @@ async function carregarExecucoes() {
 }
 
 async function carregarUltimoDisparo() {
+  carregarAgendamentos();
   carregarExecucoes();
   try {
     const { last } = await api('/admin/catalog/run');

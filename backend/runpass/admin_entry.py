@@ -23,6 +23,7 @@ def _admin():
         _boto_client("lambda"),
         os.environ.get("RUNPASS_CATALOG_FUNCTION", ""),
         _boto_client("logs"),
+        _boto_client("scheduler"),
     )
     return Mangum(app, lifespan="off")
 

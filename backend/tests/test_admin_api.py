@@ -9,7 +9,7 @@ import jwt
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from runpass.admin_api import MfaPolicy, admit_operator, create_admin_app
-from runpass.admin_users import AdminUsers, CatalogRunner
+from runpass.admin_users import AdminUsers, CatalogRunner, CatalogSchedules, next_run
 from runpass.catalog import CatalogService, seed_synthetic
 from runpass.edition_requests import EditionRequestService
 from runpass.identity import AuthFailure, Principal
@@ -97,6 +97,37 @@ class FakeLogs:
         return {"events": self.events}
 
 
+class FakeScheduler:
+    def __init__(self):
+        self.fail = False
+        self.items = {
+            "runpass-dev-catalogo-enriquecimento-1": (
+                "cron(30 7 ? * MON *)",
+                "ENABLED",
+                "Enriquecimento",
+            ),
+            "runpass-dev-catalogo-calendario": ("cron(0 7 ? * MON *)", "ENABLED", "Calendario"),
+            "runpass-dev-catalogo-imagens": ("cron(30 9 ? * MON *)", "DISABLED", "Imagens"),
+            "runpass-dev-catalogo-estranho": ("rate(1 day)", "ENABLED", "Rate"),
+        }
+
+    def list_schedules(self, **args):
+        if self.fail:
+            raise RuntimeError("negado")
+        self.args = args
+        return {"Schedules": [{"Name": n} for n in self.items]}
+
+    def get_schedule(self, Name):
+        e, st, d = self.items[Name]
+        return {
+            "Name": Name,
+            "ScheduleExpression": e,
+            "State": st,
+            "Description": d,
+            "ScheduleExpressionTimezone": "America/Sao_Paulo",
+        }
+
+
 class FakeLambda:
     def __init__(self):
         self.calls, self.fail = [], False
@@ -119,6 +150,7 @@ class AdminApiTests(unittest.TestCase):
         self.mfa_on = True
         self.now = NOW.timestamp()
         self.cognito, self.lam, self.logs = FakeUsers(), FakeLambda(), FakeLogs()
+        self.sched = FakeScheduler()
 
         def verify(tok):
             try:
@@ -149,6 +181,9 @@ class AdminApiTests(unittest.TestCase):
                     "runpass-dev-catalogo-semanal",
                     lambda: self.now,
                     self.logs,
+                ),
+                schedules=CatalogSchedules(
+                    self.sched, "runpass-dev-catalogo-semanal", lambda: self.now
                 ),
                 site={
                     "directory": self.portal_dir,
@@ -466,6 +501,43 @@ class AdminApiTests(unittest.TestCase):
         self.client.post("/admin/catalog/run", json={"mode": "semanal"}, headers=h)
         item = self.client.get("/admin/catalog/runs", headers=h).json()["items"][0]
         self.assertEqual(item["status"], "dispatch_failed")
+
+    def test_proximos_agendamentos_calculam_a_data_no_fuso_de_sao_paulo(self):
+        h = self.auth(token("op"))
+        self.assertEqual(
+            self.client.get(
+                "/admin/catalog/schedules", headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        r = self.client.get("/admin/catalog/schedules", headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        itens = r.json()["items"]
+        self.assertEqual(self.sched.args["NamePrefix"], "runpass-dev-catalogo-")
+        # NOW = terca 10/11/2026 12:00 em SP (15:00Z): a proxima segunda e 16/11
+        self.assertEqual(
+            [i["name"] for i in itens], ["calendario", "enriquecimento-1", "estranho", "imagens"]
+        )
+        self.assertEqual(itens[0]["nextRun"], "2026-11-16T10:00:00Z")  # 07:00 -03
+        self.assertEqual(itens[1]["nextRun"], "2026-11-16T10:30:00Z")
+        self.assertIsNone(itens[2]["nextRun"])  # rate(): nao calcula, sem inventar
+        self.assertFalse(itens[3]["enabled"])
+        self.assertIsNone(itens[3]["nextRun"])
+        self.sched.fail = True
+        self.assertEqual(self.client.get("/admin/catalog/schedules", headers=h).status_code, 503)
+
+    def test_next_run_formas_simples_e_nao_suportadas(self):
+        agora = datetime(2026, 11, 16, 9, 59, tzinfo=timezone.utc)  # 06:59 em SP, segunda
+        self.assertEqual(next_run("cron(0 7 ? * MON *)", "America/Sao_Paulo", agora).hour, 10)
+        agora = datetime(2026, 11, 16, 10, 0, 1, tzinfo=timezone.utc)  # logo depois das 07:00
+        self.assertEqual(next_run("cron(0 7 ? * MON *)", "America/Sao_Paulo", agora).day, 23)
+        self.assertEqual(
+            next_run("cron(0 12 1 * ? *)", "UTC", agora).isoformat(), "2026-12-01T12:00:00+00:00"
+        )
+        self.assertEqual(next_run("at(2027-01-01T08:00:00)", "UTC", agora).year, 2027)
+        self.assertIsNone(next_run("at(2020-01-01T08:00:00)", "UTC", agora))
+        for ruim in ("rate(5 minutes)", "cron(*/5 * * * ? *)", "cron(0 7 ? * MON-FRI *)", "", None):
+            self.assertIsNone(next_run(ruim, "UTC", agora))
 
     def test_falha_ao_disparar_nao_trava_o_intervalo(self):
         h = self.auth(token("op"))

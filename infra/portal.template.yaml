@@ -125,6 +125,20 @@ Resources:
                   Action: logs:FilterLogEvents
                   Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${CatalogFunctionName}:*'
                 - !Ref AWS::NoValue
+              - !If
+                - HasCatalogFunction
+                - Sid: LerAgendamentosDoCatalogo
+                  Effect: Allow
+                  Action: scheduler:GetSchedule
+                  Resource: !Sub 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/runpass-${Environment}-catalogo-*'
+                - !Ref AWS::NoValue
+              - !If
+                - HasCatalogFunction
+                - Sid: ListarAgendamentos
+                  Effect: Allow
+                  Action: scheduler:ListSchedules
+                  Resource: '*'
+                - !Ref AWS::NoValue
               - Sid: SegredosNaInicializacao
                 Effect: Allow
                 Action: ssm:GetParameter
