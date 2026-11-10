@@ -1558,4 +1558,53 @@ void main() {
     expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
     expect(find.byKey(const Key('catalog-request-new')), findsNothing);
   });
+
+  testWidgets('ordenar a lista por data e por nota (ranking das melhores)', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Map<String, dynamic> race(String id, String date, {double? score}) => {
+      ...entry(id),
+      'id': 'E$id',
+      'date': date,
+      if (score != null) 'runScore': {'value': score, 'reviewCount': 12},
+    };
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions') {
+        return JsonReply(200, {
+          'items': [
+            race('A', '2024-05-01', score: 4.2),
+            race('B', '2025-05-01'),
+            race('C', '2026-05-01', score: 4.8),
+          ],
+        });
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
+    expect(top('Corrida A') < top('Corrida B'), isTrue); // padrão: do servidor
+    Future<void> choose(String label) async {
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(label).last);
+      await tester.pumpAndSettle();
+    }
+
+    await choose('Data: mais recentes primeiro');
+    expect(top('Corrida C') < top('Corrida B'), isTrue);
+    expect(top('Corrida B') < top('Corrida A'), isTrue);
+    await choose('Melhores avaliadas (ranking)');
+    expect(find.textContaining('#1 · Corrida C'), findsOneWidget);
+    expect(find.textContaining('#2 · Corrida A'), findsOneWidget);
+    expect(
+      find.textContaining('#3'),
+      findsNothing,
+    ); // sem nota: fim, sem posição
+    expect(top('Corrida A') < top('Corrida B'), isTrue);
+    expect(find.textContaining('★ 4,8 · 12 avaliações'), findsOneWidget);
+  });
 }

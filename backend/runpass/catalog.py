@@ -6,7 +6,7 @@ import math
 import unicodedata
 from copy import deepcopy
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -199,9 +199,25 @@ class CatalogService:
                 if head["archived"]
                 else ("upcoming" if date.fromisoformat(body["date"]) > today else "past")
             )
-            # Projections belong to S07; no invented participant count or score.
+            score = self._score(edition_id)
+            if score:
+                body["runScore"] = score
             return body
         raise Problem(503, "CONCURRENT_RETRY_REQUIRED")
+
+    def _score(self, edition_id):
+        """Nota publica da edicao (projecao ja calculada pelo consumidor); nunca inventa nota."""
+        try:
+            item = self.store.get(("projections", "EDITION#" + edition_id, "SCORE#current"))
+        except KeyError:  # armazenamento sem a tabela de projecoes
+            return None
+        if not item or not item.get("reviewCount"):
+            return None
+        value = Decimal(item["ratingSum"]) / Decimal(8 * item["reviewCount"])
+        return {
+            "value": float(value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)),
+            "reviewCount": int(item["reviewCount"]),
+        }
 
     def detail(self, actor, edition_id):
         self.identity.authorize(actor, admitted=True)

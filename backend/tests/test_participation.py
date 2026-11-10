@@ -6,7 +6,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from runpass.api import create_app
-from runpass.catalog import CatalogService, seed_synthetic
+from runpass.catalog import CatalogFilters, CatalogService, seed_synthetic
 from runpass.identity import Principal
 from runpass.participation import ParticipationService
 from runpass.service import IdentityService, Problem
@@ -240,6 +240,18 @@ class ParticipationTests(unittest.TestCase):
         after = social.edition_reviews(reader, "synthetic-sp-2024")
         self.assertEqual(after["summary"]["reviewCount"], 1)
         self.assertEqual(after["summary"]["recommendPercent"], 100)
+
+    def test_edition_carries_the_public_score_only_when_there_are_reviews(self):
+        reader = self.admit("reader")
+        key = ("projections", "EDITION#synthetic-sp-2024", "SCORE#current")
+        self.assertNotIn("runScore", self.catalog.detail(reader, "synthetic-sp-2024"))
+        self.store.commit({key: None}, {key: {"reviewCount": 3, "ratingSum": 3 * 8 * 4 + 2}})
+        score = self.catalog.detail(reader, "synthetic-sp-2024")["runScore"]
+        self.assertEqual(score, {"value": 4.1, "reviewCount": 3})
+        listed = self.catalog.list(reader, CatalogFilters())["items"]
+        by_id = {e["id"]: e for e in listed}
+        self.assertEqual(by_id["synthetic-sp-2024"]["runScore"]["reviewCount"], 3)
+        self.assertNotIn("runScore", by_id["synthetic-sp-2025"])
 
     def test_completion_is_atomic_idempotent_and_pins_image(self):
         draft = self.service.create(self.actor, "create", self.payload(timeSeconds=3600))

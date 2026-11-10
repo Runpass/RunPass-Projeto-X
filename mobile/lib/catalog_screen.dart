@@ -201,6 +201,51 @@ class _CatalogScreenState extends State<CatalogScreen> {
     super.dispose();
   }
 
+  /// Ordem da lista: `dateAsc` (padrão, a do servidor), `dateDesc` ou `rating` (ranking das melhores).
+  String sort = 'dateAsc';
+
+  static num? scoreOf(Map<String, dynamic> edition) {
+    final raw = (edition['runScore'] as Map?)?['value'];
+    return raw is num ? raw : num.tryParse('${raw ?? ''}');
+  }
+
+  static int reviewsOf(Map<String, dynamic> edition) =>
+      ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
+
+  /// Itens na ordem escolhida. Sem nota, a prova vai para o fim do ranking.
+  List<Map<String, dynamic>> get view {
+    final list = [...items];
+    int byDate(Map<String, dynamic> a, Map<String, dynamic> b) =>
+        (b['date'] as String).compareTo(a['date'] as String);
+    if (sort == 'dateDesc') {
+      list.sort(byDate);
+    } else if (sort == 'rating') {
+      list.sort((a, b) {
+        final sa = scoreOf(a), sb = scoreOf(b);
+        if (sa == null && sb == null) return byDate(a, b);
+        if (sa == null) return 1;
+        if (sb == null) return -1;
+        final c = sb.compareTo(sa);
+        return c != 0 ? c : (reviewsOf(b).compareTo(reviewsOf(a)));
+      });
+    }
+    return list;
+  }
+
+  /// Ordens por data decrescente e por nota precisam do conjunto todo: carrega as próximas páginas.
+  Future<void> loadRest() async {
+    var pages = 0;
+    while (mounted && sort != 'dateAsc' && nextCursor != null && pages++ < 5) {
+      await load(more: true);
+      if (error != null) return;
+    }
+  }
+
+  Future<void> changeSort(String value) async {
+    setState(() => sort = value);
+    await loadRest();
+  }
+
   Future<void> load({bool more = false}) async {
     if (loading) return;
     if (!more && !(form.currentState?.validate() ?? true)) return;
@@ -230,7 +275,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ? {'phrase': sentence, 'limit': '20'}
             : {
                 ...activeFilters,
-                'limit': '20',
+                'limit': sort == 'dateAsc' ? '20' : '100',
                 if (more && nextCursor != null) 'cursor': nextCursor!,
               },
       );
@@ -256,6 +301,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
+    if (!more && error == null) await loadRest();
   }
 
   /// Aviso honesto sobre a busca por frase: o que o catalogo nao filtra e quando a IA nao respondeu.
@@ -571,6 +617,42 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
+          if (items.length > 1)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.sort, size: 20),
+                  const SizedBox(width: 8),
+                  const Text('Ordenar por'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButton<String>(
+                      key: const Key('catalog-sort'),
+                      value: sort,
+                      isExpanded: true,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'dateAsc',
+                          child: Text('Data: mais antigas primeiro'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'dateDesc',
+                          child: Text('Data: mais recentes primeiro'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'rating',
+                          child: Text('Melhores avaliadas (ranking)'),
+                        ),
+                      ],
+                      onChanged: loading
+                          ? null
+                          : (value) => changeSort(value ?? 'dateAsc'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (loading) const Center(child: CircularProgressIndicator()),
           if (!loading && error == null && items.isEmpty)
             Text(
@@ -587,7 +669,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 child: const Text('Não encontrou? Pedir cadastro da corrida'),
               ),
             ),
-          for (final edition in items)
+          for (final (index, edition) in view.indexed)
             Card(
               color: edition['status'] == 'archived' ? context.panelCard : null,
               child: ListTile(
@@ -613,11 +695,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         : runPassOrange,
                   ),
                 ),
-                title: Text(edition['name'] as String),
+                title: Text(
+                  sort == 'rating' && scoreOf(edition) != null
+                      ? '#${index + 1} · ${edition['name']}'
+                      : edition['name'] as String,
+                ),
                 subtitle: Text(
                   '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}\n'
                   '${(edition['distances'] as List).map((d) => '${d['kilometers']} km').join(' · ')}'
                   '${edition['status'] == 'archived' ? '\nArquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}' : ''}'
+                  '${scoreOf(edition) != null ? '\n★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações' : ''}'
                   '${mine.containsKey(edition['id']) ? '\nJá está na sua lista' : ''}',
                 ),
                 isThreeLine: true,
