@@ -496,84 +496,88 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     ),
   );
 
-  Widget filters() => SizedBox(
-    height: 92,
-    child: ListView(
-      scrollDirection: Axis.horizontal,
-      children: [
-        for (final item in FeedFilter.values)
-          Padding(
-            padding: const EdgeInsets.only(right: 14),
-            child: InkWell(
-              onTap: () => selectFilter(item),
-              borderRadius: BorderRadius.circular(40),
-              child: Column(
-                children: [
-                  Container(
-                    width: 62,
-                    height: 62,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      // Destaque laranja segue o filtro selecionado, não mais fixo em "Todos".
-                      color: filter == item ? runPassOrange : context.softFill,
-                    ),
-                    child: Icon(
-                      item.icon,
-                      color: filter == item ? Colors.white : runPassOrange,
-                      size: 30,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    item.label,
+  /// Cinco atalhos (4 filtros + agenda) que sempre cabem na largura, em iPhone e Android: o espaço é
+  /// dividido igualmente; o círculo e o rótulo se ajustam, sem rolagem lateral.
+  Widget filters() => LayoutBuilder(
+    builder: (context, box) {
+      final count = FeedFilter.values.length + 1;
+      final slot = box.maxWidth / count;
+      final circle = (slot - 10).clamp(44.0, 62.0);
+      Widget chip({
+        Key? key,
+        required IconData icon,
+        required String label,
+        required bool selected,
+        required VoidCallback onTap,
+      }) => SizedBox(
+        width: slot,
+        child: InkWell(
+          key: key,
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(40),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: circle,
+                height: circle,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  // Destaque laranja segue o filtro selecionado.
+                  color: selected ? runPassOrange : context.softFill,
+                ),
+                child: Icon(
+                  icon,
+                  color: selected ? Colors.white : runPassOrange,
+                  size: circle * .48,
+                ),
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: slot - 4,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
                     style: TextStyle(
                       fontSize: 12,
-                      fontWeight: filter == item
-                          ? FontWeight.w800
-                          : FontWeight.w500,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-        // Atalho para a agenda, no mesmo padrão dos filtros (círculo + nome); não é um filtro.
-        Padding(
-          padding: const EdgeInsets.only(right: 14),
-          child: InkWell(
-            key: const Key('home-agenda-chip'),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => AgendaScreen(gateway: widget.gateway),
-              ),
-            ),
-            borderRadius: BorderRadius.circular(40),
-            child: Column(
-              children: [
-                Container(
-                  width: 62,
-                  height: 62,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: context.softFill,
-                  ),
-                  child: const Icon(
-                    Icons.calendar_month_rounded,
-                    color: runPassOrange,
-                    size: 30,
-                  ),
                 ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Agenda',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
-      ],
-    ),
+      );
+      return SizedBox(
+        height: circle + 34,
+        child: Row(
+          children: [
+            for (final item in FeedFilter.values)
+              chip(
+                icon: item.icon,
+                label: item.label,
+                selected: filter == item,
+                onTap: () => selectFilter(item),
+              ),
+            // Atalho para a agenda, no mesmo padrão dos filtros; não é um filtro.
+            chip(
+              key: const Key('home-agenda-chip'),
+              icon: Icons.calendar_month_rounded,
+              label: 'Agenda',
+              selected: false,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => AgendaScreen(gateway: widget.gateway),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    },
   );
 
   /// Quando "Amigos"/"Seguindo" está vazio por falta de vínculo (não só de publicações
@@ -623,7 +627,12 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: const RunPassWordmark(compact: true),
+      // Em telas estreitas o logo encolhe em vez de estourar a barra.
+      title: const FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: RunPassWordmark(compact: true),
+      ),
       actions: [
         IconButton(
           key: const Key('find-friends'),

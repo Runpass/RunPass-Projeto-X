@@ -15,6 +15,7 @@ Map<String, dynamic> upcoming(String id, {String date = '2099-05-01'}) => {
 };
 
 void main() {
+  homeWidthsTests();
   participantsTests();
   bannerTests();
   void big(WidgetTester tester) {
@@ -289,6 +290,21 @@ void main() {
       );
       await tester.pumpAndSettle();
       final icon = find.byKey(const Key('home-agenda-chip'));
+      // Todos os cinco atalhos ficam inteiros dentro da tela, sem rolar.
+      for (final label in [
+        'Todos',
+        'Amigos',
+        'Seguindo',
+        'Minha Cidade',
+        'Agenda',
+      ]) {
+        final r = tester.getRect(find.text(label));
+        expect(
+          r.left >= 0 && r.right <= 390,
+          isTrue,
+          reason: '$label dentro da tela',
+        );
+      }
       // Na fonte larga dos testes o último círculo fica além da borda; rola o carrossel até ele.
       await tester.dragUntilVisible(
         icon,
@@ -467,4 +483,45 @@ void bannerTests() {
     expect(find.byKey(const Key('hero-credit')), findsNothing);
     expect(find.textContaining('CORRIDA A COM UM NOME'), findsOneWidget);
   });
+}
+
+void homeWidthsTests() {
+  for (final width in [320.0, 360.0, 411.0, 430.0]) {
+    testWidgets('os cinco atalhos da home cabem em ${width.toInt()} pt', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/me') {
+          return const JsonReply(200, {
+            'id': 'me',
+            'displayName': 'Eu',
+            'username': 'eu',
+            'version': 1,
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      for (final label in [
+        'Todos',
+        'Amigos',
+        'Seguindo',
+        'Minha Cidade',
+        'Agenda',
+      ]) {
+        final r = tester.getRect(find.text(label));
+        expect(
+          r.left >= 0 && r.right <= width,
+          isTrue,
+          reason: '$label em $width',
+        );
+      }
+    });
+  }
 }
