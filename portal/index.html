@@ -33,16 +33,61 @@
         <button type="submit">Entrar</button>
         <button type="button" id="voltar" class="sec">Voltar</button>
       </form>
+      <form id="form-nova" hidden autocomplete="off">
+        <p class="ajuda">Primeiro acesso: defina sua senha (12+ caracteres, com maiúscula, minúscula, número e símbolo).</p>
+        <label>Nova senha <input id="nova-senha" type="password" required minlength="12" autocomplete="new-password"></label>
+        <button type="submit">Definir senha</button>
+      </form>
+      <form id="form-setup" hidden autocomplete="off">
+        <p class="ajuda">Cadastre o autenticador: no app (Google Authenticator, 1Password, Authy...) escolha "inserir chave" e digite a chave abaixo. Depois informe o código de 6 dígitos.</p>
+        <p><code id="segredo" class="segredo"></code></p>
+        <label>Código do autenticador (6 dígitos)
+          <input id="codigo-setup" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code">
+        </label>
+        <button type="submit">Concluir cadastro</button>
+      </form>
     </section>
     <section id="painel" hidden>
       <nav class="abas" role="tablist">
-        <button role="tab" id="aba-pedidos" aria-selected="true">Pedidos de corrida</button>
+        <button role="tab" id="aba-pedidos" data-aba="pedidos" aria-selected="true">Pedidos de corrida</button>
+        <button role="tab" id="aba-catalogo" data-aba="catalogo" aria-selected="false">Atualizar catálogo</button>
+        <button role="tab" id="aba-cadastros" data-aba="cadastros" aria-selected="false">Cadastros no app</button>
+        <button role="tab" id="aba-operadores" data-aba="operadores" aria-selected="false">Operadores</button>
       </nav>
-      <div class="barra">
-        <h1>Pedidos de corrida pendentes</h1>
-        <button id="atualizar" type="button" class="sec">Atualizar</button>
-      </div>
-      <div id="pedidos"></div>
+      <section id="sec-pedidos" data-sec="pedidos">
+        <div class="barra">
+          <h1>Pedidos de corrida pendentes</h1>
+          <button id="atualizar" type="button" class="sec">Atualizar</button>
+        </div>
+        <div id="pedidos"></div>
+      </section>
+      <section id="sec-catalogo" data-sec="catalogo" hidden>
+        <div class="barra"><h1>Atualizar o catálogo</h1></div>
+        <p class="ajuda">Dispara a rotina do catálogo agora. Ela usa a cota da OpenAI e roda em segundo plano (alguns minutos). Só um disparo a cada 10 minutos. Nada é publicado: o resultado vai para revisão.</p>
+        <article class="cartao">
+          <label>O que rodar <select id="modo-catalogo"></select></label>
+          <button id="rodar" type="button">Disparar</button>
+          <p id="ultimo-disparo" class="meta"></p>
+        </article>
+      </section>
+      <section id="sec-cadastros" data-sec="cadastros" hidden>
+        <div class="barra">
+          <h1>Cadastros no app</h1>
+          <button id="atualizar-cadastros" type="button" class="sec">Atualizar</button>
+        </div>
+        <p class="ajuda">Quem já criou conta no aplicativo. E-mails aparecem mascarados e cada consulta fica registrada.</p>
+        <p id="resumo-cadastros" class="linha"></p>
+        <div id="cadastros"></div>
+      </section>
+      <section id="sec-operadores" data-sec="operadores" hidden>
+        <div class="barra"><h1>Criar operador</h1></div>
+        <p class="ajuda">O operador recebe um e-mail com senha temporária e, no primeiro acesso, define a senha e cadastra o autenticador (MFA obrigatório).</p>
+        <form id="form-operador" class="cartao" autocomplete="off">
+          <label>E-mail <input id="op-email" type="email" required maxlength="320"></label>
+          <fieldset id="op-permissoes"><legend>Permissões</legend></fieldset>
+          <button type="submit">Criar e conceder acesso</button>
+        </form>
+      </section>
     </section>
   </main>
   <script type="module" src="app.js"></script>

@@ -1,6 +1,9 @@
 import cfg from './config.js';
-import { confirmarMfa, entrar } from './cognito.js';
-import { linkSeguro, mensagem, montarDecisao, resumoPedido, segundosAteExpirar } from './lib.js';
+import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
+import {
+  MODOS_CATALOGO, PERMISSOES, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  resumoPedido, segundosAteExpirar, statusCadastro,
+} from './lib.js';
 
 // O token fica só em memória: recarregar a página ou fechar a aba encerra a sessão.
 let token = null;
@@ -57,8 +60,9 @@ function sair(motivo) {
   $('painel').hidden = true;
   $('sessao').hidden = true;
   $('entrar').hidden = false;
-  $('form-senha').hidden = false;
-  $('form-mfa').hidden = true;
+  etapa('senha');
+  $('segredo').textContent = '';
+  $('cadastros').replaceChildren();
   $('senha').value = '';
   $('codigo').value = '';
   $('pedidos').replaceChildren();
@@ -194,46 +198,187 @@ function painelRecusa(area, pedido) {
   area.replaceChildren(el('label', {}, 'Motivo da recusa', motivo), confirmar);
 }
 
+// ---- cadastros, operadores e atualização do catálogo ------------------------------------------
+
+let permissoes = [];
+
+function mostrarAba(nome) {
+  for (const b of document.querySelectorAll('[data-aba]')) b.setAttribute('aria-selected', String(b.dataset.aba === nome));
+  for (const s of document.querySelectorAll('[data-sec]')) s.hidden = s.dataset.sec !== nome;
+  aviso('');
+  if (nome === 'pedidos') carregarPedidos();
+  if (nome === 'catalogo') carregarUltimoDisparo();
+  if (nome === 'cadastros') carregarCadastros();
+}
+
+async function carregarCadastros() {
+  const alvo = $('cadastros');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/users/runners');
+    $('resumo-cadastros').textContent = resumoCadastros(r);
+    alvo.replaceChildren(
+      r.items.length
+        ? el(
+            'table',
+            { class: 'tabela' },
+            el('thead', {}, el('tr', {}, el('th', {}, 'Cadastro'), el('th', {}, 'E-mail'), el('th', {}, 'Situação'), el('th', {}, 'Criado em'))),
+            el('tbody', {}, r.items.map((u) => el('tr', {}, el('td', {}, u.id), el('td', {}, u.email), el('td', {}, statusCadastro(u.status) + (u.enabled ? '' : ' (desativado)')), el('td', {}, (u.createdAt || '').slice(0, 10).split('-').reverse().join('/'))))),
+          )
+        : el('p', { class: 'vazio' }, 'Nenhum cadastro ainda.'),
+    );
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+async function carregarUltimoDisparo() {
+  try {
+    const { last } = await api('/admin/catalog/run');
+    $('ultimo-disparo').textContent = last
+      ? `Último disparo: ${MODOS_CATALOGO[last.mode] || last.mode} em ${last.startedAt.replace('T', ' ').replace('Z', ' UTC')}`
+      : 'Nenhum disparo registrado.';
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
+$('rodar').addEventListener('click', async () => {
+  const modo = $('modo-catalogo').value;
+  if (!window.confirm(`Disparar agora: ${MODOS_CATALOGO[modo]}? Usa a cota da OpenAI.`)) return;
+  $('rodar').disabled = true;
+  try {
+    await api('/admin/catalog/run', { method: 'POST', body: JSON.stringify({ mode: modo }) });
+    aviso('Rotina disparada. Ela roda em segundo plano; os resultados chegam em revisão.', 'ok');
+    await carregarUltimoDisparo();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  } finally {
+    $('rodar').disabled = false;
+  }
+});
+
+$('form-operador').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  const email = $('op-email').value.trim();
+  const escolhidas = [...document.querySelectorAll('#op-permissoes input:checked')].map((i) => i.value);
+  if (!emailValido(email) || !escolhidas.length) return aviso('Informe um e-mail válido e ao menos uma permissão.', 'erro');
+  if (!window.confirm(`Criar o operador ${email} com: ${escolhidas.join(', ')}?`)) return;
+  try {
+    const r = await api('/admin/operators', { method: 'POST', body: JSON.stringify({ email, permissions: escolhidas }) });
+    aviso(`Operador criado (${r.email}). Ele recebeu um e-mail com a senha temporária.`, 'ok');
+    $('form-operador').reset();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+});
+
+function prepararAbas() {
+  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin' };
+  for (const [nome, perm] of Object.entries(abas)) $(`aba-${nome}`).hidden = !permissoes.includes(perm);
+  $('modo-catalogo').replaceChildren(...Object.entries(MODOS_CATALOGO).map(([v, t]) => el('option', { value: v }, t)));
+  $('op-permissoes').replaceChildren(
+    el('legend', {}, 'Permissões'),
+    ...Object.entries(PERMISSOES).map(([v, t]) => el('label', {}, el('input', { type: 'checkbox', value: v }), t)),
+  );
+  mostrarAba(permissoes.includes('catalog_admin') ? 'pedidos' : permissoes.includes('user_admin') ? 'cadastros' : '');
+}
+
+for (const b of document.querySelectorAll('[data-aba]')) b.addEventListener('click', () => mostrarAba(b.dataset.aba));
+
 // ---- login --------------------------------------------------------------------------------------
+
+function etapa(nome) {
+  for (const id of ['form-senha', 'form-nova', 'form-setup', 'form-mfa']) $(id).hidden = id !== `form-${nome}`;
+}
+
+async function abrirPainel(t) {
+  iniciarSessao(t, emailTentativa);
+  const info = await api('/admin/session');
+  permissoes = info.permissions || [];
+  if (!permissoes.some((p) => p === 'catalog_admin' || p === 'user_admin')) {
+    aviso('Seu acesso não inclui permissão para este portal. Peça a ativação.', 'erro');
+    return;
+  }
+  prepararAbas();
+}
 
 $('form-senha').addEventListener('submit', async (evento) => {
   evento.preventDefault();
   aviso('');
   emailTentativa = $('email').value.trim();
   try {
-    sessaoMfa = await entrar(cfg, emailTentativa, $('senha').value);
+    const r = await entrar(cfg, emailTentativa, $('senha').value);
+    sessaoMfa = r.sessao;
+    if (r.desafio === 'mfa_setup') {
+      const s = await iniciarAutenticador(cfg, sessaoMfa);
+      sessaoMfa = s.sessao;
+      $('segredo').textContent = s.segredo;
+    }
     $('senha').value = '';
-    $('form-senha').hidden = true;
-    $('form-mfa').hidden = false;
-    $('codigo').focus();
+    etapa({ mfa: 'mfa', nova_senha: 'nova', mfa_setup: 'setup' }[r.desafio]);
+    $({ mfa: 'codigo', nova_senha: 'nova-senha', mfa_setup: 'codigo-setup' }[r.desafio]).focus();
   } catch (erro) {
     aviso(mensagem(erro.codigo), 'erro');
   }
 });
+
+$('form-nova').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  aviso('');
+  try {
+    sessaoMfa = await definirSenha(cfg, emailTentativa, sessaoMfa, $('nova-senha').value);
+    $('nova-senha').value = '';
+    const s = await iniciarAutenticador(cfg, sessaoMfa);
+    sessaoMfa = s.sessao;
+    $('segredo').textContent = s.segredo;
+    etapa('setup');
+    $('codigo-setup').focus();
+  } catch (erro) {
+    aviso(mensagem(erro.codigo), 'erro');
+    if (erro.codigo !== 'InvalidPasswordException') voltarAoInicio();
+  }
+});
+
+$('form-setup').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  aviso('');
+  try {
+    const t = await concluirAutenticador(cfg, emailTentativa, sessaoMfa, $('codigo-setup').value.trim());
+    $('segredo').textContent = '';
+    $('codigo-setup').value = '';
+    await abrirPainel(t);
+  } catch (erro) {
+    if (token) return;
+    aviso(mensagem(erro.codigo), 'erro');
+    if (erro.codigo !== 'CodeMismatchException' && erro.codigo !== 'ExpiredCodeException') voltarAoInicio();
+  }
+});
+
+function voltarAoInicio() {
+  sessaoMfa = null;
+  $('segredo').textContent = '';
+  etapa('senha');
+}
 
 $('form-mfa').addEventListener('submit', async (evento) => {
   evento.preventDefault();
   aviso('');
   try {
     const t = await confirmarMfa(cfg, emailTentativa, sessaoMfa, $('codigo').value.trim());
-    iniciarSessao(t, emailTentativa);
-    const info = await api('/admin/session');
-    $('quem').textContent = `${emailTentativa}`;
-    if (!info.permissions.includes('catalog_admin')) {
-      aviso('Seu acesso não inclui a permissão catalog_admin. Peça a ativação.', 'erro');
-      $('pedidos').replaceChildren();
-      return;
-    }
-    await carregarPedidos();
+    await abrirPainel(t);
   } catch (erro) {
     if (token) return;
     aviso(mensagem(erro.codigo), 'erro');
     if (erro.codigo === 'CodeMismatchException' || erro.codigo === 'ExpiredCodeException') return;
-    $('form-mfa').hidden = true;
-    $('form-senha').hidden = false;
+    voltarAoInicio();
   }
 });
 
 $('voltar').addEventListener('click', () => sair());
 $('sair').addEventListener('click', () => sair());
 $('atualizar').addEventListener('click', carregarPedidos);
+$('atualizar-cadastros').addEventListener('click', carregarCadastros);

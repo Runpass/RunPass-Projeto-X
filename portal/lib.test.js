@@ -47,3 +47,13 @@ test('segundosAteExpirar lê o exp do JWT e devolve 0 para token inválido', () 
   assert.equal(segundosAteExpirar(`a.${corpo}.c`, 5_000_000), 0);
   assert.equal(segundosAteExpirar('lixo'), 0);
 });
+
+test('cadastros e operadores: resumo, status e e-mail', async () => {
+  const { resumoCadastros, statusCadastro, emailValido } = await import('./lib.js');
+  assert.equal(resumoCadastros({ total: 3, partial: false, byStatus: { CONFIRMED: 2, UNCONFIRMED: 1 } }), '3 cadastros: 2 confirmado, 1 e-mail não confirmado');
+  assert.equal(resumoCadastros({ total: 1, partial: true, byStatus: {} }), '1 cadastro (lista parcial)');
+  assert.equal(statusCadastro('XYZ'), 'XYZ');
+  assert.ok(emailValido(' a@b.com '));
+  assert.ok(!emailValido('sem-arroba'));
+  assert.match(mensagem('RUN_TOO_SOON'), /10 minutos/);
+});

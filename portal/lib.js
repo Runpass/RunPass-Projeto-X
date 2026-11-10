@@ -9,6 +9,10 @@ export const MENSAGENS = {
   LimitExceededException: 'Muitas tentativas. Aguarde um pouco.',
   PASSWORD_RESET_REQUIRED: 'É preciso redefinir a senha antes de entrar.',
   MFA_SETUP: 'Este usuário ainda não cadastrou o autenticador (MFA).',
+  InvalidPasswordException: 'A senha não atende às regras (12+ caracteres com maiúscula, minúscula, número e símbolo).',
+  OPERATOR_EXISTS: 'Já existe um operador com este e-mail.',
+  ACCESS_CONFLICT: 'A conta foi criada, mas a concessão de acesso falhou. Avise o administrador.',
+  RUN_TOO_SOON: 'A rotina foi disparada há pouco. Aguarde 10 minutos entre disparos.',
   INVALID_TOKEN: 'Sua sessão expirou ou o acesso foi retirado. Entre de novo.',
   PERMISSION_REQUIRED: 'Você não tem permissão para esta ação.',
   REQUEST_NOT_PENDING: 'Este pedido já foi decidido por outra pessoa.',
@@ -73,4 +77,39 @@ export function segundosAteExpirar(token, agoraMs = Date.now()) {
   } catch {
     return 0;
   }
+}
+
+export const PERMISSOES = {
+  catalog_admin: 'Catálogo (pedidos de corrida e atualização)',
+  moderation: 'Moderação',
+  lake_read: 'Leitura de dados analíticos',
+  user_admin: 'Usuários (cadastros e operadores)',
+};
+
+export const MODOS_CATALOGO = {
+  semanal: 'Rotina semanal (séries conhecidas)',
+  simulacao: 'Simulação (não grava nada)',
+  enriquecer: 'Enriquecer provas do último calendário',
+  imagens: 'Coletar imagens candidatas',
+};
+
+export const STATUS_CADASTRO = {
+  CONFIRMED: 'Confirmado',
+  UNCONFIRMED: 'E-mail não confirmado',
+  FORCE_CHANGE_PASSWORD: 'Troca de senha pendente',
+  RESET_REQUIRED: 'Redefinição pendente',
+};
+
+export function statusCadastro(s) {
+  return STATUS_CADASTRO[s] || s || '—';
+}
+
+export function emailValido(texto) {
+  return /^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{2,}$/.test((texto || '').trim());
+}
+
+/** Resumo "12 cadastros: 10 confirmados, 2 e-mail não confirmado". */
+export function resumoCadastros(r) {
+  const partes = Object.entries(r.byStatus || {}).map(([s, n]) => `${n} ${statusCadastro(s).toLowerCase()}`);
+  return `${r.total} cadastro${r.total === 1 ? '' : 's'}${partes.length ? ': ' + partes.join(', ') : ''}${r.partial ? ' (lista parcial)' : ''}`;
 }

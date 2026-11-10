@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field
 
 from .catalog import normalized
 from .edition_requests import EditionRequestReview
@@ -162,6 +163,8 @@ def create_admin_app(
     portal_origin,
     clock=time.time,
     site=None,
+    users=None,
+    runner=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
@@ -273,5 +276,42 @@ def create_admin_app(
     ):
         need(op, "catalog_admin")
         return {"items": search_editions(catalog, q, limit)}
+
+    class NewOperator(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        email: str = Field(max_length=320)
+        permissions: list[str] = Field(min_length=1, max_length=8)
+
+    class CatalogRun(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        mode: str = Field(max_length=20)
+
+    @app.get("/admin/users/runners")
+    def runners(op: Operator, limit: int = Query(200, ge=1, le=500)):
+        actor = need(op, "user_admin").subject
+        if users is None:
+            raise Unavailable()
+        return users.registered_runners(actor, limit)
+
+    @app.post("/admin/operators", status_code=201)
+    def create_operator(payload: NewOperator, op: Operator):
+        actor = need(op, "user_admin").subject
+        if users is None:
+            raise Unavailable()
+        return users.create_operator(actor, payload.email, payload.permissions)
+
+    @app.get("/admin/catalog/run")
+    def last_run(op: Operator):
+        need(op, "catalog_admin")
+        if runner is None:
+            raise Unavailable()
+        return runner.last()
+
+    @app.post("/admin/catalog/run", status_code=202)
+    def start_run(payload: CatalogRun, op: Operator):
+        actor = need(op, "catalog_admin").subject
+        if runner is None:
+            raise Unavailable()
+        return runner.start(actor, payload.mode)
 
     return app

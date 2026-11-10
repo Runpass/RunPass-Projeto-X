@@ -19,6 +19,9 @@ def _admin():
         os.environ["RUNPASS_OPERATOR_CLIENT_ID"],
         os.environ["RUNPASS_OPERATOR_POOL_ID"],
         os.environ.get("RUNPASS_PORTAL_ORIGIN", ""),
+        os.environ["RUNPASS_RUNNER_USER_POOL_ID"],
+        _boto_client("lambda"),
+        os.environ.get("RUNPASS_CATALOG_FUNCTION", ""),
     )
     return Mangum(app, lifespan="off")
 

@@ -20,5 +20,6 @@ aws cloudformation deploy --stack-name "$STACK" --template-file "$ROOT/infra/por
     Environment=dev "DataStack=$(pv DataStack)" "ArtifactBucket=$(pv ArtifactBucket)" "ArtifactKey=$KEY" \
     "RunnerUserPoolId=$(pv RunnerUserPoolId)" "RunnerClientId=$(pv RunnerClientId)" \
     "OperatorUserPoolId=$(io OperatorPool)" "OperatorClientId=$(io OperatorClient)" \
-    "ErasureHmacParameter=$(pv ErasureHmacParameter)" "CursorKeyParameter=$(pv CursorKeyParameter)"
+    "ErasureHmacParameter=$(pv ErasureHmacParameter)" "CursorKeyParameter=$(pv CursorKeyParameter)" \
+    "CatalogFunctionName=runpass-dev-catalogo-semanal"
 echo "Portal: $(aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='PortalUrl'].OutputValue" --output text)"

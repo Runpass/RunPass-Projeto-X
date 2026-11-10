@@ -9,6 +9,7 @@ import jwt
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from runpass.admin_api import MfaPolicy, admit_operator, create_admin_app
+from runpass.admin_users import AdminUsers, CatalogRunner
 from runpass.catalog import CatalogService, seed_synthetic
 from runpass.edition_requests import EditionRequestService
 from runpass.identity import AuthFailure, Principal
@@ -48,6 +49,53 @@ class FakeCognito:
         return {"UserPool": self.config}
 
 
+class FakeUsers:
+    """Cognito falso: um pool de corredores e a criacao de operadores."""
+
+    def __init__(self):
+        self.created, self.exists = [], False
+
+    def list_users(self, **args):
+        self.args = args
+        if args.get("PaginationToken") == "p2":
+            return {"Users": [self.user("u3333333-x", "carlos@exemplo.invalid", "UNCONFIRMED", 3)]}
+        return {
+            "Users": [
+                self.user("u1111111-x", "ana@exemplo.invalid", "CONFIRMED", 1),
+                self.user("u2222222-x", "bia@exemplo.invalid", "CONFIRMED", 2),
+            ],
+            "PaginationToken": "p2",
+        }
+
+    @staticmethod
+    def user(name, email, status, day):
+        return {
+            "Username": name,
+            "UserStatus": status,
+            "Enabled": True,
+            "UserCreateDate": datetime(2026, 11, day, 12, tzinfo=timezone.utc),
+            "Attributes": [{"Name": "email", "Value": email}],
+        }
+
+    def admin_create_user(self, **args):
+        if self.exists:
+            raise type("UsernameExistsException", (Exception,), {})()
+        self.created.append(args)
+        return {
+            "User": {"Username": "novo-sub", "Attributes": [{"Name": "sub", "Value": "novo-sub"}]}
+        }
+
+
+class FakeLambda:
+    def __init__(self):
+        self.calls, self.fail = [], False
+
+    def invoke(self, **args):
+        if self.fail:
+            raise RuntimeError("boom")
+        self.calls.append(args)
+
+
 class AdminApiTests(unittest.TestCase):
     def setUp(self):
         self.identity = IdentityService(
@@ -59,6 +107,7 @@ class AdminApiTests(unittest.TestCase):
         self.requests = EditionRequestService(self.identity, Fernet.generate_key())
         self.mfa_on = True
         self.now = NOW.timestamp()
+        self.cognito, self.lam = FakeUsers(), FakeLambda()
 
         def verify(tok):
             try:
@@ -80,6 +129,12 @@ class AdminApiTests(unittest.TestCase):
                 self.policy,
                 ORIGIN,
                 clock=lambda: self.now,
+                users=AdminUsers(
+                    self.store, self.cognito, "pool-corredores", "pool-op", lambda: self.now
+                ),
+                runner=CatalogRunner(
+                    self.store, self.lam, "runpass-dev-catalogo-semanal", lambda: self.now
+                ),
                 site={
                     "directory": self.portal_dir,
                     "region": "sa-east-1",
@@ -88,6 +143,7 @@ class AdminApiTests(unittest.TestCase):
             )
         )
         grant_access(self.store, "op", ["catalog_admin"], "outro", NOW)
+        grant_access(self.store, "adm", ["user_admin"], "outro", NOW)
         grant_access(self.store, "mod", ["moderation"], "outro", NOW)
 
     def auth(self, tok=None):
@@ -259,6 +315,101 @@ class AdminApiTests(unittest.TestCase):
             headers={"Origin": "https://malicioso.invalid", "Access-Control-Request-Method": "GET"},
         )
         self.assertNotIn("access-control-allow-origin", other.headers)
+
+    def test_cadastros_do_app_exigem_user_admin_e_mascaram_email(self):
+        self.assertEqual(
+            self.client.get("/admin/users/runners", headers=self.auth(token("op"))).status_code, 403
+        )
+        r = self.client.get("/admin/users/runners", headers=self.auth(token("adm")))
+        self.assertEqual(r.status_code, 200)
+        dados = r.json()
+        self.assertEqual(dados["total"], 3)  # leu as duas paginas
+        self.assertFalse(dados["partial"])
+        self.assertEqual(dados["byStatus"], {"CONFIRMED": 2, "UNCONFIRMED": 1})
+        self.assertEqual(
+            dados["items"][0]["email"], "c***@exemplo.invalid"
+        )  # mais recente primeiro
+        self.assertNotIn("ana@exemplo.invalid", r.text)
+        self.assertNotIn("u1111111-x", r.text)  # so o prefixo do id
+        trilha = self.store.query("operations", "OPERATOR#adm", prefix="AUDIT#")
+        self.assertEqual(len(trilha[0] if isinstance(trilha, tuple) else trilha), 1)
+
+    def test_criar_operador_concede_acesso_e_audita(self):
+        corpo = {"email": " Novo@Exemplo.invalid ", "permissions": ["catalog_admin"]}
+        self.assertEqual(
+            self.client.post(
+                "/admin/operators", json=corpo, headers=self.auth(token("op"))
+            ).status_code,
+            403,
+        )
+        r = self.client.post("/admin/operators", json=corpo, headers=self.auth(token("adm")))
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(self.cognito.created[0]["Username"], "novo@exemplo.invalid")
+        self.assertEqual(self.cognito.created[0]["DesiredDeliveryMediums"], ["EMAIL"])
+        acesso = self.store.get(("identity", "OPERATOR#novo-sub", "ACCESS"))
+        self.assertEqual(acesso["permissions"], ["catalog_admin"])
+        self.assertEqual(acesso["grantedBy"], "adm")
+        for ruim in (
+            {"email": "sem-arroba", "permissions": ["catalog_admin"]},
+            {"email": "a@b.invalid", "permissions": []},
+            {"email": "a@b.invalid", "permissions": ["root"]},
+            {"email": "a@b.invalid", "permissions": ["catalog_admin"], "extra": 1},
+        ):
+            self.assertEqual(
+                self.client.post(
+                    "/admin/operators", json=ruim, headers=self.auth(token("adm"))
+                ).status_code,
+                422,
+            )
+        self.cognito.exists = True
+        r = self.client.post("/admin/operators", json=corpo, headers=self.auth(token("adm")))
+        self.assertEqual((r.status_code, r.json()["code"]), (409, "OPERATOR_EXISTS"))
+
+    def test_disparar_catalogo_so_modos_da_lista_com_intervalo(self):
+        h = self.auth(token("op"))
+        self.assertEqual(
+            self.client.post("/admin/catalog/run", json={"mode": "x"}, headers=h).status_code, 422
+        )
+        self.assertEqual(
+            self.client.post(
+                "/admin/catalog/run", json={"mode": "semanal"}, headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        r = self.client.post("/admin/catalog/run", json={"mode": "enriquecer"}, headers=h)
+        self.assertEqual(r.status_code, 202, r.text)
+        chamada = self.lam.calls[0]
+        self.assertEqual(chamada["InvocationType"], "Event")
+        self.assertEqual(chamada["FunctionName"], "runpass-dev-catalogo-semanal")
+        self.assertIn(b"enriquecer", chamada["Payload"])
+        r = self.client.post("/admin/catalog/run", json={"mode": "semanal"}, headers=h)
+        self.assertEqual((r.status_code, r.json()["code"]), (429, "RUN_TOO_SOON"))
+        self.assertEqual(len(self.lam.calls), 1)
+        self.assertEqual(
+            self.client.get("/admin/catalog/run", headers=h).json()["last"]["mode"], "enriquecer"
+        )
+        self.now += 601
+        self.assertEqual(
+            self.client.post(
+                "/admin/catalog/run",
+                json={"mode": "simulacao"},
+                headers=self.auth(token("op", now=NOW)),
+            ).status_code,
+            202,
+        )
+
+    def test_falha_ao_disparar_nao_trava_o_intervalo(self):
+        h = self.auth(token("op"))
+        self.lam.fail = True
+        self.assertEqual(
+            self.client.post("/admin/catalog/run", json={"mode": "semanal"}, headers=h).status_code,
+            503,
+        )
+        self.lam.fail = False
+        self.assertEqual(
+            self.client.post("/admin/catalog/run", json={"mode": "semanal"}, headers=h).status_code,
+            202,
+        )
 
 
 class MfaPolicyTests(unittest.TestCase):

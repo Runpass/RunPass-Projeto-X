@@ -25,6 +25,20 @@ implantado**: hospedagem em S3 + CloudFront e API própria exigem o aval de cust
 - **Mudança consciente de regra:** antes, o login de operador só existia num componente restrito, nunca por
   HTTP. Aqui a prova de MFA vem da configuração do pool + `auth_time`, e não de um login feito pela nossa API.
 
+## Abas e permissões
+| Aba | Rota | Permissão | Notas |
+|---|---|---|---|
+| Pedidos de corrida | `/admin/edition-requests*`, `/admin/editions` | `catalog_admin` | vincular, aprovar, recusar |
+| Atualizar catálogo | `GET/POST /admin/catalog/run` | `catalog_admin` | dispara a Lambda da rotina (assíncrono) só com modos da lista fechada (`semanal`, `simulacao`, `enriquecer`, `imagens`); 1 disparo a cada 10 min (a rotina gasta a cota da OpenAI); registra quem disparou; nada é publicado |
+| Cadastros no app | `GET /admin/users/runners` | `user_admin` | quem criou conta (pool dos corredores): id curto, e-mail **mascarado**, situação, data; cada consulta fica auditada (`AUDIT#...`) |
+| Operadores | `POST /admin/operators` | `user_admin` | cria o usuário no pool de operadores com convite por e-mail e concede as permissões (quem concede fica em `grantedBy`) |
+
+- Primeiro acesso de um operador novo: o portal conduz a troca da senha temporária e o cadastro do autenticador
+  (chave para digitar no app; MFA é obrigatório no pool) e entra com o token resultante.
+- `user_admin` é nova: quem já é operador a recebe por `operator_tool.py grant --permission user_admin ...`
+  (por outro responsável, como as demais).
+- Quem tem `user_admin` pode conceder qualquer permissão: trate como acesso de administrador.
+
 ## Peças
 - `portal/` página estática sem build (`index.html`, `app.js`, `lib.js`, `cognito.js`, `style.css`); testes da
   lógica pura: `make portal-test` (Node). O `config.js` é gerado pela API (região e client id públicos).
@@ -34,13 +48,14 @@ implantado**: hospedagem em S3 + CloudFront e API própria exigem o aval de cust
 
 ## Implantar (somente com autorização)
 1. `make lambda-package` e subir o zip ao bucket de artefatos (mesmo fluxo da API dos corredores).
-2. `AWS_PROFILE=<admin> scripts/deploy-portal.sh <chave-do-zip>` (o usuário de desenvolvimento não pode criar
+2. `AWS_PROFILE=<admin> scripts/deploy-portal.sh` (o usuário de desenvolvimento não pode criar
    API Gateway e IAM). Se uma criação anterior falhou, a stack fica em `ROLLBACK_COMPLETE` e precisa ser
    apagada antes de repetir.
 3. Abrir a URL impressa (`PortalUrl`).
 
 ## Limites
-- Hoje só pedidos de corrida (listar, vincular, aprovar, recusar) e busca de corridas para vincular.
-- Aprovar banners (com crédito e base de autorização) e conceder/revogar acesso ainda são comandos do terminal.
+- Aprovar banners (com crédito e base de autorização) e revogar acesso ainda são comandos do terminal.
+- A situação da rotina disparada não aparece na página (roda em segundo plano; ver os relatórios e o CloudWatch).
+- A lista de cadastros mostra até 1200 contas por consulta (o resumo avisa quando é parcial).
 - O cliente do pool de operadores usa `USER_PASSWORD_AUTH` (já era assim); migrar para SRP é melhoria futura.
 - Se um dia o CloudFront for liberado, dá para colocar a página nele sem mudar a API.

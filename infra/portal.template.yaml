@@ -32,6 +32,10 @@ Parameters:
   CursorKeyParameter:
     Type: String
     AllowedPattern: '^/.+'
+  CatalogFunctionName:
+    Type: String
+    Default: ''
+    Description: Lambda da rotina do catalogo (RunPass-Catalogo). Vazio = o portal nao dispara a atualizacao
   ApiRateLimit:
     Type: Number
     Default: 10
@@ -41,6 +45,7 @@ Parameters:
 
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
+  HasCatalogFunction: !Not [!Equals [!Ref CatalogFunctionName, '']]
 
 Resources:
   # ---- API so para operadores --------------------------------------------------------------------
@@ -98,6 +103,21 @@ Resources:
                 Effect: Allow
                 Action: cognito-idp:DescribeUserPool
                 Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${OperatorUserPoolId}'
+              - Sid: ListarCadastrosDosCorredores
+                Effect: Allow
+                Action: cognito-idp:ListUsers
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${RunnerUserPoolId}'
+              - Sid: CriarOperadoresComConvite
+                Effect: Allow
+                Action: cognito-idp:AdminCreateUser
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${OperatorUserPoolId}'
+              - !If
+                - HasCatalogFunction
+                - Sid: DispararRotinaDoCatalogo
+                  Effect: Allow
+                  Action: lambda:InvokeFunction
+                  Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${CatalogFunctionName}'
+                - !Ref AWS::NoValue
               - Sid: SegredosNaInicializacao
                 Effect: Allow
                 Action: ssm:GetParameter
@@ -136,6 +156,7 @@ Resources:
           RUNPASS_OPERATOR_ISSUER: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${OperatorUserPoolId}'
           RUNPASS_OPERATOR_CLIENT_ID: !Ref OperatorClientId
           RUNPASS_OPERATOR_POOL_ID: !Ref OperatorUserPoolId
+          RUNPASS_CATALOG_FUNCTION: !Ref CatalogFunctionName
       Tags:
         - {Key: Project, Value: RunPass}
         - {Key: Environment, Value: !Ref Environment}

@@ -1,8 +1,10 @@
 """Explicit AWS composition, called only by a separately authorized environment entry point."""
 
+import time
 from dataclasses import dataclass
 
 from .admin_api import MfaPolicy, create_admin_app, find_portal_dir
+from .admin_users import AdminUsers, CatalogRunner
 from .api import create_app
 from .aws_adapters import CognitoAccountRemover, S3AuditSink
 from .catalog import CatalogService
@@ -109,6 +111,9 @@ def create_admin_aws_app(
     operator_client_id,
     operator_pool_id,
     portal_origin,
+    runner_pool_id="",
+    lambda_client=None,
+    catalog_function="",
 ):
     """API do portal: so tokens do pool de operadores; o MFA do pool e conferido (ver admin_api)."""
     service = _identity_service(settings, dynamodb_client)
@@ -121,12 +126,16 @@ def create_admin_aws_app(
         audience="operator",
     )
     portal = find_portal_dir()
+    clock = time.time
     return create_admin_app(
         service.store,
         catalog,
         verifier,
         MfaPolicy(cognito_client, operator_pool_id),
         portal_origin,
+        clock=clock,
+        users=AdminUsers(service.store, cognito_client, runner_pool_id, operator_pool_id, clock),
+        runner=CatalogRunner(service.store, lambda_client, catalog_function, clock),
         site=(
             {"directory": portal, "region": settings.region, "client_id": operator_client_id}
             if portal
