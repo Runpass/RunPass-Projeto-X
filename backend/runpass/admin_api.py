@@ -11,8 +11,10 @@ terminal grava, para os servicos de revisao e de catalogo (que exigem esse regis
 """
 
 import hashlib
+import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
@@ -20,7 +22,7 @@ import jwt
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .catalog import normalized
 from .edition_requests import EditionRequestReview
@@ -31,6 +33,40 @@ from .store import Conflict, Unavailable
 
 MAX_AUTH_AGE = 3600
 MFA_CHECK_TTL = 300
+
+# Arquivos da pagina servidos pela propria API (lista fechada: nenhum caminho vira nome de arquivo).
+SITE_FILES = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/lib.js": ("lib.js", "text/javascript; charset=utf-8"),
+    "/cognito.js": ("cognito.js", "text/javascript; charset=utf-8"),
+    "/style.css": ("style.css", "text/css; charset=utf-8"),
+}
+
+
+def security_headers(region):
+    """Cabecalhos de toda resposta: scripts e estilos so do proprio site; conexoes so ao Cognito e a si."""
+    return {
+        "Content-Security-Policy": (
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+            f"connect-src 'self' https://cognito-idp.{region}.amazonaws.com; "
+            "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        ),
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+        "Cache-Control": "no-store",
+    }
+
+
+def find_portal_dir():
+    """No pacote da Lambda a pasta `portal/` fica ao lado de `runpass/`; no repositorio, na raiz."""
+    aqui = Path(__file__).resolve()
+    for base in (aqui.parents[1], aqui.parents[2]):
+        if (base / "portal" / "index.html").exists():
+            return base / "portal"
+    return None
 
 
 class MfaPolicy:
@@ -118,7 +154,16 @@ def search_editions(catalog, text, limit=20):
     return found
 
 
-def create_admin_app(store, catalog, verifier, mfa_policy, portal_origin, clock=time.time):
+def create_admin_app(
+    store,
+    catalog,
+    verifier,
+    mfa_policy,
+    portal_origin,
+    clock=time.time,
+    site=None,
+):
+    """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
         title="RunPass Admin", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None
     )
@@ -130,6 +175,39 @@ def create_admin_app(store, catalog, verifier, mfa_policy, portal_origin, clock=
             allow_headers=["Authorization", "Content-Type"],
             max_age=600,
         )
+    headers_seguranca = security_headers((site or {}).get("region", "sa-east-1"))
+
+    @app.middleware("http")
+    async def seguranca(request, call_next):
+        resposta = await call_next(request)
+        for chave, valor in headers_seguranca.items():
+            resposta.headers.setdefault(chave, valor)
+        return resposta
+
+    if site:
+
+        def rota_do_arquivo(caminho):
+            nome, tipo = SITE_FILES[caminho]
+
+            # Funcao sem parametros: o FastAPI nao pode expor nada disto como parametro de consulta.
+            def servir():
+                return Response((Path(site["directory"]) / nome).read_bytes(), media_type=tipo)
+
+            return servir
+
+        for caminho in SITE_FILES:
+            app.add_api_route(
+                caminho, rota_do_arquivo(caminho), methods=["GET"], include_in_schema=False
+            )
+
+        @app.get("/config.js", include_in_schema=False)
+        def config_js():
+            # So valores publicos: regiao e client id do pool. A API e a pagina compartilham a origem.
+            config = {"region": site["region"], "clientId": site["client_id"], "apiUrl": ""}
+            return Response(
+                f"export default {json.dumps(config)};", media_type="text/javascript; charset=utf-8"
+            )
+
     review = EditionRequestReview(
         catalog, clock=lambda: datetime.fromtimestamp(clock(), timezone.utc)
     )

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .admin_api import MfaPolicy, create_admin_app
+from .admin_api import MfaPolicy, create_admin_app, find_portal_dir
 from .api import create_app
 from .aws_adapters import CognitoAccountRemover, S3AuditSink
 from .catalog import CatalogService
@@ -120,12 +120,18 @@ def create_admin_aws_app(
         CognitoDirectory(cognito_client),
         audience="operator",
     )
+    portal = find_portal_dir()
     return create_admin_app(
         service.store,
         catalog,
         verifier,
         MfaPolicy(cognito_client, operator_pool_id),
         portal_origin,
+        site=(
+            {"directory": portal, "region": settings.region, "client_id": operator_client_id}
+            if portal
+            else None
+        ),
     )
 
 

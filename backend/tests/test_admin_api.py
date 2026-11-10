@@ -71,9 +71,20 @@ class AdminApiTests(unittest.TestCase):
             )
 
         self.policy = type("P", (), {"enforced": lambda _: self.mfa_on})()
+        self.portal_dir = ROOT / "portal"
         self.client = TestClient(
             create_admin_app(
-                self.store, self.catalog, verify, self.policy, ORIGIN, clock=lambda: self.now
+                self.store,
+                self.catalog,
+                verify,
+                self.policy,
+                ORIGIN,
+                clock=lambda: self.now,
+                site={
+                    "directory": self.portal_dir,
+                    "region": "sa-east-1",
+                    "client_id": "cliente-publico",
+                },
             )
         )
         grant_access(self.store, "op", ["catalog_admin"], "outro", NOW)
@@ -185,6 +196,53 @@ class AdminApiTests(unittest.TestCase):
         )
         none = self.client.get("/admin/editions?q=zzzz", headers=self.auth()).json()["items"]
         self.assertEqual(none, [])
+
+    def test_a_pagina_e_servida_pela_api_com_cabecalhos_de_seguranca_e_sem_login(self):
+        home = self.client.get("/")
+        self.assertEqual(home.status_code, 200)
+        self.assertIn("text/html", home.headers["content-type"])
+        self.assertIn("RunPass", home.text)
+        csp = home.headers["content-security-policy"]
+        self.assertIn("script-src 'self'", csp)
+        self.assertIn("frame-ancestors 'none'", csp)
+        self.assertIn("https://cognito-idp.sa-east-1.amazonaws.com", csp)
+        self.assertNotIn("unsafe-inline", csp)
+        self.assertEqual(home.headers["x-frame-options"], "DENY")
+        self.assertEqual(home.headers["x-content-type-options"], "nosniff")
+        self.assertIn("max-age=", home.headers["strict-transport-security"])
+        for caminho, tipo in (
+            ("/app.js", "javascript"),
+            ("/lib.js", "javascript"),
+            ("/cognito.js", "javascript"),
+            ("/style.css", "css"),
+        ):
+            resposta = self.client.get(caminho)
+            self.assertEqual(resposta.status_code, 200, caminho)
+            self.assertIn(tipo, resposta.headers["content-type"])
+        config = self.client.get("/config.js")
+        self.assertEqual(config.status_code, 200)
+        self.assertIn('"clientId": "cliente-publico"', config.text)
+        self.assertIn('"apiUrl": ""', config.text)  # mesma origem: sem URL da API
+        # Os cabecalhos tambem valem para as respostas da API (inclusive erros).
+        erro = self.client.get("/admin/session")
+        self.assertEqual(erro.status_code, 401)
+        self.assertEqual(erro.headers["x-frame-options"], "DENY")
+
+    def test_so_a_lista_fechada_de_arquivos_e_servida(self):
+        for caminho in (
+            "/config.py",
+            "/../backend/runpass/admin_api.py",
+            "/lib.test.js",
+            "/config.example.js",
+            "/%2e%2e/Makefile",
+            "/portal/index.html",
+        ):
+            self.assertEqual(self.client.get(caminho).status_code, 404, caminho)
+        # nenhum parametro de consulta muda o arquivo servido
+        self.assertEqual(self.client.get("/?c=/lib.js").text, self.client.get("/").text)
+        # as rotas de administracao continuam exigindo login
+        for caminho in ("/admin/session", "/admin/edition-requests", "/admin/editions?q=x"):
+            self.assertEqual(self.client.get(caminho).status_code, 401, caminho)
 
     def test_cors_so_para_a_origem_do_portal(self):
         ok = self.client.options(

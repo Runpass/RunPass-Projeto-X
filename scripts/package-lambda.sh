@@ -21,6 +21,9 @@ mkdir "$OUT/package/runpass"
 cp "$ROOT"/backend/runpass/*.py "$OUT/package/runpass/"
 # The loopback harness must never ship: it mints its own tokens.
 rm "$OUT/package/runpass/local_api.py" "$OUT/package/runpass/seed_catalog.py"
+# A pagina do portal e servida pela API de operadores: so os arquivos publicos, sem testes nem exemplos.
+mkdir "$OUT/package/portal"
+cp "$ROOT"/portal/index.html "$ROOT"/portal/style.css "$ROOT"/portal/app.js "$ROOT"/portal/lib.js "$ROOT"/portal/cognito.js "$OUT/package/portal/"
 
 "$PYTHON" -c "import shutil, sys; shutil.make_archive(sys.argv[1], 'zip', sys.argv[2])" \
   "$OUT/runpass-lambda" "$OUT/package"

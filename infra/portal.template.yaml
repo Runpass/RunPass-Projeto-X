@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  RunPass portal de administracao (candidato, NAO implantado): pagina estatica em S3 + CloudFront e a API
-  so para operadores. O login e feito direto no Cognito; a API confere MFA obrigatorio do pool, sessao
-  recente e acesso ativo (ver backend/runpass/admin_api.py).
+  RunPass portal de administracao: UMA Lambda com API HTTP que serve a pagina e as rotas so para
+  operadores (mesma origem, HTTPS do API Gateway; sem S3 nem CloudFront). O login e feito direto no Cognito;
+  a API confere MFA obrigatorio do pool, sessao recente e acesso ativo (ver backend/runpass/admin_api.py).
 
 Parameters:
   Environment:
@@ -43,99 +43,6 @@ Conditions:
   IsProd: !Equals [!Ref Environment, prod]
 
 Resources:
-  # ---- hospedagem da pagina -------------------------------------------------------------------
-  SiteBucket:
-    Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
-      OwnershipControls:
-        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
-
-  SiteBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref SiteBucket
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: SoOCloudFrontDesteSite
-            Effect: Allow
-            Principal: {Service: cloudfront.amazonaws.com}
-            Action: s3:GetObject
-            Resource: !Sub '${SiteBucket.Arn}/*'
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
-          - Sid: SoHttps
-            Effect: Deny
-            Principal: '*'
-            Action: s3:*
-            Resource: [!GetAtt SiteBucket.Arn, !Sub '${SiteBucket.Arn}/*']
-            Condition:
-              Bool: {aws:SecureTransport: 'false'}
-
-  OriginAccessControl:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub 'runpass-${Environment}-portal'
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  SecurityHeaders:
-    Type: AWS::CloudFront::ResponseHeadersPolicy
-    Properties:
-      ResponseHeadersPolicyConfig:
-        Name: !Sub 'runpass-${Environment}-portal-seguranca'
-        SecurityHeadersConfig:
-          ContentSecurityPolicy:
-            Override: true
-            # Scripts e estilos so do proprio site; conexoes so ao login (Cognito) e a API do portal.
-            ContentSecurityPolicy: !Sub >-
-              default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;
-              connect-src 'self' https://cognito-idp.${AWS::Region}.amazonaws.com https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com;
-              base-uri 'none'; form-action 'self'; frame-ancestors 'none'
-          ContentTypeOptions: {Override: true}
-          FrameOptions: {FrameOption: DENY, Override: true}
-          ReferrerPolicy: {ReferrerPolicy: no-referrer, Override: true}
-          StrictTransportSecurity:
-            AccessControlMaxAgeSec: 31536000
-            IncludeSubdomains: true
-            Override: true
-
-  Distribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        Comment: !Sub 'RunPass ${Environment} portal de administracao'
-        DefaultRootObject: index.html
-        HttpVersion: http2
-        PriceClass: PriceClass_100
-        Origins:
-          - Id: site
-            DomainName: !GetAtt SiteBucket.RegionalDomainName
-            OriginAccessControlId: !GetAtt OriginAccessControl.Id
-            S3OriginConfig: {OriginAccessIdentity: ''}
-        DefaultCacheBehavior:
-          TargetOriginId: site
-          ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods: [GET, HEAD]
-          Compress: true
-          # CachingDisabled: poucas visitas, e o JavaScript novo precisa valer na hora.
-          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-          ResponseHeadersPolicyId: !Ref SecurityHeaders
-
   # ---- API so para operadores --------------------------------------------------------------------
   AdminFunctionLogs:
     Type: AWS::Logs::LogGroup
@@ -229,8 +136,6 @@ Resources:
           RUNPASS_OPERATOR_ISSUER: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${OperatorUserPoolId}'
           RUNPASS_OPERATOR_CLIENT_ID: !Ref OperatorClientId
           RUNPASS_OPERATOR_POOL_ID: !Ref OperatorUserPoolId
-          # Unica origem aceita no CORS: a propria pagina do portal.
-          RUNPASS_PORTAL_ORIGIN: !Sub 'https://${Distribution.DomainName}'
       Tags:
         - {Key: Project, Value: RunPass}
         - {Key: Environment, Value: !Ref Environment}
@@ -288,10 +193,5 @@ Resources:
 
 Outputs:
   PortalUrl:
-    Value: !Sub 'https://${Distribution.DomainName}'
-  ApiUrl:
+    Description: Abrir no navegador; a pagina e a API ficam nesta mesma origem
     Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
-  SiteBucketName:
-    Value: !Ref SiteBucket
-  DistributionId:
-    Value: !Ref Distribution
