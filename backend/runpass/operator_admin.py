@@ -5,6 +5,7 @@ there is no synthetic shortcut for a persistent store.
 """
 
 import hashlib
+import io
 import json
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -141,3 +142,42 @@ def approve_banner(
         payload, expected_version=int(head["version"]), origin=origin_url, actor=actor
     )
     return {"reference": reference, "version": updated["version"], "contentType": actual_type}
+
+
+def normalize_image(data, content_type):
+    """JPEG e PNG seguem como estao; WebP vira JPEG (o app e a limpeza usam JPEG/PNG). Outro tipo, erro."""
+    if content_type in ("image/jpeg", "image/png"):
+        return data, content_type
+    if content_type == "image/webp":
+        from PIL import Image
+
+        try:
+            image = Image.open(io.BytesIO(data)).convert("RGB")
+        except Exception as error:
+            raise ValueError("WebP invalido") from error
+        out = io.BytesIO()
+        image.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue(), "image/jpeg"
+    raise ValueError(f"Tipo {content_type} nao aceito: use JPEG, PNG ou WebP")
+
+
+def remove_banner(catalog, actor, edition_id, origin_url):
+    """Retira o banner (pedido do organizador, erro de imagem...). A edicao ganha uma versao sem imagem.
+
+    O arquivo no bucket e o registro da base de autorizacao ficam guardados para auditoria."""
+    body = catalog._edition(edition_id)
+    head = catalog.store.get(("catalog", "EDITION#" + edition_id, "HEAD"))
+    if body is None or head is None:
+        raise Problem(404, "EDITION_NOT_FOUND")
+    if not body.get("imageReference"):
+        raise ValueError("A edicao nao tem banner")
+    payload = {
+        k: v
+        for k, v in body.items()
+        if k in ImportEdition.model_fields and k not in ("imageReference", "imageCredit")
+    }
+    payload["archived"] = body.get("status") == "archived"
+    updated = CatalogImporter(catalog).put(
+        payload, expected_version=int(head["version"]), origin=origin_url, actor=actor
+    )
+    return {"version": updated["version"]}

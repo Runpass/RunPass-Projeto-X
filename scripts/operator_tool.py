@@ -29,6 +29,8 @@ from runpass.operator_admin import (
     approve_banner,
     grant_access,
     load_catalog,
+    normalize_image,
+    remove_banner,
     retire_catalog,
 )
 from runpass.operators import establish_session
@@ -236,11 +238,12 @@ def download_image(url):
     with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - https validado acima
         kind = response.headers.get_content_type()
         data = response.read(MAX_BANNER_BYTES + 1)
-    if kind not in ("image/jpeg", "image/png"):
-        sys.exit(f"Tipo {kind} nao aceito: use uma imagem JPEG ou PNG.")
     if len(data) > MAX_BANNER_BYTES:
         sys.exit("Imagem maior que 6 MB.")
-    return data, kind
+    try:
+        return normalize_image(data, kind)
+    except ValueError as error:
+        sys.exit(str(error))
 
 
 def approve_banner_cmd(session, args):
@@ -266,6 +269,49 @@ def approve_banner_cmd(session, args):
         f"Banner publicado em {args.edition_id}: {result['reference']} "
         f"(versao {result['version']}, {result['contentType']})."
     )
+
+
+def approve_banners_cmd(session, args):
+    """Varios banners num so login. CSV com: edition_id, image_url, credit. Mesma base de autorizacao."""
+    import csv
+
+    items = list(csv.DictReader(Path(args.file).read_text(encoding="utf-8").splitlines()))
+    if not items:
+        sys.exit("Arquivo vazio.")
+    prepared = []
+    for item in items:  # confere tudo ANTES de pedir senha: nada baixa pela metade
+        image, kind = download_image(item["image_url"])
+        UploadService.sanitize(image, kind)
+        print(f"ok  {item['edition_id']}: {kind}, {len(image)} bytes")
+        prepared.append((item, image, kind))
+    if args.dry_run:
+        print("SIMULACAO: nada foi guardado nem publicado.")
+        return
+    if not args.confirm_rights:
+        sys.exit("Confirme com --confirm-rights que a base de autorizacao informada e verdadeira.")
+    actor, catalog = operator_login(session, args.env, args.username)
+    from runpass.aws_adapters import S3BlobStore
+
+    blobs = S3BlobStore(
+        session.client("s3"), exports(session, f"runpass-{args.env}-data")["MedalBucket"]
+    )
+    for item, image, kind in prepared:
+        try:
+            result = approve_banner(
+                catalog, blobs, actor, item["edition_id"], image, kind,
+                item["credit"], args.rights_note, item["image_url"],
+            )  # fmt: skip
+            print(
+                f"publicado {item['edition_id']}: {result['reference']} (versao {result['version']})"
+            )
+        except Exception as error:  # noqa: BLE001 - segue com as demais e mostra o motivo
+            print(f"FALHOU    {item['edition_id']}: {type(error).__name__}: {error}")
+
+
+def remove_banner_cmd(session, args):
+    actor, catalog = operator_login(session, args.env, args.username)
+    result = remove_banner(catalog, actor, args.edition_id, args.origin)
+    print(f"Banner retirado de {args.edition_id} (versao {result['version']}).")
 
 
 def print_report(report):
@@ -400,6 +446,23 @@ def main():
     ab.add_argument("--rights-note", required=True, help="como a autorizacao ou licenca foi obtida")
     ab.add_argument("--confirm-rights", action="store_true", help="confirma que ha autorizacao")
     ab.add_argument("--dry-run", action="store_true", help="so baixa e confere a imagem")
+    abs_ = sub.add_parser(
+        "approve-banners",
+        help="aprova varios banners num so login (CSV: edition_id,image_url,credit)",
+    )
+    abs_.add_argument("--username", required=True, help="e-mail do operador")
+    abs_.add_argument("--file", required=True)
+    abs_.add_argument("--rights-note", required=True, help="base de autorizacao, igual para o lote")
+    abs_.add_argument("--confirm-rights", action="store_true")
+    abs_.add_argument("--dry-run", action="store_true")
+    rb = sub.add_parser(
+        "remove-banner", help="retira o banner de uma corrida (ex.: pedido do organizador)"
+    )
+    rb.add_argument("--username", required=True, help="e-mail do operador")
+    rb.add_argument("--edition-id", required=True)
+    rb.add_argument(
+        "--origin", default="https://exemplo.invalid/origem", help="URL https de referencia"
+    )
     sub.add_parser(
         "retire-synthetic", help="arquiva e tira da lista as edicoes sinteticas (nao apaga nada)"
     ).add_argument("--username", required=True, help="e-mail do operador")
@@ -442,6 +505,10 @@ def main():
         import_csv(session, args)
     elif args.command == "approve-banner":
         approve_banner_cmd(session, args)
+    elif args.command == "approve-banners":
+        approve_banners_cmd(session, args)
+    elif args.command == "remove-banner":
+        remove_banner_cmd(session, args)
     elif args.command == "reset-operator":
         if args.recreate:
             recreate_operator(session, args.env, args.username)

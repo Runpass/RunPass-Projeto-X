@@ -11,6 +11,8 @@ from runpass.operator_admin import (
     approve_banner,
     grant_access,
     load_catalog,
+    normalize_image,
+    remove_banner,
     retire_catalog,
 )
 from runpass.service import IdentityService
@@ -176,6 +178,49 @@ class OperatorAdminTest(unittest.TestCase):
         with self.assertRaises(Exception) as none:
             UploadService(self.identity, blobs).edition_banner(runner, other)
         self.assertEqual(none.exception.code, "IMAGE_NOT_AVAILABLE")
+
+    def test_webp_vira_jpeg_e_outros_tipos_sao_recusados(self):
+        import io
+
+        from PIL import Image
+
+        webp = io.BytesIO()
+        Image.new("RGB", (300, 150), (10, 20, 30)).save(webp, format="WEBP")
+        data, kind = normalize_image(webp.getvalue(), "image/webp")
+        self.assertEqual(kind, "image/jpeg")
+        self.assertEqual(Image.open(io.BytesIO(data)).format, "JPEG")
+        self.assertEqual(normalize_image(b"x", "image/png"), (b"x", "image/png"))
+        with self.assertRaises(ValueError):
+            normalize_image(b"x", "image/gif")
+        with self.assertRaises(ValueError):
+            normalize_image(b"nao e webp", "image/webp")
+
+    def test_remove_banner_publishes_a_version_without_image_and_keeps_the_audit_row(self):
+        grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
+        self.session()
+        load_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        blobs = MemoryBlobStore()
+        done = approve_banner(
+            self.catalog, blobs, self.operator, "synthetic-sp-2025", self.png(), "image/png",
+            "Divulgação: Org", "Autorizacao por e-mail do organizador", "https://x.exemplo/o",
+        )  # fmt: skip
+        with self.assertRaises(ValueError):
+            remove_banner(self.catalog, self.operator, "synthetic-sp-2024", "https://x.exemplo/o")
+        result = remove_banner(
+            self.catalog, self.operator, "synthetic-sp-2025", "https://x.exemplo/o"
+        )
+        self.assertEqual(result["version"], 3)
+        runner = Principal("runner", True)
+        self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
+        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        edition = self.catalog.detail(runner, "synthetic-sp-2025")
+        self.assertNotIn("imageReference", edition)
+        self.assertNotIn("imageCredit", edition)
+        with self.assertRaises(Exception) as gone:
+            UploadService(self.identity, blobs).edition_banner(runner, edition)
+        self.assertEqual(gone.exception.code, "IMAGE_NOT_AVAILABLE")
+        row = ("operations", "EDITION#synthetic-sp-2025", "IMAGE#" + done["reference"])
+        self.assertIsNotNone(self.store.get(row))  # auditoria preservada
 
     def test_banner_refuses_a_file_that_is_not_the_declared_image(self):
         grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
