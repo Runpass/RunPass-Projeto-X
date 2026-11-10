@@ -155,7 +155,11 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
 /// cor), silhueta de corredor e a maior distância. Não é foto nem logo da prova: só uma identidade visual.
 class RaceArt extends StatelessWidget {
   final Map<String, dynamic> edition;
-  const RaceArt({super.key, required this.edition});
+
+  /// Na lista, a distância fica no canto superior esquerdo (os atalhos ocupam o direito); no banner da
+  /// corrida fica à direita, longe do botão de voltar.
+  final bool labelAtLeft;
+  const RaceArt({super.key, required this.edition, this.labelAtLeft = false});
 
   static const palettes = [
     [runPassNavy, Color(0xff5a2a1c), runPassOrange],
@@ -209,7 +213,9 @@ class RaceArt extends StatelessWidget {
             ),
             if (label != null)
               Positioned.fill(
-                child: CustomPaint(painter: _ArtLabelPainter(label)),
+                child: CustomPaint(
+                  painter: _ArtLabelPainter(label, left: labelAtLeft),
+                ),
               ),
           ],
         ),
@@ -221,7 +227,8 @@ class RaceArt extends StatelessWidget {
 /// Pinta a distância como desenho (marca d'água), para não virar um texto duplicado na tela.
 class _ArtLabelPainter extends CustomPainter {
   final String label;
-  const _ArtLabelPainter(this.label);
+  final bool left;
+  const _ArtLabelPainter(this.label, {this.left = false});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -236,11 +243,15 @@ class _ArtLabelPainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    text.paint(canvas, Offset(size.width - text.width - 18, 52));
+    text.paint(
+      canvas,
+      left ? const Offset(16, 10) : Offset(size.width - text.width - 18, 52),
+    );
   }
 
   @override
-  bool shouldRepaint(_ArtLabelPainter old) => old.label != label;
+  bool shouldRepaint(_ArtLabelPainter old) =>
+      old.label != label || old.left != left;
 }
 
 /// Fundo do cartão da corrida na lista: ocupa o espaço todo. A imagem aprovada (banner ou logo) quando
@@ -296,7 +307,7 @@ class _EditionCoverState extends State<EditionCover> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        RaceArt(edition: widget.edition),
+        RaceArt(edition: widget.edition, labelAtLeft: true),
         if (url != null)
           Image.network(
             url!,

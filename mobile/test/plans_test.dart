@@ -672,6 +672,11 @@ void searchTests() {
       expect(find.byKey(const Key('edition-cover-image')), findsOneWidget);
       // A outra corrida segue com o ícone, sem imagem.
       expect(find.byType(EditionCover), findsNWidgets(2));
+      // Sem imagem, a distância da arte fica no canto superior esquerdo do cartão.
+      expect(
+        tester.widget<RaceArt>(find.byType(RaceArt).first).labelAtLeft,
+        isTrue,
+      );
     },
   );
 }
