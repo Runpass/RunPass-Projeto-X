@@ -11,6 +11,24 @@ from cryptography.fernet import Fernet, InvalidToken
 from .service import Problem, stamp
 
 
+def _write_review_pointer(read, write, pk, edition_id, participation_id, item, owner):
+    """Ponteiro `EDREV#<edicao>` para a lista publica de avaliacoes (sem Scan).
+
+    A leitura sempre reconfere participacao, avaliacao e conta; o ponteiro entra no `sharedKeys`
+    do dono, entao o apagamento da conta o remove. Pontos antigos (troca de edicao) ficam na lista
+    para o apagamento limpar tudo, mas nunca aparecem: a leitura exige a edicao atual."""
+    pointer = ("history", "EDREV#" + edition_id, f"T#{item['completedAt']}#{participation_id}")
+    ref = ("history", pk, "REVREF#" + participation_id)
+    old = read(ref)
+    read(pointer)
+    write(
+        pointer,
+        {"owner": owner, "id": participation_id, "completedAt": item["completedAt"]},
+    )
+    kept = [k for k in (old or {}).get("sharedKeys", []) if tuple(k) != pointer]
+    write(ref, {"sharedKeys": [list(pointer), *kept]})
+
+
 class ParticipationService:
     def __init__(self, identity, catalog, cursor_key):
         self.identity, self.catalog = identity, catalog
@@ -239,6 +257,9 @@ class ParticipationService:
             )
             write(image_key, {**image, "refs": image.get("refs", 0) + 1})
             write(claim_key, {"participationId": participation_id, "version": item["version"]})
+            _write_review_pointer(
+                read, write, pk, item["editionId"], participation_id, item, actor.subject
+            )
             if payload["publishToFeed"]:
                 # Ponteiro global para o feed "Todos" (social.py:_public_feed), sem Scan: a
                 # visibilidade de verdade é sempre reconferida na leitura via can_view.
@@ -625,6 +646,9 @@ class ParticipationService:
                 for event_item_key in (event_key, audit_key, work_key):
                     read(event_item_key)
                 write(review_key, updated_review)
+                _write_review_pointer(
+                    read, write, pk, edition_id, participation_id, item, actor.subject
+                )
                 write(
                     event_key,
                     {

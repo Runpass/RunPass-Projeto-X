@@ -234,7 +234,9 @@ void main() {
       await reveal(tester, find.text('Corrida A'));
       await tester.tap(find.text('Corrida A'));
       await tester.pumpAndSettle();
-      expect(find.text('Corrida A'), findsOneWidget);
+      // O nome da corrida aparece só no banner (em maiúsculas), não repetido abaixo.
+      expect(find.text('CORRIDA A'), findsOneWidget);
+      expect(find.text('Corrida A'), findsNothing);
       await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
       expect(find.text('Distância selecionada.'), findsOneWidget);
@@ -824,6 +826,8 @@ void main() {
           )
           .last,
     );
+    await tester.ensureVisible(find.text('Editar meu rascunho'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Editar meu rascunho'));
     await tester.pumpAndSettle();
     expect(find.text('Rascunho da participação'), findsOneWidget);

@@ -78,6 +78,10 @@ def enroll(session, env, username):
         AuthFlow="USER_PASSWORD_AUTH",
         AuthParameters={"USERNAME": username, "PASSWORD": password},
     )
+    setup_mfa(idp, client_id, pool_id, env, username, auth)
+
+
+def setup_mfa(idp, client_id, pool_id, env, username, auth):
     if auth.get("ChallengeName") != "MFA_SETUP":
         sys.exit(f"Desafio inesperado: {auth.get('ChallengeName')}")
     token = idp.associate_software_token(Session=auth["Session"])
@@ -103,7 +107,48 @@ def enroll(session, env, username):
         for a in idp.admin_get_user(UserPoolId=pool_id, Username=username)["UserAttributes"]
         if a["Name"] == "sub"
     )
-    print(f"\nOperador criado com MFA. Identificador (sub) para o passo grant: {sub}")
+    print(f"\nOperador com MFA pronto. Identificador (sub): {sub}")
+
+
+def recreate_operator(session, env, username):
+    """TOTP verificado nao pode ser removido sem login: apaga o usuario e refaz (novo sub, novo grant)."""
+    pool = outputs(session, f"runpass-{env}-identity")
+    session.client("cognito-idp").admin_delete_user(
+        UserPoolId=pool["OperatorPool"], Username=username
+    )
+    print("Operador antigo apagado do pool. Cadastrando de novo.")
+    enroll(session, env, username)
+    print("Agora outro perfil AWS precisa rodar o comando grant com este sub (docs/operadores.md).")
+
+
+def reset_operator(session, env, username):
+    """Esqueceu senha e MFA: nova senha e novo TOTP para o MESMO operador (o sub e o acesso ficam)."""
+    pool = outputs(session, f"runpass-{env}-identity")
+    client_id, pool_id = pool["OperatorClient"], pool["OperatorPool"]
+    idp = session.client("cognito-idp")
+    idp.admin_get_user(UserPoolId=pool_id, Username=username)  # falha se nao existir
+    password = ask("Nova senha do operador (minimo 12 caracteres): ")
+    if password != ask("Repita a senha: "):
+        sys.exit("As senhas nao conferem.")
+    idp.admin_set_user_password(
+        UserPoolId=pool_id, Username=username, Password=password, Permanent=True
+    )
+    idp.admin_set_user_mfa_preference(
+        UserPoolId=pool_id,
+        Username=username,
+        SoftwareTokenMfaSettings={"Enabled": False, "PreferredMfa": False},
+    )
+    auth = idp.initiate_auth(
+        ClientId=client_id,
+        AuthFlow="USER_PASSWORD_AUTH",
+        AuthParameters={"USERNAME": username, "PASSWORD": password},
+    )
+    if auth.get("ChallengeName") == "SOFTWARE_TOKEN_MFA":
+        sys.exit(
+            "O TOTP antigo continua valendo e o Cognito nao permite remove-lo sem login.\n"
+            "Rode: reset-operator --recreate (apaga e recria o operador; exige novo grant)."
+        )
+    setup_mfa(idp, client_id, pool_id, env, username, auth)
 
 
 def store_for(session, env):
@@ -288,6 +333,11 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("enroll", "load-catalog"):
         sub.add_parser(name).add_argument("--username", required=True, help="e-mail do operador")
+    sub.add_parser("reset-operator", help="esqueceu senha e MFA: refaz os dois do mesmo operador")
+    sub.choices["reset-operator"].add_argument("--username", required=True, help="e-mail")
+    sub.choices["reset-operator"].add_argument(
+        "--recreate", action="store_true", help="apaga e recria o operador (novo sub)"
+    )
     sub.add_parser(
         "retire-synthetic", help="arquiva e tira da lista as edicoes sinteticas (nao apaga nada)"
     ).add_argument("--username", required=True, help="e-mail do operador")
@@ -328,6 +378,11 @@ def main():
         if not args.offline and not args.username:
             sys.exit("Informe --username (ou use --offline para so validar o arquivo).")
         import_csv(session, args)
+    elif args.command == "reset-operator":
+        if args.recreate:
+            recreate_operator(session, args.env, args.username)
+        else:
+            reset_operator(session, args.env, args.username)
     elif args.command == "retire-synthetic":
         retire_synthetic(session, args.env, args.username)
     elif args.command == "sync-source":

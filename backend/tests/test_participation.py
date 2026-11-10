@@ -10,6 +10,7 @@ from runpass.catalog import CatalogService, seed_synthetic
 from runpass.identity import Principal
 from runpass.participation import ParticipationService
 from runpass.service import IdentityService, Problem
+from runpass.social import SocialService
 from runpass.store import MemoryStore
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -185,6 +186,60 @@ class ParticipationTests(unittest.TestCase):
         winners = [value for value in results if value != "PARTICIPATION_EXISTS"]
         self.assertEqual(len(winners), 1)
         self.assertEqual(results.count("PARTICIPATION_EXISTS"), 7)
+
+    def finish(self, subject, stars, comment=None):
+        actor = self.actor if subject == "owner" else self.admit(subject)
+        draft = self.service.create(actor, "d-" + subject, self.payload(timeSeconds=3600))
+        image = ("operations", "USER#" + subject, "IMAGE#img-" + subject)
+        self.store.commit(
+            {image: None},
+            {image: {"owner": subject, "origin": "runner", "state": "valid", "refs": 0}},
+        )
+        body = self.completion(draft, medalImageReference="img-" + subject)
+        body["ratings"] = {k: stars for k in body["ratings"]}
+        if comment:
+            body["comment"] = comment
+        self.service.complete(actor, draft["id"], "c-" + subject, body)
+        return actor, draft["id"]
+
+    def test_public_edition_reviews_list_average_and_recommendation(self):
+        social = SocialService(self.identity)
+        reader = self.admit("reader")
+        empty = social.edition_reviews(reader, "synthetic-sp-2024")
+        self.assertEqual(empty["items"], [])
+        self.assertEqual(empty["summary"]["reviewCount"], 0)
+        self.assertIsNone(empty["summary"]["average"])
+        self.finish("owner", 5, "Prova sensacional")
+        other, other_id = self.finish("other", 2)
+        page = social.edition_reviews(reader, "synthetic-sp-2024")
+        self.assertEqual(len(page["items"]), 2)
+        self.assertEqual({i["authorName"] for i in page["items"]}, {"owner", "other"})
+        self.assertEqual(
+            next(i for i in page["items"] if i["authorName"] == "owner")["comment"],
+            "Prova sensacional",
+        )
+        summary = page["summary"]
+        self.assertEqual(summary["reviewCount"], 2)
+        self.assertEqual(summary["average"], 3.5)
+        self.assertEqual(summary["recommendPercent"], 50)
+        self.assertEqual(summary["byCriterion"]["kit"], 3.5)
+        self.assertEqual(social.edition_reviews(reader, "synthetic-sp-2024", "5k")["items"], [])
+        self.assertEqual(
+            len(social.edition_reviews(reader, "synthetic-sp-2024", "10k")["items"]), 2
+        )
+        one = social.edition_reviews(reader, "synthetic-sp-2024", limit=1)
+        self.assertEqual(len(one["items"]), 1)
+        rest = social.edition_reviews(
+            reader, "synthetic-sp-2024", limit=1, cursor=one["nextCursor"]
+        )
+        self.assertEqual(len(rest["items"]), 1)
+        self.assertNotIn("nextCursor", rest)
+        self.assertEqual(social.edition_reviews(reader, "synthetic-sp-2025")["items"], [])
+        part = self.service.get(other, other_id)
+        self.service.delete(other, other_id, "del", part["version"])
+        after = social.edition_reviews(reader, "synthetic-sp-2024")
+        self.assertEqual(after["summary"]["reviewCount"], 1)
+        self.assertEqual(after["summary"]["recommendPercent"], 100)
 
     def test_completion_is_atomic_idempotent_and_pins_image(self):
         draft = self.service.create(self.actor, "create", self.payload(timeSeconds=3600))

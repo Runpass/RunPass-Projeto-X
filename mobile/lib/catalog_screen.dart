@@ -671,6 +671,8 @@ class _EditionScreenState extends State<EditionScreen> {
   String? selectedDistance, error;
   bool loading = true, saving = false, loadingReviews = false;
   List<Map<String, dynamic>>? reviews;
+  Map<String, dynamic>? reviewSummary;
+  bool showAllReviews = false;
   Map<String, dynamic>? mine;
   Map<String, dynamic>? myReview;
 
@@ -794,9 +796,13 @@ class _EditionScreenState extends State<EditionScreen> {
       if (mounted) {
         reviews = (page['items'] as List? ?? const [])
             .cast<Map<String, dynamic>>();
+        reviewSummary = (page['summary'] as Map?)?.cast<String, dynamic>();
       }
     } on Exception {
-      if (mounted) reviews = null;
+      if (mounted) {
+        reviews = null;
+        reviewSummary = null;
+      }
     } finally {
       if (mounted) setState(() => loadingReviews = false);
     }
@@ -944,11 +950,6 @@ class _EditionScreenState extends State<EditionScreen> {
   Widget header(Map<String, dynamic> body) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(
-        body['name'] as String,
-        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
-      ),
-      const SizedBox(height: 8),
       Row(
         children: [
           const Icon(Icons.calendar_today_outlined, size: 16),
@@ -1128,6 +1129,7 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
+  /// Item avaliado: estrelas douradas; sem avaliações ficam vazias (só o contorno).
   Widget bar(String label, IconData icon, double? value) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 7),
     child: Row(
@@ -1135,17 +1137,7 @@ class _EditionScreenState extends State<EditionScreen> {
         Icon(icon, size: 20),
         const SizedBox(width: 10),
         SizedBox(width: 118, child: Text(label)),
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: (value ?? 0) / 5,
-              minHeight: 7,
-              color: runPassOrange,
-              backgroundColor: context.track,
-            ),
-          ),
-        ),
+        Expanded(child: Stars(value ?? 0, size: 20)),
         SizedBox(
           width: 42,
           child: Text(
@@ -1161,27 +1153,40 @@ class _EditionScreenState extends State<EditionScreen> {
   Widget scoreCard(Map<String, dynamic> body) {
     final score = body['runScore'] as Map<String, dynamic>?;
     final loaded = reviews ?? const <Map<String, dynamic>>[];
+    final summary = reviewSummary;
     final value =
-        (score?['value'] as num?) ??
+        (summary?['average'] as num?) ??
+        (score?['value'] is num
+            ? score!['value'] as num
+            : num.tryParse('${score?['value'] ?? ''}')) ??
         (loaded.isEmpty
             ? null
             : loaded.map(reviewAverage).reduce((a, b) => a + b) /
                   loaded.length);
     if (value == null) {
-      return const Card(
+      return Card(
         child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text('Esta prova ainda não tem avaliações.'),
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            'Esta prova ainda não tem avaliações.',
+            key: const Key('reviews-none'),
+            style: TextStyle(color: context.muted),
+          ),
         ),
       );
     }
-    final count = (score?['reviewCount'] as num?)?.toInt() ?? loaded.length;
-    final recommend = loaded.isEmpty
-        ? null
-        : (100 *
-                  loaded.where((r) => reviewAverage(r) >= 4).length /
-                  loaded.length)
-              .round();
+    final count =
+        (summary?['reviewCount'] as num?)?.toInt() ??
+        (score?['reviewCount'] as num?)?.toInt() ??
+        loaded.length;
+    final recommend =
+        (summary?['recommendPercent'] as num?)?.toInt() ??
+        (loaded.isEmpty
+            ? null
+            : (100 *
+                      loaded.where((r) => reviewAverage(r) >= 4).length /
+                      loaded.length)
+                  .round());
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1317,6 +1322,9 @@ class _EditionScreenState extends State<EditionScreen> {
 
   Widget reviewsTab(Map<String, dynamic> body) {
     final loaded = reviews;
+    final byCriterion = (reviewSummary?['byCriterion'] as Map?) ?? const {};
+    double? criterion(String key) =>
+        (byCriterion[key] as num?)?.toDouble() ?? average(key);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -1324,16 +1332,16 @@ class _EditionScreenState extends State<EditionScreen> {
         myReviewCard(),
         scoreCard(body),
         const SizedBox(height: 14),
+        for (final (key, label, icon) in criteria)
+          bar(label, icon, criterion(key)),
+        const SizedBox(height: 18),
         if (loadingReviews)
           const Center(child: CircularProgressIndicator())
         else if (loaded == null)
           const Text(
-            'A lista pública de avaliações ainda não está disponível. As suas aparecem acima.',
+            'A lista pública de avaliações não pôde ser carregada agora. As suas aparecem acima.',
           )
         else if (loaded.isNotEmpty) ...[
-          for (final (key, label, icon) in criteria)
-            bar(label, icon, average(key)),
-          const SizedBox(height: 18),
           Row(
             children: [
               const Expanded(
@@ -1342,13 +1350,16 @@ class _EditionScreenState extends State<EditionScreen> {
                   style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                 ),
               ),
-              TextButton(
-                onPressed: () => soon('Lista completa em breve.'),
-                child: const Text('Ver todas'),
-              ),
+              if (loaded.length > 3)
+                TextButton(
+                  key: const Key('reviews-show-all'),
+                  onPressed: () =>
+                      setState(() => showAllReviews = !showAllReviews),
+                  child: Text(showAllReviews ? 'Ver menos' : 'Ver todas'),
+                ),
             ],
           ),
-          for (final review in loaded.take(3)) ...[
+          for (final review in showAllReviews ? loaded : loaded.take(3)) ...[
             reviewTile(review),
             const SizedBox(height: 10),
           ],
@@ -1417,10 +1428,18 @@ class _EditionScreenState extends State<EditionScreen> {
                 children: [
                   hero(body),
                   Material(
-                    color: Colors.white,
+                    color: Theme.of(context).scaffoldBackgroundColor,
                     child: TabBar(
                       labelColor: runPassOrange,
                       indicatorColor: runPassOrange,
+                      labelStyle: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                      unselectedLabelStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
                       unselectedLabelColor: context.onSurfaceText,
                       tabs: [
                         Tab(text: 'Sobre'),

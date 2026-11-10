@@ -227,6 +227,20 @@ def create_app(
             raise Unavailable()
         return catalog.detail(actor, id)
 
+    @app.get("/editions/{id}/reviews", operation_id="listEditionReviews")
+    def edition_reviews(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+        distanceId: str | None = Query(None, min_length=1, max_length=100),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_reviews(actor, id, distanceId, limit, cursor)
+
     @app.post("/participations", status_code=201, operation_id="createParticipationDraft")
     def create_participation(
         body: CreateParticipation, actor: Actor, idempotency_key: IdempotencyKey

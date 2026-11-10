@@ -5690,6 +5690,13 @@
               "invalidated",
               "pending_review"
             ]
+          },
+          "authorName": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -6224,6 +6231,9 @@
           },
           "nextCursor": {
             "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ReviewSummary"
           }
         }
       },
@@ -8729,6 +8739,36 @@
           "commentId",
           "likedByMe"
         ]
+      },
+      "ReviewSummary": {
+        "type": "object",
+        "required": [
+          "reviewCount"
+        ],
+        "properties": {
+          "reviewCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "average": {
+            "type": "number",
+            "nullable": true,
+            "description": "Media dos oito criterios das avaliacoes validas do filtro, uma casa; null sem avaliacoes."
+          },
+          "recommendPercent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "nullable": true,
+            "description": "Percentual de avaliacoes cuja media dos oito criterios e >= 4; derivado, nao ha pergunta propria."
+          },
+          "byCriterion": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        }
       }
     }
   }
