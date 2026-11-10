@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'agenda.dart';
 import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
@@ -150,7 +151,14 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
 
 class CatalogScreen extends StatefulWidget {
   final IdentityGateway gateway;
-  const CatalogScreen({super.key, required this.gateway});
+
+  /// Ordem inicial da lista (`dateDesc` por padrão; `dateAsc` usa só a paginação do servidor).
+  final String initialSort;
+  const CatalogScreen({
+    super.key,
+    required this.gateway,
+    this.initialSort = 'dateDesc',
+  });
   @override
   State<CatalogScreen> createState() => _CatalogScreenState();
 }
@@ -207,12 +215,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
     super.dispose();
   }
 
-  /// Ordem da lista: `dateAsc` (padrão, a do servidor), `dateDesc` ou `rating` (ranking das melhores).
-  String sort = 'dateAsc';
+  /// Ordem da lista: `dateDesc` (padrão: mais recentes primeiro), `dateAsc` (a do servidor) ou
+  /// `rating` (ranking das melhores). Só `dateAsc` usa a paginação do servidor com limite 20.
+  late String sort = widget.initialSort;
 
   /// Itens por página da busca atual. O cursor do servidor é amarrado aos filtros (inclui o limite),
   /// então o limite não pode mudar no meio de uma busca.
-  String pageLimit = '20';
+  late String pageLimit = widget.initialSort == 'dateAsc' ? '20' : '100';
 
   static num? scoreOf(Map<String, dynamic> edition) {
     final raw = (edition['runScore'] as Map?)?['value'];
@@ -468,7 +477,19 @@ class _CatalogScreenState extends State<CatalogScreen> {
       title: const RunPassWordmark(compact: true),
       actions: [
         IconButton(
+          key: const Key('catalog-agenda'),
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Minha agenda',
+          icon: const Icon(Icons.calendar_month_rounded),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => AgendaScreen(gateway: widget.gateway),
+            ),
+          ),
+        ),
+        IconButton(
           key: const Key('catalog-search-toggle'),
+          visualDensity: VisualDensity.compact,
           tooltip: showFilters ? 'Fechar filtros' : 'Filtrar corridas',
           icon: Icon(showFilters ? Icons.close_rounded : Icons.search_rounded),
           onPressed: () {
@@ -735,12 +756,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       isExpanded: true,
                       items: const [
                         DropdownMenuItem(
-                          value: 'dateAsc',
-                          child: Text('Data: mais antigas'),
-                        ),
-                        DropdownMenuItem(
                           value: 'dateDesc',
                           child: Text('Data: mais recentes'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'dateAsc',
+                          child: Text('Data: mais antigas'),
                         ),
                         DropdownMenuItem(
                           value: 'rating',

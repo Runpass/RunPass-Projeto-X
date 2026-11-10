@@ -97,6 +97,7 @@ Future<void> openSearch(WidgetTester tester) async {
 }
 
 void main() {
+  defaultOrderTests();
   test('query parameters preserve stage and encode filters without leaking into path', () async {
     final gateway = await signed((uri, method, headers, body) async {
       expect(uri.path, '/dev/editions');
@@ -129,7 +130,9 @@ void main() {
         return const JsonReply(200, {'items': [], 'nextCursor': 'next'});
       });
       await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
+        MaterialApp(
+          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+        ),
       );
       await tester.pumpAndSettle();
       await openSearch(tester);
@@ -179,7 +182,11 @@ void main() {
       calls.add(uri.queryParameters);
       return const JsonReply(200, {'items': []});
     });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Encontre sua próxima conquista'), findsNothing);
     await openSearch(tester);
@@ -228,7 +235,9 @@ void main() {
             : JsonReply(200, entry('A'));
       });
       await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
+        MaterialApp(
+          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+        ),
       );
       await tester.pumpAndSettle();
       await reveal(tester, find.text('Corrida A'));
@@ -517,7 +526,11 @@ void main() {
       (uri, method, headers, body) async =>
           const JsonReply(403, {'code': 'BETA_ADMISSION_REQUIRED'}),
     );
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+      ),
+    );
     await tester.pumpAndSettle();
     await reveal(
       tester,
@@ -805,7 +818,11 @@ void main() {
       }
       return JsonReply(200, entry('A'));
     });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+      ),
+    );
     await tester.pumpAndSettle();
     await reveal(tester, find.textContaining('Já está na sua lista'));
     expect(find.textContaining('Já está na sua lista'), findsOneWidget);
@@ -1084,7 +1101,9 @@ void main() {
         return const JsonReply(200, {'items': []});
       });
       await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
+        MaterialApp(
+          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+        ),
       );
       await tester.pumpAndSettle();
       await openSearch(tester);
@@ -1176,7 +1195,9 @@ void main() {
           return const JsonReply(200, {'items': []});
         });
         await tester.pumpWidget(
-          MaterialApp(home: CatalogScreen(gateway: gateway)),
+          MaterialApp(
+            home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+          ),
         );
         await tester.pumpAndSettle();
         await openSearch(tester);
@@ -1224,7 +1245,9 @@ void main() {
         return const JsonReply(200, {'items': []});
       });
       await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
+        MaterialApp(
+          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+        ),
       );
       await tester.pumpAndSettle();
       await openSearch(tester);
@@ -1266,7 +1289,9 @@ void main() {
         });
       });
       await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
+        MaterialApp(
+          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+        ),
       );
       await tester.pumpAndSettle();
       await openSearch(tester);
@@ -1331,7 +1356,9 @@ void main() {
           return const JsonReply(200, {'items': []});
         });
         await tester.pumpWidget(
-          MaterialApp(home: CatalogScreen(gateway: gateway)),
+          MaterialApp(
+            home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+          ),
         );
         await tester.pumpAndSettle();
         // O pedido fica junto da pesquisa, na lupa: fechada, nao aparece no fim da lista.
@@ -1497,7 +1524,9 @@ void main() {
         });
       });
       await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
+        MaterialApp(
+          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+        ),
       );
       await tester.pumpAndSettle();
       // Sem tocar na lupa: o campo ja esta na tela, com o rotulo certo.
@@ -1532,7 +1561,11 @@ void main() {
     final gateway = await signed((uri, method, headers, body) async {
       return const JsonReply(200, {'items': []});
     });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(
       find.text('Nenhuma corrida encontrada com esses filtros.'),
@@ -1555,7 +1588,11 @@ void main() {
         'items': [entry('A')],
       });
     });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
     expect(find.byKey(const Key('catalog-request-new')), findsNothing);
@@ -1585,7 +1622,11 @@ void main() {
       }
       return const JsonReply(200, {'items': []});
     });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+      ),
+    );
     await tester.pumpAndSettle();
     double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
     expect(top('Corrida A') < top('Corrida B'), isTrue); // padrão: do servidor
@@ -1634,7 +1675,9 @@ void main() {
         });
       });
       await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
+        MaterialApp(
+          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+        ),
       );
       await tester.pumpAndSettle();
       expect(calls.single['limit'], '20');
@@ -1646,6 +1689,39 @@ void main() {
       expect(calls.last.containsKey('cursor'), isFalse);
       expect(find.byKey(const Key('catalog-error')), findsNothing);
       expect(find.textContaining('Corrida B'), findsOneWidget);
+    },
+  );
+}
+
+void defaultOrderTests() {
+  testWidgets(
+    'por padrão a lista vem da data mais recente para a mais antiga',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final limits = <String?>[];
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          limits.add(uri.queryParameters['limit']);
+          return JsonReply(200, {
+            'items': [
+              {...entry('A'), 'id': 'EA', 'date': '2024-05-01'},
+              {...entry('B'), 'id': 'EB', 'date': '2026-05-01'},
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(limits.first, '100');
+      double top(String text) =>
+          tester.getTopLeft(find.textContaining(text)).dy;
+      expect(top('Corrida B') < top('Corrida A'), isTrue);
+      expect(find.text('Data: mais recentes'), findsOneWidget);
     },
   );
 }

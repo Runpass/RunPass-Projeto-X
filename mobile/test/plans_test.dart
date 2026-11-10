@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/agenda.dart';
 import 'package:runpass/catalog_screen.dart';
-import 'package:runpass/home_screen.dart';
 import 'package:runpass/identity_gateway.dart';
 
 import 'catalog_test.dart' show entry, signed;
