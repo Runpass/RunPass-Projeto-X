@@ -228,3 +228,24 @@ export function dataHojeIso(agora = new Date()) {
   const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(agora);
   return p;
 }
+
+/** Motivo (código curto vindo da API) -> frase para a pessoa. Nunca mostra detalhes da chave. */
+export function motivoOpenAi(codigo) {
+  const c = codigo || '';
+  if (c.startsWith('key_read_failed')) {
+    const tipo = c.split(':')[1] || '';
+    return `Não consegui ler a chave no SSM (${tipo || 'erro'}): confira o nome do parâmetro, se ele é SecureString e se a região é sa-east-1.`;
+  }
+  const mapa = {
+    empty_key: 'O parâmetro do SSM está vazio.',
+    http_401: 'A OpenAI recusou a chave: ela é inválida, foi revogada ou não é uma chave de administrador (sk-admin-...).',
+    http_403: 'A OpenAI recusou a chave: ela não tem permissão para ler custos e uso.',
+    http_400: 'A OpenAI recusou a consulta (confira o ID do projeto, proj_...).',
+    http_404: 'A OpenAI não encontrou o recurso (confira o ID do projeto, proj_...).',
+    http_429: 'A OpenAI limitou as consultas agora. Tente de novo em instantes.',
+    network: 'Sem resposta da OpenAI agora.',
+    not_configured: 'A chave de administrador não está configurada neste deploy.',
+  };
+  if (mapa[c]) return mapa[c];
+  return c.startsWith('http_') ? `A OpenAI respondeu com erro (${c.slice(5)}).` : 'Motivo não identificado.';
+}

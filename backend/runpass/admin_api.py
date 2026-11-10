@@ -427,9 +427,10 @@ def create_admin_app(
             try:  # dados reais da OpenAI quando ha chave de administrador; senao, a estimativa pelos logs
                 out["openaiOrg"] = openai_org.report()
                 org_status = "ok"
-            except Unavailable:
+            except Unavailable as error:
                 out["openaiOrg"] = None
                 org_status = "error"
+                out["openaiOrgReason"] = getattr(error, "reason", "unknown")
         else:
             out["openaiOrg"] = None
         out["openaiOrgStatus"] = org_status

@@ -119,3 +119,14 @@ test('banners: nota de direitos padrão e data de hoje', async () => {
   assert.match(dataHojeIso(new Date('2026-11-10T15:00:00Z')), /^2026-11-10$/);
   assert.match(mensagem('IMAGE_URL_BLOCKED'), /rede interna/);
 });
+
+test('motivo da falha da OpenAI vira frase útil sem vazar detalhes', async () => {
+  const { motivoOpenAi } = await import('./lib.js');
+  assert.match(motivoOpenAi('key_read_failed:ParameterNotFound'), /ParameterNotFound.*SecureString/);
+  assert.match(motivoOpenAi('http_401'), /administrador/);
+  assert.match(motivoOpenAi('http_403'), /permissão/);
+  assert.match(motivoOpenAi('http_400'), /projeto/);
+  assert.match(motivoOpenAi('http_500'), /\(500\)/);
+  assert.match(motivoOpenAi('network'), /Sem resposta/);
+  assert.equal(motivoOpenAi(undefined), 'Motivo não identificado.');
+});

@@ -275,6 +275,37 @@ class OpenAiOrgTests(unittest.TestCase):
         self.assertEqual(costs[1]["start_time"], 1_793_491_200)  # 01/11/2026 00:00 UTC
         self.assertEqual(costs[2], "sk-admin-teste")
 
+    def test_motivos_seguros_para_cada_tipo_de_falha(self):
+        def motivo(org):
+            with self.assertRaises(Unavailable) as ctx:
+                org.report()
+            return ctx.exception.reason
+
+        for status, esperado in (
+            (401, "http_401"),
+            (403, "http_403"),
+            (400, "http_400"),
+            (0, "network"),
+        ):
+            self.api.status = status
+            self.assertEqual(
+                motivo(OpenAiOrg(lambda: "sk-admin-teste", lambda: self.now, "", None, self.api)),
+                esperado,
+            )
+
+        class ParameterNotFound(Exception):
+            pass
+
+        def falha():
+            raise ParameterNotFound("o valor da chave nao deve vazar")
+
+        r = motivo(OpenAiOrg(falha, lambda: self.now, "", None, self.api))
+        self.assertEqual(r, "key_read_failed:ParameterNotFound")
+        self.assertEqual(
+            motivo(OpenAiOrg(lambda: "", lambda: self.now, "", None, self.api)), "empty_key"
+        )
+        self.assertEqual(motivo(OpenAiOrg(None, lambda: self.now)), "not_configured")
+
     def test_erro_da_openai_ou_da_leitura_da_chave_vira_indisponivel(self):
         self.api.status = 401
         with self.assertRaises(Unavailable):

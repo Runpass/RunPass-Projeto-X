@@ -220,6 +220,14 @@ def openai_transport(path, params, key, timeout=15):
         return 0, {}
 
 
+class OrgUnavailable(Unavailable):
+    """Indisponivel com um motivo curto e seguro para mostrar (nunca traz a chave nem o corpo da resposta)."""
+
+    def __init__(self, reason):
+        super().__init__()
+        self.reason = reason
+
+
 class OpenAiOrg:
     """Gasto e uso reais da OpenAI pela API de administracao (a mesma fonte da pagina Usage do console).
 
@@ -243,7 +251,7 @@ class OpenAiOrg:
             query = dict(params, **({"page": page} if page else {}))
             status, body = self.transport(path, query, key)
             if status != 200:
-                raise Unavailable()
+                raise OrgUnavailable("network" if status == 0 else f"http_{status}")
             buckets += body.get("data", [])
             page = body.get("next_page") if body.get("has_more") else None
             if not page:
@@ -252,16 +260,16 @@ class OpenAiOrg:
 
     def report(self):
         if not self.configured:
-            raise Unavailable()
+            raise OrgUnavailable("not_configured")
         now = self.clock()
         if self._cache and now - self._cache[0] < CACHE_TTL:
             return self._cache[1]
         try:
             key = self.key_loader()
         except Exception as error:  # noqa: BLE001 - sem permissao ou parametro: cai para a estimativa
-            raise Unavailable() from error
+            raise OrgUnavailable("key_read_failed:" + type(error).__name__[:40]) from error
         if not key:
-            raise Unavailable()
+            raise OrgUnavailable("empty_key")
         today = datetime.fromtimestamp(now, timezone.utc).date()
         start = _month_start(today)
         start_ts = int(
