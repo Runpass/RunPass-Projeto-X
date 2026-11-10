@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>RunPass Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topo">
+    <strong class="marca">Run<span>Pass</span> <small>Admin</small></strong>
+    <div id="sessao" class="sessao" hidden>
+      <span id="quem"></span>
+      <span id="expira"></span>
+      <button id="sair" type="button" class="sec">Sair</button>
+    </div>
+  </header>
+  <main>
+    <p id="aviso" role="status" aria-live="polite" class="aviso" hidden></p>
+    <section id="entrar" class="cartao">
+      <h1>Entrar</h1>
+      <p class="ajuda">Acesso só para operadores. A senha e o código do autenticador vão direto para o login seguro (Cognito).</p>
+      <form id="form-senha" autocomplete="on">
+        <label>E-mail do operador <input id="email" type="email" required autocomplete="username"></label>
+        <label>Senha <input id="senha" type="password" required autocomplete="current-password"></label>
+        <button type="submit">Continuar</button>
+      </form>
+      <form id="form-mfa" hidden autocomplete="off">
+        <label>Código do autenticador (6 dígitos)
+          <input id="codigo" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code">
+        </label>
+        <button type="submit">Entrar</button>
+        <button type="button" id="voltar" class="sec">Voltar</button>
+      </form>
+    </section>
+    <section id="painel" hidden>
+      <nav class="abas" role="tablist">
+        <button role="tab" id="aba-pedidos" aria-selected="true">Pedidos de corrida</button>
+      </nav>
+      <div class="barra">
+        <h1>Pedidos de corrida pendentes</h1>
+        <button id="atualizar" type="button" class="sec">Atualizar</button>
+      </div>
+      <div id="pedidos"></div>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

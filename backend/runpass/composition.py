@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from .admin_api import MfaPolicy, create_admin_app
 from .api import create_app
 from .aws_adapters import CognitoAccountRemover, S3AuditSink
 from .catalog import CatalogService
@@ -97,6 +98,34 @@ def create_aws_app(
         social,
         natural_search,
         edition_requests,
+    )
+
+
+def create_admin_aws_app(
+    settings: AwsSettings,
+    dynamodb_client,
+    cognito_client,
+    operator_issuer,
+    operator_client_id,
+    operator_pool_id,
+    portal_origin,
+):
+    """API do portal: so tokens do pool de operadores; o MFA do pool e conferido (ver admin_api)."""
+    service = _identity_service(settings, dynamodb_client)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    verifier = CognitoVerifier(
+        operator_issuer,
+        operator_client_id,
+        JwksProvider(operator_issuer, settings.region),
+        CognitoDirectory(cognito_client),
+        audience="operator",
+    )
+    return create_admin_app(
+        service.store,
+        catalog,
+        verifier,
+        MfaPolicy(cognito_client, operator_pool_id),
+        portal_origin,
     )
 
 

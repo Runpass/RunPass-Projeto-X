@@ -1,0 +1,239 @@
+import cfg from './config.js';
+import { confirmarMfa, entrar } from './cognito.js';
+import { linkSeguro, mensagem, montarDecisao, resumoPedido, segundosAteExpirar } from './lib.js';
+
+// O token fica só em memória: recarregar a página ou fechar a aba encerra a sessão.
+let token = null;
+let temporizador = null;
+let sessaoMfa = null;
+let emailTentativa = '';
+
+const $ = (id) => document.getElementById(id);
+
+/** Cria elementos sem innerHTML: todo texto vindo da API entra como texto, nunca como HTML. */
+function el(tag, atributos = {}, ...filhos) {
+  const nó = document.createElement(tag);
+  for (const [chave, valor] of Object.entries(atributos)) {
+    if (chave === 'class') nó.className = valor;
+    else if (chave.startsWith('on')) nó.addEventListener(chave.slice(2), valor);
+    else if (valor !== false && valor != null) nó.setAttribute(chave, valor === true ? '' : valor);
+  }
+  for (const filho of filhos.flat()) nó.append(filho instanceof Node ? filho : String(filho ?? ''));
+  return nó;
+}
+
+function aviso(texto, tipo = '') {
+  const caixa = $('aviso');
+  caixa.hidden = !texto;
+  caixa.textContent = texto || '';
+  caixa.className = `aviso ${tipo}`;
+}
+
+async function api(caminho, opcoes = {}) {
+  const resposta = await fetch(cfg.apiUrl + caminho, {
+    ...opcoes,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(opcoes.body ? { 'Content-Type': 'application/json' } : {}),
+    },
+  });
+  const json = await resposta.json().catch(() => ({}));
+  if (resposta.status === 401) {
+    sair('INVALID_TOKEN');
+    throw new Error('sessão');
+  }
+  if (!resposta.ok) {
+    const erro = new Error(json.code || 'erro');
+    erro.codigo = json.code;
+    throw erro;
+  }
+  return json;
+}
+
+function sair(motivo) {
+  token = null;
+  sessaoMfa = null;
+  clearInterval(temporizador);
+  $('painel').hidden = true;
+  $('sessao').hidden = true;
+  $('entrar').hidden = false;
+  $('form-senha').hidden = false;
+  $('form-mfa').hidden = true;
+  $('senha').value = '';
+  $('codigo').value = '';
+  $('pedidos').replaceChildren();
+  aviso(motivo ? mensagem(motivo) : '', motivo ? 'erro' : '');
+}
+
+function iniciarSessao(t, assunto) {
+  token = t;
+  $('entrar').hidden = true;
+  $('painel').hidden = false;
+  $('sessao').hidden = false;
+  $('quem').textContent = assunto;
+  clearInterval(temporizador);
+  const tick = () => {
+    const restante = segundosAteExpirar(token);
+    if (restante <= 30) return sair('INVALID_TOKEN');
+    $('expira').textContent = `Sessão expira em ${Math.ceil(restante / 60)} min`;
+  };
+  tick();
+  temporizador = setInterval(tick, 15000);
+}
+
+// ---- pedidos de corrida -----------------------------------------------------------------------
+
+async function carregarPedidos() {
+  const lista = $('pedidos');
+  lista.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const { items } = await api('/admin/edition-requests');
+    lista.replaceChildren(
+      ...(items.length
+        ? items.map(cartaoPedido)
+        : [el('p', { class: 'vazio' }, 'Nenhum pedido pendente.')]),
+    );
+  } catch (erro) {
+    if (token) {
+      lista.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+function cartaoPedido(pedido) {
+  const resumo = resumoPedido(pedido);
+  const link = linkSeguro(resumo.fonte);
+  const area = el('div');
+  const cartao = el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, resumo.titulo),
+    el('div', { class: 'linha' }, resumo.linha),
+    link
+      ? el('div', { class: 'meta' }, 'Fonte informada: ', el('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, link))
+      : '',
+    el('div', { class: 'meta' }, `Pedido ${pedido.id} · versão ${pedido.version}`),
+    el(
+      'div',
+      { class: 'acoes' },
+      el('button', { type: 'button', onclick: () => painelVinculo(area, pedido, 'link') }, 'Vincular a corrida existente'),
+      el('button', { type: 'button', class: 'ok', onclick: () => painelVinculo(area, pedido, 'approve') }, 'Aprovar (corrida já importada)'),
+      el('button', { type: 'button', class: 'perigo', onclick: () => painelRecusa(area, pedido) }, 'Recusar'),
+    ),
+    area,
+  );
+  return cartao;
+}
+
+async function decidir(pedido, corpo, botao) {
+  botao.disabled = true;
+  try {
+    const decisao = montarDecisao({ versao: pedido.version, ...corpo });
+    await api(`/admin/edition-requests/${encodeURIComponent(pedido.id)}/decision`, {
+      method: 'POST',
+      body: JSON.stringify(decisao),
+    });
+    aviso('Pedido decidido.', 'ok');
+    await carregarPedidos();
+  } catch (erro) {
+    botao.disabled = false;
+    if (token) aviso(erro.codigo ? mensagem(erro.codigo) : erro.message, 'erro');
+  }
+}
+
+function painelVinculo(area, pedido, decisao) {
+  let escolhida = null;
+  const resultados = el('ul', { class: 'escolhas', role: 'listbox' });
+  const confirmar = el('button', { type: 'button', class: 'ok', disabled: true }, decisao === 'link' ? 'Vincular' : 'Aprovar');
+  const busca = el('input', { type: 'search', placeholder: 'Nome da corrida no catálogo', maxlength: '160', value: (pedido.details || {}).name || '' });
+  let aguardando = null;
+
+  const pesquisar = async () => {
+    escolhida = null;
+    confirmar.disabled = true;
+    try {
+      const { items } = await api(`/admin/editions?q=${encodeURIComponent(busca.value.trim())}&limit=20`);
+      resultados.replaceChildren(
+        ...(items.length
+          ? items.map((e) => {
+              const li = el('li', { role: 'option', 'aria-selected': 'false', tabindex: '0' }, `${e.name} · ${e.date} · ${e.city}/${e.state}`);
+              const marcar = () => {
+                for (const outro of resultados.children) outro.setAttribute('aria-selected', 'false');
+                li.setAttribute('aria-selected', 'true');
+                escolhida = e.id;
+                confirmar.disabled = false;
+              };
+              li.addEventListener('click', marcar);
+              li.addEventListener('keydown', (ev) => ev.key === 'Enter' && marcar());
+              return li;
+            })
+          : [el('li', {}, 'Nenhuma corrida encontrada. Importe a corrida antes de aprovar o pedido.')]),
+      );
+    } catch (erro) {
+      if (token) aviso(mensagem(erro.codigo), 'erro');
+    }
+  };
+  busca.addEventListener('input', () => {
+    clearTimeout(aguardando);
+    aguardando = setTimeout(pesquisar, 350);
+  });
+  confirmar.addEventListener('click', () => decidir(pedido, { decisao: decisao, edicaoId: escolhida }, confirmar));
+  area.replaceChildren(
+    el('label', {}, decisao === 'link' ? 'Corrida do catálogo que este pedido repete:' : 'Corrida do catálogo criada a partir do pedido:', busca),
+    resultados,
+    confirmar,
+  );
+  pesquisar();
+}
+
+function painelRecusa(area, pedido) {
+  const motivo = el('textarea', { rows: '3', maxlength: '500', placeholder: 'Motivo (a pessoa que pediu vai ler)' });
+  const confirmar = el('button', { type: 'button', class: 'perigo' }, 'Confirmar recusa');
+  confirmar.addEventListener('click', () => decidir(pedido, { decisao: 'reject', motivo: motivo.value }, confirmar));
+  area.replaceChildren(el('label', {}, 'Motivo da recusa', motivo), confirmar);
+}
+
+// ---- login --------------------------------------------------------------------------------------
+
+$('form-senha').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  aviso('');
+  emailTentativa = $('email').value.trim();
+  try {
+    sessaoMfa = await entrar(cfg, emailTentativa, $('senha').value);
+    $('senha').value = '';
+    $('form-senha').hidden = true;
+    $('form-mfa').hidden = false;
+    $('codigo').focus();
+  } catch (erro) {
+    aviso(mensagem(erro.codigo), 'erro');
+  }
+});
+
+$('form-mfa').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  aviso('');
+  try {
+    const t = await confirmarMfa(cfg, emailTentativa, sessaoMfa, $('codigo').value.trim());
+    iniciarSessao(t, emailTentativa);
+    const info = await api('/admin/session');
+    $('quem').textContent = `${emailTentativa}`;
+    if (!info.permissions.includes('catalog_admin')) {
+      aviso('Seu acesso não inclui a permissão catalog_admin. Peça a ativação.', 'erro');
+      $('pedidos').replaceChildren();
+      return;
+    }
+    await carregarPedidos();
+  } catch (erro) {
+    if (token) return;
+    aviso(mensagem(erro.codigo), 'erro');
+    if (erro.codigo === 'CodeMismatchException' || erro.codigo === 'ExpiredCodeException') return;
+    $('form-mfa').hidden = true;
+    $('form-senha').hidden = false;
+  }
+});
+
+$('voltar').addEventListener('click', () => sair());
+$('sair').addEventListener('click', () => sair());
+$('atualizar').addEventListener('click', carregarPedidos);
