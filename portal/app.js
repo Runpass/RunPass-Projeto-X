@@ -284,7 +284,7 @@ async function carregarCustos() {
       partes.push(...secaoOpenAiReal(r.openaiOrg));
     } else {
       if (r.openaiOrgStatus === 'error') {
-        partes.push(el('p', { class: 'aviso erro' }, '`Não foi possível ler os dados reais da OpenAI. ${motivoOpenAi(r.openaiOrgReason)} Mostrando a estimativa.`));
+        partes.push(el('p', { class: 'aviso erro' }, `Não foi possível ler os dados reais da OpenAI. ${motivoOpenAi(r.openaiOrgReason)} Mostrando a estimativa.`));
       }
       partes.push(...secaoOpenAiEstimativa(r.openai, r.openaiOrgStatus === 'not_configured'));
     }

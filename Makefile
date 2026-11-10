@@ -27,7 +27,7 @@ test:
 	PYTHONPATH=backend $(PYTHON) -m unittest discover -s backend/tests -v
 
 portal-test:
-	cd portal && node --test lib.test.js
+	cd portal && for f in app.js lib.js cognito.js; do node --check $$f || exit 1; done && node --test lib.test.js
 
 infra-check:
 	$(CFN_LINT) -t infra/identity.template.json infra/data.template.yaml infra/app.template.yaml infra/deploy-role.template.yaml infra/cost.template.yaml infra/portal.template.yaml -r sa-east-1
