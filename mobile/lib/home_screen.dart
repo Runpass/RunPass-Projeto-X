@@ -592,6 +592,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
       actions: [
         IconButton(
           key: const Key('find-friends'),
+          visualDensity: VisualDensity.compact,
           tooltip: 'Buscar amigos',
           icon: const Icon(Icons.person_search_rounded),
           onPressed: () => Navigator.of(context).push(
@@ -602,6 +603,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
         ),
         IconButton(
           key: const Key('home-agenda'),
+          visualDensity: VisualDensity.compact,
           tooltip: 'Minha agenda',
           icon: const Icon(Icons.calendar_month_rounded),
           onPressed: () => Navigator.of(context).push(
@@ -611,12 +613,12 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
           ),
         ),
         IconButton(
+          visualDensity: VisualDensity.compact,
           tooltip: 'Buscar corridas',
           icon: const Icon(Icons.search_rounded),
           onPressed: () => go(CatalogScreen(gateway: widget.gateway)),
         ),
         NotificationBell(gateway: widget.gateway),
-        const SizedBox(width: 4),
       ],
     ),
     bottomNavigationBar: runPassNavigation(context, widget.gateway, 0),

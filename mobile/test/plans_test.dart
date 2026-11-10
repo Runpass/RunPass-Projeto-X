@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/agenda.dart';
 import 'package:runpass/catalog_screen.dart';
+import 'package:runpass/home_screen.dart';
 import 'package:runpass/identity_gateway.dart';
 
 import 'catalog_test.dart' show entry, signed;
@@ -262,6 +263,42 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('catalog-suggestions')), findsNothing);
       expect(find.byKey(const Key('catalog-error')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'a home mostra o ícone da agenda dentro da tela e abre a agenda',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844); // largura de iPhone
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/me') {
+          return const JsonReply(200, {
+            'id': 'me',
+            'displayName': 'Eu',
+            'username': 'eu',
+            'version': 1,
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      final icon = find.byKey(const Key('home-agenda'));
+      expect(icon, findsOneWidget);
+      final rect = tester.getRect(icon);
+      expect(
+        rect.left >= 0 && rect.right <= 390,
+        isTrue,
+        reason: 'ícone visível na largura do iPhone',
+      );
+      await tester.tap(icon);
+      await tester.pumpAndSettle();
+      expect(find.byType(AgendaScreen), findsOneWidget);
+      expect(find.text('Minha agenda'), findsOneWidget);
     },
   );
 }
