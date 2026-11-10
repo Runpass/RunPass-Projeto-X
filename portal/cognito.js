@@ -1,14 +1,21 @@
 // Login direto no Cognito: a senha e o código do autenticador vão para o Cognito, nunca para a nossa API.
 
 async function chamar(cfg, alvo, corpo) {
-  const resposta = await fetch(`https://cognito-idp.${cfg.region}.amazonaws.com/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-amz-json-1.1',
-      'X-Amz-Target': `AWSCognitoIdentityProviderService.${alvo}`,
-    },
-    body: JSON.stringify(corpo),
-  });
+  let resposta;
+  try {
+    resposta = await fetch(`https://cognito-idp.${cfg.region}.amazonaws.com/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-amz-json-1.1',
+        'X-Amz-Target': `AWSCognitoIdentityProviderService.${alvo}`,
+      },
+      body: JSON.stringify(corpo),
+    });
+  } catch {
+    const erro = new Error('NetworkError');
+    erro.codigo = 'NetworkError'; // sem internet, bloqueio de rede ou extensão do navegador
+    throw erro;
+  }
   const json = await resposta.json().catch(() => ({}));
   if (!resposta.ok) {
     const erro = new Error(json.__type || 'erro');
@@ -33,6 +40,7 @@ export async function entrar(cfg, email, senha) {
   });
   const mapa = { SOFTWARE_TOKEN_MFA: 'mfa', NEW_PASSWORD_REQUIRED: 'nova_senha', MFA_SETUP: 'mfa_setup' };
   const desafio = mapa[r.ChallengeName];
+  if (!desafio && r.ChallengeName) throw falha(`UnsupportedChallenge:${String(r.ChallengeName).slice(0, 40)}`);
   if (!desafio || !r.Session) throw falha('NotAuthorizedException');
   return { desafio, sessao: r.Session };
 }

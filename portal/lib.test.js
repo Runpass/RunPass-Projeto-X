@@ -38,6 +38,12 @@ test('mensagem traduz códigos conhecidos e não vaza código desconhecido', () 
   assert.match(mensagem('CodeMismatchException'), /incorreto/);
   assert.match(mensagem('INVALID_TOKEN'), /sessão/);
   assert.equal(mensagem('ALGO_ESTRANHO_INTERNO'), 'Não foi possível concluir. Tente novamente.');
+  // Erros do Cognito sem tradução mostram o código (ajuda o suporte); outros códigos seguem ocultos.
+  assert.match(mensagem('InvalidParameterException'), /\(InvalidParameterException\)/);
+  assert.match(mensagem('PasswordResetRequiredException'), /redefinir/);
+  assert.match(mensagem('NetworkError'), /Cognito/);
+  assert.match(mensagem('UnsupportedChallenge:SELECT_MFA_TYPE'), /SELECT_MFA_TYPE/);
+  assert.equal(mensagem('x<script>Exception'), 'Não foi possível concluir. Tente novamente.');
   assert.equal(mensagem(undefined), 'Não foi possível concluir. Tente novamente.');
 });
 

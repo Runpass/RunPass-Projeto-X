@@ -7,6 +7,9 @@ export const MENSAGENS = {
   ExpiredCodeException: 'Código expirado. Digite o código atual.',
   TooManyRequestsException: 'Muitas tentativas. Aguarde um pouco.',
   LimitExceededException: 'Muitas tentativas. Aguarde um pouco.',
+  PasswordResetRequiredException: 'É preciso redefinir a senha antes de entrar. Peça a um administrador para refazer o acesso (aba Operadores > Refazer senha e autenticador).',
+  UserNotConfirmedException: 'Este usuário ainda não foi confirmado. Peça a um administrador para refazer o acesso.',
+  NetworkError: 'Não consegui falar com o login (Cognito). Confira a internet, bloqueadores de conteúdo ou VPN e tente de novo.',
   PASSWORD_RESET_REQUIRED: 'É preciso redefinir a senha antes de entrar.',
   MFA_SETUP: 'Este usuário ainda não cadastrou o autenticador (MFA).',
   InvalidPasswordException: 'A senha não atende às regras (12+ caracteres com maiúscula, minúscula, número e símbolo).',
@@ -37,7 +40,14 @@ export const MENSAGENS = {
 };
 
 export function mensagem(codigo) {
-  return MENSAGENS[codigo] || 'Não foi possível concluir. Tente novamente.';
+  if (MENSAGENS[codigo]) return MENSAGENS[codigo];
+  const c = typeof codigo === 'string' ? codigo : '';
+  if (c.startsWith('UnsupportedChallenge:')) {
+    return `O login pediu uma etapa que o portal ainda não suporta (${c.slice(21)}). Avise um administrador.`;
+  }
+  // Códigos do Cognito (terminam em "Exception") ajudam no suporte e não são segredo; os demais ficam ocultos.
+  if (/^[A-Za-z]{3,60}Exception$/.test(c)) return `Não foi possível concluir (${c}). Tente novamente ou avise um administrador.`;
+  return 'Não foi possível concluir. Tente novamente.';
 }
 
 /** Corpo do POST de decisão. Lança Error com texto para a pessoa quando faltar algo. */
