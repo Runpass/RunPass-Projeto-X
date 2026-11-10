@@ -904,6 +904,91 @@
         "x-requires-beta-admission": true
       }
     },
+    "/editions/search": {
+      "get": {
+        "operationId": "searchEditions",
+        "description": "Interpreta uma frase livre (ex.: \"meia maratona plana em abril\") e a traduz nos filtros do catálogo (state, city, dateFrom, dateTo, distanceKm, q, lat/lon/radiusKm). A IA só interpreta a frase: datas, nomes e links vêm sempre do catálogo, e a frase não é registrada. Se a IA falhar ou demorar, a busca segue por nome (`search.source` = text), sem erro. `search.notApplied` lista o que a frase pediu e o catálogo não filtra (preço, altimetria, faixa de distância, tema), para o app avisar em vez de fingir. Para as páginas seguintes o cliente usa GET /editions com `search.filters` e o mesmo limit. lat e lon vêm juntos ou 422; só são usados para \"perto de mim\".",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionSearchPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "phrase",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "lat",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "description": "Com lon; juntos ou 422."
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            }
+          }
+        ],
+        "x-requires-beta-admission": true,
+        "summary": "Busca de edições por frase livre"
+      }
+    },
     "/editions/{id}": {
       "get": {
         "operationId": "getEdition",
@@ -5267,6 +5352,226 @@
         },
         "x-requires-beta-admission": true
       }
+    },
+    "/me/race-plans": {
+      "get": {
+        "operationId": "listMyRacePlans",
+        "description": "Own race plans (wanted / registered) with an edition summary, ordered by date. Never other users' plans.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RacePlanPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "wanted",
+                "registered"
+              ]
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
+    "/me/race-plans/{editionId}": {
+      "put": {
+        "operationId": "putMyRacePlan",
+        "description": "Idempotent: sets this person's plan for the edition (wanted = want to run, registered = signed up / will run). Archived editions are refused.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutRacePlan"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RacePlan"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "editionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      },
+      "get": {
+        "operationId": "getMyRacePlan",
+        "description": "Own plan for the edition; 404 PLAN_NOT_FOUND when none.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RacePlan"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "editionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      },
+      "delete": {
+        "operationId": "deleteMyRacePlan",
+        "description": "Removes the own plan; idempotent.",
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "editionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
     }
   },
   "components": {
@@ -5605,6 +5910,13 @@
               "invalidated",
               "pending_review"
             ]
+          },
+          "authorName": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -6074,6 +6386,57 @@
           }
         }
       },
+      "EditionSearchPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EditionPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "search"
+            ],
+            "properties": {
+              "search": {
+                "type": "object",
+                "required": [
+                  "source",
+                  "filters",
+                  "applied",
+                  "notApplied"
+                ],
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "llm",
+                      "cache",
+                      "text"
+                    ]
+                  },
+                  "filters": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Filtros efetivos do GET /editions, sem limit."
+                  },
+                  "applied": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "notApplied": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
       "ReviewPage": {
         "type": "object",
         "required": [
@@ -6088,6 +6451,9 @@
           },
           "nextCursor": {
             "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ReviewSummary"
           }
         }
       },
@@ -8593,6 +8959,107 @@
           "commentId",
           "likedByMe"
         ]
+      },
+      "ReviewSummary": {
+        "type": "object",
+        "required": [
+          "reviewCount"
+        ],
+        "properties": {
+          "reviewCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "average": {
+            "type": "number",
+            "nullable": true,
+            "description": "Media dos oito criterios das avaliacoes validas do filtro, uma casa; null sem avaliacoes."
+          },
+          "recommendPercent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "nullable": true,
+            "description": "Percentual de avaliacoes cuja media dos oito criterios e >= 4; derivado, nao ha pergunta propria."
+          },
+          "byCriterion": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "PutRacePlan": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "wanted",
+              "registered"
+            ]
+          },
+          "distanceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        }
+      },
+      "RacePlan": {
+        "type": "object",
+        "required": [
+          "editionId",
+          "status",
+          "version"
+        ],
+        "properties": {
+          "editionId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "wanted",
+              "registered"
+            ]
+          },
+          "distanceId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "edition": {
+            "type": "object",
+            "description": "Edition summary (list only).",
+            "additionalProperties": true
+          }
+        }
+      },
+      "RacePlanPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RacePlan"
+            }
+          }
+        }
       }
     }
   }

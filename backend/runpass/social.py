@@ -546,6 +546,91 @@ class SocialService:
             result["nextCursor"] = _cursor_encode([page[-1].get("completedAt", ""), page[-1]["id"]])
         return result
 
+    REVIEW_SCAN = 2000
+    CRITERIA = (
+        "organization",
+        "course",
+        "kit",
+        "medal",
+        "hydration",
+        "facilities",
+        "safety",
+        "valueForMoney",
+    )
+    RECOMMEND_FROM = 4.0  # "recomendaria" = media dos oito criterios >= 4 (nao ha pergunta propria)
+
+    def edition_reviews(self, actor, edition_id, distance_id=None, limit=20, cursor=None):
+        """Avaliacoes publicas validas da edicao, mais recentes primeiro, com o resumo do conjunto.
+
+        Le o ponteiro `EDREV#<edicao>` e reconfere tudo na leitura: participacao concluida na
+        edicao atual, avaliacao valida e conta ativa. O resumo (`summary`) cobre todas as avaliacoes
+        validas do filtro, nao so a pagina. Assume volume pequeno na beta (como o feed publico)."""
+        self.identity.authorize(actor, admitted=True)
+        after = _cursor_decode(cursor) if cursor else None
+        valid, active = [], {}
+        for _, pointer in self._list("history", "EDREV#" + edition_id, "T#", self.REVIEW_SCAN):
+            owner = pointer["owner"]
+            if owner not in active:
+                active[owner] = self._active_profile(self.store.get, owner)
+            if not active[owner]:
+                continue
+            base = "P#" + pointer["id"]
+            part = self.store.get(("history", "USER#" + owner, base + "#PART"))
+            review = self.store.get(("history", "USER#" + owner, base + "#REVIEW"))
+            if (
+                not part
+                or part.get("state") != "completed"
+                or part.get("editionId") != edition_id
+                or not review
+                or review.get("moderationState") != "valid"
+                or (distance_id and part.get("distanceId") != distance_id)
+            ):
+                continue
+            valid.append((part, review, active[owner]))
+        valid.sort(key=lambda r: (r[0].get("completedAt", ""), r[0]["id"]), reverse=True)
+        summary = self._review_summary([r for _, r, _ in valid])
+        window = [
+            r
+            for r in valid
+            if after is None or (r[0].get("completedAt", ""), r[0]["id"]) < tuple(after)
+        ]
+        page = window[:limit]
+        items = [
+            {
+                "participationId": part["id"],
+                "version": review["reviewVersion"],
+                "ratings": review["ratings"],
+                "moderationState": review["moderationState"],
+                **({"comment": review["comment"]} if review.get("comment") else {}),
+                "authorName": profile.get("displayName") or "Corredor RunPass",
+                "createdAt": part.get("completedAt", ""),
+            }
+            for part, review, profile in page
+        ]
+        result = {"items": items, "summary": summary}
+        if len(window) > limit:
+            last = page[-1][0]
+            result["nextCursor"] = _cursor_encode([last.get("completedAt", ""), last["id"]])
+        return result
+
+    def _review_summary(self, reviews):
+        count = len(reviews)
+        if not count:
+            return {"reviewCount": 0, "average": None, "recommendPercent": None, "byCriterion": {}}
+        sums = {c: sum(r["ratings"][c] for r in reviews) for c in self.CRITERIA}
+        total = sum(sums.values())
+        liked = sum(
+            1
+            for r in reviews
+            if sum(r["ratings"][c] for c in self.CRITERIA) / 8 >= self.RECOMMEND_FROM
+        )
+        return {
+            "reviewCount": count,
+            "average": round(total / (8 * count) + 1e-9, 1),
+            "recommendPercent": round(100 * liked / count),
+            "byCriterion": {c: round(sums[c] / count + 1e-9, 1) for c in self.CRITERIA},
+        }
+
     def _comment_likes(self, post_id):
         """{comment id: [liker subject, ...]} de uma publicacao."""
         likes = {}

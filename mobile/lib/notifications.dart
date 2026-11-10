@@ -474,6 +474,7 @@ class _NotificationBellState extends State<NotificationBell> {
   Widget build(BuildContext context) => ValueListenableBuilder<int>(
     valueListenable: NotificationCenter.instance.unread,
     builder: (context, count, _) => IconButton(
+      visualDensity: VisualDensity.compact,
       key: const Key('notifications-bell'),
       tooltip: count > 0 ? 'Avisos ($count novos)' : 'Avisos',
       icon: Badge(

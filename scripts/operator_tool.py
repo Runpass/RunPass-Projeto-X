@@ -20,8 +20,10 @@ from cryptography.fernet import Fernet
 from runpass.catalog import CatalogService
 from runpass.catalog_import import import_rows, parse_csv, rows_to_results
 from runpass.catalog_sources import ADAPTERS, SourceDisabled, SourceError
+from runpass.edition_requests import EditionRequestReview
 from runpass.identity import CognitoDirectory, CognitoVerifier, JwksProvider
-from runpass.operator_admin import PERMISSIONS, grant_access, load_catalog
+from runpass.models import ReviewRequestDecision
+from runpass.operator_admin import PERMISSIONS, grant_access, load_catalog, retire_catalog
 from runpass.operators import establish_session
 from runpass.service import IdentityService
 from runpass.store import DynamoStore
@@ -76,6 +78,10 @@ def enroll(session, env, username):
         AuthFlow="USER_PASSWORD_AUTH",
         AuthParameters={"USERNAME": username, "PASSWORD": password},
     )
+    setup_mfa(idp, client_id, pool_id, env, username, auth)
+
+
+def setup_mfa(idp, client_id, pool_id, env, username, auth):
     if auth.get("ChallengeName") != "MFA_SETUP":
         sys.exit(f"Desafio inesperado: {auth.get('ChallengeName')}")
     token = idp.associate_software_token(Session=auth["Session"])
@@ -101,7 +107,48 @@ def enroll(session, env, username):
         for a in idp.admin_get_user(UserPoolId=pool_id, Username=username)["UserAttributes"]
         if a["Name"] == "sub"
     )
-    print(f"\nOperador criado com MFA. Identificador (sub) para o passo grant: {sub}")
+    print(f"\nOperador com MFA pronto. Identificador (sub): {sub}")
+
+
+def recreate_operator(session, env, username):
+    """TOTP verificado nao pode ser removido sem login: apaga o usuario e refaz (novo sub, novo grant)."""
+    pool = outputs(session, f"runpass-{env}-identity")
+    session.client("cognito-idp").admin_delete_user(
+        UserPoolId=pool["OperatorPool"], Username=username
+    )
+    print("Operador antigo apagado do pool. Cadastrando de novo.")
+    enroll(session, env, username)
+    print("Agora outro perfil AWS precisa rodar o comando grant com este sub (docs/operadores.md).")
+
+
+def reset_operator(session, env, username):
+    """Esqueceu senha e MFA: nova senha e novo TOTP para o MESMO operador (o sub e o acesso ficam)."""
+    pool = outputs(session, f"runpass-{env}-identity")
+    client_id, pool_id = pool["OperatorClient"], pool["OperatorPool"]
+    idp = session.client("cognito-idp")
+    idp.admin_get_user(UserPoolId=pool_id, Username=username)  # falha se nao existir
+    password = ask("Nova senha do operador (minimo 12 caracteres): ")
+    if password != ask("Repita a senha: "):
+        sys.exit("As senhas nao conferem.")
+    idp.admin_set_user_password(
+        UserPoolId=pool_id, Username=username, Password=password, Permanent=True
+    )
+    idp.admin_set_user_mfa_preference(
+        UserPoolId=pool_id,
+        Username=username,
+        SoftwareTokenMfaSettings={"Enabled": False, "PreferredMfa": False},
+    )
+    auth = idp.initiate_auth(
+        ClientId=client_id,
+        AuthFlow="USER_PASSWORD_AUTH",
+        AuthParameters={"USERNAME": username, "PASSWORD": password},
+    )
+    if auth.get("ChallengeName") == "SOFTWARE_TOKEN_MFA":
+        sys.exit(
+            "O TOTP antigo continua valendo e o Cognito nao permite remove-lo sem login.\n"
+            "Rode: reset-operator --recreate (apaga e recria o operador; exige novo grant)."
+        )
+    setup_mfa(idp, client_id, pool_id, env, username, auth)
 
 
 def store_for(session, env):
@@ -112,6 +159,7 @@ def store_for(session, env):
             "identity": tables["IdentityTable"],
             "operations": tables["OperationsTable"],
             "catalog": tables["CatalogTable"],
+            "history": tables["HistoryTable"],
         },
     )
 
@@ -158,6 +206,15 @@ def load(session, env, username):
     actor, catalog = operator_login(session, env, username)
     ids = load_catalog(catalog, actor, FIXTURE.read_text())
     print(f"{len(ids)} edicoes carregadas pelo importador (idempotente): {', '.join(ids)}")
+
+
+def retire_synthetic(session, env, username):
+    actor, catalog = operator_login(session, env, username)
+    r = retire_catalog(catalog, actor, FIXTURE.read_text())
+    print(
+        f"arquivadas: {r['arquivadas'] or '-'}; tiradas da lista: {r['tiradas_da_lista'] or '-'}; "
+        f"nunca carregadas: {r['ausentes'] or '-'}"
+    )
 
 
 def print_report(report):
@@ -238,12 +295,52 @@ def sync_source(session, args):
     )
 
 
+def safe(text):
+    """Texto de usuario no terminal: sem caracteres de controle (evita sequencias de escape)."""
+    return "".join(c if c.isprintable() else "?" for c in str(text))
+
+
+def list_requests(session, args):
+    """Fila de pedidos de prova ausente aguardando revisao (sem dados de quem pediu)."""
+    actor, catalog = operator_login(session, args.env, args.username)
+    items, more = EditionRequestReview(catalog).pending(actor, limit=args.limit)
+    for item in items:
+        d = item["details"]
+        print(
+            f"{item['id']}  v{item['version']}  {safe(d['name'])} | {d['date']} | "
+            f"{safe(d['city'])}/{d.get('state', '-')} | {d['distanceKm']} km | "
+            f"{safe(d.get('officialUrl', '-'))} | pedido em {item['createdAt']}"
+        )
+    print(f"{len(items)} pedido(s) pendente(s){' (ha mais)' if more else ''}.")
+
+
+def review_request(session, args):
+    """Aprova/vincula a uma edicao ja carregada no catalogo, ou rejeita com motivo."""
+    decision = ReviewRequestDecision(
+        expectedVersion=args.version,
+        decision=args.decision,
+        editionId=args.edition_id,
+        reason=args.reason,
+    )
+    actor, catalog = operator_login(session, args.env, args.username)
+    result = EditionRequestReview(catalog).decide(actor, args.id, decision)
+    print(f"Pedido {result['id']}: {result['status']} (versao {result['version']})")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--env", default="dev")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("enroll", "load-catalog"):
         sub.add_parser(name).add_argument("--username", required=True, help="e-mail do operador")
+    sub.add_parser("reset-operator", help="esqueceu senha e MFA: refaz os dois do mesmo operador")
+    sub.choices["reset-operator"].add_argument("--username", required=True, help="e-mail")
+    sub.choices["reset-operator"].add_argument(
+        "--recreate", action="store_true", help="apaga e recria o operador (novo sub)"
+    )
+    sub.add_parser(
+        "retire-synthetic", help="arquiva e tira da lista as edicoes sinteticas (nao apaga nada)"
+    ).add_argument("--username", required=True, help="e-mail do operador")
     imp = sub.add_parser("import-csv", help="importa provas de um CSV autorizado")
     imp.add_argument("--username", help="e-mail do operador (nao precisa com --offline)")
     imp.add_argument("--file", required=True)
@@ -261,6 +358,16 @@ def main():
     syn.add_argument("--city", default="Sao Paulo")
     syn.add_argument("--query", default="corrida")
     syn.add_argument("--dry-run", action="store_true")
+    lr = sub.add_parser("list-requests", help="lista pedidos de prova ausente pendentes")
+    lr.add_argument("--username", required=True)
+    lr.add_argument("--limit", type=int, default=20)
+    rr = sub.add_parser("review-request", help="decide um pedido de prova ausente")
+    rr.add_argument("--username", required=True)
+    rr.add_argument("--id", required=True)
+    rr.add_argument("--version", type=int, required=True, help="versao mostrada em list-requests")
+    rr.add_argument("--decision", choices=["approve", "link", "reject"], required=True)
+    rr.add_argument("--edition-id", help="obrigatorio em approve/link: edicao ja no catalogo")
+    rr.add_argument("--reason", help="obrigatorio em reject")
     g = sub.add_parser("grant")
     g.add_argument("--subject", required=True)
     g.add_argument("--permission", action="append", choices=PERMISSIONS, required=True)
@@ -271,8 +378,19 @@ def main():
         if not args.offline and not args.username:
             sys.exit("Informe --username (ou use --offline para so validar o arquivo).")
         import_csv(session, args)
+    elif args.command == "reset-operator":
+        if args.recreate:
+            recreate_operator(session, args.env, args.username)
+        else:
+            reset_operator(session, args.env, args.username)
+    elif args.command == "retire-synthetic":
+        retire_synthetic(session, args.env, args.username)
     elif args.command == "sync-source":
         sync_source(session, args)
+    elif args.command == "list-requests":
+        list_requests(session, args)
+    elif args.command == "review-request":
+        review_request(session, args)
     elif args.command == "enroll":
         enroll(session, args.env, args.username)
     elif args.command == "grant":

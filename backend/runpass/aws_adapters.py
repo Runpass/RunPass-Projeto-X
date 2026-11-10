@@ -195,3 +195,23 @@ class CognitoAccountRemover:
                 raise Unavailable() from error
         except BotoCoreError as error:
             raise Unavailable() from error
+
+
+class LambdaSearchInvoker:
+    """Invoca a Lambda de busca do catalogo. Qualquer falha vira Unavailable (o chamador tem fallback)."""
+
+    def __init__(self, client, function_name):
+        self.client, self.function_name = client, function_name
+
+    def __call__(self, payload):
+        try:
+            result = self.client.invoke(
+                FunctionName=self.function_name,
+                InvocationType="RequestResponse",
+                Payload=json.dumps(payload).encode(),
+            )
+            if result.get("StatusCode") != 200 or result.get("FunctionError"):
+                raise Unavailable()
+            return json.loads(result["Payload"].read())
+        except (BotoCoreError, ClientError, ValueError, KeyError) as error:
+            raise Unavailable() from error

@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'agenda.dart';
 import 'home_screen.dart';
+import 'edition_requests.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
 import 'notifications.dart';
@@ -81,6 +85,10 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   'PROCESSING_TIMEOUT' || 'UPLOAD_UNAVAILABLE' => 'Não foi possível enviar ou processar a foto agora (conexão ou serviço). Tente de novo; o rascunho foi preservado.',
   'IMAGE_NOT_VALID' => 'A foto escolhida ainda não foi validada. Envie a foto de novo; o rascunho foi preservado.',
   'EDITION_NOT_COMPLETABLE' => 'Esta corrida ainda não aconteceu. Só dá para concluir a participação depois da data da prova.',
+  'TOO_MANY_PENDING_REQUESTS' => 'Você já tem 10 pedidos aguardando análise. Espere a equipe responder para pedir mais.',
+  'REQUEST_NOT_EDITABLE' || 'REQUEST_NOT_REJECTED' => 'Este pedido não pode mais ser corrigido (ele já foi analisado ou reenviado). Atualize a lista.',
+  'EDITION_REQUEST_NOT_FOUND' =>
+    'Não encontramos este pedido. Volte à lista de solicitações.',
   'PARTICIPATION_NOT_DRAFT' => 'Esta participação já foi concluída ou excluída, então não pode mais ser alterada como rascunho.',
   _ => 'Não foi possível concluir agora. Pode ser falta de conexão ou instabilidade do serviço. Tente novamente em instantes.',
 };
@@ -143,7 +151,14 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
 
 class CatalogScreen extends StatefulWidget {
   final IdentityGateway gateway;
-  const CatalogScreen({super.key, required this.gateway});
+
+  /// Ordem inicial da lista (`dateDesc` por padrão; `dateAsc` usa só a paginação do servidor).
+  final String initialSort;
+  const CatalogScreen({
+    super.key,
+    required this.gateway,
+    this.initialSort = 'dateDesc',
+  });
   @override
   State<CatalogScreen> createState() => _CatalogScreenState();
 }
@@ -161,6 +176,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
       key: TextEditingController(),
   };
   final form = GlobalKey<FormState>();
+  // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
+  List<Map<String, dynamic>> suggestions = [];
+  Timer? suggestTimer;
+  // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
+  final phrase = TextEditingController();
+  Map<String, dynamic>? searchInfo;
   final items = <Map<String, dynamic>>[];
   Map<String, Map<String, dynamic>> mine = {};
   Map<String, String> activeFilters = {};
@@ -186,39 +207,160 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   @override
   void dispose() {
+    suggestTimer?.cancel();
+    phrase.dispose();
     for (final controller in fields.values) {
       controller.dispose();
     }
     super.dispose();
   }
 
+  /// Ordem da lista: `dateDesc` (padrão: mais recentes primeiro), `dateAsc` (a do servidor) ou
+  /// `rating` (ranking das melhores). Só `dateAsc` usa a paginação do servidor com limite 20.
+  late String sort = widget.initialSort;
+
+  /// Itens por página da busca atual. O cursor do servidor é amarrado aos filtros (inclui o limite),
+  /// então o limite não pode mudar no meio de uma busca.
+  late String pageLimit = widget.initialSort == 'dateAsc' ? '20' : '100';
+
+  static num? scoreOf(Map<String, dynamic> edition) {
+    final raw = (edition['runScore'] as Map?)?['value'];
+    return raw is num ? raw : num.tryParse('${raw ?? ''}');
+  }
+
+  static int reviewsOf(Map<String, dynamic> edition) =>
+      ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
+
+  /// Itens na ordem escolhida. Sem nota, a prova vai para o fim do ranking.
+  List<Map<String, dynamic>> get view {
+    final list = [...items];
+    int byDate(Map<String, dynamic> a, Map<String, dynamic> b) =>
+        (b['date'] as String).compareTo(a['date'] as String);
+    if (sort == 'dateDesc') {
+      list.sort(byDate);
+    } else if (sort == 'rating') {
+      list.sort((a, b) {
+        final sa = scoreOf(a), sb = scoreOf(b);
+        if (sa == null && sb == null) return byDate(a, b);
+        if (sa == null) return 1;
+        if (sb == null) return -1;
+        final c = sb.compareTo(sa);
+        return c != 0 ? c : (reviewsOf(b).compareTo(reviewsOf(a)));
+      });
+    }
+    return list;
+  }
+
+  /// Ordens por data decrescente e por nota precisam do conjunto todo: carrega as próximas páginas.
+  Future<void> loadRest() async {
+    var pages = 0;
+    while (mounted && sort != 'dateAsc' && nextCursor != null && pages++ < 5) {
+      await load(more: true);
+      if (error != null) return;
+    }
+  }
+
+  Future<void> changeSort(String value) async {
+    setState(() => sort = value);
+    // Páginas já carregadas com limite 20 não continuam com 100: recomeça a mesma busca.
+    if (value != 'dateAsc' && pageLimit != '100' && nextCursor != null) {
+      await load();
+    } else {
+      await loadRest();
+    }
+  }
+
+  void onPhraseChanged(String text) {
+    setState(() {});
+    suggestTimer?.cancel();
+    if (text.trim().length < 2) {
+      if (suggestions.isNotEmpty) setState(() => suggestions = []);
+      return;
+    }
+    suggestTimer = Timer(
+      const Duration(milliseconds: 400),
+      () => suggest(text.trim()),
+    );
+  }
+
+  Future<void> suggest(String text) async {
+    try {
+      final page = await widget.gateway.request(
+        '/editions',
+        query: {'q': text, 'limit': '8'},
+      );
+      // Resposta atrasada de um texto que já mudou é descartada.
+      if (!mounted || phrase.text.trim() != text) return;
+      setState(
+        () => suggestions = (page['items'] as List? ?? const [])
+            .cast<Map<String, dynamic>>(),
+      );
+    } on Exception {
+      // Sugestão é só ajuda: nunca mostra erro.
+      if (mounted) {
+        setState(() => suggestions = []);
+      }
+    }
+  }
+
+  Future<void> openSuggestion(Map<String, dynamic> edition) async {
+    setState(() => suggestions = []);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EditionScreen(
+          gateway: widget.gateway,
+          editionId: edition['id'] as String,
+        ),
+      ),
+    );
+    loadMine();
+  }
+
   Future<void> load({bool more = false}) async {
     if (loading) return;
     if (!more && !(form.currentState?.validate() ?? true)) return;
+    final sentence = phrase.text.trim();
     if (!more) {
-      activeFilters = {
-        for (final entry in fields.entries)
-          if (entry.value.text.trim().isNotEmpty)
-            entry.key: entry.value.text.trim(),
-        'registrationStatus': ?registration,
-      };
+      suggestTimer?.cancel();
+      suggestions = [];
+      activeFilters = sentence.isNotEmpty
+          ? {}
+          : {
+              for (final entry in fields.entries)
+                if (entry.value.text.trim().isNotEmpty)
+                  entry.key: entry.value.text.trim(),
+              'registrationStatus': ?registration,
+            };
+      searchInfo = null;
       items.clear();
       nextCursor = null;
+      pageLimit = sort == 'dateAsc' ? '20' : '100';
     }
     setState(() {
       loading = true;
       error = null;
     });
     try {
+      final bySentence = !more && sentence.isNotEmpty;
       final page = await widget.gateway.request(
-        '/editions',
-        query: {
-          ...activeFilters,
-          'limit': '20',
-          if (more && nextCursor != null) 'cursor': nextCursor!,
-        },
+        bySentence ? '/editions/search' : '/editions',
+        query: bySentence
+            ? {'phrase': sentence, 'limit': '20'}
+            : {
+                ...activeFilters,
+                'limit': pageLimit,
+                if (more && nextCursor != null) 'cursor': nextCursor!,
+              },
       );
       if (!mounted) return;
+      if (bySentence) {
+        // As proximas paginas usam GET /editions com os filtros que o servidor resolveu.
+        searchInfo = Map<String, dynamic>.from(page['search'] as Map);
+        activeFilters = {
+          for (final e in (searchInfo!['filters'] as Map).entries)
+            e.key as String: '${e.value}',
+        };
+      }
       final known = items.map((e) => e['id']).toSet();
       for (final entry
           in (page['items'] as List).cast<Map<String, dynamic>>()) {
@@ -232,10 +374,62 @@ class _CatalogScreenState extends State<CatalogScreen> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
+    if (!more && error == null) await loadRest();
+  }
+
+  /// Aviso honesto sobre a busca por frase: o que o catalogo nao filtra e quando a IA nao respondeu.
+  String? get searchNotice {
+    final info = searchInfo;
+    if (info == null) return null;
+    const labels = {
+      'preco_max_brl': 'preço',
+      'altimetria': 'altimetria',
+      'distancia_max_km': 'distância máxima',
+      'consulta_semantica': 'o tema da frase',
+      'raio_km': 'proximidade ("perto de mim")',
+    };
+    final skipped = (info['notApplied'] as List? ?? const [])
+        .map((k) => labels[k] ?? '$k')
+        .toList();
+    final parts = [
+      if (info['source'] == 'text') 'Não foi possível interpretar a frase agora. Mostrando a busca pelo nome.',
+      if (skipped.isNotEmpty)
+        'Não filtrei por: ${skipped.join(', ')}. Os resultados não consideram isso.',
+    ];
+    return parts.isEmpty ? null : parts.join('\n');
+  }
+
+  void openMyRequests() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+    ),
+  );
+
+  Future<void> requestRace() async {
+    final sent = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => EditionRequestFormScreen(
+          gateway: widget.gateway,
+          prefill: {
+            if (phrase.text.trim().isNotEmpty) 'name': phrase.text.trim(),
+            if ((fields['city']?.text.trim() ?? '').isNotEmpty)
+              'city': fields['city']!.text.trim(),
+          },
+        ),
+      ),
+    );
+    if (sent != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Pedido enviado. Acompanhe em "Minhas solicitações".'),
+        ),
+      );
+    }
   }
 
   void clearSearch() {
     if (loading) return;
+    phrase.clear();
     for (final controller in fields.values) {
       controller.clear();
     }
@@ -283,12 +477,24 @@ class _CatalogScreenState extends State<CatalogScreen> {
       title: const RunPassWordmark(compact: true),
       actions: [
         IconButton(
+          key: const Key('catalog-agenda'),
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Minha agenda',
+          icon: const Icon(Icons.calendar_month_rounded),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => AgendaScreen(gateway: widget.gateway),
+            ),
+          ),
+        ),
+        IconButton(
           key: const Key('catalog-search-toggle'),
-          tooltip: showFilters ? 'Fechar pesquisa' : 'Pesquisar corridas',
+          visualDensity: VisualDensity.compact,
+          tooltip: showFilters ? 'Fechar filtros' : 'Filtrar corridas',
           icon: Icon(showFilters ? Icons.close_rounded : Icons.search_rounded),
           onPressed: () {
             if (showFilters && activeFilters.isNotEmpty) {
-              // Ao fechar a pesquisa, volta a lista completa.
+              // Ao fechar os filtros, volta a lista completa (a frase digitada fica).
               for (final controller in fields.values) {
                 controller.clear();
               }
@@ -308,6 +514,79 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: TextField(
+              key: const Key('catalog-phrase'),
+              controller: phrase,
+              maxLength: 200,
+              buildCounter: (
+                _, {
+                required currentLength,
+                required isFocused,
+                maxLength,
+              }) => null,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) {
+                suggestTimer?.cancel();
+                setState(() => suggestions = []);
+                load();
+              },
+              onChanged: onPhraseChanged,
+              decoration: InputDecoration(
+                labelText: 'Descreva a corrida',
+                hintText: 'Ex.: meia maratona em abril',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: phrase.text.isEmpty
+                    ? null
+                    : IconButton(
+                        key: const Key('catalog-phrase-clear'),
+                        tooltip: 'Limpar a frase',
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: loading
+                            ? null
+                            : () {
+                                phrase.clear();
+                                suggestTimer?.cancel();
+                                setState(() => suggestions = []);
+                                load();
+                              },
+                      ),
+              ),
+            ),
+          ),
+          if (suggestions.isNotEmpty && phrase.text.trim().length >= 2)
+            Card(
+              key: const Key('catalog-suggestions'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      suggestions.length > 1
+                          ? 'Encontramos ${suggestions.length} corridas. Escolha uma:'
+                          : 'Encontramos esta corrida:',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  for (final edition in suggestions)
+                    ListTile(
+                      key: Key('suggestion-${edition['id']}'),
+                      dense: true,
+                      leading: const Icon(
+                        Icons.directions_run,
+                        color: runPassOrange,
+                      ),
+                      title: Text(edition['name'] as String),
+                      subtitle: Text(
+                        '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
+                      ),
+                      onTap: () => openSuggestion(edition),
+                    ),
+                ],
+              ),
+            ),
           if (showFilters)
             Card(
               child: Padding(
@@ -324,6 +603,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
                             fontWeight: FontWeight.w800,
                             fontSize: 18,
                           ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Se houver uma frase acima, estes filtros são ignorados.',
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -407,12 +693,46 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         onPressed: loading ? null : clearSearch,
                         child: const Text('Limpar busca'),
                       ),
+                      const Divider(height: 32),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Não encontrou a corrida?',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Peça o cadastro. A equipe pesquisa os pedidos periodicamente, confere a fonte e o resultado aparece em "Minhas solicitações".',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      FilledButton(
+                        key: const Key('catalog-request-new'),
+                        onPressed: loading ? null : requestRace,
+                        child: const Text('Pedir cadastro da corrida'),
+                      ),
+                      TextButton(
+                        key: const Key('catalog-request-mine'),
+                        onPressed: openMyRequests,
+                        child: const Text('Minhas solicitações'),
+                      ),
                     ],
                   ),
                 ),
               ),
             ),
           const SizedBox(height: 16),
+          if (searchNotice != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                searchNotice!,
+                key: const Key('catalog-search-notice'),
+              ),
+            ),
           if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
             TextButton(
@@ -420,6 +740,42 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
+          if (items.length > 1)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.sort, size: 20),
+                  const SizedBox(width: 8),
+                  const Text('Ordenar por'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButton<String>(
+                      key: const Key('catalog-sort'),
+                      value: sort,
+                      isExpanded: true,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'dateDesc',
+                          child: Text('Data: mais recentes'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'dateAsc',
+                          child: Text('Data: mais antigas'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'rating',
+                          child: Text('Melhores avaliadas'),
+                        ),
+                      ],
+                      onChanged: loading
+                          ? null
+                          : (value) => changeSort(value ?? 'dateAsc'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (loading) const Center(child: CircularProgressIndicator()),
           if (!loading && error == null && items.isEmpty)
             Text(
@@ -427,7 +783,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   ? 'Nenhuma corrida encontrada com esses filtros.'
                   : 'Nenhuma corrida nesta página. Continue a busca.',
             ),
-          for (final edition in items)
+          if (!loading && error == null && items.isEmpty && nextCursor == null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                key: const Key('catalog-request-empty'),
+                onPressed: requestRace,
+                child: const Text('Não encontrou? Pedir cadastro da corrida'),
+              ),
+            ),
+          for (final (index, edition) in view.indexed)
             Card(
               color: edition['status'] == 'archived' ? context.panelCard : null,
               child: ListTile(
@@ -453,11 +818,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         : runPassOrange,
                   ),
                 ),
-                title: Text(edition['name'] as String),
+                title: Text(
+                  sort == 'rating' && scoreOf(edition) != null
+                      ? '#${index + 1} · ${edition['name']}'
+                      : edition['name'] as String,
+                ),
                 subtitle: Text(
                   '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}\n'
                   '${(edition['distances'] as List).map((d) => '${d['kilometers']} km').join(' · ')}'
                   '${edition['status'] == 'archived' ? '\nArquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}' : ''}'
+                  '${scoreOf(edition) != null ? '\n★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações' : ''}'
                   '${mine.containsKey(edition['id']) ? '\nJá está na sua lista' : ''}',
                 ),
                 isThreeLine: true,
@@ -511,7 +881,11 @@ class _EditionScreenState extends State<EditionScreen> {
   String? selectedDistance, error;
   bool loading = true, saving = false, loadingReviews = false;
   List<Map<String, dynamic>>? reviews;
+  Map<String, dynamic>? reviewSummary;
+  bool showAllReviews = false;
   Map<String, dynamic>? mine;
+  Map<String, dynamic>? plan;
+  bool savingPlan = false;
   Map<String, dynamic>? myReview;
 
   static const criteria = [
@@ -551,7 +925,137 @@ class _EditionScreenState extends State<EditionScreen> {
     if (mounted && edition != null) {
       loadReviews();
       loadMyParticipation();
+      loadPlan();
     }
+  }
+
+  /// Situação da pessoa nesta corrida: `wanted` (quero correr) ou `registered` (inscrito).
+  Future<void> loadPlan() async {
+    try {
+      final found = await widget.gateway.request(
+        '/me/race-plans/${Uri.encodeComponent(widget.editionId)}',
+      );
+      if (mounted) setState(() => plan = found);
+    } on Exception {
+      if (mounted) setState(() => plan = null);
+    }
+  }
+
+  /// Marca ou, se já estava marcado, desmarca (toque de novo para tirar).
+  Future<void> setPlan(String status) async {
+    if (savingPlan) return;
+    setState(() {
+      savingPlan = true;
+      error = null;
+    });
+    final id = Uri.encodeComponent(widget.editionId);
+    try {
+      if (plan?['status'] == status) {
+        await widget.gateway.request('/me/race-plans/$id', method: 'DELETE');
+        if (mounted) setState(() => plan = null);
+      } else {
+        final saved = await widget.gateway.request(
+          '/me/race-plans/$id',
+          method: 'PUT',
+          body: {'status': status, 'distanceId': ?selectedDistance},
+        );
+        if (mounted) setState(() => plan = saved);
+      }
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = catalogError(issue));
+    } on Exception {
+      if (mounted) {
+        setState(
+          () => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => savingPlan = false);
+    }
+  }
+
+  /// Escolha da situação: quero correr, inscrito (vou correr) e já corri (registro da participação).
+  Widget situation(Map<String, dynamic> body) {
+    final past = body['status'] == 'past';
+    final archived = body['status'] == 'archived';
+    final current = plan?['status'] as String?;
+    Widget choice(
+      String key,
+      IconData icon,
+      String label,
+      bool selected,
+      VoidCallback? onTap,
+    ) => selected
+        ? FilledButton.icon(
+            key: Key(key),
+            onPressed: onTap,
+            icon: Icon(icon),
+            label: Text(label),
+          )
+        : OutlinedButton.icon(
+            key: Key(key),
+            onPressed: onTap,
+            icon: Icon(icon),
+            label: Text(label),
+          );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Minha situação nesta corrida',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (!past && !archived)
+              choice(
+                'plan-wanted',
+                current == 'wanted' ? Icons.favorite : Icons.favorite_border,
+                'Quero correr',
+                current == 'wanted',
+                savingPlan ? null : () => setPlan('wanted'),
+              ),
+            if (!past && !archived)
+              choice(
+                'plan-registered',
+                Icons.how_to_reg_outlined,
+                'Inscrito',
+                current == 'registered',
+                savingPlan ? null : () => setPlan('registered'),
+              ),
+            if (mine == null && selectedDistance != null && !archived)
+              choice(
+                'plan-ran',
+                Icons.directions_run,
+                saving ? 'Salvando...' : 'Já corri',
+                false,
+                saving ? null : createDraft,
+              ),
+          ],
+        ),
+        if (current != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              current == 'wanted'
+                  ? 'Esta corrida está na sua agenda, em Desejadas.'
+                  : 'Esta corrida está na sua agenda, em Inscritas.',
+              key: const Key('plan-note'),
+            ),
+          ),
+        if (!past && !archived && selectedDistance == null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Escolha uma distância para registrar que você já correu.',
+              style: TextStyle(color: context.muted),
+            ),
+          ),
+      ],
+    );
   }
 
   /// Participação desta pessoa nesta edição, se já existir (rascunho ou concluída).
@@ -634,9 +1138,13 @@ class _EditionScreenState extends State<EditionScreen> {
       if (mounted) {
         reviews = (page['items'] as List? ?? const [])
             .cast<Map<String, dynamic>>();
+        reviewSummary = (page['summary'] as Map?)?.cast<String, dynamic>();
       }
     } on Exception {
-      if (mounted) reviews = null;
+      if (mounted) {
+        reviews = null;
+        reviewSummary = null;
+      }
     } finally {
       if (mounted) setState(() => loadingReviews = false);
     }
@@ -668,68 +1176,68 @@ class _EditionScreenState extends State<EditionScreen> {
     (_) => '.',
   );
 
-  Widget hero(Map<String, dynamic> body) => Container(
-    height: 200,
-    width: double.infinity,
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+  Widget hero(Map<String, dynamic> body) {
+    final wanted = plan?['status'] == 'wanted';
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 170),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+        ),
       ),
-    ),
-    child: SafeArea(
-      bottom: false,
-      child: Stack(
-        children: [
-          Positioned(
-            left: 8,
-            top: 4,
-            child: IconButton(
-              tooltip: 'Voltar',
-              color: Colors.white,
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => Navigator.of(context).maybePop(),
-            ),
-          ),
-          Positioned(
-            right: 8,
-            top: 4,
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: 'Quero correr',
-                  color: Colors.white,
-                  icon: const Icon(Icons.favorite_border),
-                  onPressed: () => soon('Lista Quero correr em breve.'),
-                ),
-                IconButton(
-                  tooltip: 'Compartilhar',
-                  color: Colors.white,
-                  icon: const Icon(Icons.ios_share),
-                  onPressed: () => soon('Compartilhamento em breve.'),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            left: 20,
-            right: 20,
-            bottom: 20,
-            child: Text(
-              (body['name'] as String).toUpperCase(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: 24,
-                letterSpacing: 1,
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Os ícones ficam numa linha própria: o título longo nunca passa por cima deles.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Voltar',
+                    color: Colors.white,
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: () => Navigator.of(context).maybePop(),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    key: const Key('hero-wanted'),
+                    tooltip: wanted ? 'Tirar de Quero correr' : 'Quero correr',
+                    color: Colors.white,
+                    icon: Icon(wanted ? Icons.favorite : Icons.favorite_border),
+                    onPressed: savingPlan ? null : () => setPlan('wanted'),
+                  ),
+                  IconButton(
+                    tooltip: 'Compartilhar',
+                    color: Colors.white,
+                    icon: const Icon(Icons.ios_share),
+                    onPressed: () => soon('Compartilhamento em breve.'),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Text(
+                (body['name'] as String).toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 24,
+                  letterSpacing: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget distanceSelector(Map<String, dynamic> body) {
     final archived = body['status'] == 'archived';
@@ -784,11 +1292,6 @@ class _EditionScreenState extends State<EditionScreen> {
   Widget header(Map<String, dynamic> body) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(
-        body['name'] as String,
-        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
-      ),
-      const SizedBox(height: 8),
       Row(
         children: [
           const Icon(Icons.calendar_today_outlined, size: 16),
@@ -873,13 +1376,9 @@ class _EditionScreenState extends State<EditionScreen> {
                 : 'Editar meu rascunho',
           ),
         ),
-      ] else if (selectedDistance != null) ...[
-        const SizedBox(height: 16),
-        FilledButton(
-          onPressed: saving ? null : createDraft,
-          child: Text(saving ? 'Salvando...' : 'Criar rascunho'),
-        ),
       ],
+      const SizedBox(height: 16),
+      situation(body),
       // Informacoes da fonte ao fim da aba, sem empurrar as acoes da pessoa.
       const SizedBox(height: 16),
       if (body['venue'] != null)
@@ -968,6 +1467,7 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
+  /// Item avaliado: estrelas douradas; sem avaliações ficam vazias (só o contorno).
   Widget bar(String label, IconData icon, double? value) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 7),
     child: Row(
@@ -975,17 +1475,7 @@ class _EditionScreenState extends State<EditionScreen> {
         Icon(icon, size: 20),
         const SizedBox(width: 10),
         SizedBox(width: 118, child: Text(label)),
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: (value ?? 0) / 5,
-              minHeight: 7,
-              color: runPassOrange,
-              backgroundColor: context.track,
-            ),
-          ),
-        ),
+        Expanded(child: Stars(value ?? 0, size: 20)),
         SizedBox(
           width: 42,
           child: Text(
@@ -1001,27 +1491,40 @@ class _EditionScreenState extends State<EditionScreen> {
   Widget scoreCard(Map<String, dynamic> body) {
     final score = body['runScore'] as Map<String, dynamic>?;
     final loaded = reviews ?? const <Map<String, dynamic>>[];
+    final summary = reviewSummary;
     final value =
-        (score?['value'] as num?) ??
+        (summary?['average'] as num?) ??
+        (score?['value'] is num
+            ? score!['value'] as num
+            : num.tryParse('${score?['value'] ?? ''}')) ??
         (loaded.isEmpty
             ? null
             : loaded.map(reviewAverage).reduce((a, b) => a + b) /
                   loaded.length);
     if (value == null) {
-      return const Card(
+      return Card(
         child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text('Esta prova ainda não tem avaliações.'),
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            'Esta prova ainda não tem avaliações.',
+            key: const Key('reviews-none'),
+            style: TextStyle(color: context.muted),
+          ),
         ),
       );
     }
-    final count = (score?['reviewCount'] as num?)?.toInt() ?? loaded.length;
-    final recommend = loaded.isEmpty
-        ? null
-        : (100 *
-                  loaded.where((r) => reviewAverage(r) >= 4).length /
-                  loaded.length)
-              .round();
+    final count =
+        (summary?['reviewCount'] as num?)?.toInt() ??
+        (score?['reviewCount'] as num?)?.toInt() ??
+        loaded.length;
+    final recommend =
+        (summary?['recommendPercent'] as num?)?.toInt() ??
+        (loaded.isEmpty
+            ? null
+            : (100 *
+                      loaded.where((r) => reviewAverage(r) >= 4).length /
+                      loaded.length)
+                  .round());
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1157,6 +1660,9 @@ class _EditionScreenState extends State<EditionScreen> {
 
   Widget reviewsTab(Map<String, dynamic> body) {
     final loaded = reviews;
+    final byCriterion = (reviewSummary?['byCriterion'] as Map?) ?? const {};
+    double? criterion(String key) =>
+        (byCriterion[key] as num?)?.toDouble() ?? average(key);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -1164,16 +1670,16 @@ class _EditionScreenState extends State<EditionScreen> {
         myReviewCard(),
         scoreCard(body),
         const SizedBox(height: 14),
+        for (final (key, label, icon) in criteria)
+          bar(label, icon, criterion(key)),
+        const SizedBox(height: 18),
         if (loadingReviews)
           const Center(child: CircularProgressIndicator())
         else if (loaded == null)
           const Text(
-            'A lista pública de avaliações ainda não está disponível. As suas aparecem acima.',
+            'A lista pública de avaliações não pôde ser carregada agora. As suas aparecem acima.',
           )
         else if (loaded.isNotEmpty) ...[
-          for (final (key, label, icon) in criteria)
-            bar(label, icon, average(key)),
-          const SizedBox(height: 18),
           Row(
             children: [
               const Expanded(
@@ -1182,13 +1688,16 @@ class _EditionScreenState extends State<EditionScreen> {
                   style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                 ),
               ),
-              TextButton(
-                onPressed: () => soon('Lista completa em breve.'),
-                child: const Text('Ver todas'),
-              ),
+              if (loaded.length > 3)
+                TextButton(
+                  key: const Key('reviews-show-all'),
+                  onPressed: () =>
+                      setState(() => showAllReviews = !showAllReviews),
+                  child: Text(showAllReviews ? 'Ver menos' : 'Ver todas'),
+                ),
             ],
           ),
-          for (final review in loaded.take(3)) ...[
+          for (final review in showAllReviews ? loaded : loaded.take(3)) ...[
             reviewTile(review),
             const SizedBox(height: 10),
           ],
@@ -1257,10 +1766,18 @@ class _EditionScreenState extends State<EditionScreen> {
                 children: [
                   hero(body),
                   Material(
-                    color: Colors.white,
+                    color: Theme.of(context).scaffoldBackgroundColor,
                     child: TabBar(
                       labelColor: runPassOrange,
                       indicatorColor: runPassOrange,
+                      labelStyle: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                      unselectedLabelStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
                       unselectedLabelColor: context.onSurfaceText,
                       tabs: [
                         Tab(text: 'Sobre'),

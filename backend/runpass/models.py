@@ -1,7 +1,7 @@
 import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -83,6 +83,11 @@ class Eligibility(Input):
         if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
             raise ValueError("Date must be YYYY-MM-DD")
         return date.fromisoformat(value)
+
+
+class PutRacePlan(Input):
+    status: Literal["wanted", "registered"]
+    distanceId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
 
 
 class CreateParticipation(Input):
@@ -184,3 +189,90 @@ class CreateComment(Input):
         if not value.strip():
             raise ValueError("Comment cannot be blank")
         return value.strip()
+
+
+class EditionRequestFields(Input):
+    """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` nao e aceito ainda."""
+
+    name: Annotated[str, Field(min_length=1, max_length=160)]
+    date: date
+    city: Annotated[str, Field(min_length=1, max_length=100)]
+    state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
+    distanceKm: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
+    officialUrl: Annotated[str, Field(max_length=500, pattern=r"^https://[^\s]+$")] | None = None
+
+    @field_validator("name", "city")
+    @classmethod
+    def text(cls, value):
+        value = " ".join(value.split())
+        if not value or any(ord(c) < 32 for c in value):
+            raise ValueError("Text required")
+        return value
+
+    @field_validator("state")
+    @classmethod
+    def uf(cls, value):
+        return value.upper() if value is not None else None
+
+    @field_validator("date", mode="before")
+    @classmethod
+    def race_date(cls, value):
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("Date must be YYYY-MM-DD")
+        return date.fromisoformat(value)
+
+    @field_validator("distanceKm", mode="before")
+    @classmethod
+    def kilometers(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("Distancia invalida")
+        if isinstance(value, Decimal):
+            return value
+        if not isinstance(value, int | float):
+            raise ValueError("Distancia invalida")
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError("Distancia invalida") from error
+
+
+class PatchEditionRequest(Input):
+    expectedVersion: Annotated[int, Field(ge=1)]
+    name: Annotated[str, Field(min_length=1, max_length=160)] | None = None
+    date: str | None = None
+    city: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
+    distanceKm: Decimal | None = None
+    officialUrl: Annotated[str, Field(max_length=500)] | None = None
+
+    @model_validator(mode="after")
+    def changes(self):
+        fields = self.model_fields_set - {"expectedVersion"}
+        if not fields or any(getattr(self, f) is None for f in fields):
+            raise ValueError("At least one change required, without nulls")
+        return self
+
+    @field_validator("distanceKm", mode="before")
+    @classmethod
+    def kilometers(cls, value):
+        return EditionRequestFields.kilometers(value) if value is not None else None
+
+
+class ResubmitEditionRequest(Input):
+    expectedVersion: Annotated[int, Field(ge=1)]
+
+
+class ReviewRequestDecision(Input):
+    expectedVersion: Annotated[int, Field(ge=1)]
+    decision: Literal["approve", "link", "reject"]
+    editionId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    reason: Annotated[str, Field(min_length=1, max_length=500)] | None = None
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if self.decision == "reject":
+            if not self.reason or not self.reason.strip() or self.editionId is not None:
+                raise ValueError("Reject needs a reason and no edition")
+        elif not self.editionId or self.reason is not None:
+            raise ValueError("Approve and link need an existing edition")
+        return self

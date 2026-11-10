@@ -8,6 +8,9 @@ class DemoTransport {
   final editions = <Map<String, dynamic>>[];
   final participations = <String, Map<String, dynamic>>{};
   final uploads = <String, Map<String, dynamic>>{};
+  final editionRequests = <Map<String, dynamic>>[];
+  // Planos de corrida por pessoa: e-mail -> id da edição -> plano.
+  final racePlans = <String, Map<String, Map<String, dynamic>>>{};
   int sequence = 0;
 
   DemoTransport({this.capacity = 1000}) {
@@ -410,6 +413,100 @@ class DemoTransport {
     if (account['admitted'] != true) {
       return failure('BETA_ADMISSION_REQUIRED', 403);
     }
+    if (uri.path == '/edition-requests' && method == 'POST') {
+      // Demonstracao: o pedido fica pendente; nao ha operador para aprovar.
+      final km = data['distanceKm'];
+      if (data['name'] == null ||
+          data['date'] == null ||
+          data['city'] == null) {
+        return failure('INVALID_INPUT', 422);
+      }
+      if (km is! num || km <= 0) return failure('INVALID_INPUT', 422);
+      final request = <String, dynamic>{
+        'id': 'demo-request-${++sequence}',
+        'owner': email,
+        'version': 1,
+        'status': 'pending',
+        'details': {
+          for (final key in [
+            'name',
+            'date',
+            'city',
+            'state',
+            'distanceKm',
+            'officialUrl',
+          ])
+            if (data[key] != null) key: data[key],
+        },
+      };
+      editionRequests.insert(0, request);
+      return JsonReply(201, {...request}..remove('owner'));
+    }
+    if (uri.path == '/me/race-plans' && method == 'GET') {
+      final mine = racePlans[email] ?? const {};
+      return JsonReply(200, {
+        'items': [
+          for (final plan in mine.values)
+            if (uri.queryParameters['status'] == null ||
+                uri.queryParameters['status'] == plan['status'])
+              {
+                ...plan,
+                'edition': {
+                  for (final e in editions.where(
+                    (e) => e['id'] == plan['editionId'],
+                  )) ...{
+                    for (final k in [
+                      'id',
+                      'name',
+                      'date',
+                      'city',
+                      'state',
+                      'status',
+                      'distances',
+                    ])
+                      k: e[k],
+                  },
+                },
+              },
+        ],
+      });
+    }
+    final planRoute = RegExp(r'^/me/race-plans/([^/]+)$').firstMatch(uri.path);
+    if (planRoute != null) {
+      final id = Uri.decodeComponent(planRoute.group(1)!);
+      final mine = racePlans.putIfAbsent(email, () => {});
+      if (method == 'GET') {
+        return mine[id] == null
+            ? failure('PLAN_NOT_FOUND', 404)
+            : JsonReply(200, mine[id]!);
+      }
+      if (method == 'DELETE') {
+        mine.remove(id);
+        return const JsonReply(204, {});
+      }
+      if (method == 'PUT') {
+        if (!editions.any((e) => e['id'] == id)) {
+          return failure('EDITION_NOT_FOUND', 404);
+        }
+        final old = mine[id];
+        mine[id] = {
+          'editionId': id,
+          'status': data['status'],
+          'distanceId': ?data['distanceId'],
+          'version': ((old?['version'] as int?) ?? 0) + 1,
+          'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        };
+        return JsonReply(200, mine[id]!);
+      }
+    }
+    if (uri.path == '/me/edition-requests' && method == 'GET') {
+      return JsonReply(200, {
+        'items': [
+          for (final r in editionRequests)
+            if (r['owner'] == email) {...r}..remove('owner'),
+        ],
+      });
+    }
     if (uri.path == '/uploads' && method == 'POST') {
       final id = 'demo-upload-${++sequence}';
       uploads[id] = {
@@ -439,6 +536,22 @@ class DemoTransport {
         'imageReference': 'img_$id',
       });
     }
+    if (uri.path == '/editions/search') {
+      // Demonstracao sem IA: so busca pelo nome, como o servidor faz quando a IA nao responde.
+      final text = normalize(uri.queryParameters['phrase'] ?? '');
+      final found = editions
+          .where((e) => normalize(e['name'] as String).contains(text))
+          .toList();
+      return JsonReply(200, {
+        'items': found.take(20).toList(),
+        'search': {
+          'source': 'text',
+          'filters': {'q': text},
+          'applied': ['texto'],
+          'notApplied': <String>[],
+        },
+      });
+    }
     if (uri.path == '/editions') {
       final q = uri.queryParameters;
       final limit = int.tryParse(q['limit'] ?? '') ?? 20;
@@ -450,6 +563,10 @@ class DemoTransport {
           return false;
         }
         if (q['state'] != null && e['state'] != q['state']!.toUpperCase()) {
+          return false;
+        }
+        if (q['q'] != null &&
+            !normalize(e['name'] as String).contains(normalize(q['q']!))) {
           return false;
         }
         if (q['namePrefix'] != null &&

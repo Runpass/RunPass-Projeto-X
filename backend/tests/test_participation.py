@@ -6,10 +6,11 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from runpass.api import create_app
-from runpass.catalog import CatalogService, seed_synthetic
+from runpass.catalog import CatalogFilters, CatalogService, seed_synthetic
 from runpass.identity import Principal
 from runpass.participation import ParticipationService
 from runpass.service import IdentityService, Problem
+from runpass.social import SocialService
 from runpass.store import MemoryStore
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -185,6 +186,125 @@ class ParticipationTests(unittest.TestCase):
         winners = [value for value in results if value != "PARTICIPATION_EXISTS"]
         self.assertEqual(len(winners), 1)
         self.assertEqual(results.count("PARTICIPATION_EXISTS"), 7)
+
+    def finish(self, subject, stars, comment=None):
+        actor = self.actor if subject == "owner" else self.admit(subject)
+        draft = self.service.create(actor, "d-" + subject, self.payload(timeSeconds=3600))
+        image = ("operations", "USER#" + subject, "IMAGE#img-" + subject)
+        self.store.commit(
+            {image: None},
+            {image: {"owner": subject, "origin": "runner", "state": "valid", "refs": 0}},
+        )
+        body = self.completion(draft, medalImageReference="img-" + subject)
+        body["ratings"] = {k: stars for k in body["ratings"]}
+        if comment:
+            body["comment"] = comment
+        self.service.complete(actor, draft["id"], "c-" + subject, body)
+        return actor, draft["id"]
+
+    def test_public_edition_reviews_list_average_and_recommendation(self):
+        social = SocialService(self.identity)
+        reader = self.admit("reader")
+        empty = social.edition_reviews(reader, "synthetic-sp-2024")
+        self.assertEqual(empty["items"], [])
+        self.assertEqual(empty["summary"]["reviewCount"], 0)
+        self.assertIsNone(empty["summary"]["average"])
+        self.finish("owner", 5, "Prova sensacional")
+        other, other_id = self.finish("other", 2)
+        page = social.edition_reviews(reader, "synthetic-sp-2024")
+        self.assertEqual(len(page["items"]), 2)
+        self.assertEqual({i["authorName"] for i in page["items"]}, {"owner", "other"})
+        self.assertEqual(
+            next(i for i in page["items"] if i["authorName"] == "owner")["comment"],
+            "Prova sensacional",
+        )
+        summary = page["summary"]
+        self.assertEqual(summary["reviewCount"], 2)
+        self.assertEqual(summary["average"], 3.5)
+        self.assertEqual(summary["recommendPercent"], 50)
+        self.assertEqual(summary["byCriterion"]["kit"], 3.5)
+        self.assertEqual(social.edition_reviews(reader, "synthetic-sp-2024", "5k")["items"], [])
+        self.assertEqual(
+            len(social.edition_reviews(reader, "synthetic-sp-2024", "10k")["items"]), 2
+        )
+        one = social.edition_reviews(reader, "synthetic-sp-2024", limit=1)
+        self.assertEqual(len(one["items"]), 1)
+        rest = social.edition_reviews(
+            reader, "synthetic-sp-2024", limit=1, cursor=one["nextCursor"]
+        )
+        self.assertEqual(len(rest["items"]), 1)
+        self.assertNotIn("nextCursor", rest)
+        self.assertEqual(social.edition_reviews(reader, "synthetic-sp-2025")["items"], [])
+        part = self.service.get(other, other_id)
+        self.service.delete(other, other_id, "del", part["version"])
+        after = social.edition_reviews(reader, "synthetic-sp-2024")
+        self.assertEqual(after["summary"]["reviewCount"], 1)
+        self.assertEqual(after["summary"]["recommendPercent"], 100)
+
+    def test_edition_carries_the_public_score_only_when_there_are_reviews(self):
+        reader = self.admit("reader")
+        key = ("projections", "EDITION#synthetic-sp-2024", "SCORE#current")
+        self.assertNotIn("runScore", self.catalog.detail(reader, "synthetic-sp-2024"))
+        self.store.commit({key: None}, {key: {"reviewCount": 3, "ratingSum": 3 * 8 * 4 + 2}})
+        score = self.catalog.detail(reader, "synthetic-sp-2024")["runScore"]
+        self.assertEqual(score, {"value": 4.1, "reviewCount": 3})
+        listed = self.catalog.list(reader, CatalogFilters())["items"]
+        by_id = {e["id"]: e for e in listed}
+        self.assertEqual(by_id["synthetic-sp-2024"]["runScore"]["reviewCount"], 3)
+        self.assertNotIn("runScore", by_id["synthetic-sp-2025"])
+
+    def test_unreadable_scores_never_break_the_catalog(self):
+        from runpass.store import Unavailable
+
+        reader = self.admit("reader")
+        real = self.store.get
+
+        def get(key):
+            if key[0] == "projections":
+                raise Unavailable()
+            return real(key)
+
+        self.store.get = get
+        listed = self.catalog.list(reader, CatalogFilters())["items"]
+        self.assertTrue(listed)
+        self.assertTrue(all("runScore" not in e for e in listed))
+        self.assertNotIn("runScore", self.catalog.detail(reader, "synthetic-sp-2024"))
+
+    def test_race_plans_set_change_list_and_delete(self):
+        other = self.admit("other")
+        with self.assertRaises(Problem) as none:
+            self.service.get_plan(self.actor, "synthetic-sp-2026")
+        self.assertEqual(none.exception.code, "PLAN_NOT_FOUND")
+        wanted = self.service.put_plan(self.actor, "synthetic-sp-2026", "wanted")
+        self.assertEqual((wanted["status"], wanted["version"]), ("wanted", 1))
+        again = self.service.put_plan(self.actor, "synthetic-sp-2026", "wanted")
+        self.assertEqual(again["version"], 2)  # idempotente no efeito; so conta a revisao
+        signed = self.service.put_plan(self.actor, "synthetic-sp-2026", "registered", "21k")
+        self.assertEqual((signed["status"], signed["distanceId"]), ("registered", "21k"))
+        self.service.put_plan(self.actor, "synthetic-sp-2025", "wanted")
+        everything = self.service.list_plans(self.actor)["items"]
+        self.assertEqual(
+            [i["editionId"] for i in everything], ["synthetic-sp-2025", "synthetic-sp-2026"]
+        )
+        self.assertEqual(everything[1]["edition"]["name"], "Corrida Sintética São Paulo")
+        only = self.service.list_plans(self.actor, "registered")["items"]
+        self.assertEqual([i["editionId"] for i in only], ["synthetic-sp-2026"])
+        self.assertEqual(self.service.list_plans(other)["items"], [])  # nunca de outra pessoa
+        self.service.delete_plan(self.actor, "synthetic-sp-2026")
+        self.service.delete_plan(self.actor, "synthetic-sp-2026")  # repetir e seguro
+        with self.assertRaises(Problem):
+            self.service.get_plan(self.actor, "synthetic-sp-2026")
+
+    def test_race_plan_refuses_unknown_edition_bad_distance_and_archived(self):
+        with self.assertRaises(Problem) as missing:
+            self.service.put_plan(self.actor, "nao-existe", "wanted")
+        self.assertEqual(missing.exception.code, "EDITION_NOT_FOUND")
+        with self.assertRaises(Problem) as distance:
+            self.service.put_plan(self.actor, "synthetic-sp-2026", "wanted", "42k")
+        self.assertEqual(distance.exception.code, "DISTANCE_NOT_IN_EDITION")
+        with self.assertRaises(Problem) as archived:
+            self.service.put_plan(self.actor, "synthetic-archived", "wanted")
+        self.assertEqual(archived.exception.code, "EDITION_ARCHIVED")
 
     def test_completion_is_atomic_idempotent_and_pins_image(self):
         draft = self.service.create(self.actor, "create", self.payload(timeSeconds=3600))

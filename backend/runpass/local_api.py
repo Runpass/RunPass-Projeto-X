@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from .api import create_app
 from .catalog import CatalogService, seed_synthetic
+from .edition_requests import EditionRequestService
 from .identity import CognitoVerifier, Principal
 from .participation import ParticipationService
 from .service import IdentityService
@@ -74,7 +75,15 @@ def create_runtime():
     )
     identity.admit(admitted, "seed-admission", {"birthDate": "1990-01-01", "declaresAdult": True})
     return LocalRuntime(
-        create_app(identity, verifier, catalog, participations, uploads, SocialService(identity)),
+        create_app(
+            identity,
+            verifier,
+            catalog,
+            participations,
+            uploads,
+            SocialService(identity),
+            edition_requests=EditionRequestService(identity, Fernet.generate_key()),
+        ),
         tokens,
         (now + timedelta(hours=1)).isoformat(),
     )

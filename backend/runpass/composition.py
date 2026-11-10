@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from .api import create_app
 from .aws_adapters import CognitoAccountRemover, S3AuditSink
 from .catalog import CatalogService
+from .edition_requests import EditionRequestService
 from .erasure import ErasureProcessor
 from .events import EventProcessor
 from .identity import CognitoDirectory, CognitoVerifier, JwksProvider
@@ -53,7 +54,9 @@ def _identity_service(settings: AwsSettings, dynamodb_client, account_remover=No
     )
 
 
-def create_aws_app(settings: AwsSettings, dynamodb_client, cognito_client, blob_store=None):
+def create_aws_app(
+    settings: AwsSettings, dynamodb_client, cognito_client, blob_store=None, natural_search=None
+):
     verifier = CognitoVerifier(
         settings.runner_issuer,
         settings.runner_client_id,
@@ -70,10 +73,12 @@ def create_aws_app(settings: AwsSettings, dynamodb_client, cognito_client, blob_
     service = _identity_service(settings, dynamodb_client, account_remover)
     catalog = None
     participations = None
+    edition_requests = None
     if settings.catalog_table and settings.cursor_encryption_key:
         catalog = CatalogService(service, settings.cursor_encryption_key)
         if settings.history_table:
             participations = ParticipationService(service, catalog, settings.cursor_encryption_key)
+            edition_requests = EditionRequestService(service, settings.cursor_encryption_key)
     social = SocialService(service) if settings.history_table else None
     uploads = None
     if blob_store is not None:
@@ -83,7 +88,16 @@ def create_aws_app(settings: AwsSettings, dynamodb_client, cognito_client, blob_
             may_view=social.may_view_photo if social else None,
             may_view_profile=social.may_view_profile_photo if social else None,
         )
-    return create_app(service, verifier, catalog, participations, uploads, social)
+    return create_app(
+        service,
+        verifier,
+        catalog,
+        participations,
+        uploads,
+        social,
+        natural_search,
+        edition_requests,
+    )
 
 
 def create_event_processor(settings: AwsSettings, dynamodb_client, s3_client, audit_bucket):
