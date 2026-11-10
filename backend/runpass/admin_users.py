@@ -141,6 +141,134 @@ class AdminUsers:
         )
         return {"subject": subject, "email": mask_email(email), "permissions": wanted}
 
+    # ---- gestao de operadores ---------------------------------------------------------------
+
+    def _call(self, method, **args):
+        try:
+            return getattr(self.cognito, method)(UserPoolId=self.operator_pool_id, **args)
+        except Exception as error:  # noqa: BLE001
+            if type(error).__name__ == "UserNotFoundException":
+                raise Problem(404, "OPERATOR_NOT_FOUND") from error
+            raise Unavailable() from error
+
+    def list_operators(self):
+        users, token = [], None
+        for _ in range(MAX_PAGES):
+            args = {"Limit": 60}
+            if token:
+                args["PaginationToken"] = token
+            page = self._call("list_users", **args)
+            users += page.get("Users", [])
+            token = page.get("PaginationToken")
+            if not token:
+                break
+        items = []
+        for user in users:
+            attrs = {a["Name"]: a["Value"] for a in user.get("Attributes", [])}
+            subject = attrs.get("sub") or user["Username"]
+            access = self.store.get(("identity", "OPERATOR#" + subject, "ACCESS"))
+            items.append(
+                {
+                    "subject": subject,
+                    "email": attrs.get("email", ""),
+                    "status": user.get("UserStatus", ""),
+                    "enabled": bool(user.get("Enabled", True)),
+                    "createdAt": _iso(user.get("UserCreateDate")),
+                    "access": {
+                        k: access[k] for k in ("state", "permissions", "grantedBy", "grantedAt")
+                    }
+                    if access
+                    else None,
+                }
+            )
+        items.sort(key=lambda o: o["email"])
+        return items
+
+    @staticmethod
+    def _is_admin(op):
+        access = op["access"] or {}
+        return (
+            op["enabled"]
+            and access.get("state") == "active"
+            and "user_admin" in access.get("permissions", [])
+        )
+
+    def _guard(self, actor, subject, keeps_admin):
+        """Ninguem mexe no proprio acesso e a conta nunca fica sem um administrador de usuarios ativo."""
+        if actor == subject:
+            raise Problem(409, "CANNOT_CHANGE_SELF")
+        operators = self.list_operators()
+        target = next((o for o in operators if o["subject"] == subject), None)
+        if target is None:
+            raise Problem(404, "OPERATOR_NOT_FOUND")
+        if not keeps_admin and self._is_admin(target):
+            if not any(self._is_admin(o) for o in operators if o["subject"] != subject):
+                raise Problem(409, "LAST_ADMIN")
+        return target
+
+    def _write_access(self, actor, subject, state, permissions):
+        key = ("identity", "OPERATOR#" + subject, "ACCESS")
+        current = self.store.get(key)
+        value = {
+            "state": state,
+            "permissions": sorted(set(permissions)),
+            "grantedBy": actor,
+            "grantedAt": _iso(_now(self.clock)),
+        }
+        try:
+            self.store.commit({key: current}, {key: value})
+        except Conflict as error:
+            raise Problem(409, "ACCESS_CONFLICT") from error
+
+    def set_permissions(self, actor, subject, permissions):
+        wanted = sorted(set(permissions or []))
+        if not wanted or set(wanted) - set(PERMISSIONS):
+            raise Problem(422, "INVALID_INPUT")
+        target = self._guard(actor, subject, "user_admin" in wanted)
+        if not target["access"] or target["access"]["state"] != "active":
+            raise Problem(409, "OPERATOR_NOT_ACTIVE")
+        self._write_access(actor, subject, "active", wanted)
+        audit(
+            self.store,
+            actor,
+            "operator.permissions",
+            {"subject": subject, "permissions": wanted},
+            self.clock,
+        )
+        return {"subject": subject, "permissions": wanted}
+
+    def revoke(self, actor, subject):
+        """Retira o acesso na hora (a API confere o acesso a cada chamada), desativa o login e derruba as sessoes."""
+        target = self._guard(actor, subject, False)
+        perms = (target["access"] or {}).get("permissions") or ["catalog_admin"]
+        if target["access"]:
+            self._write_access(actor, subject, "revoked", perms)
+        self._call("admin_disable_user", Username=target["email"])
+        self._call("admin_user_global_sign_out", Username=target["email"])
+        audit(self.store, actor, "operator.revoke", {"subject": subject}, self.clock)
+        return {"subject": subject, "state": "revoked"}
+
+    def reactivate(self, actor, subject):
+        target = self._guard(actor, subject, True)
+        if not target["access"]:
+            raise Problem(409, "OPERATOR_NOT_ACTIVE")
+        self._call("admin_enable_user", Username=target["email"])
+        self._write_access(actor, subject, "active", target["access"]["permissions"])
+        audit(self.store, actor, "operator.reactivate", {"subject": subject}, self.clock)
+        return {"subject": subject, "state": "active"}
+
+    def reset_credentials(self, actor, subject):
+        """Esqueceu senha e autenticador: apaga o usuario e recria com convite novo (sub novo, mesmas permissoes)."""
+        target = self._guard(actor, subject, False)
+        permissions = (target["access"] or {}).get("permissions") or []
+        if not permissions:
+            raise Problem(409, "OPERATOR_NOT_ACTIVE")
+        self._write_access(actor, subject, "revoked", permissions)  # o sub antigo deixa de valer ja
+        self._call("admin_delete_user", Username=target["email"])
+        audit(self.store, actor, "operator.reset", {"subject": subject}, self.clock)
+        created = self.create_operator(actor, target["email"], permissions)
+        return {**created, "email": target["email"]}
+
 
 class CatalogRunner:
     def __init__(self, store, lambda_client, function_name, clock, logs_client=None):

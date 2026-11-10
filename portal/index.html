@@ -99,7 +99,13 @@
         <div id="custos"></div>
       </section>
       <section id="sec-operadores" data-sec="operadores" hidden>
-        <div class="barra"><h1>Criar operador</h1></div>
+        <div class="barra">
+          <h1>Operadores</h1>
+          <button id="atualizar-operadores" type="button" class="sec">Atualizar</button>
+        </div>
+        <p class="ajuda">Quem entra neste portal. Alterações valem na hora: retirar o acesso derruba a sessão do operador. Você não altera o seu próprio acesso, e a conta sempre mantém um administrador de usuários ativo.</p>
+        <div id="operadores"></div>
+        <div class="barra"><h2>Criar operador</h2></div>
         <p class="ajuda">O operador recebe um e-mail com senha temporária e, no primeiro acesso, define a senha e cadastra o autenticador (MFA obrigatório).</p>
         <form id="form-operador" class="cartao" autocomplete="off">
           <label>E-mail <input id="op-email" type="email" required maxlength="320"></label>

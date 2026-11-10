@@ -20,11 +20,13 @@ from uuid import uuid4
 
 import jwt
 from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from .admin_users import audit
 from .catalog import normalized
 from .edition_requests import EditionRequestReview
 from .identity import AuthFailure
@@ -285,6 +287,10 @@ def create_admin_app(
         email: str = Field(max_length=320)
         permissions: list[str] = Field(min_length=1, max_length=8)
 
+    class Permissions(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        permissions: list[str] = Field(min_length=1, max_length=8)
+
     class CatalogRun(BaseModel):
         model_config = ConfigDict(extra="forbid")
         mode: str = Field(max_length=20)
@@ -302,6 +308,36 @@ def create_admin_app(
         if users is None:
             raise Unavailable()
         return users.create_operator(actor, payload.email, payload.permissions)
+
+    Subject = Annotated[str, PathParam(pattern=r"^[0-9A-Za-z\-]{1,64}$")]
+
+    def need_users(op):
+        actor = need(op, "user_admin").subject
+        if users is None:
+            raise Unavailable()
+        return actor
+
+    @app.get("/admin/operators")
+    def list_operators(op: Operator):
+        actor = need_users(op)
+        audit(store, actor, "operators.list", {}, clock)
+        return {"items": users.list_operators()}
+
+    @app.put("/admin/operators/{subject}/permissions")
+    def operator_permissions(subject: Subject, payload: Permissions, op: Operator):
+        return users.set_permissions(need_users(op), subject, payload.permissions)
+
+    @app.post("/admin/operators/{subject}/revoke")
+    def operator_revoke(subject: Subject, op: Operator):
+        return users.revoke(need_users(op), subject)
+
+    @app.post("/admin/operators/{subject}/reactivate")
+    def operator_reactivate(subject: Subject, op: Operator):
+        return users.reactivate(need_users(op), subject)
+
+    @app.post("/admin/operators/{subject}/reset")
+    def operator_reset(subject: Subject, op: Operator):
+        return users.reset_credentials(need_users(op), subject)
 
     @app.get("/admin/catalog/run")
     def last_run(op: Operator):

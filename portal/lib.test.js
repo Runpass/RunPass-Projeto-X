@@ -95,3 +95,16 @@ test('custos: formatação, percentual e barras', async () => {
   assert.ok(barras([0.0001, 100], 100, 50)[0].h >= 1); // valor pequeno continua visível
   assert.deepEqual(barras([], 100, 50), []);
 });
+
+test('operadores: situação e permissões', async () => {
+  const { situacaoOperador, permissoesDe } = await import('./lib.js');
+  const ativo = { enabled: true, status: 'CONFIRMED', access: { state: 'active', permissions: ['cost_read'] } };
+  assert.equal(situacaoOperador(ativo), 'Ativo');
+  assert.deepEqual(permissoesDe(ativo), ['cost_read']);
+  assert.equal(situacaoOperador({ ...ativo, enabled: false }), 'Desativado');
+  assert.equal(situacaoOperador({ enabled: true, access: null }), 'Sem acesso');
+  assert.equal(situacaoOperador({ enabled: true, access: { state: 'revoked', permissions: [] } }), 'Acesso retirado');
+  assert.equal(situacaoOperador({ ...ativo, status: 'FORCE_CHANGE_PASSWORD' }), 'Convite enviado (ainda não entrou)');
+  assert.deepEqual(permissoesDe({ access: null }), []);
+  assert.match(mensagem('LAST_ADMIN'), /administrador/);
+});

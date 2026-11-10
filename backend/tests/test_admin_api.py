@@ -50,12 +50,29 @@ class FakeCognito:
 
 
 class FakeUsers:
-    """Cognito falso: um pool de corredores e a criacao de operadores."""
+    """Cognito falso: pool dos corredores (so leitura) e pool de operadores (criar, listar, desativar, apagar)."""
 
     def __init__(self):
-        self.created, self.exists = [], False
+        self.created, self.exists, self.calls = [], False, []
+        self.operators = {}  # email -> {"sub", "enabled"}
 
     def list_users(self, **args):
+        if args["UserPoolId"] == "pool-op":
+            return {
+                "Users": [
+                    {
+                        "Username": o["sub"],
+                        "UserStatus": "CONFIRMED",
+                        "Enabled": o["enabled"],
+                        "UserCreateDate": datetime(2026, 11, 1, tzinfo=timezone.utc),
+                        "Attributes": [
+                            {"Name": "sub", "Value": o["sub"]},
+                            {"Name": "email", "Value": email},
+                        ],
+                    }
+                    for email, o in self.operators.items()
+                ]
+            }
         self.args = args
         if args.get("PaginationToken") == "p2":
             return {"Users": [self.user("u3333333-x", "carlos@exemplo.invalid", "UNCONFIRMED", 3)]}
@@ -78,12 +95,27 @@ class FakeUsers:
         }
 
     def admin_create_user(self, **args):
-        if self.exists:
+        if self.exists or args["Username"] in self.operators:
             raise type("UsernameExistsException", (Exception,), {})()
         self.created.append(args)
-        return {
-            "User": {"Username": "novo-sub", "Attributes": [{"Name": "sub", "Value": "novo-sub"}]}
-        }
+        sub = f"novo-sub-{len(self.created)}"
+        self.operators[args["Username"]] = {"sub": sub, "enabled": True}
+        return {"User": {"Username": sub, "Attributes": [{"Name": "sub", "Value": sub}]}}
+
+    def admin_disable_user(self, **args):
+        self.calls.append(("disable", args["Username"]))
+        self.operators[args["Username"]]["enabled"] = False
+
+    def admin_enable_user(self, **args):
+        self.calls.append(("enable", args["Username"]))
+        self.operators[args["Username"]]["enabled"] = True
+
+    def admin_user_global_sign_out(self, **args):
+        self.calls.append(("signout", args["Username"]))
+
+    def admin_delete_user(self, **args):
+        self.calls.append(("delete", args["Username"]))
+        del self.operators[args["Username"]]
 
 
 class FakeLogs:
@@ -413,9 +445,10 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 201, r.text)
         self.assertEqual(self.cognito.created[0]["Username"], "novo@exemplo.invalid")
         self.assertEqual(self.cognito.created[0]["DesiredDeliveryMediums"], ["EMAIL"])
-        acesso = self.store.get(("identity", "OPERATOR#novo-sub", "ACCESS"))
+        acesso = self.store.get(("identity", "OPERATOR#novo-sub-1", "ACCESS"))
         self.assertEqual(acesso["permissions"], ["catalog_admin"])
         self.assertEqual(acesso["grantedBy"], "adm")
+        self.assertEqual(acesso["state"], "active")
         for ruim in (
             {"email": "sem-arroba", "permissions": ["catalog_admin"]},
             {"email": "a@b.invalid", "permissions": []},
@@ -570,6 +603,125 @@ class AdminApiTests(unittest.TestCase):
         self.openai_costs.value = None
         r = self.client.get("/admin/costs", headers=h).json()
         self.assertEqual((r["aws"], r["openai"], r["errors"]), ({"totalUsd": 5}, None, ["openai"]))
+
+    def operadores(self):
+        """adm (administrador de usuarios) e dois operadores no pool falso, cada um com ACCESS."""
+        for email, sub in (
+            ("adm@e.invalid", "adm"),
+            ("op@e.invalid", "op"),
+            ("outro@e.invalid", "mod"),
+        ):
+            self.cognito.operators[email] = {"sub": sub, "enabled": True}
+
+    def test_listar_operadores_mostra_acesso_e_exige_user_admin(self):
+        self.operadores()
+        self.assertEqual(
+            self.client.get("/admin/operators", headers=self.auth(token("op"))).status_code, 403
+        )
+        itens = self.client.get("/admin/operators", headers=self.auth(token("adm"))).json()["items"]
+        por = {i["email"]: i for i in itens}
+        self.assertEqual(por["op@e.invalid"]["access"]["permissions"], ["catalog_admin"])
+        self.assertEqual(por["adm@e.invalid"]["access"]["state"], "active")
+        self.assertEqual(por["outro@e.invalid"]["access"]["permissions"], ["moderation"])
+
+    def test_alterar_permissoes_revogar_e_reativar(self):
+        self.operadores()
+        h = self.auth(token("adm"))
+        r = self.client.put(
+            "/admin/operators/op/permissions",
+            json={"permissions": ["catalog_admin", "cost_read"]},
+            headers=h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(
+            self.store.get(("identity", "OPERATOR#op", "ACCESS"))["permissions"],
+            ["catalog_admin", "cost_read"],
+        )
+        self.assertEqual(
+            self.client.put(
+                "/admin/operators/op/permissions", json={"permissions": ["root"]}, headers=h
+            ).status_code,
+            422,
+        )
+        # revogar: o proprio operador perde o acesso na hora, no mesmo token
+        self.assertEqual(
+            self.client.get("/admin/session", headers=self.auth(token("op"))).status_code, 200
+        )
+        self.assertEqual(self.client.post("/admin/operators/op/revoke", headers=h).status_code, 200)
+        self.assertEqual(self.store.get(("identity", "OPERATOR#op", "ACCESS"))["state"], "revoked")
+        self.assertEqual(
+            self.client.get("/admin/session", headers=self.auth(token("op"))).status_code, 401
+        )
+        self.assertIn(("disable", "op@e.invalid"), self.cognito.calls)
+        self.assertIn(("signout", "op@e.invalid"), self.cognito.calls)
+        # revogado nao recebe mudanca de permissoes ate ser reativado
+        self.assertEqual(
+            self.client.put(
+                "/admin/operators/op/permissions",
+                json={"permissions": ["catalog_admin"]},
+                headers=h,
+            ).status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.post("/admin/operators/op/reactivate", headers=h).status_code, 200
+        )
+        self.assertEqual(
+            self.client.get("/admin/session", headers=self.auth(token("op"))).status_code, 200
+        )
+
+    def test_protecoes_nao_mexer_em_si_nem_deixar_a_conta_sem_administrador(self):
+        self.operadores()
+        h = self.auth(token("adm"))
+        for caminho, corpo in (("/permissions", None), ("/revoke", None), ("/reset", None)):
+            metodo = (
+                self.client.put if corpo is None and caminho == "/permissions" else self.client.post
+            )
+            kw = {"json": {"permissions": ["catalog_admin"]}} if caminho == "/permissions" else {}
+            r = metodo("/admin/operators/adm" + caminho, headers=h, **kw)
+            self.assertEqual((r.status_code, r.json()["code"]), (409, "CANNOT_CHANGE_SELF"))
+        # outro administrador de usuarios: pode ser rebaixado enquanto sobrar um (adm); o ultimo nao
+        grant_access(self.store, "mod", ["user_admin"], "outro", NOW)
+        h2 = self.auth(token("mod"))
+        r = self.client.put(
+            "/admin/operators/adm/permissions", json={"permissions": ["catalog_admin"]}, headers=h2
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        r = self.client.post("/admin/operators/mod/revoke", headers=self.auth(token("adm")))
+        self.assertEqual(r.status_code, 403)  # adm perdeu user_admin
+        self.assertEqual(
+            self.client.post("/admin/operators/nao-existe-123/revoke", headers=h2).status_code, 404
+        )
+        self.assertEqual(
+            self.client.post("/admin/operators/..%2Fx/revoke", headers=h2).status_code, 404
+        )
+
+    def test_ultimo_administrador_nao_pode_ser_rebaixado_por_outro_operador_inativo(self):
+        self.operadores()
+        grant_access(self.store, "mod", ["user_admin"], "outro", NOW)
+        h = self.auth(token("adm"))
+        self.assertEqual(
+            self.client.post("/admin/operators/mod/revoke", headers=h).status_code, 200
+        )
+        # agora adm e o unico administrador ativo; "mod" revogado nao conta
+        self.cognito.operators["outro@e.invalid"]["enabled"] = False
+        r = self.client.put(
+            "/admin/operators/mod/permissions", json={"permissions": ["catalog_admin"]}, headers=h
+        )
+        self.assertEqual(r.status_code, 409)  # revogado
+
+    def test_reset_apaga_e_recria_com_as_mesmas_permissoes(self):
+        self.operadores()
+        h = self.auth(token("adm"))
+        r = self.client.post("/admin/operators/op/reset", headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        novo = r.json()["subject"]
+        self.assertNotEqual(novo, "op")
+        self.assertEqual(self.store.get(("identity", "OPERATOR#op", "ACCESS"))["state"], "revoked")
+        acesso = self.store.get(("identity", "OPERATOR#" + novo, "ACCESS"))
+        self.assertEqual((acesso["state"], acesso["permissions"]), ("active", ["catalog_admin"]))
+        self.assertIn(("delete", "op@e.invalid"), self.cognito.calls)
+        self.assertEqual(self.cognito.created[-1]["DesiredDeliveryMediums"], ["EMAIL"])
 
     def test_falha_ao_disparar_nao_trava_o_intervalo(self):
         h = self.auth(token("op"))

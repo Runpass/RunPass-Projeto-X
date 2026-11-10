@@ -32,7 +32,7 @@ implantado**: hospedagem em S3 + CloudFront e API própria exigem o aval de cust
 | Atualizar catálogo | `GET/POST /admin/catalog/run` | `catalog_admin` | dispara a Lambda da rotina (assíncrono) só com modos da lista fechada (`semanal`, `simulacao`, `enriquecer`, `imagens`); 1 disparo a cada 10 min (a rotina gasta a cota da OpenAI); registra quem disparou; nada é publicado. `GET /admin/catalog/runs` lista os disparos e as execuções agendadas (7 dias) com a situação (aguardando, em execução, concluída, erro, tempo esgotado), lida dos registros START/REPORT da Lambda (permissão `logs:FilterLogEvents` só nesse grupo). `GET /admin/catalog/schedules` lista os agendamentos `runpass-<env>-catalogo-*` do EventBridge Scheduler com a próxima execução (calculada aqui no fuso do agendamento; só `cron` simples e `at`, `rate` aparece sem data; permissões `scheduler:GetSchedule` nesse prefixo e `scheduler:ListSchedules`, somente leitura) |
 | Cadastros no app | `GET /admin/users/runners` | `user_admin` | quem criou conta (pool dos corredores): id curto, e-mail **mascarado**, situação, data; cada consulta fica auditada (`AUDIT#...`) |
 | Custos | `GET /admin/costs` | `cost_read` | AWS (Cost Explorer, conta inteira: mês até agora, previsão, por dia, por serviço, 6 meses; cada consulta custa US$ 0,01 e fica 15 min em cache) e OpenAI (soma das linhas `uso_openai` que as Lambdas do catálogo imprimem; **estimativa**, não a fatura). O custo em dinheiro da OpenAI só aparece se os preços forem informados no deploy (`OPENAI_PRICE_IN_PER_MTOK`, `OPENAI_PRICE_OUT_PER_MTOK`, `OPENAI_PRICE_PER_SEARCH`, da página oficial de preços); sem eles o painel mostra só o consumo. Uma fonte fora do ar não esconde a outra |
-| Operadores | `POST /admin/operators` | `user_admin` | cria o usuário no pool de operadores com convite por e-mail e concede as permissões (quem concede fica em `grantedBy`) |
+| Operadores | `GET/POST /admin/operators`, `PUT .../{sub}/permissions`, `POST .../{sub}/revoke`, `.../reactivate`, `.../reset` | `user_admin` | lista quem entra no portal (situação e permissões); cria com convite por e-mail; altera permissões; retira o acesso (na hora: a API confere o acesso a cada chamada; também desativa o login e derruba as sessões); reativa; refaz senha e autenticador (apaga e recria o login com as mesmas permissões, sub novo). Proteções: ninguém altera o próprio acesso e a conta sempre mantém um `user_admin` ativo. Tudo auditado (`AUDIT#...`) |
 
 - Primeiro acesso de um operador novo: o portal conduz a troca da senha temporária e o cadastro do autenticador
   (chave para digitar no app; MFA é obrigatório no pool) e entra com o token resultante.
@@ -55,7 +55,7 @@ implantado**: hospedagem em S3 + CloudFront e API própria exigem o aval de cust
 3. Abrir a URL impressa (`PortalUrl`).
 
 ## Limites
-- Aprovar banners (com crédito e base de autorização) e revogar acesso ainda são comandos do terminal.
+- Aprovar banners (com crédito e base de autorização) ainda é comando do terminal. Contas de corredores só são lidas (não há suspensão pelo portal).
 - A situação das execuções vem só dos registros de início e fim da Lambda: mostra se rodou, quanto durou e se deu erro ou tempo esgotado, mas não o conteúdo do relatório (ver os arquivos no S3 do catálogo).
 - A lista de cadastros mostra até 1200 contas por consulta (o resumo avisa quando é parcial).
 - O cliente do pool de operadores usa `USER_PASSWORD_AUTH` (já era assim); migrar para SRP é melhoria futura.

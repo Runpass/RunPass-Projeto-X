@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  MODOS_CATALOGO, PERMISSOES, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  MODOS_CATALOGO, PERMISSOES, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -65,6 +65,7 @@ function sair(motivo) {
   $('segredo').textContent = '';
   $('cadastros').replaceChildren();
   $('custos').replaceChildren();
+  $('operadores').replaceChildren();
   $('senha').value = '';
   $('codigo').value = '';
   $('pedidos').replaceChildren();
@@ -306,6 +307,72 @@ async function carregarCustos() {
   }
 }
 
+// ---- gestão de operadores -----------------------------------------------------------------------
+
+let meuId = '';
+
+async function acaoOperador(caminho, metodo, corpo, sucesso) {
+  try {
+    await api(`/admin/operators/${encodeURIComponent(caminho)}`, { method: metodo, body: corpo ? JSON.stringify(corpo) : undefined });
+    aviso(sucesso, 'ok');
+    await carregarOperadores();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
+function editorPermissoes(op, area) {
+  const atuais = new Set(permissoesDe(op));
+  const caixas = Object.entries(PERMISSOES).map(([v, t]) => el('label', {}, el('input', { type: 'checkbox', value: v, checked: atuais.has(v) }), t));
+  const salvar = el('button', { type: 'button', class: 'ok' }, 'Salvar permissões');
+  salvar.addEventListener('click', () => {
+    const escolhidas = [...area.querySelectorAll('input:checked')].map((i) => i.value);
+    if (!escolhidas.length) return aviso('Escolha ao menos uma permissão (ou retire o acesso).', 'erro');
+    acaoOperador(`${op.subject}/permissions`, 'PUT', { permissions: escolhidas }, 'Permissões atualizadas.');
+  });
+  area.replaceChildren(el('fieldset', {}, el('legend', {}, 'Permissões'), caixas), salvar);
+}
+
+function cartaoOperador(op) {
+  const area = el('div');
+  const eu = op.subject === meuId;
+  const ativo = op.enabled && op.access && op.access.state === 'active';
+  const botoes = [];
+  if (!eu) {
+    if (ativo) {
+      botoes.push(el('button', { type: 'button', class: 'sec', onclick: () => editorPermissoes(op, area) }, 'Alterar permissões'));
+      botoes.push(el('button', { type: 'button', class: 'perigo', onclick: () => window.confirm(`Retirar o acesso de ${op.email}? A sessão dele cai agora.`) && acaoOperador(`${op.subject}/revoke`, 'POST', null, 'Acesso retirado.') }, 'Retirar acesso'));
+      botoes.push(el('button', { type: 'button', class: 'sec', onclick: () => window.confirm(`Esqueceu senha ou autenticador? Vamos apagar o login de ${op.email} e enviar um convite novo, com as mesmas permissões. Continuar?`) && acaoOperador(`${op.subject}/reset`, 'POST', null, 'Login recriado: o operador recebeu um convite novo por e-mail.') }, 'Refazer senha e autenticador'));
+    } else if (op.access) {
+      botoes.push(el('button', { type: 'button', class: 'ok', onclick: () => acaoOperador(`${op.subject}/reactivate`, 'POST', null, 'Acesso reativado.') }, 'Reativar acesso'));
+    }
+  }
+  const concedido = op.access && op.access.grantedAt ? ` · concedido em ${dataHoraBr(op.access.grantedAt)}` : '';
+  return el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, op.email + (eu ? ' (você)' : '')),
+    el('div', { class: 'linha' }, `${situacaoOperador(op)}${concedido}`),
+    el('div', { class: 'meta' }, permissoesDe(op).map((p) => PERMISSOES[p] || p).join(' · ') || 'Sem permissões'),
+    el('div', { class: 'acoes' }, botoes),
+    area,
+  );
+}
+
+async function carregarOperadores() {
+  const alvo = $('operadores');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const { items } = await api('/admin/operators');
+    alvo.replaceChildren(...(items.length ? items.map(cartaoOperador) : [el('p', { class: 'vazio' }, 'Nenhum operador.')]));
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
 // ---- cadastros, operadores e atualização do catálogo ------------------------------------------
 
 let permissoes = [];
@@ -318,6 +385,7 @@ function mostrarAba(nome) {
   if (nome === 'catalogo') carregarUltimoDisparo();
   if (nome === 'cadastros') carregarCadastros();
   if (nome === 'custos') carregarCustos();
+  if (nome === 'operadores') carregarOperadores();
 }
 
 async function carregarCadastros() {
@@ -432,6 +500,7 @@ $('form-operador').addEventListener('submit', async (evento) => {
     const r = await api('/admin/operators', { method: 'POST', body: JSON.stringify({ email, permissions: escolhidas }) });
     aviso(`Operador criado (${r.email}). Ele recebeu um e-mail com a senha temporária.`, 'ok');
     $('form-operador').reset();
+    carregarOperadores();
   } catch (erro) {
     if (token) aviso(mensagem(erro.codigo), 'erro');
   }
@@ -460,6 +529,7 @@ async function abrirPainel(t) {
   iniciarSessao(t, emailTentativa);
   const info = await api('/admin/session');
   permissoes = info.permissions || [];
+  meuId = info.subject;
   if (!permissoes.some((p) => ['catalog_admin', 'user_admin', 'cost_read'].includes(p))) {
     aviso('Seu acesso não inclui permissão para este portal. Peça a ativação.', 'erro');
     return;
@@ -543,5 +613,6 @@ $('voltar').addEventListener('click', () => sair());
 $('sair').addEventListener('click', () => sair());
 $('atualizar').addEventListener('click', carregarPedidos);
 $('atualizar-cadastros').addEventListener('click', carregarCadastros);
+$('atualizar-operadores').addEventListener('click', carregarOperadores);
 $('atualizar-custos').addEventListener('click', carregarCustos);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);

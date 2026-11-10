@@ -11,6 +11,10 @@ export const MENSAGENS = {
   MFA_SETUP: 'Este usuário ainda não cadastrou o autenticador (MFA).',
   InvalidPasswordException: 'A senha não atende às regras (12+ caracteres com maiúscula, minúscula, número e símbolo).',
   OPERATOR_EXISTS: 'Já existe um operador com este e-mail.',
+  CANNOT_CHANGE_SELF: 'Você não pode alterar o seu próprio acesso. Peça a outro administrador.',
+  LAST_ADMIN: 'Esta ação deixaria a conta sem nenhum administrador de usuários ativo.',
+  OPERATOR_NOT_FOUND: 'Operador não encontrado.',
+  OPERATOR_NOT_ACTIVE: 'O acesso deste operador não está ativo. Reative-o primeiro.',
   ACCESS_CONFLICT: 'A conta foi criada, mas a concessão de acesso falhou. Avise o administrador.',
   RUN_TOO_SOON: 'A rotina foi disparada há pouco. Aguarde 10 minutos entre disparos.',
   INVALID_TOKEN: 'Sua sessão expirou ou o acesso foi retirado. Entre de novo.',
@@ -189,4 +193,17 @@ export function barras(valores, largura, altura) {
 export function mesBr(m) {
   const [a, b] = (m || '').split('-');
   return a && b ? `${b}/${a}` : '';
+}
+
+export function situacaoOperador(o) {
+  if (!o.enabled) return 'Desativado';
+  const estado = o.access && o.access.state;
+  if (!estado) return 'Sem acesso';
+  if (estado === 'revoked') return 'Acesso retirado';
+  if (o.status === 'FORCE_CHANGE_PASSWORD') return 'Convite enviado (ainda não entrou)';
+  return 'Ativo';
+}
+
+export function permissoesDe(o) {
+  return (o.access && o.access.permissions) || [];
 }

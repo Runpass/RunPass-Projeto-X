@@ -129,9 +129,15 @@ Resources:
                 Effect: Allow
                 Action: cognito-idp:ListUsers
                 Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${RunnerUserPoolId}'
-              - Sid: CriarOperadoresComConvite
+              - Sid: GerirOperadores
                 Effect: Allow
-                Action: cognito-idp:AdminCreateUser
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:ListUsers
+                  - cognito-idp:AdminDisableUser
+                  - cognito-idp:AdminEnableUser
+                  - cognito-idp:AdminUserGlobalSignOut
+                  - cognito-idp:AdminDeleteUser
                 Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${OperatorUserPoolId}'
               - !If
                 - HasCatalogFunction
