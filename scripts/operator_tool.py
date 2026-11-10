@@ -20,7 +20,9 @@ from cryptography.fernet import Fernet
 from runpass.catalog import CatalogService
 from runpass.catalog_import import import_rows, parse_csv, rows_to_results
 from runpass.catalog_sources import ADAPTERS, SourceDisabled, SourceError
+from runpass.edition_requests import EditionRequestReview
 from runpass.identity import CognitoDirectory, CognitoVerifier, JwksProvider
+from runpass.models import ReviewRequestDecision
 from runpass.operator_admin import PERMISSIONS, grant_access, load_catalog
 from runpass.operators import establish_session
 from runpass.service import IdentityService
@@ -112,6 +114,7 @@ def store_for(session, env):
             "identity": tables["IdentityTable"],
             "operations": tables["OperationsTable"],
             "catalog": tables["CatalogTable"],
+            "history": tables["HistoryTable"],
         },
     )
 
@@ -238,6 +241,38 @@ def sync_source(session, args):
     )
 
 
+def safe(text):
+    """Texto de usuario no terminal: sem caracteres de controle (evita sequencias de escape)."""
+    return "".join(c if c.isprintable() else "?" for c in str(text))
+
+
+def list_requests(session, args):
+    """Fila de pedidos de prova ausente aguardando revisao (sem dados de quem pediu)."""
+    actor, catalog = operator_login(session, args.env, args.username)
+    items, more = EditionRequestReview(catalog).pending(actor, limit=args.limit)
+    for item in items:
+        d = item["details"]
+        print(
+            f"{item['id']}  v{item['version']}  {safe(d['name'])} | {d['date']} | "
+            f"{safe(d['city'])}/{d.get('state', '-')} | {d['distanceKm']} km | "
+            f"{safe(d.get('officialUrl', '-'))} | pedido em {item['createdAt']}"
+        )
+    print(f"{len(items)} pedido(s) pendente(s){' (ha mais)' if more else ''}.")
+
+
+def review_request(session, args):
+    """Aprova/vincula a uma edicao ja carregada no catalogo, ou rejeita com motivo."""
+    decision = ReviewRequestDecision(
+        expectedVersion=args.version,
+        decision=args.decision,
+        editionId=args.edition_id,
+        reason=args.reason,
+    )
+    actor, catalog = operator_login(session, args.env, args.username)
+    result = EditionRequestReview(catalog).decide(actor, args.id, decision)
+    print(f"Pedido {result['id']}: {result['status']} (versao {result['version']})")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--env", default="dev")
@@ -261,6 +296,16 @@ def main():
     syn.add_argument("--city", default="Sao Paulo")
     syn.add_argument("--query", default="corrida")
     syn.add_argument("--dry-run", action="store_true")
+    lr = sub.add_parser("list-requests", help="lista pedidos de prova ausente pendentes")
+    lr.add_argument("--username", required=True)
+    lr.add_argument("--limit", type=int, default=20)
+    rr = sub.add_parser("review-request", help="decide um pedido de prova ausente")
+    rr.add_argument("--username", required=True)
+    rr.add_argument("--id", required=True)
+    rr.add_argument("--version", type=int, required=True, help="versao mostrada em list-requests")
+    rr.add_argument("--decision", choices=["approve", "link", "reject"], required=True)
+    rr.add_argument("--edition-id", help="obrigatorio em approve/link: edicao ja no catalogo")
+    rr.add_argument("--reason", help="obrigatorio em reject")
     g = sub.add_parser("grant")
     g.add_argument("--subject", required=True)
     g.add_argument("--permission", action="append", choices=PERMISSIONS, required=True)
@@ -273,6 +318,10 @@ def main():
         import_csv(session, args)
     elif args.command == "sync-source":
         sync_source(session, args)
+    elif args.command == "list-requests":
+        list_requests(session, args)
+    elif args.command == "review-request":
+        review_request(session, args)
     elif args.command == "enroll":
         enroll(session, args.env, args.username)
     elif args.command == "grant":

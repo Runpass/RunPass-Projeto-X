@@ -7,13 +7,14 @@ from functools import lru_cache
 
 from boto3.dynamodb.types import TypeDeserializer
 
-from .aws_adapters import S3AuditSink, S3BlobStore
+from .aws_adapters import LambdaSearchInvoker, S3AuditSink, S3BlobStore
 from .composition import (
     AwsSettings,
     create_aws_app,
     create_erasure_processor,
     create_event_processor,
 )
+from .nl_search import NaturalSearch
 from .service import Problem
 from .store import DynamoStore, Unavailable
 
@@ -66,6 +67,21 @@ def _settings(with_cursor_key=False):
     )
 
 
+def _natural_search():
+    """Sem a variavel, a rota /editions/search funciona so por nome (sem IA)."""
+    name = os.environ.get("RUNPASS_CATALOG_SEARCH_FUNCTION")
+    if not name:
+        return None
+    from botocore.config import Config
+
+    # Sem repeticao automatica e com prazo curto: a busca por nome e o plano B imediato.
+    client = _boto_client(
+        "lambda",
+        config=Config(connect_timeout=2, read_timeout=8, retries={"max_attempts": 1}),
+    )
+    return NaturalSearch(LambdaSearchInvoker(client, name))
+
+
 @lru_cache(maxsize=1)
 def _api():
     from mangum import Mangum
@@ -75,6 +91,7 @@ def _api():
         _boto_client("dynamodb"),
         _boto_client("cognito-idp"),
         S3BlobStore(_s3_client(), os.environ["RUNPASS_MEDAL_BUCKET"]),
+        _natural_search(),
     )
     return Mangum(app, lifespan="off")
 

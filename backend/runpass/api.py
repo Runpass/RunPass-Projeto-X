@@ -17,12 +17,16 @@ from .models import (
     CreateComment,
     CreateParticipation,
     CreateProfile,
+    EditionRequestFields,
     Eligibility,
+    PatchEditionRequest,
     PatchParticipation,
     PatchProfile,
     ReplaceReview,
+    ResubmitEditionRequest,
     StartUpload,
 )
+from .nl_search import MAX_PHRASE, text_fallback
 from .service import Problem
 from .store import Unavailable
 
@@ -33,7 +37,14 @@ IdempotencyKey = Annotated[
 
 
 def create_app(
-    service=None, verifier=None, catalog=None, participations=None, uploads=None, social=None
+    service=None,
+    verifier=None,
+    catalog=None,
+    participations=None,
+    uploads=None,
+    social=None,
+    natural_search=None,
+    edition_requests=None,
 ):
     # Runtime schema is a subset; the versioned full contract remains the canonical OpenAPI.
     app = FastAPI(
@@ -169,6 +180,46 @@ def create_app(
             raise Problem(422, "INVALID_FILTERS") from error
         return catalog.list(actor, filters, cursor)
 
+    @app.get("/editions/search", operation_id="searchEditions")
+    def search_editions(
+        actor: Actor,
+        phrase: str = Query(..., min_length=1, max_length=MAX_PHRASE),
+        limit: int = Query(20, ge=1, le=100),
+        lat: float | None = Query(None, ge=-90, le=90),
+        lon: float | None = Query(None, ge=-180, le=180),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        phrase = " ".join(phrase.split())
+        if not phrase or (lat is None) != (lon is None):
+            raise Problem(422, "INVALID_FILTERS")
+        translation = (
+            natural_search.translate(phrase, lat, lon) if natural_search else text_fallback(phrase)
+        )
+        echoed = {}
+        if translation.empty:
+            page = {"items": []}
+        else:
+            try:
+                filters = CatalogFilters(limit=limit, **translation.filters)
+            except ValidationError:
+                # Filtro vindo da IA fora dos limites do catalogo: busca por nome, nunca erro.
+                translation = text_fallback(phrase)
+                filters = CatalogFilters(limit=limit, **translation.filters)
+            page = catalog.list(actor, filters)
+            # O cliente pagina depois por GET /editions com estes filtros e o mesmo limit.
+            echoed = filters.model_dump(mode="json", exclude_none=True, exclude={"limit"})
+        return {
+            **page,
+            "search": {
+                "source": translation.source,
+                "filters": echoed,
+                "applied": list(translation.applied),
+                "notApplied": list(translation.not_applied),
+            },
+        }
+
     @app.get("/editions/{id}", operation_id="getEdition")
     def edition(id: str, actor: Actor):
         service.authorize(actor, admitted=True)
@@ -214,6 +265,48 @@ def create_app(
         if participations is None:
             raise Unavailable()
         return participations.get_deletion(actor, id)
+
+    @app.post("/edition-requests", status_code=201, operation_id="createEditionRequest")
+    def create_edition_request(
+        body: EditionRequestFields, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.create(actor, idempotency_key, body)
+
+    @app.get("/me/edition-requests", operation_id="listMyEditionRequests")
+    def list_my_edition_requests(
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=8192),
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.list_mine(actor, limit, cursor)
+
+    @app.get("/edition-requests/{id}", operation_id="getEditionRequest")
+    def get_edition_request(id: str, actor: Actor):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.get(actor, id)
+
+    @app.patch("/edition-requests/{id}", operation_id="patchEditionRequest")
+    def patch_edition_request(
+        id: str, body: PatchEditionRequest, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.patch(
+            actor, id, idempotency_key, body.model_dump(exclude_unset=True, mode="python")
+        )
+
+    @app.post("/edition-requests/{id}/resubmit", operation_id="resubmitEditionRequest")
+    def resubmit_edition_request(
+        id: str, body: ResubmitEditionRequest, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.resubmit(actor, id, idempotency_key, body.model_dump())
 
     @app.get("/me/participations", operation_id="listMyParticipations")
     def list_participations(

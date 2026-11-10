@@ -8,6 +8,7 @@ class DemoTransport {
   final editions = <Map<String, dynamic>>[];
   final participations = <String, Map<String, dynamic>>{};
   final uploads = <String, Map<String, dynamic>>{};
+  final editionRequests = <Map<String, dynamic>>[];
   int sequence = 0;
 
   DemoTransport({this.capacity = 1000}) {
@@ -410,6 +411,43 @@ class DemoTransport {
     if (account['admitted'] != true) {
       return failure('BETA_ADMISSION_REQUIRED', 403);
     }
+    if (uri.path == '/edition-requests' && method == 'POST') {
+      // Demonstracao: o pedido fica pendente; nao ha operador para aprovar.
+      final km = data['distanceKm'];
+      if (data['name'] == null ||
+          data['date'] == null ||
+          data['city'] == null) {
+        return failure('INVALID_INPUT', 422);
+      }
+      if (km is! num || km <= 0) return failure('INVALID_INPUT', 422);
+      final request = <String, dynamic>{
+        'id': 'demo-request-${++sequence}',
+        'owner': email,
+        'version': 1,
+        'status': 'pending',
+        'details': {
+          for (final key in [
+            'name',
+            'date',
+            'city',
+            'state',
+            'distanceKm',
+            'officialUrl',
+          ])
+            if (data[key] != null) key: data[key],
+        },
+      };
+      editionRequests.insert(0, request);
+      return JsonReply(201, {...request}..remove('owner'));
+    }
+    if (uri.path == '/me/edition-requests' && method == 'GET') {
+      return JsonReply(200, {
+        'items': [
+          for (final r in editionRequests)
+            if (r['owner'] == email) {...r}..remove('owner'),
+        ],
+      });
+    }
     if (uri.path == '/uploads' && method == 'POST') {
       final id = 'demo-upload-${++sequence}';
       uploads[id] = {
@@ -439,6 +477,22 @@ class DemoTransport {
         'imageReference': 'img_$id',
       });
     }
+    if (uri.path == '/editions/search') {
+      // Demonstracao sem IA: so busca pelo nome, como o servidor faz quando a IA nao responde.
+      final text = normalize(uri.queryParameters['phrase'] ?? '');
+      final found = editions
+          .where((e) => normalize(e['name'] as String).contains(text))
+          .toList();
+      return JsonReply(200, {
+        'items': found.take(20).toList(),
+        'search': {
+          'source': 'text',
+          'filters': {'q': text},
+          'applied': ['texto'],
+          'notApplied': <String>[],
+        },
+      });
+    }
     if (uri.path == '/editions') {
       final q = uri.queryParameters;
       final limit = int.tryParse(q['limit'] ?? '') ?? 20;
@@ -450,6 +504,10 @@ class DemoTransport {
           return false;
         }
         if (q['state'] != null && e['state'] != q['state']!.toUpperCase()) {
+          return false;
+        }
+        if (q['q'] != null &&
+            !normalize(e['name'] as String).contains(normalize(q['q']!))) {
           return false;
         }
         if (q['namePrefix'] != null &&

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'home_screen.dart';
+import 'edition_requests.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
 import 'notifications.dart';
@@ -81,6 +82,10 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   'PROCESSING_TIMEOUT' || 'UPLOAD_UNAVAILABLE' => 'Não foi possível enviar ou processar a foto agora (conexão ou serviço). Tente de novo; o rascunho foi preservado.',
   'IMAGE_NOT_VALID' => 'A foto escolhida ainda não foi validada. Envie a foto de novo; o rascunho foi preservado.',
   'EDITION_NOT_COMPLETABLE' => 'Esta corrida ainda não aconteceu. Só dá para concluir a participação depois da data da prova.',
+  'TOO_MANY_PENDING_REQUESTS' => 'Você já tem 10 pedidos aguardando análise. Espere a equipe responder para pedir mais.',
+  'REQUEST_NOT_EDITABLE' || 'REQUEST_NOT_REJECTED' => 'Este pedido não pode mais ser corrigido (ele já foi analisado ou reenviado). Atualize a lista.',
+  'EDITION_REQUEST_NOT_FOUND' =>
+    'Não encontramos este pedido. Volte à lista de solicitações.',
   'PARTICIPATION_NOT_DRAFT' => 'Esta participação já foi concluída ou excluída, então não pode mais ser alterada como rascunho.',
   _ => 'Não foi possível concluir agora. Pode ser falta de conexão ou instabilidade do serviço. Tente novamente em instantes.',
 };
@@ -161,6 +166,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
       key: TextEditingController(),
   };
   final form = GlobalKey<FormState>();
+  // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
+  final phrase = TextEditingController();
+  Map<String, dynamic>? searchInfo;
   final items = <Map<String, dynamic>>[];
   Map<String, Map<String, dynamic>> mine = {};
   Map<String, String> activeFilters = {};
@@ -186,6 +194,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   @override
   void dispose() {
+    phrase.dispose();
     for (final controller in fields.values) {
       controller.dispose();
     }
@@ -195,13 +204,17 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Future<void> load({bool more = false}) async {
     if (loading) return;
     if (!more && !(form.currentState?.validate() ?? true)) return;
+    final sentence = phrase.text.trim();
     if (!more) {
-      activeFilters = {
-        for (final entry in fields.entries)
-          if (entry.value.text.trim().isNotEmpty)
-            entry.key: entry.value.text.trim(),
-        'registrationStatus': ?registration,
-      };
+      activeFilters = sentence.isNotEmpty
+          ? {}
+          : {
+              for (final entry in fields.entries)
+                if (entry.value.text.trim().isNotEmpty)
+                  entry.key: entry.value.text.trim(),
+              'registrationStatus': ?registration,
+            };
+      searchInfo = null;
       items.clear();
       nextCursor = null;
     }
@@ -210,15 +223,26 @@ class _CatalogScreenState extends State<CatalogScreen> {
       error = null;
     });
     try {
+      final bySentence = !more && sentence.isNotEmpty;
       final page = await widget.gateway.request(
-        '/editions',
-        query: {
-          ...activeFilters,
-          'limit': '20',
-          if (more && nextCursor != null) 'cursor': nextCursor!,
-        },
+        bySentence ? '/editions/search' : '/editions',
+        query: bySentence
+            ? {'phrase': sentence, 'limit': '20'}
+            : {
+                ...activeFilters,
+                'limit': '20',
+                if (more && nextCursor != null) 'cursor': nextCursor!,
+              },
       );
       if (!mounted) return;
+      if (bySentence) {
+        // As proximas paginas usam GET /editions com os filtros que o servidor resolveu.
+        searchInfo = Map<String, dynamic>.from(page['search'] as Map);
+        activeFilters = {
+          for (final e in (searchInfo!['filters'] as Map).entries)
+            e.key as String: '${e.value}',
+        };
+      }
       final known = items.map((e) => e['id']).toSet();
       for (final entry
           in (page['items'] as List).cast<Map<String, dynamic>>()) {
@@ -234,8 +258,53 @@ class _CatalogScreenState extends State<CatalogScreen> {
     }
   }
 
+  /// Aviso honesto sobre a busca por frase: o que o catalogo nao filtra e quando a IA nao respondeu.
+  String? get searchNotice {
+    final info = searchInfo;
+    if (info == null) return null;
+    const labels = {
+      'preco_max_brl': 'preço',
+      'altimetria': 'altimetria',
+      'distancia_max_km': 'distância máxima',
+      'consulta_semantica': 'o tema da frase',
+      'raio_km': 'proximidade ("perto de mim")',
+    };
+    final skipped = (info['notApplied'] as List? ?? const [])
+        .map((k) => labels[k] ?? '$k')
+        .toList();
+    final parts = [
+      if (info['source'] == 'text') 'Não foi possível interpretar a frase agora. Mostrando a busca pelo nome.',
+      if (skipped.isNotEmpty)
+        'Não filtrei por: ${skipped.join(', ')}. Os resultados não consideram isso.',
+    ];
+    return parts.isEmpty ? null : parts.join('\n');
+  }
+
+  Future<void> requestRace() async {
+    final sent = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => EditionRequestFormScreen(
+          gateway: widget.gateway,
+          prefill: {
+            if (phrase.text.trim().isNotEmpty) 'name': phrase.text.trim(),
+            if ((fields['city']?.text.trim() ?? '').isNotEmpty)
+              'city': fields['city']!.text.trim(),
+          },
+        ),
+      ),
+    );
+    if (sent != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Pedido enviado. Acompanhe em "Minhas solicitações".'),
+        ),
+      );
+    }
+  }
+
   void clearSearch() {
     if (loading) return;
+    phrase.clear();
     for (final controller in fields.values) {
       controller.clear();
     }
@@ -289,6 +358,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
           onPressed: () {
             if (showFilters && activeFilters.isNotEmpty) {
               // Ao fechar a pesquisa, volta a lista completa.
+              phrase.clear();
               for (final controller in fields.values) {
                 controller.clear();
               }
@@ -327,6 +397,22 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: TextField(
+                          key: const Key('catalog-phrase'),
+                          controller: phrase,
+                          maxLength: 200,
+                          textInputAction: TextInputAction.search,
+                          onSubmitted: (_) => load(),
+                          decoration: const InputDecoration(
+                            labelText: 'Descreva a corrida',
+                            hintText: 'Ex.: meia maratona em abril',
+                            helperText: 'Com a frase preenchida, os campos abaixo são ignorados.',
+                            helperMaxLines: 2,
+                          ),
+                        ),
+                      ),
                       filter(
                         'namePrefix',
                         'Início do nome da corrida',
@@ -413,6 +499,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
               ),
             ),
           const SizedBox(height: 16),
+          if (searchNotice != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                searchNotice!,
+                key: const Key('catalog-search-notice'),
+              ),
+            ),
           if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
             TextButton(
@@ -488,6 +582,41 @@ class _CatalogScreenState extends State<CatalogScreen> {
               onPressed: loading ? null : () => load(more: true),
               child: const Text('Carregar mais'),
             ),
+          const SizedBox(height: 8),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Não encontrou a corrida?',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Peça o cadastro. A equipe pesquisa os pedidos periodicamente, confere a fonte e o resultado aparece em "Minhas solicitações".',
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton(
+                    key: const Key('catalog-request-new'),
+                    onPressed: loading ? null : requestRace,
+                    child: const Text('Pedir cadastro da corrida'),
+                  ),
+                  TextButton(
+                    key: const Key('catalog-request-mine'),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            MyEditionRequestsScreen(gateway: widget.gateway),
+                      ),
+                    ),
+                    child: const Text('Minhas solicitações'),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     ),

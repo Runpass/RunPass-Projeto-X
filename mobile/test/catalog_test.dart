@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
+import 'package:runpass/edition_requests.dart';
 import 'package:runpass/identity_gateway.dart';
 
 Map<String, dynamic> entry(String id, {bool archived = false}) => {
@@ -804,6 +805,8 @@ void main() {
     await tester.pumpAndSettle();
     await reveal(tester, find.textContaining('Já está na sua lista'));
     expect(find.textContaining('Já está na sua lista'), findsOneWidget);
+    await tester.ensureVisible(find.text('Corrida A'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Corrida A'));
     await tester.pumpAndSettle();
     // Tocar abre a página da corrida (informações e avaliações), não uma pergunta.
@@ -1127,5 +1130,340 @@ void main() {
     expect(find.text('Inscrições abertas.'), findsOneWidget);
     expect(find.text('Informação conferida em 06/11/2026.'), findsOneWidget);
     expect(find.text('Local: Parque Exemplo'), findsOneWidget);
+  });
+
+  group('busca por frase livre', () {
+    Future<void> typePhrase(WidgetTester tester, String text) async {
+      await tester.enterText(find.byKey(const Key('catalog-phrase')), text);
+      await tester.ensureVisible(find.text('Buscar'));
+      await tester.tap(find.text('Buscar'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+      'usa /editions/search, lista o resultado e pagina por /editions com os filtros do servidor',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final calls = <Uri>[];
+        final gateway = await signed((uri, method, headers, body) async {
+          calls.add(uri);
+          if (uri.path == '/editions/search') {
+            return JsonReply(200, {
+              'items': [entry('S1')],
+              'nextCursor': 'c1',
+              'search': {
+                'source': 'llm',
+                'filters': {'state': 'SP', 'distanceKm': '21.1'},
+                'applied': ['uf', 'distancia_km'],
+                'notApplied': <String>[],
+              },
+            });
+          }
+          if (uri.path == '/editions' &&
+              uri.queryParameters['cursor'] == 'c1') {
+            return JsonReply(200, {
+              'items': [entry('S2')],
+            });
+          }
+          return const JsonReply(200, {'items': []});
+        });
+        await tester.pumpWidget(
+          MaterialApp(home: CatalogScreen(gateway: gateway)),
+        );
+        await tester.pumpAndSettle();
+        await openSearch(tester);
+        await typePhrase(tester, '  meia maratona em SP  ');
+        final search = calls.lastWhere((u) => u.path == '/editions/search');
+        expect(search.queryParameters, {
+          'phrase': 'meia maratona em SP',
+          'limit': '20',
+        });
+        expect(find.text('Corrida S1'), findsOneWidget);
+        expect(find.byKey(const Key('catalog-search-notice')), findsNothing);
+        await reveal(tester, find.text('Carregar mais'));
+        await tester.tap(find.text('Carregar mais'));
+        await tester.pumpAndSettle();
+        expect(calls.last.path, '/editions');
+        expect(calls.last.queryParameters, {
+          'state': 'SP',
+          'distanceKm': '21.1',
+          'limit': '20',
+          'cursor': 'c1',
+        });
+        expect(find.text('Corrida S2'), findsOneWidget);
+      },
+    );
+
+    testWidgets('avisa o que nao foi filtrado e quando a IA nao respondeu', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      var source = 'llm';
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions/search') {
+          return JsonReply(200, {
+            'items': [entry('S1')],
+            'search': {
+              'source': source,
+              'filters': {'q': 'x'},
+              'applied': ['texto'],
+              'notApplied': ['preco_max_brl', 'altimetria'],
+            },
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      await openSearch(tester);
+      await typePhrase(tester, 'corrida barata e plana');
+      var notice = tester.widget<Text>(
+        find.byKey(const Key('catalog-search-notice')),
+      );
+      expect(notice.data, contains('Não filtrei por: preço, altimetria.'));
+      expect(notice.data, isNot(contains('interpretar a frase')));
+      source = 'text';
+      await typePhrase(tester, 'corrida barata e plana 2');
+      notice = tester.widget<Text>(
+        find.byKey(const Key('catalog-search-notice')),
+      );
+      expect(
+        notice.data,
+        contains('Não foi possível interpretar a frase agora'),
+      );
+    });
+
+    testWidgets('sem frase usa os campos de sempre, e limpar volta a lista', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <Uri>[];
+      final gateway = await signed((uri, method, headers, body) async {
+        calls.add(uri);
+        return JsonReply(200, {
+          'items': [entry('S1')],
+          if (uri.path == '/editions/search')
+            'search': {
+              'source': 'llm',
+              'filters': <String, dynamic>{},
+              'applied': <String>[],
+              'notApplied': ['consulta_semantica'],
+            },
+        });
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      await openSearch(tester);
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Cidade'),
+        'Sao Paulo',
+      );
+      await tester.ensureVisible(find.text('Buscar'));
+      await tester.tap(find.text('Buscar'));
+      await tester.pumpAndSettle();
+      expect(calls.last.path, '/editions');
+      expect(calls.last.queryParameters['city'], 'Sao Paulo');
+      await typePhrase(tester, 'qualquer coisa');
+      expect(calls.last.path, '/editions/search');
+      expect(find.byKey(const Key('catalog-search-notice')), findsOneWidget);
+      await tester.ensureVisible(find.text('Limpar busca'));
+      await tester.tap(find.text('Limpar busca'));
+      await tester.pumpAndSettle();
+      expect(calls.last.path, '/editions');
+      expect(calls.last.queryParameters.containsKey('phrase'), isFalse);
+      expect(find.byKey(const Key('catalog-search-notice')), findsNothing);
+    });
+  });
+
+  group('pedido de prova ausente', () {
+    void bigScreen(WidgetTester tester) {
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+    }
+
+    Future<void> fillRequest(WidgetTester tester) async {
+      await tester.enterText(
+        find.byKey(const Key('request-name')),
+        '  Night Run  ',
+      );
+      await tester.enterText(
+        find.byKey(const Key('request-date')),
+        '2027-03-14',
+      );
+      await tester.enterText(
+        find.byKey(const Key('request-distanceKm')),
+        '10,5',
+      );
+    }
+
+    testWidgets(
+      'o catalogo oferece o pedido e envia so o que a pessoa preencheu',
+      (tester) async {
+        bigScreen(tester);
+        final posts = <Map<String, dynamic>>[];
+        final gateway = await signed((uri, method, headers, body) async {
+          if (uri.path == '/edition-requests' && method == 'POST') {
+            posts.add(body!);
+            return JsonReply(201, {
+              'id': 'r1',
+              'version': 1,
+              'status': 'pending',
+              'details': body,
+            });
+          }
+          return const JsonReply(200, {'items': []});
+        });
+        await tester.pumpWidget(
+          MaterialApp(home: CatalogScreen(gateway: gateway)),
+        );
+        await tester.pumpAndSettle();
+        await reveal(tester, find.byKey(const Key('catalog-request-new')));
+        await tester.tap(find.byKey(const Key('catalog-request-new')));
+        await tester.pumpAndSettle();
+        expect(find.text('Pedir cadastro da corrida'), findsWidgets);
+        await fillRequest(tester);
+        await tester.tap(find.byKey(const Key('request-submit')));
+        await tester.pumpAndSettle();
+        expect(posts.single, {
+          'name': 'Night Run',
+          'date': '2027-03-14',
+          'city': 'São Paulo',
+          'state': 'SP',
+          'distanceKm': 10.5,
+        });
+        expect(find.textContaining('Pedido enviado'), findsOneWidget);
+      },
+    );
+
+    testWidgets('campos invalidos nao chegam ao servidor', (tester) async {
+      bigScreen(tester);
+      var calls = 0;
+      final gateway = await signed((uri, method, headers, body) async {
+        if (method == 'POST') calls++;
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: EditionRequestFormScreen(gateway: gateway)),
+      );
+      await tester.tap(find.byKey(const Key('request-submit')));
+      await tester.pumpAndSettle();
+      expect(find.text('Preencha este campo.'), findsNWidgets(3));
+      await tester.enterText(find.byKey(const Key('request-name')), 'X');
+      await tester.enterText(
+        find.byKey(const Key('request-date')),
+        '14/03/2027',
+      );
+      await tester.enterText(find.byKey(const Key('request-distanceKm')), '-3');
+      await tester.enterText(
+        find.byKey(const Key('request-officialUrl')),
+        'http://x.org',
+      );
+      await tester.tap(find.byKey(const Key('request-submit')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Use uma data válida no formato AAAA-MM-DD.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Informe a distância em km'), findsOneWidget);
+      expect(find.textContaining('https://'), findsWidgets);
+      expect(calls, 0);
+    });
+
+    testWidgets('erro do servidor diz o motivo e o que fazer', (tester) async {
+      bigScreen(tester);
+      final gateway = await signed((uri, method, headers, body) async {
+        return const JsonReply(409, {'code': 'TOO_MANY_PENDING_REQUESTS'});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: EditionRequestFormScreen(gateway: gateway)),
+      );
+      await fillRequest(tester);
+      await tester.tap(find.byKey(const Key('request-submit')));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Você já tem 10 pedidos aguardando análise'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+      'minhas solicitacoes mostram a situacao e permitem corrigir o rejeitado',
+      (tester) async {
+        bigScreen(tester);
+        final calls = <String>[];
+        Map<String, dynamic> request(
+          String id,
+          String status, {
+          Map<String, dynamic>? extra,
+        }) => {
+          'id': id,
+          'version': status == 'rejected' ? 2 : 1,
+          'status': status,
+          'details': {
+            'name': 'Prova $id',
+            'date': '2027-03-14',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distanceKm': 10,
+          },
+          ...?extra,
+        };
+        final gateway = await signed((uri, method, headers, body) async {
+          calls.add('$method ${uri.path}');
+          if (uri.path == '/me/edition-requests') {
+            return JsonReply(200, {
+              'items': [
+                request('a', 'pending'),
+                request('b', 'rejected', extra: {'reason': 'Data não confere'}),
+                request('c', 'linked', extra: {'linkedEditionId': 'E9'}),
+              ],
+            });
+          }
+          if (method == 'PATCH') {
+            return JsonReply(
+              200,
+              request('b', 'rejected', extra: {'version': 3}),
+            );
+          }
+          if (uri.path.endsWith('/resubmit')) {
+            return JsonReply(200, request('b', 'pending'));
+          }
+          return const JsonReply(200, {'items': []});
+        });
+        await tester.pumpWidget(
+          MaterialApp(home: MyEditionRequestsScreen(gateway: gateway)),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Em análise pela equipe'), findsOneWidget);
+        expect(find.text('Não aprovada'), findsOneWidget);
+        expect(find.text('Motivo: Data não confere'), findsOneWidget);
+        expect(find.textContaining('Esta corrida já existia'), findsOneWidget);
+        expect(find.text('Ver a corrida no catálogo'), findsOneWidget);
+        await tester.tap(find.text('Corrigir e reenviar'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('request-reason')), findsOneWidget);
+        await tester.enterText(
+          find.byKey(const Key('request-date')),
+          '2027-03-21',
+        );
+        await tester.tap(find.byKey(const Key('request-submit')));
+        await tester.pumpAndSettle();
+        expect(
+          calls.where((c) => c.startsWith('PATCH') || c.contains('resubmit')),
+          ['PATCH /edition-requests/b', 'POST /edition-requests/b/resubmit'],
+        );
+      },
+    );
   });
 }
