@@ -91,6 +91,8 @@ class MemoryBlobStore:
 
 
 VIEW_SECONDS = 5 * 60
+# Dono fixo das imagens do catalogo no bucket (`derived/catalog/...`); nunca colide com um sub de pessoa.
+CATALOG_OWNER = "catalog"
 
 
 class UploadService:
@@ -147,6 +149,22 @@ class UploadService:
             "contentType": link["contentType"],
             "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
         }
+
+    def edition_banner(self, actor, edition):
+        """Link temporario do banner aprovado da edicao (copia sanitizada guardada pelo operador)."""
+        self.identity.authorize(actor, admitted=True)
+        reference = edition.get("imageReference")
+        if not reference:
+            raise Problem(404, "IMAGE_NOT_AVAILABLE")
+        link = self.blobs.view_url(CATALOG_OWNER, reference)
+        result = {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(self.identity.clock() + timedelta(seconds=VIEW_SECONDS)),
+        }
+        if edition.get("imageCredit"):
+            result["credit"] = edition["imageCredit"]
+        return result
 
     @staticmethod
     def status(item):

@@ -6,9 +6,18 @@ from cryptography.fernet import Fernet
 from dynamo_fake import SerializingDynamoStore
 from runpass.catalog import CatalogFilters, CatalogService
 from runpass.identity import Principal
-from runpass.operator_admin import FIXTURE_ORIGIN, grant_access, load_catalog
+from runpass.operator_admin import (
+    FIXTURE_ORIGIN,
+    approve_banner,
+    grant_access,
+    load_catalog,
+    normalize_image,
+    remove_banner,
+    retire_catalog,
+)
 from runpass.service import IdentityService
 from runpass.store import MemoryStore
+from runpass.upload import MemoryBlobStore, UploadService
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/catalog.synthetic.json"
 NOW = datetime(2026, 11, 4, 15, tzinfo=timezone.utc)
@@ -89,6 +98,148 @@ class OperatorAdminTest(unittest.TestCase):
         body = self.catalog.detail(runner, "synthetic-archived")
         self.assertEqual(body["status"], "archived")
         self.assertEqual(body["archivedReason"], "unavailable")
+
+    def test_retire_archives_and_unlists_but_keeps_detail_and_is_repeatable(self):
+        grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
+        self.session()
+        load_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        first = retire_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        self.assertEqual(len(first["tiradas_da_lista"]), 5)
+        again = retire_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        self.assertEqual(again["arquivadas"], [])
+        runner = Principal("runner", True)
+        self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
+        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.assertEqual(self.catalog.list(runner, CatalogFilters())["items"], [])
+        self.assertEqual(self.catalog.detail(runner, "synthetic-sp-2026")["status"], "archived")
+
+    def test_retire_without_session_is_refused_and_ignores_unloaded(self):
+        grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
+        out = retire_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        self.assertEqual(len(out["ausentes"]), 5)
+        self.session()
+        load_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        self.store.commit(
+            {
+                ("operations", "OPERATOR#op", "SESSION#digest"): self.store.get(
+                    ("operations", "OPERATOR#op", "SESSION#digest")
+                )
+            },
+            {("operations", "OPERATOR#op", "SESSION#digest"): None},
+        )
+        with self.assertRaises(Exception):
+            retire_catalog(self.catalog, self.operator, FIXTURE.read_text())
+
+    def png(self):
+        import io
+
+        from PIL import Image
+
+        out = io.BytesIO()
+        Image.new("RGB", (640, 360), (200, 60, 20)).save(out, format="PNG")
+        return out.getvalue()
+
+    def test_banner_needs_credit_and_rights_note_and_publishes_only_after_both(self):
+        grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
+        self.session()
+        load_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        blobs = MemoryBlobStore()
+        args = (self.catalog, blobs, self.operator, "synthetic-sp-2025", self.png(), "image/png")
+        with self.assertRaises(ValueError):
+            approve_banner(
+                *args, "", "Autorizacao por e-mail do organizador em 10/11", "https://x.exemplo/o"
+            )
+        with self.assertRaises(ValueError):
+            approve_banner(*args, "Divulgação: Org", "ok", "https://x.exemplo/o")
+        self.assertEqual(blobs.derived, {})  # nada foi guardado sem credito e base de autorizacao
+        result = approve_banner(
+            *args,
+            "Divulgação: Org",
+            "Autorizacao por e-mail do organizador em 10/11",
+            "https://x.exemplo/o",
+        )
+        self.assertTrue(result["reference"].startswith("banner_"))
+        runner = Principal("runner", True)
+        self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
+        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        edition = self.catalog.detail(runner, "synthetic-sp-2025")
+        self.assertEqual(edition["imageCredit"], "Divulgação: Org")
+        link = UploadService(self.identity, blobs).edition_banner(runner, edition)
+        self.assertEqual(link["credit"], "Divulgação: Org")
+        self.assertEqual(link["contentType"], "image/png")
+        self.assertIn("banner_", link["url"])
+        # a base de autorizacao fica so na tabela de operacoes, nunca na API
+        row = self.store.get(
+            ("operations", "EDITION#synthetic-sp-2025", "IMAGE#" + result["reference"])
+        )
+        self.assertIn("Autorizacao", row["rightsNote"])
+        self.assertNotIn("rightsNote", edition)
+        other = self.catalog.detail(runner, "synthetic-sp-2024")
+        with self.assertRaises(Exception) as none:
+            UploadService(self.identity, blobs).edition_banner(runner, other)
+        self.assertEqual(none.exception.code, "IMAGE_NOT_AVAILABLE")
+
+    def test_webp_vira_jpeg_e_outros_tipos_sao_recusados(self):
+        import io
+
+        from PIL import Image
+
+        webp = io.BytesIO()
+        Image.new("RGB", (300, 150), (10, 20, 30)).save(webp, format="WEBP")
+        data, kind = normalize_image(webp.getvalue(), "image/webp")
+        self.assertEqual(kind, "image/jpeg")
+        self.assertEqual(Image.open(io.BytesIO(data)).format, "JPEG")
+        self.assertEqual(normalize_image(b"x", "image/png"), (b"x", "image/png"))
+        with self.assertRaises(ValueError):
+            normalize_image(b"x", "image/gif")
+        with self.assertRaises(ValueError):
+            normalize_image(b"nao e webp", "image/webp")
+
+    def test_remove_banner_publishes_a_version_without_image_and_keeps_the_audit_row(self):
+        grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
+        self.session()
+        load_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        blobs = MemoryBlobStore()
+        done = approve_banner(
+            self.catalog, blobs, self.operator, "synthetic-sp-2025", self.png(), "image/png",
+            "Divulgação: Org", "Autorizacao por e-mail do organizador", "https://x.exemplo/o",
+        )  # fmt: skip
+        with self.assertRaises(ValueError):
+            remove_banner(self.catalog, self.operator, "synthetic-sp-2024", "https://x.exemplo/o")
+        result = remove_banner(
+            self.catalog, self.operator, "synthetic-sp-2025", "https://x.exemplo/o"
+        )
+        self.assertEqual(result["version"], 3)
+        runner = Principal("runner", True)
+        self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
+        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        edition = self.catalog.detail(runner, "synthetic-sp-2025")
+        self.assertNotIn("imageReference", edition)
+        self.assertNotIn("imageCredit", edition)
+        with self.assertRaises(Exception) as gone:
+            UploadService(self.identity, blobs).edition_banner(runner, edition)
+        self.assertEqual(gone.exception.code, "IMAGE_NOT_AVAILABLE")
+        row = ("operations", "EDITION#synthetic-sp-2025", "IMAGE#" + done["reference"])
+        self.assertIsNotNone(self.store.get(row))  # auditoria preservada
+
+    def test_banner_refuses_a_file_that_is_not_the_declared_image(self):
+        grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
+        self.session()
+        load_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        blobs = MemoryBlobStore()
+        with self.assertRaises(Exception):
+            approve_banner(
+                self.catalog,
+                blobs,
+                self.operator,
+                "synthetic-sp-2025",
+                b"<html>nao e imagem</html>",
+                "image/png",
+                "Divulgação: Org",
+                "Autorizacao por e-mail do organizador",
+                "https://x.exemplo/o",
+            )
+        self.assertEqual(blobs.derived, {})
 
     def test_update_works_with_dynamodb_decimal_versions(self):
         # DynamoDB devolve numeros como Decimal; a versao esperada precisa virar inteiro.

@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/demo_transport.dart';
-import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/main.dart';
 
@@ -98,17 +97,13 @@ void main() {
       await tester.tap(find.byKey(const Key('catalog-search-toggle')));
       await tester.pumpAndSettle();
       expect(find.text('Encontre sua próxima conquista'), findsOneWidget);
+      // Ordem padrão: mais recentes primeiro (o seletor aparece com a lista carregada).
       await tester.scrollUntilVisible(
-        find.text('Carregar mais').hitTestable(),
-        400,
-        scrollable: find
-            .descendant(
-              of: find.byType(CatalogScreen),
-              matching: find.byType(Scrollable),
-            )
-            .first,
+        find.byKey(const Key('catalog-sort')),
+        300,
+        scrollable: find.byType(Scrollable).first,
       );
-      expect(find.text('Carregar mais'), findsOneWidget);
+      expect(find.byKey(const Key('catalog-sort')), findsOneWidget);
       await tester.tap(find.text('Início'));
       await tester.pumpAndSettle();
       // The demo feed carries fictional posts by other runners.

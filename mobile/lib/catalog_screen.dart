@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'agenda.dart';
+import 'friends.dart';
 import 'home_screen.dart';
+import 'edition_requests.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
 import 'notifications.dart';
@@ -81,6 +86,10 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   'PROCESSING_TIMEOUT' || 'UPLOAD_UNAVAILABLE' => 'Não foi possível enviar ou processar a foto agora (conexão ou serviço). Tente de novo; o rascunho foi preservado.',
   'IMAGE_NOT_VALID' => 'A foto escolhida ainda não foi validada. Envie a foto de novo; o rascunho foi preservado.',
   'EDITION_NOT_COMPLETABLE' => 'Esta corrida ainda não aconteceu. Só dá para concluir a participação depois da data da prova.',
+  'TOO_MANY_PENDING_REQUESTS' => 'Você já tem 10 pedidos aguardando análise. Espere a equipe responder para pedir mais.',
+  'REQUEST_NOT_EDITABLE' || 'REQUEST_NOT_REJECTED' => 'Este pedido não pode mais ser corrigido (ele já foi analisado ou reenviado). Atualize a lista.',
+  'EDITION_REQUEST_NOT_FOUND' =>
+    'Não encontramos este pedido. Volte à lista de solicitações.',
   'PARTICIPATION_NOT_DRAFT' => 'Esta participação já foi concluída ou excluída, então não pode mais ser alterada como rascunho.',
   _ => 'Não foi possível concluir agora. Pode ser falta de conexão ou instabilidade do serviço. Tente novamente em instantes.',
 };
@@ -141,26 +150,158 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
   return mine;
 }
 
+/// Miniatura da corrida na lista: a imagem aprovada (banner ou logo) quando existe; senão o ícone.
+/// Só corridas com `imageReference` pedem o link, e ele fica em cache por alguns minutos.
+class EditionThumb extends StatefulWidget {
+  final IdentityGateway gateway;
+  final Map<String, dynamic> edition;
+  final bool archived;
+  const EditionThumb({
+    super.key,
+    required this.gateway,
+    required this.edition,
+    this.archived = false,
+  });
+
+  /// Links temporários já obtidos (corrida -> url, instante), para a rolagem não repetir pedidos.
+  static final Map<String, (String, DateTime)> cache = {};
+
+  @override
+  State<EditionThumb> createState() => _EditionThumbState();
+}
+
+class _EditionThumbState extends State<EditionThumb> {
+  String? url;
+
+  @override
+  void initState() {
+    super.initState();
+    resolve();
+  }
+
+  Future<void> resolve() async {
+    final id = widget.edition['id'] as String;
+    if (widget.edition['imageReference'] == null) return;
+    final hit = EditionThumb.cache[id];
+    if (hit != null && DateTime.now().difference(hit.$2).inMinutes < 4) {
+      url = hit.$1;
+      return;
+    }
+    try {
+      final link = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(id)}/banner',
+      );
+      final found = link['url'] as String?;
+      if (found == null) return;
+      EditionThumb.cache[id] = (found, DateTime.now());
+      if (mounted) setState(() => url = found);
+    } on Exception {
+      // Sem imagem, fica o ícone: a lista nunca depende dela.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final archived = widget.archived;
+    final icon = Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: archived
+            ? context.panelStrong
+            : runPassOrange.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Icon(
+        archived ? Icons.inventory_2_outlined : Icons.directions_run,
+        color: archived ? context.archivedText : runPassOrange,
+      ),
+    );
+    final shown = url;
+    if (shown == null) return icon;
+    return ClipRRect(
+      key: const Key('edition-thumb'),
+      borderRadius: BorderRadius.circular(14),
+      child: Image.network(
+        shown,
+        width: 48,
+        height: 48,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => icon,
+      ),
+    );
+  }
+}
+
+/// Intervalo (`from`, `to`) em AAAA-MM-DD do ano escolhido no filtro, ou null se não for um ano.
+({String from, String to})? yearRange(String raw) {
+  final year = int.tryParse(raw.trim());
+  if (year == null || year < 1990 || year > 2100) return null;
+  return (from: '$year-01-01', to: '$year-12-31');
+}
+
+/// Anos oferecidos no filtro: do próximo ano até 2024, do mais recente para o mais antigo.
+List<int> filterYears([DateTime? now]) {
+  final top = (now ?? DateTime.now()).year + 1;
+  return [for (var y = top; y >= 2024; y--) y];
+}
+
+const brazilianStates = {
+  'AC': 'Acre',
+  'AL': 'Alagoas',
+  'AP': 'Amapá',
+  'AM': 'Amazonas',
+  'BA': 'Bahia',
+  'CE': 'Ceará',
+  'DF': 'Distrito Federal',
+  'ES': 'Espírito Santo',
+  'GO': 'Goiás',
+  'MA': 'Maranhão',
+  'MT': 'Mato Grosso',
+  'MS': 'Mato Grosso do Sul',
+  'MG': 'Minas Gerais',
+  'PA': 'Pará',
+  'PB': 'Paraíba',
+  'PR': 'Paraná',
+  'PE': 'Pernambuco',
+  'PI': 'Piauí',
+  'RJ': 'Rio de Janeiro',
+  'RN': 'Rio Grande do Norte',
+  'RS': 'Rio Grande do Sul',
+  'RO': 'Rondônia',
+  'RR': 'Roraima',
+  'SC': 'Santa Catarina',
+  'SP': 'São Paulo',
+  'SE': 'Sergipe',
+  'TO': 'Tocantins',
+}; // fmt: skip
+
 class CatalogScreen extends StatefulWidget {
   final IdentityGateway gateway;
-  const CatalogScreen({super.key, required this.gateway});
+
+  /// Ordem inicial da lista (`dateDesc` por padrão; `dateAsc` usa só a paginação do servidor).
+  final String initialSort;
+  const CatalogScreen({
+    super.key,
+    required this.gateway,
+    this.initialSort = 'dateDesc',
+  });
   @override
   State<CatalogScreen> createState() => _CatalogScreenState();
 }
 
 class _CatalogScreenState extends State<CatalogScreen> {
   final fields = {
-    for (final key in [
-      'namePrefix',
-      'city',
-      'state',
-      'distanceKm',
-      'dateFrom',
-      'dateTo',
-    ])
+    for (final key in ['namePrefix', 'city', 'state', 'distanceKm', 'year'])
       key: TextEditingController(),
   };
   final form = GlobalKey<FormState>();
+  // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
+  List<Map<String, dynamic>> suggestions = [];
+  Timer? suggestTimer;
+  // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
+  final phrase = TextEditingController();
+  Map<String, dynamic>? searchInfo;
   final items = <Map<String, dynamic>>[];
   Map<String, Map<String, dynamic>> mine = {};
   Map<String, String> activeFilters = {};
@@ -186,39 +327,163 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   @override
   void dispose() {
+    suggestTimer?.cancel();
+    phrase.dispose();
     for (final controller in fields.values) {
       controller.dispose();
     }
     super.dispose();
   }
 
+  /// Ordem da lista: `dateDesc` (padrão: mais recentes primeiro), `dateAsc` (a do servidor) ou
+  /// `rating` (ranking das melhores). Só `dateAsc` usa a paginação do servidor com limite 20.
+  late String sort = widget.initialSort;
+
+  /// Itens por página da busca atual. O cursor do servidor é amarrado aos filtros (inclui o limite),
+  /// então o limite não pode mudar no meio de uma busca.
+  late String pageLimit = widget.initialSort == 'dateAsc' ? '20' : '100';
+
+  static num? scoreOf(Map<String, dynamic> edition) {
+    final raw = (edition['runScore'] as Map?)?['value'];
+    return raw is num ? raw : num.tryParse('${raw ?? ''}');
+  }
+
+  static int reviewsOf(Map<String, dynamic> edition) =>
+      ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
+
+  /// Itens na ordem escolhida. Sem nota, a prova vai para o fim do ranking.
+  List<Map<String, dynamic>> get view {
+    final list = [...items];
+    int byDate(Map<String, dynamic> a, Map<String, dynamic> b) =>
+        (b['date'] as String).compareTo(a['date'] as String);
+    if (sort == 'dateDesc') {
+      list.sort(byDate);
+    } else if (sort == 'rating') {
+      list.sort((a, b) {
+        final sa = scoreOf(a), sb = scoreOf(b);
+        if (sa == null && sb == null) return byDate(a, b);
+        if (sa == null) return 1;
+        if (sb == null) return -1;
+        final c = sb.compareTo(sa);
+        return c != 0 ? c : (reviewsOf(b).compareTo(reviewsOf(a)));
+      });
+    }
+    return list;
+  }
+
+  /// Ordens por data decrescente e por nota precisam do conjunto todo: carrega as próximas páginas.
+  Future<void> loadRest() async {
+    var pages = 0;
+    while (mounted && sort != 'dateAsc' && nextCursor != null && pages++ < 5) {
+      await load(more: true);
+      if (error != null) return;
+    }
+  }
+
+  Future<void> changeSort(String value) async {
+    setState(() => sort = value);
+    // Páginas já carregadas com limite 20 não continuam com 100: recomeça a mesma busca.
+    if (value != 'dateAsc' && pageLimit != '100' && nextCursor != null) {
+      await load();
+    } else {
+      await loadRest();
+    }
+  }
+
+  void onPhraseChanged(String text) {
+    setState(() {});
+    suggestTimer?.cancel();
+    if (text.trim().length < 2) {
+      if (suggestions.isNotEmpty) setState(() => suggestions = []);
+      return;
+    }
+    suggestTimer = Timer(
+      const Duration(milliseconds: 400),
+      () => suggest(text.trim()),
+    );
+  }
+
+  Future<void> suggest(String text) async {
+    try {
+      final page = await widget.gateway.request(
+        '/editions',
+        query: {'q': text, 'limit': '8'},
+      );
+      // Resposta atrasada de um texto que já mudou é descartada.
+      if (!mounted || phrase.text.trim() != text) return;
+      setState(
+        () => suggestions = (page['items'] as List? ?? const [])
+            .cast<Map<String, dynamic>>(),
+      );
+    } on Exception {
+      // Sugestão é só ajuda: nunca mostra erro.
+      if (mounted) {
+        setState(() => suggestions = []);
+      }
+    }
+  }
+
+  Future<void> openSuggestion(Map<String, dynamic> edition) async {
+    setState(() => suggestions = []);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EditionScreen(
+          gateway: widget.gateway,
+          editionId: edition['id'] as String,
+        ),
+      ),
+    );
+    loadMine();
+  }
+
   Future<void> load({bool more = false}) async {
     if (loading) return;
-    if (!more && !(form.currentState?.validate() ?? true)) return;
+    final sentence = phrase.text.trim();
     if (!more) {
-      activeFilters = {
-        for (final entry in fields.entries)
-          if (entry.value.text.trim().isNotEmpty)
-            entry.key: entry.value.text.trim(),
-        'registrationStatus': ?registration,
-      };
+      suggestTimer?.cancel();
+      suggestions = [];
+      activeFilters = sentence.isNotEmpty
+          ? {}
+          : {
+              for (final entry in fields.entries)
+                if (entry.value.text.trim().isNotEmpty && entry.key != 'year')
+                  entry.key: entry.value.text.trim(),
+              if (yearRange(fields['year']!.text) case final range?) ...{
+                'dateFrom': range.from,
+                'dateTo': range.to,
+              },
+              'registrationStatus': ?registration,
+            };
+      searchInfo = null;
       items.clear();
       nextCursor = null;
+      pageLimit = sort == 'dateAsc' ? '20' : '100';
     }
     setState(() {
       loading = true;
       error = null;
     });
     try {
+      final bySentence = !more && sentence.isNotEmpty;
       final page = await widget.gateway.request(
-        '/editions',
-        query: {
-          ...activeFilters,
-          'limit': '20',
-          if (more && nextCursor != null) 'cursor': nextCursor!,
-        },
+        bySentence ? '/editions/search' : '/editions',
+        query: bySentence
+            ? {'phrase': sentence, 'limit': '20'}
+            : {
+                ...activeFilters,
+                'limit': pageLimit,
+                if (more && nextCursor != null) 'cursor': nextCursor!,
+              },
       );
       if (!mounted) return;
+      if (bySentence) {
+        // As proximas paginas usam GET /editions com os filtros que o servidor resolveu.
+        searchInfo = Map<String, dynamic>.from(page['search'] as Map);
+        activeFilters = {
+          for (final e in (searchInfo!['filters'] as Map).entries)
+            e.key as String: '${e.value}',
+        };
+      }
       final known = items.map((e) => e['id']).toSet();
       for (final entry
           in (page['items'] as List).cast<Map<String, dynamic>>()) {
@@ -232,14 +497,68 @@ class _CatalogScreenState extends State<CatalogScreen> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
+    if (!more && error == null) await loadRest();
+  }
+
+  /// Aviso honesto sobre a busca por frase: o que o catalogo nao filtra e quando a IA nao respondeu.
+  String? get searchNotice {
+    final info = searchInfo;
+    if (info == null) return null;
+    const labels = {
+      'preco_max_brl': 'preço',
+      'altimetria': 'altimetria',
+      'distancia_max_km': 'distância máxima',
+      'consulta_semantica': 'o tema da frase',
+      'raio_km': 'proximidade ("perto de mim")',
+    };
+    final skipped = (info['notApplied'] as List? ?? const [])
+        .map((k) => labels[k] ?? '$k')
+        .toList();
+    final parts = [
+      if (info['source'] == 'text') 'Não foi possível interpretar a frase agora. Mostrando a busca pelo nome.',
+      if (skipped.isNotEmpty)
+        'Não filtrei por: ${skipped.join(', ')}. Os resultados não consideram isso.',
+    ];
+    return parts.isEmpty ? null : parts.join('\n');
+  }
+
+  void openMyRequests() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+    ),
+  );
+
+  Future<void> requestRace() async {
+    final sent = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => EditionRequestFormScreen(
+          gateway: widget.gateway,
+          prefill: {
+            if (phrase.text.trim().isNotEmpty) 'name': phrase.text.trim(),
+            if ((fields['city']?.text.trim() ?? '').isNotEmpty)
+              'city': fields['city']!.text.trim(),
+          },
+        ),
+      ),
+    );
+    if (sent != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Pedido enviado. Acompanhe em "Minhas solicitações".'),
+        ),
+      );
+    }
   }
 
   void clearSearch() {
     if (loading) return;
+    phrase.clear();
+    // Primeiro o reset do formulário (ele devolve ao seletor o valor antigo e dispara o onChanged);
+    // só depois limpo os campos, para o último valor valer.
+    form.currentState?.reset();
     for (final controller in fields.values) {
       controller.clear();
     }
-    form.currentState?.reset();
     setState(() {
       registration = null;
       registrationEpoch++;
@@ -252,30 +571,22 @@ class _CatalogScreenState extends State<CatalogScreen> {
     String label, {
     String? Function(String)? validate,
     int? maxLength,
+    String? hint,
+    bool required = false,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: TextFormField(
       controller: fields[key],
       maxLength: maxLength,
-      decoration: InputDecoration(labelText: label),
+      decoration: InputDecoration(labelText: label, helperText: hint),
       keyboardType: key == 'distanceKm'
           ? const TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
       validator: (value) => value == null || value.trim().isEmpty
-          ? null
+          ? (required ? 'Informe o nome da corrida.' : null)
           : validate?.call(value.trim()),
     ),
   );
-
-  String? dateValidator(String value) {
-    final parsed = DateTime.tryParse(value);
-    if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value) ||
-        parsed == null ||
-        parsed.toIso8601String().substring(0, 10) != value) {
-      return 'Use uma data válida no formato AAAA-MM-DD.';
-    }
-    return null;
-  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -283,12 +594,24 @@ class _CatalogScreenState extends State<CatalogScreen> {
       title: const RunPassWordmark(compact: true),
       actions: [
         IconButton(
+          key: const Key('catalog-agenda'),
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Minha agenda',
+          icon: const Icon(Icons.calendar_month_rounded),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => AgendaScreen(gateway: widget.gateway),
+            ),
+          ),
+        ),
+        IconButton(
           key: const Key('catalog-search-toggle'),
-          tooltip: showFilters ? 'Fechar pesquisa' : 'Pesquisar corridas',
+          visualDensity: VisualDensity.compact,
+          tooltip: showFilters ? 'Fechar filtros' : 'Filtrar corridas',
           icon: Icon(showFilters ? Icons.close_rounded : Icons.search_rounded),
           onPressed: () {
             if (showFilters && activeFilters.isNotEmpty) {
-              // Ao fechar a pesquisa, volta a lista completa.
+              // Ao fechar os filtros, volta a lista completa (a frase digitada fica).
               for (final controller in fields.values) {
                 controller.clear();
               }
@@ -308,6 +631,100 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: TextField(
+              key: const Key('catalog-phrase'),
+              controller: phrase,
+              maxLength: 200,
+              buildCounter: (
+                _, {
+                required currentLength,
+                required isFocused,
+                maxLength,
+              }) => null,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) {
+                suggestTimer?.cancel();
+                setState(() => suggestions = []);
+                load();
+              },
+              onChanged: onPhraseChanged,
+              decoration: InputDecoration(
+                labelText: 'Descreva a corrida',
+                hintText: 'Ex.: meia maratona em abril',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: phrase.text.isEmpty
+                    ? null
+                    : IconButton(
+                        key: const Key('catalog-phrase-clear'),
+                        tooltip: 'Limpar a frase',
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: loading
+                            ? null
+                            : () {
+                                phrase.clear();
+                                suggestTimer?.cancel();
+                                setState(() => suggestions = []);
+                                load();
+                              },
+                      ),
+              ),
+            ),
+          ),
+          // Sempre visíveis (não ficam escondidos atrás da lupa): pedir cadastro e acompanhar os pedidos.
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Wrap(
+              spacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  key: const Key('catalog-request-new'),
+                  onPressed: loading ? null : requestRace,
+                  icon: const Icon(Icons.add_circle_outline),
+                  label: const Text('Pedir cadastro da corrida'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('catalog-request-mine'),
+                  onPressed: openMyRequests,
+                  icon: const Icon(Icons.assignment_outlined),
+                  label: const Text('Minhas solicitações'),
+                ),
+              ],
+            ),
+          ),
+          if (suggestions.isNotEmpty && phrase.text.trim().length >= 2)
+            Card(
+              key: const Key('catalog-suggestions'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      suggestions.length > 1
+                          ? 'Encontramos ${suggestions.length} corridas. Escolha uma:'
+                          : 'Encontramos esta corrida:',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  for (final edition in suggestions)
+                    ListTile(
+                      key: Key('suggestion-${edition['id']}'),
+                      dense: true,
+                      leading: const Icon(
+                        Icons.directions_run,
+                        color: runPassOrange,
+                      ),
+                      title: Text(edition['name'] as String),
+                      subtitle: Text(
+                        '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
+                      ),
+                      onTap: () => openSuggestion(edition),
+                    ),
+                ],
+              ),
+            ),
           if (showFilters)
             Card(
               child: Padding(
@@ -326,25 +743,51 @@ class _CatalogScreenState extends State<CatalogScreen> {
                           ),
                         ),
                       ),
+                      const SizedBox(height: 4),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Se houver uma frase acima, estes filtros são ignorados.',
+                        ),
+                      ),
                       const SizedBox(height: 12),
                       filter(
                         'namePrefix',
-                        'Início do nome da corrida',
+                        'Nome da corrida (obrigatório)',
                         maxLength: 160,
+                        required: true,
                       ),
                       filter('city', 'Cidade', maxLength: 100),
-                      filter(
-                        'state',
-                        'Estado (UF)',
-                        maxLength: 2,
-                        validate: (value) =>
-                            RegExp(r'^[A-Za-z]{2}$').hasMatch(value)
-                            ? null
-                            : 'Informe a UF.',
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: DropdownButtonFormField<String?>(
+                          key: ValueKey('filter-state-$registrationEpoch'),
+                          initialValue: fields['state']!.text.isEmpty
+                              ? null
+                              : fields['state']!.text,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Estado (UF)',
+                          ),
+                          items: [
+                            const DropdownMenuItem(
+                              value: null,
+                              child: Text('Todos os estados'),
+                            ),
+                            for (final uf in brazilianStates.entries)
+                              DropdownMenuItem(
+                                value: uf.key,
+                                child: Text('${uf.key} · ${uf.value}'),
+                              ),
+                          ],
+                          onChanged: (value) =>
+                              fields['state']!.text = value ?? '',
+                        ),
                       ),
                       filter(
                         'distanceKm',
-                        'Distância em km',
+                        'Distância em km (opcional)',
+                        hint: 'Ex.: 5, 10, 21 ou 42',
                         validate: (value) {
                           final km = double.tryParse(value);
                           return km != null && km.isFinite && km > 0
@@ -352,15 +795,27 @@ class _CatalogScreenState extends State<CatalogScreen> {
                               : 'Informe uma distância positiva, usando ponto para decimais.';
                         },
                       ),
-                      filter(
-                        'dateFrom',
-                        'Data inicial (AAAA-MM-DD)',
-                        validate: dateValidator,
-                      ),
-                      filter(
-                        'dateTo',
-                        'Data final (AAAA-MM-DD)',
-                        validate: dateValidator,
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: DropdownButtonFormField<String?>(
+                          key: ValueKey('filter-year-$registrationEpoch'),
+                          initialValue: fields['year']!.text.isEmpty
+                              ? null
+                              : fields['year']!.text,
+                          decoration: const InputDecoration(
+                            labelText: 'Ano da prova',
+                          ),
+                          items: [
+                            const DropdownMenuItem(
+                              value: null,
+                              child: Text('Qualquer ano'),
+                            ),
+                            for (final y in filterYears())
+                              DropdownMenuItem(value: '$y', child: Text('$y')),
+                          ],
+                          onChanged: (value) =>
+                              fields['year']!.text = value ?? '',
+                        ),
                       ),
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
@@ -399,7 +854,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         ),
                       ),
                       FilledButton(
-                        onPressed: loading ? null : () => load(),
+                        onPressed: loading
+                            ? null
+                            : () {
+                                // Com uma frase acima, o formulário é ignorado: nada a validar.
+                                if (phrase.text.trim().isEmpty &&
+                                    !(form.currentState?.validate() ?? true)) {
+                                  return;
+                                }
+                                load();
+                              },
                         child: const Text('Buscar'),
                       ),
                       const SizedBox(height: 8),
@@ -413,6 +877,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
               ),
             ),
           const SizedBox(height: 16),
+          if (searchNotice != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                searchNotice!,
+                key: const Key('catalog-search-notice'),
+              ),
+            ),
           if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
             TextButton(
@@ -420,6 +892,42 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
+          if (items.length > 1)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.sort, size: 20),
+                  const SizedBox(width: 8),
+                  const Text('Ordenar por'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButton<String>(
+                      key: const Key('catalog-sort'),
+                      value: sort,
+                      isExpanded: true,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'dateDesc',
+                          child: Text('Data: mais recentes'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'dateAsc',
+                          child: Text('Data: mais antigas'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'rating',
+                          child: Text('Melhores avaliadas'),
+                        ),
+                      ],
+                      onChanged: loading
+                          ? null
+                          : (value) => changeSort(value ?? 'dateAsc'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (loading) const Center(child: CircularProgressIndicator()),
           if (!loading && error == null && items.isEmpty)
             Text(
@@ -427,7 +935,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   ? 'Nenhuma corrida encontrada com esses filtros.'
                   : 'Nenhuma corrida nesta página. Continue a busca.',
             ),
-          for (final edition in items)
+          if (!loading && error == null && items.isEmpty && nextCursor == null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                key: const Key('catalog-request-empty'),
+                onPressed: requestRace,
+                child: const Text('Não encontrou? Pedir cadastro da corrida'),
+              ),
+            ),
+          for (final (index, edition) in view.indexed)
             Card(
               color: edition['status'] == 'archived' ? context.panelCard : null,
               child: ListTile(
@@ -435,29 +952,21 @@ class _CatalogScreenState extends State<CatalogScreen> {
                     ? context.archivedText
                     : null,
                 contentPadding: const EdgeInsets.all(16),
-                leading: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: edition['status'] == 'archived'
-                        ? context.panelStrong
-                        : runPassOrange.withValues(alpha: .12),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(
-                    edition['status'] == 'archived'
-                        ? Icons.inventory_2_outlined
-                        : Icons.directions_run,
-                    color: edition['status'] == 'archived'
-                        ? context.archivedText
-                        : runPassOrange,
-                  ),
+                leading: EditionThumb(
+                  gateway: widget.gateway,
+                  edition: edition,
+                  archived: edition['status'] == 'archived',
                 ),
-                title: Text(edition['name'] as String),
+                title: Text(
+                  sort == 'rating' && scoreOf(edition) != null
+                      ? '#${index + 1} · ${edition['name']}'
+                      : edition['name'] as String,
+                ),
                 subtitle: Text(
                   '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}\n'
                   '${(edition['distances'] as List).map((d) => '${d['kilometers']} km').join(' · ')}'
                   '${edition['status'] == 'archived' ? '\nArquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}' : ''}'
+                  '${scoreOf(edition) != null ? '\n★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações' : ''}'
                   '${mine.containsKey(edition['id']) ? '\nJá está na sua lista' : ''}',
                 ),
                 isThreeLine: true,
@@ -511,7 +1020,15 @@ class _EditionScreenState extends State<EditionScreen> {
   String? selectedDistance, error;
   bool loading = true, saving = false, loadingReviews = false;
   List<Map<String, dynamic>>? reviews;
+  Map<String, dynamic>? reviewSummary;
+  List<Map<String, dynamic>>? participants;
+  int participantTotal = 0;
+  bool loadingParticipants = false;
+  bool showAllReviews = false;
   Map<String, dynamic>? mine;
+  Map<String, dynamic>? plan;
+  bool savingPlan = false;
+  String? bannerUrl, bannerCredit;
   Map<String, dynamic>? myReview;
 
   static const criteria = [
@@ -550,8 +1067,180 @@ class _EditionScreenState extends State<EditionScreen> {
     }
     if (mounted && edition != null) {
       loadReviews();
+      loadBanner();
+      loadParticipants();
       loadMyParticipation();
+      loadPlan();
     }
+  }
+
+  /// Banner aprovado pela equipe (cópia guardada pelo RunPass, com crédito). Sem banner ou com
+  /// falha, o degradê de sempre continua: a imagem nunca bloqueia a tela.
+  Future<void> loadBanner() async {
+    if (edition?['imageReference'] == null) return;
+    try {
+      final link = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/banner',
+      );
+      if (!mounted) return;
+      setState(() {
+        bannerUrl = link['url'] as String?;
+        bannerCredit =
+            link['credit'] as String? ?? edition?['imageCredit'] as String?;
+      });
+    } on Exception {
+      if (mounted) setState(() => bannerUrl = null);
+    }
+  }
+
+  /// Quem concluiu esta corrida. O servidor só lista perfis que a pessoa pode ver; `total` é a
+  /// contagem de todas as conclusões, sem identificar ninguém.
+  Future<void> loadParticipants() async {
+    setState(() => loadingParticipants = true);
+    try {
+      final page = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/participants',
+        query: {'limit': '50'},
+      );
+      if (mounted) {
+        participants = (page['items'] as List? ?? const [])
+            .cast<Map<String, dynamic>>();
+        participantTotal = (page['total'] as num?)?.toInt() ?? 0;
+      }
+    } on Exception {
+      if (mounted) participants = null;
+    } finally {
+      if (mounted) setState(() => loadingParticipants = false);
+    }
+  }
+
+  /// Situação da pessoa nesta corrida: `wanted` (quero correr) ou `registered` (inscrito).
+  Future<void> loadPlan() async {
+    try {
+      final found = await widget.gateway.request(
+        '/me/race-plans/${Uri.encodeComponent(widget.editionId)}',
+      );
+      if (mounted) setState(() => plan = found);
+    } on Exception {
+      if (mounted) setState(() => plan = null);
+    }
+  }
+
+  /// Marca ou, se já estava marcado, desmarca (toque de novo para tirar).
+  Future<void> setPlan(String status) async {
+    if (savingPlan) return;
+    setState(() {
+      savingPlan = true;
+      error = null;
+    });
+    final id = Uri.encodeComponent(widget.editionId);
+    try {
+      if (plan?['status'] == status) {
+        await widget.gateway.request('/me/race-plans/$id', method: 'DELETE');
+        if (mounted) setState(() => plan = null);
+      } else {
+        final saved = await widget.gateway.request(
+          '/me/race-plans/$id',
+          method: 'PUT',
+          body: {'status': status, 'distanceId': ?selectedDistance},
+        );
+        if (mounted) setState(() => plan = saved);
+      }
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = catalogError(issue));
+    } on Exception {
+      if (mounted) {
+        setState(
+          () => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => savingPlan = false);
+    }
+  }
+
+  /// Escolha da situação: quero correr, inscrito (vou correr) e já corri (registro da participação).
+  Widget situation(Map<String, dynamic> body) {
+    final past = body['status'] == 'past';
+    final archived = body['status'] == 'archived';
+    final current = plan?['status'] as String?;
+    Widget choice(
+      String key,
+      IconData icon,
+      String label,
+      bool selected,
+      VoidCallback? onTap,
+    ) => selected
+        ? FilledButton.icon(
+            key: Key(key),
+            onPressed: onTap,
+            icon: Icon(icon),
+            label: Text(label),
+          )
+        : OutlinedButton.icon(
+            key: Key(key),
+            onPressed: onTap,
+            icon: Icon(icon),
+            label: Text(label),
+          );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Minha situação nesta corrida',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (!past && !archived)
+              choice(
+                'plan-wanted',
+                current == 'wanted' ? Icons.favorite : Icons.favorite_border,
+                'Quero correr',
+                current == 'wanted',
+                savingPlan ? null : () => setPlan('wanted'),
+              ),
+            if (!past && !archived)
+              choice(
+                'plan-registered',
+                Icons.how_to_reg_outlined,
+                'Inscrito',
+                current == 'registered',
+                savingPlan ? null : () => setPlan('registered'),
+              ),
+            if (mine == null && selectedDistance != null && !archived)
+              choice(
+                'plan-ran',
+                Icons.directions_run,
+                saving ? 'Salvando...' : 'Já corri',
+                false,
+                saving ? null : createDraft,
+              ),
+          ],
+        ),
+        if (current != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              current == 'wanted'
+                  ? 'Esta corrida está na sua agenda, em Desejadas.'
+                  : 'Esta corrida está na sua agenda, em Inscritas.',
+              key: const Key('plan-note'),
+            ),
+          ),
+        if (!past && !archived && selectedDistance == null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Escolha uma distância para registrar que você já correu.',
+              style: TextStyle(color: context.muted),
+            ),
+          ),
+      ],
+    );
   }
 
   /// Participação desta pessoa nesta edição, se já existir (rascunho ou concluída).
@@ -634,9 +1323,13 @@ class _EditionScreenState extends State<EditionScreen> {
       if (mounted) {
         reviews = (page['items'] as List? ?? const [])
             .cast<Map<String, dynamic>>();
+        reviewSummary = (page['summary'] as Map?)?.cast<String, dynamic>();
       }
     } on Exception {
-      if (mounted) reviews = null;
+      if (mounted) {
+        reviews = null;
+        reviewSummary = null;
+      }
     } finally {
       if (mounted) setState(() => loadingReviews = false);
     }
@@ -668,68 +1361,109 @@ class _EditionScreenState extends State<EditionScreen> {
     (_) => '.',
   );
 
-  Widget hero(Map<String, dynamic> body) => Container(
-    height: 200,
-    width: double.infinity,
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+  Widget hero(Map<String, dynamic> body) {
+    final wanted = plan?['status'] == 'wanted';
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 170),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+        ),
       ),
-    ),
-    child: SafeArea(
-      bottom: false,
       child: Stack(
         children: [
-          Positioned(
-            left: 8,
-            top: 4,
-            child: IconButton(
-              tooltip: 'Voltar',
-              color: Colors.white,
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => Navigator.of(context).maybePop(),
-            ),
-          ),
-          Positioned(
-            right: 8,
-            top: 4,
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: 'Quero correr',
-                  color: Colors.white,
-                  icon: const Icon(Icons.favorite_border),
-                  onPressed: () => soon('Lista Quero correr em breve.'),
-                ),
-                IconButton(
-                  tooltip: 'Compartilhar',
-                  color: Colors.white,
-                  icon: const Icon(Icons.ios_share),
-                  onPressed: () => soon('Compartilhamento em breve.'),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            left: 20,
-            right: 20,
-            bottom: 20,
-            child: Text(
-              (body['name'] as String).toUpperCase(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: 24,
-                letterSpacing: 1,
+          if (bannerUrl != null)
+            Positioned.fill(
+              child: Image.network(
+                bannerUrl!,
+                key: const Key('hero-image'),
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
               ),
+            ),
+          if (bannerUrl != null)
+            const Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0x66000000), Color(0xCC000000)],
+                  ),
+                ),
+              ),
+            ),
+          SafeArea(
+            bottom: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Os ícones ficam numa linha própria: o título longo nunca passa por cima deles.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Voltar',
+                        color: Colors.white,
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => Navigator.of(context).maybePop(),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        key: const Key('hero-wanted'),
+                        tooltip: wanted
+                            ? 'Tirar de Quero correr'
+                            : 'Quero correr',
+                        color: Colors.white,
+                        icon: Icon(
+                          wanted ? Icons.favorite : Icons.favorite_border,
+                        ),
+                        onPressed: savingPlan ? null : () => setPlan('wanted'),
+                      ),
+                      IconButton(
+                        tooltip: 'Compartilhar',
+                        color: Colors.white,
+                        icon: const Icon(Icons.ios_share),
+                        onPressed: () => soon('Compartilhamento em breve.'),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  child: Text(
+                    (body['name'] as String).toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 24,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ),
+                if (bannerUrl != null && bannerCredit != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                    child: Text(
+                      'Foto: $bannerCredit',
+                      key: const Key('hero-credit'),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],
       ),
-    ),
-  );
+    );
+  }
 
   Widget distanceSelector(Map<String, dynamic> body) {
     final archived = body['status'] == 'archived';
@@ -784,11 +1518,6 @@ class _EditionScreenState extends State<EditionScreen> {
   Widget header(Map<String, dynamic> body) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(
-        body['name'] as String,
-        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
-      ),
-      const SizedBox(height: 8),
       Row(
         children: [
           const Icon(Icons.calendar_today_outlined, size: 16),
@@ -873,13 +1602,9 @@ class _EditionScreenState extends State<EditionScreen> {
                 : 'Editar meu rascunho',
           ),
         ),
-      ] else if (selectedDistance != null) ...[
-        const SizedBox(height: 16),
-        FilledButton(
-          onPressed: saving ? null : createDraft,
-          child: Text(saving ? 'Salvando...' : 'Criar rascunho'),
-        ),
       ],
+      const SizedBox(height: 16),
+      situation(body),
       // Informacoes da fonte ao fim da aba, sem empurrar as acoes da pessoa.
       const SizedBox(height: 16),
       if (body['venue'] != null)
@@ -968,6 +1693,7 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
+  /// Item avaliado: estrelas douradas; sem avaliações ficam vazias (só o contorno).
   Widget bar(String label, IconData icon, double? value) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 7),
     child: Row(
@@ -975,17 +1701,7 @@ class _EditionScreenState extends State<EditionScreen> {
         Icon(icon, size: 20),
         const SizedBox(width: 10),
         SizedBox(width: 118, child: Text(label)),
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: (value ?? 0) / 5,
-              minHeight: 7,
-              color: runPassOrange,
-              backgroundColor: context.track,
-            ),
-          ),
-        ),
+        Expanded(child: Stars(value ?? 0, size: 20)),
         SizedBox(
           width: 42,
           child: Text(
@@ -1001,27 +1717,40 @@ class _EditionScreenState extends State<EditionScreen> {
   Widget scoreCard(Map<String, dynamic> body) {
     final score = body['runScore'] as Map<String, dynamic>?;
     final loaded = reviews ?? const <Map<String, dynamic>>[];
+    final summary = reviewSummary;
     final value =
-        (score?['value'] as num?) ??
+        (summary?['average'] as num?) ??
+        (score?['value'] is num
+            ? score!['value'] as num
+            : num.tryParse('${score?['value'] ?? ''}')) ??
         (loaded.isEmpty
             ? null
             : loaded.map(reviewAverage).reduce((a, b) => a + b) /
                   loaded.length);
     if (value == null) {
-      return const Card(
+      return Card(
         child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text('Esta prova ainda não tem avaliações.'),
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            'Esta prova ainda não tem avaliações.',
+            key: const Key('reviews-none'),
+            style: TextStyle(color: context.muted),
+          ),
         ),
       );
     }
-    final count = (score?['reviewCount'] as num?)?.toInt() ?? loaded.length;
-    final recommend = loaded.isEmpty
-        ? null
-        : (100 *
-                  loaded.where((r) => reviewAverage(r) >= 4).length /
-                  loaded.length)
-              .round();
+    final count =
+        (summary?['reviewCount'] as num?)?.toInt() ??
+        (score?['reviewCount'] as num?)?.toInt() ??
+        loaded.length;
+    final recommend =
+        (summary?['recommendPercent'] as num?)?.toInt() ??
+        (loaded.isEmpty
+            ? null
+            : (100 *
+                      loaded.where((r) => reviewAverage(r) >= 4).length /
+                      loaded.length)
+                  .round());
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1157,6 +1886,9 @@ class _EditionScreenState extends State<EditionScreen> {
 
   Widget reviewsTab(Map<String, dynamic> body) {
     final loaded = reviews;
+    final byCriterion = (reviewSummary?['byCriterion'] as Map?) ?? const {};
+    double? criterion(String key) =>
+        (byCriterion[key] as num?)?.toDouble() ?? average(key);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -1164,16 +1896,16 @@ class _EditionScreenState extends State<EditionScreen> {
         myReviewCard(),
         scoreCard(body),
         const SizedBox(height: 14),
+        for (final (key, label, icon) in criteria)
+          bar(label, icon, criterion(key)),
+        const SizedBox(height: 18),
         if (loadingReviews)
           const Center(child: CircularProgressIndicator())
         else if (loaded == null)
           const Text(
-            'A lista pública de avaliações ainda não está disponível. As suas aparecem acima.',
+            'A lista pública de avaliações não pôde ser carregada agora. As suas aparecem acima.',
           )
         else if (loaded.isNotEmpty) ...[
-          for (final (key, label, icon) in criteria)
-            bar(label, icon, average(key)),
-          const SizedBox(height: 18),
           Row(
             children: [
               const Expanded(
@@ -1182,13 +1914,16 @@ class _EditionScreenState extends State<EditionScreen> {
                   style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                 ),
               ),
-              TextButton(
-                onPressed: () => soon('Lista completa em breve.'),
-                child: const Text('Ver todas'),
-              ),
+              if (loaded.length > 3)
+                TextButton(
+                  key: const Key('reviews-show-all'),
+                  onPressed: () =>
+                      setState(() => showAllReviews = !showAllReviews),
+                  child: Text(showAllReviews ? 'Ver menos' : 'Ver todas'),
+                ),
             ],
           ),
-          for (final review in loaded.take(3)) ...[
+          for (final review in showAllReviews ? loaded : loaded.take(3)) ...[
             reviewTile(review),
             const SizedBox(height: 10),
           ],
@@ -1212,12 +1947,95 @@ class _EditionScreenState extends State<EditionScreen> {
   );
 
   Widget participantsTab(Map<String, dynamic> body) {
-    final count = (body['participantCount'] as num?)?.toInt();
-    return emptyTab(
-      Icons.groups_outlined,
-      count == null
-          ? 'A lista de participantes estará disponível em breve.'
-          : '${thousands(count)} corredores já concluíram esta prova.\nA lista de participantes estará disponível em breve.',
+    final list = participants;
+    if (loadingParticipants && list == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (list == null) {
+      return emptyTab(
+        Icons.groups_outlined,
+        'Não foi possível carregar os participantes agora.',
+      );
+    }
+    if (participantTotal == 0) {
+      return emptyTab(
+        Icons.groups_outlined,
+        'Ninguém concluiu esta prova no RunPass ainda.\nSeja a primeira pessoa a registrar.',
+      );
+    }
+    final kmById = {
+      for (final d in (body['distances'] as List))
+        (d as Map)['id'] as String: (d['kilometers'] as num).toDouble(),
+    };
+    final hidden = participantTotal - list.length;
+    return ListView(
+      key: const Key('participants-list'),
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          participantTotal == 1
+              ? '1 corredor concluiu esta prova'
+              : '${thousands(participantTotal)} corredores concluíram esta prova',
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        const SizedBox(height: 8),
+        for (final item in list) _participantTile(item, kmById),
+        if (hidden > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              hidden == 1
+                  ? '1 participante não aparece porque o perfil é privado.'
+                  : '$hidden participantes não aparecem porque os perfis são privados.',
+              key: const Key('participants-hidden'),
+              style: TextStyle(color: context.muted),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _participantTile(
+    Map<String, dynamic> item,
+    Map<String, double> kmById,
+  ) {
+    final author = Map<String, dynamic>.from(item['author'] as Map);
+    final name = (author['displayName'] as String?) ?? 'Corredor RunPass';
+    final km = kmById[item['distanceId']];
+    final time = item['timeSeconds'] as num?;
+    final place = item['placement'] as num?;
+    final details = [
+      if (km != null) distanceLabel(km),
+      if (time != null) formatDuration(time),
+      if (place != null) '${place.toInt()}º lugar',
+    ].join(' · ');
+    return Card(
+      key: Key('participant-${item['participationId']}'),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: context.softFill,
+          child: Text(
+            name.isEmpty ? '?' : name.characters.first.toUpperCase(),
+            style: const TextStyle(
+              color: runPassOrange,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        title: Text(name, style: const TextStyle(fontWeight: FontWeight.w800)),
+        subtitle: Text(
+          '@${author['username'] ?? ''}${details.isEmpty ? '' : '\n$details'}',
+        ),
+        isThreeLine: details.isNotEmpty,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => PublicProfileScreen(
+              gateway: widget.gateway,
+              profileId: author['id'] as String,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1257,10 +2075,18 @@ class _EditionScreenState extends State<EditionScreen> {
                 children: [
                   hero(body),
                   Material(
-                    color: Colors.white,
+                    color: Theme.of(context).scaffoldBackgroundColor,
                     child: TabBar(
                       labelColor: runPassOrange,
                       indicatorColor: runPassOrange,
+                      labelStyle: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                      unselectedLabelStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
                       unselectedLabelColor: context.onSurfaceText,
                       tabs: [
                         Tab(text: 'Sobre'),

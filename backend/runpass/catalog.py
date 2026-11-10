@@ -6,7 +6,7 @@ import math
 import unicodedata
 from copy import deepcopy
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -17,7 +17,7 @@ from pydantic import Field, field_validator, model_validator
 from .identity import require_operator
 from .models import Input
 from .service import Problem, stamp
-from .store import Conflict, MemoryStore
+from .store import Conflict, MemoryStore, Unavailable
 
 
 def normalized(value):
@@ -199,9 +199,26 @@ class CatalogService:
                 if head["archived"]
                 else ("upcoming" if date.fromisoformat(body["date"]) > today else "past")
             )
-            # Projections belong to S07; no invented participant count or score.
+            score = self._score(edition_id)
+            if score:
+                body["runScore"] = score
             return body
         raise Problem(503, "CONCURRENT_RETRY_REQUIRED")
+
+    def _score(self, edition_id):
+        """Nota publica da edicao (projecao ja calculada pelo consumidor); nunca inventa nota."""
+        try:
+            item = self.store.get(("projections", "EDITION#" + edition_id, "SCORE#current"))
+        except (KeyError, Unavailable):
+            # Sem a tabela de projecoes ou sem leitura dela: a nota e opcional e nunca derruba a lista.
+            return None
+        if not item or not item.get("reviewCount"):
+            return None
+        value = Decimal(item["ratingSum"]) / Decimal(8 * item["reviewCount"])
+        return {
+            "value": float(value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)),
+            "reviewCount": int(item["reviewCount"]),
+        }
 
     def detail(self, actor, edition_id):
         self.identity.authorize(actor, admitted=True)
@@ -342,6 +359,8 @@ class ImportEdition(Input):
     officialUrl: str | None = None
     registrationUrl: str | None = None
     imageReference: str | None = None
+    # Credito exibido junto do banner (ex.: "Divulgação: Organizador"); so com imageReference.
+    imageCredit: str | None = Field(default=None, min_length=1, max_length=200)
     medalImageReference: str | None = None
     archived: bool = False
     # Por que a edição saiu de circulação; só vale com archived=True.
@@ -391,6 +410,8 @@ class ImportEdition(Input):
     def unique_distances(self):
         if len({d.id for d in self.distances}) != len(self.distances):
             raise ValueError("Duplicate distance ID")
+        if self.imageCredit and not self.imageReference:
+            raise ValueError("imageCredit requires imageReference")
         if self.archivedReason and not self.archived:
             raise ValueError("archivedReason requires an archived edition")
         return self
@@ -600,6 +621,33 @@ class CatalogImporter:
                     self.store.commit(expected, writes)
                 except Conflict as error:
                     raise Problem(409, "CATALOG_LOAD_RETRY") from error
+
+    def unlist(self, edition_id, *, actor=None):
+        """Tira da lista a edicao ARQUIVADA ativa; o detalhe por id (historico de quem participou) fica."""
+        head_key = ("catalog", "EDITION#" + edition_id, "HEAD")
+        head = self.store.get(head_key)
+        if not head or not head.get("archived"):
+            raise Problem(409, "ONLY_ARCHIVED_EDITIONS_CAN_BE_UNLISTED")
+        manifest_key = ("catalog", "EDITION#" + edition_id, "V#" + str(int(head["version"])))
+        manifest = self.store.get(manifest_key)
+        if not manifest:
+            raise Problem(409, "ACTIVE_OR_UNKNOWN_CATALOG_VERSION")
+        keys = [("catalog", pk, sk) for pk, sk in manifest["indexKeys"]]
+        removed = 0
+        for start in range(0, len(keys), 80):
+            expected = {head_key: head, manifest_key: manifest, **self._authorization(actor, False)}
+            writes = {}
+            for key in keys[start : start + 80]:
+                row = self.store.get(key)
+                if row is not None:
+                    expected[key], writes[key] = row, None
+            if writes:
+                try:
+                    self.store.commit(expected, writes)
+                except Conflict as error:
+                    raise Problem(409, "CATALOG_LOAD_RETRY") from error
+                removed += len(writes)
+        return removed
 
 
 def seed_synthetic(catalog, path):

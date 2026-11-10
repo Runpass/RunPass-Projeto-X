@@ -74,3 +74,58 @@ para quando houver fonte habilitada, credencial no Secrets Manager e orcamento a
 - Provas fora do Brasil: `state` continua exigindo UF de 2 letras.
 - A revisao de duplicatas (`needs_review`) hoje so aparece no relatorio da importacao; nao ha tela.
 - Remocao/despublicacao a pedido usa o arquivamento administrativo ja existente (`/admin/editions/{id}/archive`).
+
+## Busca por frase livre (09/11/2026)
+
+`GET /editions/search?phrase=...` traduz uma frase ("meia maratona em abril") nos filtros do `GET /editions`.
+A interpretação roda na Lambda `runpass-<env>-catalogo-busca` do repositório RunPass-Catalogo (OpenAI,
+`gpt-6-luna`); o backend só a invoca (`lambda:InvokeFunction` restrito àquela função) e envia **somente a frase**
+(e lat/lon se o app mandar, só para "perto de mim"). A frase e a resposta da Lambda não vão para log.
+
+- **Nunca quebra por causa da IA:** erro, timeout (8 s), permissão negada, resposta fora do contrato ou filtro
+  inválido caem para busca por nome (`search.source = "text"`). Sem `RUNPASS_CATALOG_SEARCH_FUNCTION`, a rota
+  funciona só por nome.
+- **Não finge:** `search.notApplied` lista o que a frase pediu e o catálogo não filtra (preço, altimetria, faixa
+  de distância, tema, proximidade sem localização). O app mostra o aviso.
+- **Paginação:** a próxima página é `GET /editions` com `search.filters` e o mesmo `limit`.
+- **Parâmetro opcional da stack:** `CatalogSearchFunctionName` em `infra/app.template.yaml` (vazio = sem IA e
+  sem permissão extra).
+
+Verificado: testes locais com a Lambda simulada (backend: `test_nl_search.py`; app: `catalog_test.dart`), contrato
+OpenAPI e cfn-lint. A Lambda do catálogo foi testada de verdade em DEV pelo repositório dela, mas esta rota
+**ainda não foi implantada** (a stack do app não foi atualizada) e a tela **não foi vista em aparelho**.
+Limites: o app ainda não envia lat/lon, então "perto de mim" aparece como não filtrado; ~1 em 8 chamadas à IA
+estourava o prazo de 3 s nos testes da Lambda e cai para busca por nome.
+
+## Pedido de prova ausente (09/11/2026)
+
+Quando a pessoa não acha a corrida na lista, "Pedir cadastro da corrida" (tela de Corridas) envia nome, data,
+cidade, UF opcional, **uma** distância e endereço https opcional. Rotas do contrato já existente:
+`POST /edition-requests`, `GET /me/edition-requests`, `GET /edition-requests/{id}`, `PATCH /edition-requests/{id}`
+(só pedido rejeitado, com `expectedVersion`) e `POST /edition-requests/{id}/resubmit`.
+
+- **Privado e em revisão:** o pedido só aparece para quem o fez (outra pessoa recebe 404, igual a "não existe") e
+  **nunca vira corrida pública sozinho**. Resolver um pedido também não cria participação.
+- **Limites:** até 10 pedidos pendentes por pessoa (409 `TOO_MANY_PENDING_REQUESTS`); data entre 1990 e 2 anos à
+  frente; `imageReference` do contrato **ainda não é aceito** (422).
+- **Idempotência e versão:** criar, corrigir e reenviar aceitam `Idempotency-Key`; corrigir e reenviar exigem a
+  versão atual (409 `VERSION_CONFLICT`).
+- **Pesquisa assíncrona semanal (repositório RunPass-Catalogo, `docs/ROTINA-SEMANAL.md`):** uma Lambda agendada lê
+  só a fila de pedidos pendentes (cópia dos dados, **sem dono**, mantida em `EREQ_QUEUE#pending`), pesquisa cada
+  um na web e produz relatório e CSV com fonte e trecho. **Não grava no catálogo**: o operador importa e decide.
+  Hoje ela está só implementada e testada com dados simulados; não foi implantada nem ligada.
+- **Revisão (só operador com MFA e `catalog_admin`, nunca por HTTP):**
+  `scripts/operator_tool.py list-requests --username <e-mail>` lista a fila (sem dados de quem pediu);
+  `review-request --id ID --version N --decision approve|link --edition-id E` aprova/vincula a uma edição
+  **já carregada no catálogo e aprovada** (carregue antes com `import-csv`), e `--decision reject --reason "..."`
+  rejeita com motivo. Cada decisão grava um registro de auditoria `operations/EREQ#<id>/REV#<versão>`.
+- **Apagamento de conta:** o pedido, o mapa id→dono e a entrada da fila saem junto (`sharedKeys`).
+- **Dados:** itens na tabela `history`: `USER#<sub>/EREQ#<id>` (mais novo primeiro), `EREQ#<id>/OWNER` e a fila
+  `EREQ_QUEUE#pending`. Não há tabela nova nem mudança de infraestrutura.
+
+Verificado: testes locais (backend `test_edition_requests.py`, 17 casos; app `catalog_test.dart`), contrato OpenAPI.
+**Não verificado:** DynamoDB real (o `MemoryStore` não prova concorrência), `operator_tool.py` contra a AWS (sem
+login de operador nesta sessão), e a tela em aparelho. A fila é um índice em uma só partição: serve ao volume do MVP.
+Limites: o operador não vê quem pediu; não há aviso ao corredor quando a decisão sai (só "Minhas solicitações");
+rascunho de participação a partir de pedido ainda pendente não existe (depois de aprovado, a corrida está no
+catálogo e o registro é normal); só a fila `pending` tem índice.
