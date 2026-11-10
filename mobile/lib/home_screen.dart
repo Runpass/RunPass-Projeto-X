@@ -537,6 +537,41 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
               ),
             ),
           ),
+        // Atalho para a agenda, no mesmo padrão dos filtros (círculo + nome); não é um filtro.
+        Padding(
+          padding: const EdgeInsets.only(right: 14),
+          child: InkWell(
+            key: const Key('home-agenda-chip'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => AgendaScreen(gateway: widget.gateway),
+              ),
+            ),
+            borderRadius: BorderRadius.circular(40),
+            child: Column(
+              children: [
+                Container(
+                  width: 62,
+                  height: 62,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: context.softFill,
+                  ),
+                  child: const Icon(
+                    Icons.calendar_month_rounded,
+                    color: runPassOrange,
+                    size: 30,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Agenda',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ),
+        ),
       ],
     ),
   );
@@ -598,17 +633,6 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => FriendSearchScreen(gateway: widget.gateway),
-            ),
-          ),
-        ),
-        IconButton(
-          key: const Key('home-agenda'),
-          visualDensity: VisualDensity.compact,
-          tooltip: 'Minha agenda',
-          icon: const Icon(Icons.calendar_month_rounded),
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => AgendaScreen(gateway: widget.gateway),
             ),
           ),
         ),

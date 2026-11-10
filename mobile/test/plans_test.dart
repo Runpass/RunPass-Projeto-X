@@ -266,7 +266,7 @@ void main() {
   );
 
   testWidgets(
-    'a home mostra o ícone da agenda dentro da tela e abre a agenda',
+    'a home mostra a agenda ao lado de Minha Cidade e abre a agenda',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844); // largura de iPhone
       tester.view.devicePixelRatio = 1;
@@ -286,8 +286,25 @@ void main() {
         MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      final icon = find.byKey(const Key('home-agenda'));
+      final icon = find.byKey(const Key('home-agenda-chip'));
+      // Na fonte larga dos testes o último círculo fica além da borda; rola o carrossel até ele.
+      await tester.dragUntilVisible(
+        icon,
+        find.text('Todos'),
+        const Offset(-120, 0),
+      );
+      await tester.pumpAndSettle();
       expect(icon, findsOneWidget);
+      expect(
+        find.byKey(const Key('home-agenda')),
+        findsNothing,
+      ); // saiu da barra do topo
+      final cidade = tester.getRect(find.text('Minha Cidade'));
+      expect(
+        tester.getRect(icon).left > cidade.right - 1,
+        isTrue,
+        reason: 'depois de Minha Cidade',
+      );
       final rect = tester.getRect(icon);
       expect(
         rect.left >= 0 && rect.right <= 390,
