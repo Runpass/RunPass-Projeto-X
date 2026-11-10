@@ -158,6 +158,17 @@ Resources:
                     - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
                     - Name:
                         Fn::ImportValue: !Sub '${DataStack}-CatalogTable'
+              - Sid: ReadEditionScores
+                Effect: Allow
+                Action: dynamodb:GetItem
+                Resource:
+                  - !Sub
+                    - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
+                    - Name:
+                        Fn::ImportValue: !Sub '${DataStack}-ProjectionsTable'
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys: ['EDITION#*']
               - Sid: RunnerPhotos
                 Effect: Allow
                 Action:

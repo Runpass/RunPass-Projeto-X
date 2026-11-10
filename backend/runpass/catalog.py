@@ -17,7 +17,7 @@ from pydantic import Field, field_validator, model_validator
 from .identity import require_operator
 from .models import Input
 from .service import Problem, stamp
-from .store import Conflict, MemoryStore
+from .store import Conflict, MemoryStore, Unavailable
 
 
 def normalized(value):
@@ -209,7 +209,8 @@ class CatalogService:
         """Nota publica da edicao (projecao ja calculada pelo consumidor); nunca inventa nota."""
         try:
             item = self.store.get(("projections", "EDITION#" + edition_id, "SCORE#current"))
-        except KeyError:  # armazenamento sem a tabela de projecoes
+        except (KeyError, Unavailable):
+            # Sem a tabela de projecoes ou sem leitura dela: a nota e opcional e nunca derruba a lista.
             return None
         if not item or not item.get("reviewCount"):
             return None

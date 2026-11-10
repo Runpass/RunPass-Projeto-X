@@ -253,6 +253,23 @@ class ParticipationTests(unittest.TestCase):
         self.assertEqual(by_id["synthetic-sp-2024"]["runScore"]["reviewCount"], 3)
         self.assertNotIn("runScore", by_id["synthetic-sp-2025"])
 
+    def test_unreadable_scores_never_break_the_catalog(self):
+        from runpass.store import Unavailable
+
+        reader = self.admit("reader")
+        real = self.store.get
+
+        def get(key):
+            if key[0] == "projections":
+                raise Unavailable()
+            return real(key)
+
+        self.store.get = get
+        listed = self.catalog.list(reader, CatalogFilters())["items"]
+        self.assertTrue(listed)
+        self.assertTrue(all("runScore" not in e for e in listed))
+        self.assertNotIn("runScore", self.catalog.detail(reader, "synthetic-sp-2024"))
+
     def test_completion_is_atomic_idempotent_and_pins_image(self):
         draft = self.service.create(self.actor, "create", self.payload(timeSeconds=3600))
         payload = self.completion(draft, comment="Ótima prova")
