@@ -5651,6 +5651,60 @@
         ],
         "x-requires-beta-admission": true
       }
+    },
+    "/editions/{id}/banner": {
+      "get": {
+        "operationId": "getEditionBanner",
+        "description": "Short-lived signed link to the operator-approved banner of the edition, with the credit to display. 404 IMAGE_NOT_AVAILABLE when none was approved. The image is a sanitized copy kept by RunPass, never a hotlink to the organizer.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionBannerLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
     }
   },
   "components": {
@@ -6445,6 +6499,11 @@
           "sourceExternalId": {
             "type": "string",
             "description": "Identificador da prova na fonte."
+          },
+          "imageCredit": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Credit shown with the edition banner; present only with imageReference."
           }
         }
       },
@@ -9191,6 +9250,30 @@
           "placement": {
             "type": "integer",
             "minimum": 1
+          }
+        }
+      },
+      "EditionBannerLink": {
+        "type": "object",
+        "required": [
+          "url",
+          "contentType",
+          "expiresAt"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "credit": {
+            "type": "string"
           }
         }
       }

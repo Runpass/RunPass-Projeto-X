@@ -13,6 +13,7 @@ Uso: AWS_PROFILE=runpass-dev-sa PYTHONPATH=backend python3 scripts/operator_tool
 import argparse
 import getpass
 import sys
+import urllib.request
 from pathlib import Path
 
 import boto3
@@ -23,10 +24,17 @@ from runpass.catalog_sources import ADAPTERS, SourceDisabled, SourceError
 from runpass.edition_requests import EditionRequestReview
 from runpass.identity import CognitoDirectory, CognitoVerifier, JwksProvider
 from runpass.models import ReviewRequestDecision
-from runpass.operator_admin import PERMISSIONS, grant_access, load_catalog, retire_catalog
+from runpass.operator_admin import (
+    PERMISSIONS,
+    approve_banner,
+    grant_access,
+    load_catalog,
+    retire_catalog,
+)
 from runpass.operators import establish_session
 from runpass.service import IdentityService
 from runpass.store import DynamoStore
+from runpass.upload import UploadService
 
 REGION = "sa-east-1"
 FIXTURE = Path(__file__).resolve().parents[1] / "backend/fixtures/catalog.synthetic.json"
@@ -217,6 +225,49 @@ def retire_synthetic(session, env, username):
     )
 
 
+MAX_BANNER_BYTES = 6_000_000
+
+
+def download_image(url):
+    """Baixa a imagem escolhida pelo operador: so https, so JPEG/PNG, ate 6 MB."""
+    if not url.startswith("https://"):
+        sys.exit("A imagem precisa ter endereco https.")
+    request = urllib.request.Request(url, headers={"User-Agent": "RunPass-Operador/1.0"})
+    with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - https validado acima
+        kind = response.headers.get_content_type()
+        data = response.read(MAX_BANNER_BYTES + 1)
+    if kind not in ("image/jpeg", "image/png"):
+        sys.exit(f"Tipo {kind} nao aceito: use uma imagem JPEG ou PNG.")
+    if len(data) > MAX_BANNER_BYTES:
+        sys.exit("Imagem maior que 6 MB.")
+    return data, kind
+
+
+def approve_banner_cmd(session, args):
+    """Baixa, confere e (sem --dry-run) publica o banner de uma corrida. Exige credito e base de autorizacao."""
+    image, kind = download_image(args.image_url)
+    cleaned, final_type = UploadService.sanitize(image, kind)
+    print(f"Imagem lida: {kind}, {len(image)} bytes -> limpa: {final_type}, {len(cleaned)} bytes.")
+    if args.dry_run:
+        print("SIMULACAO: nada foi guardado nem publicado.")
+        return
+    if not args.confirm_rights:
+        sys.exit("Confirme com --confirm-rights que a autorizacao ou licenca foi obtida.")
+    actor, catalog = operator_login(session, args.env, args.username)
+    buckets = exports(session, f"runpass-{args.env}-data")
+    from runpass.aws_adapters import S3BlobStore
+
+    blobs = S3BlobStore(session.client("s3"), buckets["MedalBucket"])
+    result = approve_banner(
+        catalog, blobs, actor, args.edition_id, image, kind,
+        args.credit, args.rights_note, args.image_url,
+    )  # fmt: skip
+    print(
+        f"Banner publicado em {args.edition_id}: {result['reference']} "
+        f"(versao {result['version']}, {result['contentType']})."
+    )
+
+
 def print_report(report):
     c = report["counts"]
     print(
@@ -338,6 +389,17 @@ def main():
     sub.choices["reset-operator"].add_argument(
         "--recreate", action="store_true", help="apaga e recria o operador (novo sub)"
     )
+    ab = sub.add_parser(
+        "approve-banner",
+        help="baixa, limpa e publica o banner de uma corrida (exige credito e base de autorizacao)",
+    )
+    ab.add_argument("--username", required=True, help="e-mail do operador")
+    ab.add_argument("--edition-id", required=True)
+    ab.add_argument("--image-url", required=True, help="https da imagem escolhida")
+    ab.add_argument("--credit", required=True, help='ex.: "Divulgação: Organizador"')
+    ab.add_argument("--rights-note", required=True, help="como a autorizacao ou licenca foi obtida")
+    ab.add_argument("--confirm-rights", action="store_true", help="confirma que ha autorizacao")
+    ab.add_argument("--dry-run", action="store_true", help="so baixa e confere a imagem")
     sub.add_parser(
         "retire-synthetic", help="arquiva e tira da lista as edicoes sinteticas (nao apaga nada)"
     ).add_argument("--username", required=True, help="e-mail do operador")
@@ -378,6 +440,8 @@ def main():
         if not args.offline and not args.username:
             sys.exit("Informe --username (ou use --offline para so validar o arquivo).")
         import_csv(session, args)
+    elif args.command == "approve-banner":
+        approve_banner_cmd(session, args)
     elif args.command == "reset-operator":
         if args.recreate:
             recreate_operator(session, args.env, args.username)

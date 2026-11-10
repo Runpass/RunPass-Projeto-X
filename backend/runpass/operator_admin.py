@@ -4,6 +4,7 @@ Never exposed over HTTP. The loader requires an operator session with MFA and ca
 there is no synthetic shortcut for a persistent store.
 """
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -11,6 +12,7 @@ from decimal import Decimal
 from .catalog import CatalogImporter, ImportEdition
 from .service import Problem
 from .store import Conflict
+from .upload import CATALOG_OWNER, UploadService
 
 PERMISSIONS = ("catalog_admin", "moderation", "lake_read")
 FIXTURE_ORIGIN = "https://runpass.invalid/fixture-sintetica"
@@ -89,3 +91,53 @@ def retire_catalog(catalog, actor, fixture_text, origin=FIXTURE_ORIGIN):
         if importer.unlist(entry["id"], actor=actor):
             result["tiradas_da_lista"].append(entry["id"])
     return result
+
+
+def approve_banner(
+    catalog, blobs, actor, edition_id, image, content_type, credit, rights_note, origin_url
+):
+    """Publica o banner de uma edicao DEPOIS da aprovacao humana.
+
+    `image` sao os bytes baixados da fonte; sao reencodados sem metadados (mesma sanitizacao das fotos).
+    O credito aparece no app. `rights_note` registra COMO a autorizacao ou licenca foi obtida e fica
+    so na tabela de operacoes, nunca na API. Sem as duas coisas nada e publicado."""
+    if not credit or not credit.strip():
+        raise ValueError("Credito obrigatorio")
+    if not rights_note or len(rights_note.strip()) < 10:
+        raise ValueError("Informe como a autorizacao ou licenca foi obtida (minimo 10 caracteres)")
+    data, actual_type = UploadService.sanitize(image, content_type)
+    body = catalog._edition(edition_id)
+    head = catalog.store.get(("catalog", "EDITION#" + edition_id, "HEAD"))
+    if body is None or head is None:
+        raise Problem(404, "EDITION_NOT_FOUND")
+    reference = "banner_" + hashlib.sha256(data).hexdigest()[:32]
+    blobs.write_derived(reference, data, actual_type, CATALOG_OWNER)
+    now = catalog.identity.clock()
+    image_key = ("operations", "EDITION#" + edition_id, "IMAGE#" + reference)
+    if catalog.store.get(image_key) is None:
+        catalog.store.commit(
+            {image_key: None},
+            {
+                image_key: {
+                    "owner": "catalog",
+                    "origin": "admin",
+                    "state": "valid",
+                    "refs": 0,
+                    "environment": catalog.identity.environment,
+                    "contentType": actual_type,
+                    "credit": credit.strip(),
+                    "rightsNote": rights_note.strip(),
+                    "sourceUrl": origin_url,
+                    "approvedBy": actor.subject,
+                    "approvedAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+            },
+        )
+    payload = {k: v for k, v in body.items() if k in ImportEdition.model_fields}
+    payload["archived"] = body.get("status") == "archived"
+    payload["imageReference"] = reference
+    payload["imageCredit"] = credit.strip()
+    updated = CatalogImporter(catalog).put(
+        payload, expected_version=int(head["version"]), origin=origin_url, actor=actor
+    )
+    return {"reference": reference, "version": updated["version"], "contentType": actual_type}

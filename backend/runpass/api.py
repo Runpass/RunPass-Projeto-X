@@ -269,6 +269,13 @@ def create_app(
         participations.delete_plan(actor, editionId)
         return Response(status_code=204)
 
+    @app.get("/editions/{id}/banner", operation_id="getEditionBanner")
+    def edition_banner(id: str, actor: Actor):
+        service.authorize(actor, admitted=True)
+        if catalog is None or uploads is None:
+            raise Unavailable()
+        return uploads.edition_banner(actor, catalog.detail(actor, id))
+
     @app.get("/editions/{id}/participants", operation_id="listEditionParticipants")
     def edition_participants(
         id: str,

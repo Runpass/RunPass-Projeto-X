@@ -890,6 +890,7 @@ class _EditionScreenState extends State<EditionScreen> {
   Map<String, dynamic>? mine;
   Map<String, dynamic>? plan;
   bool savingPlan = false;
+  String? bannerUrl, bannerCredit;
   Map<String, dynamic>? myReview;
 
   static const criteria = [
@@ -928,9 +929,29 @@ class _EditionScreenState extends State<EditionScreen> {
     }
     if (mounted && edition != null) {
       loadReviews();
+      loadBanner();
       loadParticipants();
       loadMyParticipation();
       loadPlan();
+    }
+  }
+
+  /// Banner aprovado pela equipe (cópia guardada pelo RunPass, com crédito). Sem banner ou com
+  /// falha, o degradê de sempre continua: a imagem nunca bloqueia a tela.
+  Future<void> loadBanner() async {
+    if (edition?['imageReference'] == null) return;
+    try {
+      final link = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/banner',
+      );
+      if (!mounted) return;
+      setState(() {
+        bannerUrl = link['url'] as String?;
+        bannerCredit =
+            link['credit'] as String? ?? edition?['imageCredit'] as String?;
+      });
+    } on Exception {
+      if (mounted) setState(() => bannerUrl = null);
     }
   }
 
@@ -1214,53 +1235,94 @@ class _EditionScreenState extends State<EditionScreen> {
           colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
         ),
       ),
-      child: SafeArea(
-        bottom: false,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Os ícones ficam numa linha própria: o título longo nunca passa por cima deles.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-              child: Row(
-                children: [
-                  IconButton(
-                    tooltip: 'Voltar',
-                    color: Colors.white,
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: () => Navigator.of(context).maybePop(),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    key: const Key('hero-wanted'),
-                    tooltip: wanted ? 'Tirar de Quero correr' : 'Quero correr',
-                    color: Colors.white,
-                    icon: Icon(wanted ? Icons.favorite : Icons.favorite_border),
-                    onPressed: savingPlan ? null : () => setPlan('wanted'),
-                  ),
-                  IconButton(
-                    tooltip: 'Compartilhar',
-                    color: Colors.white,
-                    icon: const Icon(Icons.ios_share),
-                    onPressed: () => soon('Compartilhamento em breve.'),
-                  ),
-                ],
+      child: Stack(
+        children: [
+          if (bannerUrl != null)
+            Positioned.fill(
+              child: Image.network(
+                bannerUrl!,
+                key: const Key('hero-image'),
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-              child: Text(
-                (body['name'] as String).toUpperCase(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 24,
-                  letterSpacing: 1,
+          if (bannerUrl != null)
+            const Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0x66000000), Color(0xCC000000)],
+                  ),
                 ),
               ),
             ),
-          ],
-        ),
+          SafeArea(
+            bottom: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Os ícones ficam numa linha própria: o título longo nunca passa por cima deles.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Voltar',
+                        color: Colors.white,
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => Navigator.of(context).maybePop(),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        key: const Key('hero-wanted'),
+                        tooltip: wanted
+                            ? 'Tirar de Quero correr'
+                            : 'Quero correr',
+                        color: Colors.white,
+                        icon: Icon(
+                          wanted ? Icons.favorite : Icons.favorite_border,
+                        ),
+                        onPressed: savingPlan ? null : () => setPlan('wanted'),
+                      ),
+                      IconButton(
+                        tooltip: 'Compartilhar',
+                        color: Colors.white,
+                        icon: const Icon(Icons.ios_share),
+                        onPressed: () => soon('Compartilhamento em breve.'),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  child: Text(
+                    (body['name'] as String).toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 24,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ),
+                if (bannerUrl != null && bannerCredit != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                    child: Text(
+                      'Foto: $bannerCredit',
+                      key: const Key('hero-credit'),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

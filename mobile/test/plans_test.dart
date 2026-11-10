@@ -16,6 +16,7 @@ Map<String, dynamic> upcoming(String id, {String date = '2099-05-01'}) => {
 
 void main() {
   participantsTests();
+  bannerTests();
   void big(WidgetTester tester) {
     tester.view.physicalSize = const Size(800, 3000);
     tester.view.devicePixelRatio = 1;
@@ -391,4 +392,79 @@ void participantsTests() {
       );
     },
   );
+}
+
+void bannerTests() {
+  Future<List<String>> openEdition(
+    WidgetTester tester,
+    Map<String, dynamic> edition,
+    JsonReply Function() banner,
+  ) async {
+    tester.view.physicalSize = const Size(390, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final paths = <String>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      paths.add(uri.path);
+      if (uri.path == '/editions/EA') return JsonReply(200, edition);
+      if (uri.path == '/editions/EA/banner') return banner();
+      if (uri.path.startsWith('/me/race-plans/')) {
+        return const JsonReply(404, {'code': 'PLAN_NOT_FOUND'});
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'EA'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    return paths;
+  }
+
+  testWidgets('banner aprovado aparece com o crédito', (tester) async {
+    await openEdition(
+      tester,
+      {
+        ...upcoming('A'),
+        'imageReference': 'banner_x',
+        'imageCredit': 'Divulgação: Org',
+      },
+      () => const JsonReply(200, {
+        'url': 'https://img.exemplo.invalid/banner.png',
+        'contentType': 'image/png',
+        'expiresAt': '2099-01-01T00:00:00Z',
+        'credit': 'Divulgação: Org',
+      }),
+    );
+    expect(find.byKey(const Key('hero-image')), findsOneWidget);
+    expect(find.text('Foto: Divulgação: Org'), findsOneWidget);
+    expect(find.textContaining('CORRIDA A COM UM NOME'), findsOneWidget);
+  });
+
+  testWidgets('sem banner aprovado não pede imagem nem mostra crédito', (
+    tester,
+  ) async {
+    final paths = await openEdition(
+      tester,
+      upcoming('A'),
+      () => const JsonReply(404, {'code': 'IMAGE_NOT_AVAILABLE'}),
+    );
+    expect(paths.contains('/editions/EA/banner'), isFalse);
+    expect(find.byKey(const Key('hero-image')), findsNothing);
+    expect(find.byKey(const Key('hero-credit')), findsNothing);
+  });
+
+  testWidgets('falha ao buscar o banner mantém o degradê e a tela', (
+    tester,
+  ) async {
+    await openEdition(tester, {
+      ...upcoming('A'),
+      'imageReference': 'banner_x',
+      'imageCredit': 'Divulgação: Org',
+    }, () => const JsonReply(503, {'code': 'UNAVAILABLE'}));
+    expect(find.byKey(const Key('hero-image')), findsNothing);
+    expect(find.byKey(const Key('hero-credit')), findsNothing);
+    expect(find.textContaining('CORRIDA A COM UM NOME'), findsOneWidget);
+  });
 }
