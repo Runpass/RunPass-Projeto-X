@@ -639,16 +639,30 @@ class _CatalogScreenState extends State<CatalogScreen> {
   static int reviewsOf(Map<String, dynamic> edition) =>
       ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
 
-  /// Itens na ordem escolhida (por data; em empate, pelo nome).
+  /// Prioridade da corrida para ESTA pessoa: 0 já corri (ou tenho registro), 1 inscrito (pretendo correr),
+  /// 2 desejo correr, 3 as demais. Cada perfil vê a sua própria ordem, pois vem das suas marcações.
+  int priority(Map<String, dynamic> edition) {
+    final id = edition['id'] as String;
+    if (mine.containsKey(id)) return 0;
+    return switch (plans[id]) {
+      'registered' => 1,
+      'wanted' => 2,
+      _ => 3,
+    };
+  }
+
+  /// Itens na ordem escolhida: primeiro as minhas (por prioridade), depois as demais; dentro de cada
+  /// grupo, por data (o ícone alterna crescente/decrescente) e, em empate, pelo nome.
   List<Map<String, dynamic>> get view {
     final list = [...items];
     if (widget.serverPaging) return list;
     list.sort((a, b) {
+      final byPriority = priority(a).compareTo(priority(b));
+      if (byPriority != 0) return byPriority;
       final byDate = (a['date'] as String).compareTo(b['date'] as String);
       final byName = '${a['name']}'.compareTo('${b['name']}');
-      return descending
-          ? (byDate != 0 ? -byDate : byName)
-          : (byDate != 0 ? byDate : byName);
+      if (byDate == 0) return byName;
+      return descending ? -byDate : byDate;
     });
     return list;
   }

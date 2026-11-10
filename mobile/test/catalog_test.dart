@@ -117,6 +117,7 @@ Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
 }
 
 void main() {
+  priorityOrderTests();
   defaultOrderTests();
   test('query parameters preserve stage and encode filters without leaking into path', () async {
     final gateway = await signed((uri, method, headers, body) async {
@@ -1758,6 +1759,74 @@ void main() {
       expect(calls.last, 'DELETE EA ');
       // Sem abrir a corrida: nenhuma tela de detalhe foi aberta.
       expect(find.byType(EditionScreen), findsNothing);
+    },
+  );
+}
+
+void priorityOrderTests() {
+  testWidgets(
+    'as corridas minhas vêm primeiro: corri, inscrito, desejo; depois as demais, por data',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      Map<String, dynamic> race(String id, String date) => {
+        ...entry(id),
+        'id': 'E$id',
+        'date': date,
+        'status': 'upcoming',
+      };
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              race('A', '2027-01-01'), // sem marca, a mais recente
+              race('B', '2026-06-01'), // desejo
+              race('C', '2026-05-01'), // inscrito
+              race('D', '2024-01-01'), // já corri, a mais antiga
+              race('E', '2026-12-01'), // sem marca
+              race('F', '2026-07-01'), // desejo
+            ],
+          });
+        }
+        if (uri.path == '/me/participations') {
+          return const JsonReply(200, {
+            'items': [
+              {
+                'editionId': 'ED',
+                'state': 'completed',
+                'id': 'p1',
+                'version': 1,
+              },
+            ],
+          });
+        }
+        if (uri.path == '/me/race-plans') {
+          return const JsonReply(200, {
+            'items': [
+              {'editionId': 'EB', 'status': 'wanted', 'version': 1},
+              {'editionId': 'EC', 'status': 'registered', 'version': 1},
+              {'editionId': 'EF', 'status': 'wanted', 'version': 1},
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      double top(String id) =>
+          tester.getTopLeft(find.byKey(Key('quick-ran-E$id'))).dy;
+      List<String> order() =>
+          (['A', 'B', 'C', 'D', 'E', 'F']
+            ..sort((a, b) => top(a).compareTo(top(b))));
+      // Decrescente (padrão): D (corri), C (inscrito), F e B (desejo, F é mais recente), A e E (demais, A é mais recente).
+      expect(order(), ['D', 'C', 'F', 'B', 'A', 'E']);
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      // Crescente: os grupos continuam na mesma ordem; só a data dentro de cada um inverte.
+      expect(order(), ['D', 'C', 'B', 'F', 'E', 'A']);
     },
   );
 }
