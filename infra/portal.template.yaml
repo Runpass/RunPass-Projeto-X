@@ -118,6 +118,13 @@ Resources:
                   Action: lambda:InvokeFunction
                   Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${CatalogFunctionName}'
                 - !Ref AWS::NoValue
+              - !If
+                - HasCatalogFunction
+                - Sid: LerExecucoesDoCatalogo
+                  Effect: Allow
+                  Action: logs:FilterLogEvents
+                  Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${CatalogFunctionName}:*'
+                - !Ref AWS::NoValue
               - Sid: SegredosNaInicializacao
                 Effect: Allow
                 Action: ssm:GetParameter

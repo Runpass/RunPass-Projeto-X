@@ -29,7 +29,7 @@ implantado**: hospedagem em S3 + CloudFront e API própria exigem o aval de cust
 | Aba | Rota | Permissão | Notas |
 |---|---|---|---|
 | Pedidos de corrida | `/admin/edition-requests*`, `/admin/editions` | `catalog_admin` | vincular, aprovar, recusar |
-| Atualizar catálogo | `GET/POST /admin/catalog/run` | `catalog_admin` | dispara a Lambda da rotina (assíncrono) só com modos da lista fechada (`semanal`, `simulacao`, `enriquecer`, `imagens`); 1 disparo a cada 10 min (a rotina gasta a cota da OpenAI); registra quem disparou; nada é publicado |
+| Atualizar catálogo | `GET/POST /admin/catalog/run` | `catalog_admin` | dispara a Lambda da rotina (assíncrono) só com modos da lista fechada (`semanal`, `simulacao`, `enriquecer`, `imagens`); 1 disparo a cada 10 min (a rotina gasta a cota da OpenAI); registra quem disparou; nada é publicado. `GET /admin/catalog/runs` lista os disparos e as execuções agendadas (7 dias) com a situação (aguardando, em execução, concluída, erro, tempo esgotado), lida dos registros START/REPORT da Lambda (permissão `logs:FilterLogEvents` só nesse grupo) |
 | Cadastros no app | `GET /admin/users/runners` | `user_admin` | quem criou conta (pool dos corredores): id curto, e-mail **mascarado**, situação, data; cada consulta fica auditada (`AUDIT#...`) |
 | Operadores | `POST /admin/operators` | `user_admin` | cria o usuário no pool de operadores com convite por e-mail e concede as permissões (quem concede fica em `grantedBy`) |
 
@@ -55,7 +55,7 @@ implantado**: hospedagem em S3 + CloudFront e API própria exigem o aval de cust
 
 ## Limites
 - Aprovar banners (com crédito e base de autorização) e revogar acesso ainda são comandos do terminal.
-- A situação da rotina disparada não aparece na página (roda em segundo plano; ver os relatórios e o CloudWatch).
+- A situação das execuções vem só dos registros de início e fim da Lambda: mostra se rodou, quanto durou e se deu erro ou tempo esgotado, mas não o conteúdo do relatório (ver os arquivos no S3 do catálogo).
 - A lista de cadastros mostra até 1200 contas por consulta (o resumo avisa quando é parcial).
 - O cliente do pool de operadores usa `USER_PASSWORD_AUTH` (já era assim); migrar para SRP é melhoria futura.
 - Se um dia o CloudFront for liberado, dá para colocar a página nele sem mudar a API.

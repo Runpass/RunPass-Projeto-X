@@ -57,3 +57,14 @@ test('cadastros e operadores: resumo, status e e-mail', async () => {
   assert.ok(!emailValido('sem-arroba'));
   assert.match(mensagem('RUN_TOO_SOON'), /10 minutos/);
 });
+
+test('execuções: situação, duração e acompanhamento', async () => {
+  const { situacaoExecucao, duracao, ativa } = await import('./lib.js');
+  assert.equal(situacaoExecucao('running'), 'Em execução');
+  assert.equal(situacaoExecucao('timeout'), 'Tempo esgotado (15 min)');
+  assert.equal(duracao(9000), '9s');
+  assert.equal(duracao(150000), '2min 30s');
+  assert.equal(duracao(undefined), '');
+  assert.ok(ativa([{ status: 'done' }, { status: 'waiting' }]));
+  assert.ok(!ativa([{ status: 'done' }, { status: 'failed' }]));
+});

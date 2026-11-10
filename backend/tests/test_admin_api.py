@@ -86,6 +86,17 @@ class FakeUsers:
         }
 
 
+class FakeLogs:
+    def __init__(self):
+        self.events, self.fail, self.args = [], False, None
+
+    def filter_log_events(self, **args):
+        if self.fail:
+            raise RuntimeError("sem acesso")
+        self.args = args
+        return {"events": self.events}
+
+
 class FakeLambda:
     def __init__(self):
         self.calls, self.fail = [], False
@@ -107,7 +118,7 @@ class AdminApiTests(unittest.TestCase):
         self.requests = EditionRequestService(self.identity, Fernet.generate_key())
         self.mfa_on = True
         self.now = NOW.timestamp()
-        self.cognito, self.lam = FakeUsers(), FakeLambda()
+        self.cognito, self.lam, self.logs = FakeUsers(), FakeLambda(), FakeLogs()
 
         def verify(tok):
             try:
@@ -133,7 +144,11 @@ class AdminApiTests(unittest.TestCase):
                     self.store, self.cognito, "pool-corredores", "pool-op", lambda: self.now
                 ),
                 runner=CatalogRunner(
-                    self.store, self.lam, "runpass-dev-catalogo-semanal", lambda: self.now
+                    self.store,
+                    self.lam,
+                    "runpass-dev-catalogo-semanal",
+                    lambda: self.now,
+                    self.logs,
                 ),
                 site={
                     "directory": self.portal_dir,
@@ -397,6 +412,60 @@ class AdminApiTests(unittest.TestCase):
             ).status_code,
             202,
         )
+
+    def test_execucoes_do_catalogo_mostram_disparos_e_agendadas(self):
+        h = self.auth(token("op"))
+        self.assertEqual(
+            self.client.get("/admin/catalog/runs", headers=self.auth(token("adm"))).status_code, 403
+        )
+        # disparo recente, ainda sem registro da Lambda
+        self.assertEqual(
+            self.client.post(
+                "/admin/catalog/run", json={"mode": "enriquecer"}, headers=h
+            ).status_code,
+            202,
+        )
+        item = self.client.get("/admin/catalog/runs", headers=h).json()["items"][0]
+        self.assertEqual(
+            (item["origin"], item["mode"], item["status"], item["by"]),
+            ("portal", "enriquecer", "waiting", "op"),
+        )
+        # a Lambda comecou e terminou; ha tambem uma execucao agendada antiga
+        inicio = int(self.now * 1000) + 2000
+        antigo = inicio - 3 * 86400 * 1000
+        self.logs.events = [
+            {"timestamp": antigo, "message": "START RequestId: a1 Version: $LATEST"},
+            {
+                "timestamp": antigo + 9000,
+                "message": "REPORT RequestId: a1\tDuration: 9000.5 ms\tBilled Duration: 9001 ms",
+            },
+            {"timestamp": inicio, "message": "START RequestId: b2 Version: $LATEST"},
+            {
+                "timestamp": inicio + 150000,
+                "message": "REPORT RequestId: b2\tDuration: 150000.1 ms\tStatus: timeout",
+            },
+        ]
+        dados = self.client.get("/admin/catalog/runs", headers=h).json()
+        self.assertTrue(dados["logsAvailable"])
+        portal, agendada = dados["items"]
+        self.assertEqual(
+            (portal["origin"], portal["status"], portal["durationMs"]),
+            ("portal", "timeout", 150000),
+        )
+        self.assertEqual((agendada["origin"], agendada["status"]), ("scheduled", "done"))
+        self.assertEqual(self.logs.args["logGroupName"], "/aws/lambda/runpass-dev-catalogo-semanal")
+        # sem permissao de ler os registros: mostra so o disparo, sem inventar situacao
+        self.logs.fail = True
+        dados = self.client.get("/admin/catalog/runs", headers=h).json()
+        self.assertFalse(dados["logsAvailable"])
+        self.assertEqual(dados["items"][0]["status"], "unknown")
+
+    def test_disparo_que_falhou_aparece_como_nao_disparado(self):
+        h = self.auth(token("op"))
+        self.lam.fail = True
+        self.client.post("/admin/catalog/run", json={"mode": "semanal"}, headers=h)
+        item = self.client.get("/admin/catalog/runs", headers=h).json()["items"][0]
+        self.assertEqual(item["status"], "dispatch_failed")
 
     def test_falha_ao_disparar_nao_trava_o_intervalo(self):
         h = self.auth(token("op"))

@@ -114,6 +114,7 @@ def create_admin_aws_app(
     runner_pool_id="",
     lambda_client=None,
     catalog_function="",
+    logs_client=None,
 ):
     """API do portal: so tokens do pool de operadores; o MFA do pool e conferido (ver admin_api)."""
     service = _identity_service(settings, dynamodb_client)
@@ -135,7 +136,7 @@ def create_admin_aws_app(
         portal_origin,
         clock=clock,
         users=AdminUsers(service.store, cognito_client, runner_pool_id, operator_pool_id, clock),
-        runner=CatalogRunner(service.store, lambda_client, catalog_function, clock),
+        runner=CatalogRunner(service.store, lambda_client, catalog_function, clock, logs_client),
         site=(
             {"directory": portal, "region": settings.region, "client_id": operator_client_id}
             if portal

@@ -142,9 +142,102 @@ class AdminUsers:
 
 
 class CatalogRunner:
-    def __init__(self, store, lambda_client, function_name, clock):
+    def __init__(self, store, lambda_client, function_name, clock, logs_client=None):
         self.store, self.lambda_client, self.function_name = store, lambda_client, function_name
-        self.clock = clock
+        self.clock, self.logs = clock, logs_client
+
+    def invocations(self, since_ms):
+        """Execucoes da Lambda lidas dos proprios registros dela (START/REPORT), sem dados do conteudo."""
+        if self.logs is None or not self.function_name:
+            return None
+        found, token, pages = {}, None, 0
+        while pages < 5:
+            args = {
+                "logGroupName": f"/aws/lambda/{self.function_name}",
+                "startTime": since_ms,
+                "filterPattern": '?"START RequestId" ?"REPORT RequestId"',
+                "limit": 1000,
+            }
+            if token:
+                args["nextToken"] = token
+            try:
+                page = self.logs.filter_log_events(**args)
+            except Exception:  # noqa: BLE001 - sem leitura de logs, a lista mostra so os disparos
+                return None
+            pages += 1
+            for event in page.get("events", []):
+                match = re.match(r"(START|REPORT) RequestId: (\S+)", event["message"])
+                if not match:
+                    continue
+                row = found.setdefault(match[2], {})
+                if match[1] == "START":
+                    row["startedMs"] = event["timestamp"]
+                else:
+                    row["endedMs"] = event["timestamp"]
+                    duration = re.search(r"Duration: ([\d.]+) ms", event["message"])
+                    row["durationMs"] = int(float(duration[1])) if duration else None
+                    status = re.search(r"Status: (\w+)", event["message"])
+                    row["result"] = status[1] if status else "success"
+            token = page.get("nextToken")
+            if not token:
+                break
+        return sorted((r for r in found.values() if "startedMs" in r), key=lambda r: r["startedMs"])
+
+    def runs(self, limit=10):
+        """Disparos do portal + execucoes agendadas, mais recentes primeiro, com a situacao de cada uma."""
+        now_ms = int(self.clock() * 1000)
+        dispatched, _ = self.store.query("operations", "CATALOG", prefix="RUN#", limit=100)
+        since = now_ms - 7 * 86400 * 1000
+        dispatched = [i for _, i in dispatched if int(i["startedEpoch"]) * 1000 >= since][-limit:]
+        logs = self.invocations(since)
+        used, result = set(), []
+        for item in dispatched:
+            start_ms = int(item["startedEpoch"]) * 1000
+            match = None
+            for i, inv in enumerate(logs or []):
+                if i not in used and inv["startedMs"] >= start_ms - 5000:
+                    match = i
+                    break
+            row = {
+                "origin": "portal",
+                "mode": item["mode"],
+                "by": item["by"],
+                "at": item["startedAt"],
+            }
+            if item.get("failed"):
+                row["status"] = "dispatch_failed"
+                result.append(row)
+                continue
+            if logs is None:
+                row["status"] = "unknown"
+            elif match is None:
+                row["status"] = "waiting" if now_ms - start_ms < 5 * 60 * 1000 else "no_record"
+            else:
+                used.add(match)
+                row.update(self._situation(logs[match], now_ms))
+            result.append(row)
+        for i, inv in enumerate(logs or []):
+            if i not in used:
+                row = {
+                    "origin": "scheduled",
+                    "at": _iso(datetime.fromtimestamp(inv["startedMs"] / 1000, timezone.utc)),
+                }
+                row.update(self._situation(inv, now_ms))
+                result.append(row)
+        result.sort(key=lambda r: r["at"], reverse=True)
+        return {"items": result[:limit], "logsAvailable": logs is not None}
+
+    @staticmethod
+    def _situation(inv, now_ms):
+        if "endedMs" not in inv:
+            # Limite da Lambda: 15 minutos. Depois disso sem REPORT, o registro ficou incompleto.
+            return {
+                "status": "running" if now_ms - inv["startedMs"] < 16 * 60 * 1000 else "no_record"
+            }
+        status = {"success": "done", "error": "failed", "timeout": "timeout"}.get(
+            inv["result"], "failed"
+        )
+        return {"status": status, "durationMs": inv.get("durationMs")}
 
     @property
     def key(self):
@@ -169,8 +262,15 @@ class CatalogRunner:
             "startedAt": _iso(_now(self.clock)),
             "startedEpoch": now,
         }
+        run_key = (
+            "operations",
+            "CATALOG",
+            f"RUN#{_now(self.clock):%Y%m%dT%H%M%S}#{uuid4().hex[:6]}",
+        )
         try:  # reserva o intervalo ANTES de invocar: dois cliques juntos disparam uma vez so
-            self.store.commit({self.key: previous}, {self.key: record})
+            self.store.commit(
+                {self.key: previous, run_key: None}, {self.key: record, run_key: record}
+            )
         except Conflict as error:
             raise Problem(429, "RUN_TOO_SOON") from error
         try:
@@ -180,13 +280,12 @@ class CatalogRunner:
                 Payload=json.dumps(RUN_MODES[mode]).encode(),
             )
         except Exception as error:  # noqa: BLE001
-            failed = {
-                **record,
-                "startedEpoch": 0,
-                "failed": True,
-            }  # falha ao disparar nao trava o intervalo
+            failed = {**record, "startedEpoch": 0, "failed": True}  # nao trava o intervalo
             try:
-                self.store.commit({self.key: self.store.get(self.key)}, {self.key: failed})
+                self.store.commit(
+                    {self.key: self.store.get(self.key), run_key: self.store.get(run_key)},
+                    {self.key: failed, run_key: {**record, "failed": True}},
+                )
             except Conflict:
                 pass
             raise Unavailable() from error

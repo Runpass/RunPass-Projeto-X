@@ -113,3 +113,35 @@ export function resumoCadastros(r) {
   const partes = Object.entries(r.byStatus || {}).map(([s, n]) => `${n} ${statusCadastro(s).toLowerCase()}`);
   return `${r.total} cadastro${r.total === 1 ? '' : 's'}${partes.length ? ': ' + partes.join(', ') : ''}${r.partial ? ' (lista parcial)' : ''}`;
 }
+
+export const SITUACAO_EXECUCAO = {
+  waiting: 'Aguardando início',
+  running: 'Em execução',
+  done: 'Concluída',
+  failed: 'Terminou com erro',
+  timeout: 'Tempo esgotado (15 min)',
+  dispatch_failed: 'Não foi possível disparar',
+  no_record: 'Sem registro da execução',
+  unknown: 'Situação indisponível',
+};
+
+export function situacaoExecucao(status) {
+  return SITUACAO_EXECUCAO[status] || status || '—';
+}
+
+export function duracao(ms) {
+  if (!Number.isFinite(ms)) return '';
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}min ${s % 60}s`;
+}
+
+/** "10/11/2026 12:30" no fuso de São Paulo, a partir de "2026-11-10T15:30:00Z". */
+export function dataHoraBr(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
+}
+
+export function ativa(execucoes) {
+  return execucoes.some((e) => e.status === 'waiting' || e.status === 'running');
+}

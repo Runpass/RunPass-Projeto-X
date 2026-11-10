@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  MODOS_CATALOGO, PERMISSOES, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  MODOS_CATALOGO, PERMISSOES, ativa, dataHoraBr, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -57,6 +57,7 @@ function sair(motivo) {
   token = null;
   sessaoMfa = null;
   clearInterval(temporizador);
+  clearTimeout(acompanhar);
   $('painel').hidden = true;
   $('sessao').hidden = true;
   $('entrar').hidden = false;
@@ -235,7 +236,37 @@ async function carregarCadastros() {
   }
 }
 
+let acompanhar = null;
+
+async function carregarExecucoes() {
+  clearTimeout(acompanhar);
+  try {
+    const r = await api('/admin/catalog/runs');
+    const linhas = r.items.map((e) =>
+      el(
+        'tr',
+        {},
+        el('td', {}, dataHoraBr(e.at)),
+        el('td', {}, e.origin === 'portal' ? `Portal · ${MODOS_CATALOGO[e.mode] || e.mode}` : 'Agendada'),
+        el('td', {}, e.by ? e.by.slice(0, 8) : '—'),
+        el('td', {}, situacaoExecucao(e.status)),
+        el('td', {}, duracao(e.durationMs)),
+      ),
+    );
+    $('execucoes').replaceChildren(
+      linhas.length
+        ? el('table', { class: 'tabela' }, el('thead', {}, el('tr', {}, ['Início', 'Origem', 'Por', 'Situação', 'Duração'].map((t) => el('th', {}, t)))), el('tbody', {}, linhas))
+        : el('p', { class: 'vazio' }, 'Nenhuma execução nos últimos 7 dias.'),
+      r.logsAvailable ? '' : el('p', { class: 'meta' }, 'Os registros da rotina não puderam ser lidos agora; a lista mostra só os disparos.'),
+    );
+    if (token && ativa(r.items) && !$('sec-catalogo').hidden) acompanhar = setTimeout(carregarExecucoes, 20000);
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
 async function carregarUltimoDisparo() {
+  carregarExecucoes();
   try {
     const { last } = await api('/admin/catalog/run');
     $('ultimo-disparo').textContent = last
@@ -382,3 +413,4 @@ $('voltar').addEventListener('click', () => sair());
 $('sair').addEventListener('click', () => sair());
 $('atualizar').addEventListener('click', carregarPedidos);
 $('atualizar-cadastros').addEventListener('click', carregarCadastros);
+$('atualizar-execucoes').addEventListener('click', carregarExecucoes);

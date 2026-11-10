@@ -307,6 +307,13 @@ def create_admin_app(
             raise Unavailable()
         return runner.last()
 
+    @app.get("/admin/catalog/runs")
+    def runs(op: Operator):
+        need(op, "catalog_admin")
+        if runner is None:
+            raise Unavailable()
+        return runner.runs()
+
     @app.post("/admin/catalog/run", status_code=202)
     def start_run(payload: CatalogRun, op: Operator):
         actor = need(op, "catalog_admin").subject
