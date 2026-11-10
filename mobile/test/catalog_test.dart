@@ -1594,10 +1594,10 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    await choose('Data: mais recentes primeiro');
+    await choose('Data: mais recentes');
     expect(top('Corrida C') < top('Corrida B'), isTrue);
     expect(top('Corrida B') < top('Corrida A'), isTrue);
-    await choose('Melhores avaliadas (ranking)');
+    await choose('Melhores avaliadas');
     expect(find.textContaining('#1 · Corrida C'), findsOneWidget);
     expect(find.textContaining('#2 · Corrida A'), findsOneWidget);
     expect(
@@ -1607,4 +1607,43 @@ void main() {
     expect(top('Corrida A') < top('Corrida B'), isTrue);
     expect(find.textContaining('★ 4,8 · 12 avaliações'), findsOneWidget);
   });
+
+  testWidgets(
+    'trocar a ordem no meio da paginação recomeça a busca com o mesmo limite no cursor',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <Map<String, String>>[];
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path != '/editions') return const JsonReply(200, {'items': []});
+        calls.add(uri.queryParameters);
+        final q = uri.queryParameters;
+        // O cursor do servidor é amarrado ao limite: outro limite com o mesmo cursor é recusado.
+        if (q['cursor'] != null && q['limit'] != '20') {
+          return const JsonReply(422, {'code': 'INVALID_CURSOR'});
+        }
+        return JsonReply(200, {
+          'items': [
+            {...entry('A'), 'id': 'EA', 'date': '2025-01-01'},
+            {...entry('B'), 'id': 'EB', 'date': '2026-01-01'},
+          ],
+          if (q['limit'] == '20') 'nextCursor': 'c20',
+        });
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(calls.single['limit'], '20');
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Data: mais recentes').last);
+      await tester.pumpAndSettle();
+      expect(calls.last['limit'], '100');
+      expect(calls.last.containsKey('cursor'), isFalse);
+      expect(find.byKey(const Key('catalog-error')), findsNothing);
+      expect(find.textContaining('Corrida B'), findsOneWidget);
+    },
+  );
 }

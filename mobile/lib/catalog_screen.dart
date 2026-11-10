@@ -204,6 +204,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// Ordem da lista: `dateAsc` (padrão, a do servidor), `dateDesc` ou `rating` (ranking das melhores).
   String sort = 'dateAsc';
 
+  /// Itens por página da busca atual. O cursor do servidor é amarrado aos filtros (inclui o limite),
+  /// então o limite não pode mudar no meio de uma busca.
+  String pageLimit = '20';
+
   static num? scoreOf(Map<String, dynamic> edition) {
     final raw = (edition['runScore'] as Map?)?['value'];
     return raw is num ? raw : num.tryParse('${raw ?? ''}');
@@ -243,7 +247,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   Future<void> changeSort(String value) async {
     setState(() => sort = value);
-    await loadRest();
+    // Páginas já carregadas com limite 20 não continuam com 100: recomeça a mesma busca.
+    if (value != 'dateAsc' && pageLimit != '100' && nextCursor != null) {
+      await load();
+    } else {
+      await loadRest();
+    }
   }
 
   Future<void> load({bool more = false}) async {
@@ -262,6 +271,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
       searchInfo = null;
       items.clear();
       nextCursor = null;
+      pageLimit = sort == 'dateAsc' ? '20' : '100';
     }
     setState(() {
       loading = true;
@@ -275,7 +285,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ? {'phrase': sentence, 'limit': '20'}
             : {
                 ...activeFilters,
-                'limit': sort == 'dateAsc' ? '20' : '100',
+                'limit': pageLimit,
                 if (more && nextCursor != null) 'cursor': nextCursor!,
               },
       );
@@ -634,15 +644,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       items: const [
                         DropdownMenuItem(
                           value: 'dateAsc',
-                          child: Text('Data: mais antigas primeiro'),
+                          child: Text('Data: mais antigas'),
                         ),
                         DropdownMenuItem(
                           value: 'dateDesc',
-                          child: Text('Data: mais recentes primeiro'),
+                          child: Text('Data: mais recentes'),
                         ),
                         DropdownMenuItem(
                           value: 'rating',
-                          child: Text('Melhores avaliadas (ranking)'),
+                          child: Text('Melhores avaliadas'),
                         ),
                       ],
                       onChanged: loading
