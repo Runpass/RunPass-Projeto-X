@@ -215,3 +215,136 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
     ),
   );
 }
+
+/// Recorte da foto da medalha/corrida: arrastar, ampliar com dois dedos e escolher a proporção.
+/// "Livre" deixa o quadro ser redimensionado pelas bordas; as demais fixam a proporção do quadro.
+class RacePhotoCropScreen extends StatefulWidget {
+  final Uint8List image;
+  const RacePhotoCropScreen({super.key, required this.image});
+
+  /// Proporções oferecidas (largura / altura); `null` é o recorte livre.
+  static const aspects = <(String, double?)>[
+    ('Livre', null),
+    ('1:1', 1),
+    ('4:3', 4 / 3),
+    ('3:4', 3 / 4),
+    ('16:9', 16 / 9),
+  ];
+
+  @override
+  State<RacePhotoCropScreen> createState() => _RacePhotoCropScreenState();
+}
+
+class _RacePhotoCropScreenState extends State<RacePhotoCropScreen> {
+  final controller = CropController();
+  int selected = 2; // 4:3: boa para foto de medalha
+  bool busy = false;
+
+  double? get aspect => RacePhotoCropScreen.aspects[selected].$2;
+
+  void done(CropResult result) {
+    if (!mounted) return;
+    switch (result) {
+      case CropSuccess(:final croppedImage):
+        Navigator.of(context).pop<List<int>>(croppedImage);
+      case CropFailure():
+        setState(() => busy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível recortar a foto. Tente de novo.'),
+          ),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: const Text('Ajustar foto'),
+    ),
+    body: SafeArea(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              aspect == null
+                  ? 'Arraste as bordas do quadro para escolher o tamanho e mova a foto com o dedo.'
+                  : 'Arraste a foto e use dois dedos para ampliar. A parte dentro do quadro será a foto.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+          Expanded(
+            child: Crop(
+              // Trocar a proporção recria o quadro do zero (a foto volta inteira).
+              key: ValueKey(selected),
+              image: widget.image,
+              controller: controller,
+              aspectRatio: aspect,
+              interactive: true,
+              fixCropRect: aspect != null,
+              baseColor: Colors.black,
+              maskColor: Colors.black.withValues(alpha: 0.6),
+              onCropped: done,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Wrap(
+              spacing: 8,
+              children: [
+                for (final (index, option)
+                    in RacePhotoCropScreen.aspects.indexed)
+                  ChoiceChip(
+                    key: Key('crop-aspect-$index'),
+                    label: Text(option.$1),
+                    selected: selected == index,
+                    onSelected: busy
+                        ? null
+                        : (_) => setState(() => selected = index),
+                  ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('crop-cancel'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: busy ? null : () => Navigator.of(context).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('crop-confirm'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: runPassOrange,
+                    ),
+                    onPressed: busy
+                        ? null
+                        : () {
+                            setState(() => busy = true);
+                            controller.crop();
+                          },
+                    child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}

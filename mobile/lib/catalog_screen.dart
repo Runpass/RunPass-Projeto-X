@@ -11,6 +11,7 @@ import 'identity_gateway.dart';
 import 'location_picker.dart';
 import 'my_races.dart';
 import 'notifications.dart';
+import 'profile_photo.dart';
 import 'runpass_theme.dart';
 
 export 'home_screen.dart';
@@ -2678,12 +2679,21 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       } else {
         final file = await ImagePicker().pickImage(
           source: ImageSource.gallery,
-          maxWidth: 5000,
-          maxHeight: 5000,
-          imageQuality: 85,
+          // Limite menor que o antigo: o recorte devolve a imagem sem reduzir, e o envio aceita até 10 MB.
+          maxWidth: 2800,
+          maxHeight: 2800,
+          imageQuality: 88,
           requestFullMetadata: false,
         );
-        bytes = await file?.readAsBytes();
+        final original = await file?.readAsBytes();
+        if (original == null || !mounted) return;
+        // Ajuste antes de enviar: recortar, ampliar e escolher a proporção. Cancelar não envia nada.
+        bytes = await Navigator.of(context).push<List<int>>(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => RacePhotoCropScreen(image: original),
+          ),
+        );
       }
       if (bytes == null) return;
       final contentType =
