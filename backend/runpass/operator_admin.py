@@ -65,3 +65,27 @@ def load_catalog(catalog, actor, fixture_text, origin=FIXTURE_ORIGIN):
         elif not _already_loaded(catalog, entry, head, origin):
             importer.put(entry, expected_version=int(head["version"]), origin=origin, actor=actor)
     return [entry["id"] for entry in entries]
+
+
+def retire_catalog(catalog, actor, fixture_text, origin=FIXTURE_ORIGIN):
+    """Arquiva as edicoes do arquivo e as tira da lista, sem apagar nada (o historico fica no detalhe).
+
+    Repetir e seguro. Edicao que nunca foi carregada e ignorada.
+    """
+    importer = CatalogImporter(catalog)
+    result = {"arquivadas": [], "tiradas_da_lista": [], "ausentes": []}
+    for entry in json.loads(fixture_text, parse_float=Decimal):
+        key = ("catalog", "EDITION#" + entry["id"], "HEAD")
+        head = catalog.store.get(key)
+        if head is None:
+            result["ausentes"].append(entry["id"])
+            continue
+        if not head.get("archived"):
+            archived = {**entry, "archived": True, "archivedReason": "unavailable"}
+            importer.put(
+                archived, expected_version=int(head["version"]), origin=origin, actor=actor
+            )
+            result["arquivadas"].append(entry["id"])
+        if importer.unlist(entry["id"], actor=actor):
+            result["tiradas_da_lista"].append(entry["id"])
+    return result

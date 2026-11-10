@@ -23,7 +23,7 @@ from runpass.catalog_sources import ADAPTERS, SourceDisabled, SourceError
 from runpass.edition_requests import EditionRequestReview
 from runpass.identity import CognitoDirectory, CognitoVerifier, JwksProvider
 from runpass.models import ReviewRequestDecision
-from runpass.operator_admin import PERMISSIONS, grant_access, load_catalog
+from runpass.operator_admin import PERMISSIONS, grant_access, load_catalog, retire_catalog
 from runpass.operators import establish_session
 from runpass.service import IdentityService
 from runpass.store import DynamoStore
@@ -163,6 +163,15 @@ def load(session, env, username):
     print(f"{len(ids)} edicoes carregadas pelo importador (idempotente): {', '.join(ids)}")
 
 
+def retire_synthetic(session, env, username):
+    actor, catalog = operator_login(session, env, username)
+    r = retire_catalog(catalog, actor, FIXTURE.read_text())
+    print(
+        f"arquivadas: {r['arquivadas'] or '-'}; tiradas da lista: {r['tiradas_da_lista'] or '-'}; "
+        f"nunca carregadas: {r['ausentes'] or '-'}"
+    )
+
+
 def print_report(report):
     c = report["counts"]
     print(
@@ -279,6 +288,9 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("enroll", "load-catalog"):
         sub.add_parser(name).add_argument("--username", required=True, help="e-mail do operador")
+    sub.add_parser(
+        "retire-synthetic", help="arquiva e tira da lista as edicoes sinteticas (nao apaga nada)"
+    ).add_argument("--username", required=True, help="e-mail do operador")
     imp = sub.add_parser("import-csv", help="importa provas de um CSV autorizado")
     imp.add_argument("--username", help="e-mail do operador (nao precisa com --offline)")
     imp.add_argument("--file", required=True)
@@ -316,6 +328,8 @@ def main():
         if not args.offline and not args.username:
             sys.exit("Informe --username (ou use --offline para so validar o arquivo).")
         import_csv(session, args)
+    elif args.command == "retire-synthetic":
+        retire_synthetic(session, args.env, args.username)
     elif args.command == "sync-source":
         sync_source(session, args)
     elif args.command == "list-requests":

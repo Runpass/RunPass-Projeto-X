@@ -6,7 +6,7 @@ from cryptography.fernet import Fernet
 from dynamo_fake import SerializingDynamoStore
 from runpass.catalog import CatalogFilters, CatalogService
 from runpass.identity import Principal
-from runpass.operator_admin import FIXTURE_ORIGIN, grant_access, load_catalog
+from runpass.operator_admin import FIXTURE_ORIGIN, grant_access, load_catalog, retire_catalog
 from runpass.service import IdentityService
 from runpass.store import MemoryStore
 
@@ -89,6 +89,37 @@ class OperatorAdminTest(unittest.TestCase):
         body = self.catalog.detail(runner, "synthetic-archived")
         self.assertEqual(body["status"], "archived")
         self.assertEqual(body["archivedReason"], "unavailable")
+
+    def test_retire_archives_and_unlists_but_keeps_detail_and_is_repeatable(self):
+        grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
+        self.session()
+        load_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        first = retire_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        self.assertEqual(len(first["tiradas_da_lista"]), 5)
+        again = retire_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        self.assertEqual(again["arquivadas"], [])
+        runner = Principal("runner", True)
+        self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
+        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.assertEqual(self.catalog.list(runner, CatalogFilters())["items"], [])
+        self.assertEqual(self.catalog.detail(runner, "synthetic-sp-2026")["status"], "archived")
+
+    def test_retire_without_session_is_refused_and_ignores_unloaded(self):
+        grant_access(self.store, "op", ["catalog_admin"], "other", NOW)
+        out = retire_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        self.assertEqual(len(out["ausentes"]), 5)
+        self.session()
+        load_catalog(self.catalog, self.operator, FIXTURE.read_text())
+        self.store.commit(
+            {
+                ("operations", "OPERATOR#op", "SESSION#digest"): self.store.get(
+                    ("operations", "OPERATOR#op", "SESSION#digest")
+                )
+            },
+            {("operations", "OPERATOR#op", "SESSION#digest"): None},
+        )
+        with self.assertRaises(Exception):
+            retire_catalog(self.catalog, self.operator, FIXTURE.read_text())
 
     def test_update_works_with_dynamodb_decimal_versions(self):
         # DynamoDB devolve numeros como Decimal; a versao esperada precisa virar inteiro.
