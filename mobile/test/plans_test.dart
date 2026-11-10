@@ -15,6 +15,7 @@ Map<String, dynamic> upcoming(String id, {String date = '2099-05-01'}) => {
 };
 
 void main() {
+  searchTests();
   homeWidthsTests();
   participantsTests();
   bannerTests();
@@ -524,4 +525,144 @@ void homeWidthsTests() {
       }
     });
   }
+}
+
+void searchTests() {
+  test('ano vira o intervalo do ano todo e anos inválidos são recusados', () {
+    expect(yearRange('2026'), (from: '2026-01-01', to: '2026-12-31'));
+    expect(yearRange(' 2024 '), (from: '2024-01-01', to: '2024-12-31'));
+    for (final bad in ['', 'abc', '26', '1850', '2026-11', '2101']) {
+      expect(yearRange(bad), isNull, reason: bad);
+    }
+    expect(filterYears(DateTime(2026, 11, 10)), [2027, 2026, 2025, 2024]);
+    expect(brazilianStates.length, 27);
+    expect(brazilianStates['SP'], 'São Paulo');
+  });
+
+  Future<List<Map<String, String>>> openForm(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final calls = <Map<String, String>>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions') calls.add(uri.queryParameters);
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+    await tester.pumpAndSettle();
+    return calls;
+  }
+
+  Future<void> pick(WidgetTester tester, String field, String option) async {
+    final box = find.byKey(ValueKey('$field-0'));
+    await tester.ensureVisible(box);
+    await tester.tap(box);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(option).last);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('só o nome é obrigatório; UF e ano são seletores', (
+    tester,
+  ) async {
+    final calls = await openForm(tester);
+    final before = calls.length;
+    await tester.ensureVisible(find.text('Buscar'));
+    await tester.tap(find.text('Buscar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Informe o nome da corrida.'), findsOneWidget);
+    expect(calls.length, before, reason: 'sem nome nada é enviado');
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Nome da corrida (obrigatório)'),
+      'meia',
+    );
+    await pick(tester, 'filter-state', 'SP · São Paulo');
+    await pick(tester, 'filter-year', '2026');
+    await tester.ensureVisible(find.text('Buscar'));
+    await tester.tap(find.text('Buscar'));
+    await tester.pumpAndSettle();
+    expect(calls.last['namePrefix'], 'meia');
+    expect(calls.last['state'], 'SP');
+    expect(calls.last['dateFrom'], '2026-01-01');
+    expect(calls.last['dateTo'], '2026-12-31');
+    expect(
+      calls.last.containsKey('city'),
+      isFalse,
+      reason: 'cidade e os demais são opcionais',
+    );
+  });
+
+  testWidgets('limpar a busca zera UF e ano nos seletores', (tester) async {
+    final calls = await openForm(tester);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Nome da corrida (obrigatório)'),
+      'meia',
+    );
+    await pick(tester, 'filter-state', 'RJ · Rio de Janeiro');
+    await pick(tester, 'filter-year', '2025');
+    await tester.ensureVisible(find.text('Buscar'));
+    await tester.tap(find.text('Buscar'));
+    await tester.pumpAndSettle();
+    expect(calls.last['state'], 'RJ');
+    await tester.ensureVisible(find.text('Limpar busca'));
+    await tester.tap(find.text('Limpar busca'));
+    await tester.pumpAndSettle();
+    expect(calls.last.containsKey('state'), isFalse);
+    expect(calls.last.containsKey('dateFrom'), isFalse);
+    expect(find.text('Todos os estados'), findsOneWidget);
+    expect(find.text('Qualquer ano'), findsOneWidget);
+  });
+
+  testWidgets('pedir cadastro e minhas solicitações ficam sempre visíveis', (
+    tester,
+  ) async {
+    await openForm(tester);
+    await tester.tap(
+      find.byKey(const Key('catalog-search-toggle')),
+    ); // fecha a lupa
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
+    expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
+    expect(find.text('Minhas solicitações'), findsOneWidget);
+  });
+
+  testWidgets(
+    'a lista mostra a imagem aprovada e só pede link de quem tem imagem',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      EditionThumb.cache.clear();
+      final banners = <String>[];
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              {...entry('A'), 'id': 'EA', 'imageReference': 'banner_x'},
+              {...entry('B'), 'id': 'EB'},
+            ],
+          });
+        }
+        if (uri.path.endsWith('/banner')) {
+          banners.add(uri.path);
+          return const JsonReply(200, {
+            'url': 'https://img.exemplo.invalid/a.png',
+            'contentType': 'image/png',
+            'expiresAt': '2099-01-01T00:00:00Z',
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(banners, ['/editions/EA/banner']);
+      expect(find.byKey(const Key('edition-thumb')), findsOneWidget);
+      // A outra corrida segue com o ícone, sem imagem.
+      expect(find.byType(EditionThumb), findsNWidgets(2));
+    },
+  );
 }

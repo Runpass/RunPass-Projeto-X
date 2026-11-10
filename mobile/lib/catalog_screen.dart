@@ -150,6 +150,132 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
   return mine;
 }
 
+/// Miniatura da corrida na lista: a imagem aprovada (banner ou logo) quando existe; senão o ícone.
+/// Só corridas com `imageReference` pedem o link, e ele fica em cache por alguns minutos.
+class EditionThumb extends StatefulWidget {
+  final IdentityGateway gateway;
+  final Map<String, dynamic> edition;
+  final bool archived;
+  const EditionThumb({
+    super.key,
+    required this.gateway,
+    required this.edition,
+    this.archived = false,
+  });
+
+  /// Links temporários já obtidos (corrida -> url, instante), para a rolagem não repetir pedidos.
+  static final Map<String, (String, DateTime)> cache = {};
+
+  @override
+  State<EditionThumb> createState() => _EditionThumbState();
+}
+
+class _EditionThumbState extends State<EditionThumb> {
+  String? url;
+
+  @override
+  void initState() {
+    super.initState();
+    resolve();
+  }
+
+  Future<void> resolve() async {
+    final id = widget.edition['id'] as String;
+    if (widget.edition['imageReference'] == null) return;
+    final hit = EditionThumb.cache[id];
+    if (hit != null && DateTime.now().difference(hit.$2).inMinutes < 4) {
+      url = hit.$1;
+      return;
+    }
+    try {
+      final link = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(id)}/banner',
+      );
+      final found = link['url'] as String?;
+      if (found == null) return;
+      EditionThumb.cache[id] = (found, DateTime.now());
+      if (mounted) setState(() => url = found);
+    } on Exception {
+      // Sem imagem, fica o ícone: a lista nunca depende dela.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final archived = widget.archived;
+    final icon = Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: archived
+            ? context.panelStrong
+            : runPassOrange.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Icon(
+        archived ? Icons.inventory_2_outlined : Icons.directions_run,
+        color: archived ? context.archivedText : runPassOrange,
+      ),
+    );
+    final shown = url;
+    if (shown == null) return icon;
+    return ClipRRect(
+      key: const Key('edition-thumb'),
+      borderRadius: BorderRadius.circular(14),
+      child: Image.network(
+        shown,
+        width: 48,
+        height: 48,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => icon,
+      ),
+    );
+  }
+}
+
+/// Intervalo (`from`, `to`) em AAAA-MM-DD do ano escolhido no filtro, ou null se não for um ano.
+({String from, String to})? yearRange(String raw) {
+  final year = int.tryParse(raw.trim());
+  if (year == null || year < 1990 || year > 2100) return null;
+  return (from: '$year-01-01', to: '$year-12-31');
+}
+
+/// Anos oferecidos no filtro: do próximo ano até 2024, do mais recente para o mais antigo.
+List<int> filterYears([DateTime? now]) {
+  final top = (now ?? DateTime.now()).year + 1;
+  return [for (var y = top; y >= 2024; y--) y];
+}
+
+const brazilianStates = {
+  'AC': 'Acre',
+  'AL': 'Alagoas',
+  'AP': 'Amapá',
+  'AM': 'Amazonas',
+  'BA': 'Bahia',
+  'CE': 'Ceará',
+  'DF': 'Distrito Federal',
+  'ES': 'Espírito Santo',
+  'GO': 'Goiás',
+  'MA': 'Maranhão',
+  'MT': 'Mato Grosso',
+  'MS': 'Mato Grosso do Sul',
+  'MG': 'Minas Gerais',
+  'PA': 'Pará',
+  'PB': 'Paraíba',
+  'PR': 'Paraná',
+  'PE': 'Pernambuco',
+  'PI': 'Piauí',
+  'RJ': 'Rio de Janeiro',
+  'RN': 'Rio Grande do Norte',
+  'RS': 'Rio Grande do Sul',
+  'RO': 'Rondônia',
+  'RR': 'Roraima',
+  'SC': 'Santa Catarina',
+  'SP': 'São Paulo',
+  'SE': 'Sergipe',
+  'TO': 'Tocantins',
+}; // fmt: skip
+
 class CatalogScreen extends StatefulWidget {
   final IdentityGateway gateway;
 
@@ -166,14 +292,7 @@ class CatalogScreen extends StatefulWidget {
 
 class _CatalogScreenState extends State<CatalogScreen> {
   final fields = {
-    for (final key in [
-      'namePrefix',
-      'city',
-      'state',
-      'distanceKm',
-      'dateFrom',
-      'dateTo',
-    ])
+    for (final key in ['namePrefix', 'city', 'state', 'distanceKm', 'year'])
       key: TextEditingController(),
   };
   final form = GlobalKey<FormState>();
@@ -319,7 +438,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   Future<void> load({bool more = false}) async {
     if (loading) return;
-    if (!more && !(form.currentState?.validate() ?? true)) return;
     final sentence = phrase.text.trim();
     if (!more) {
       suggestTimer?.cancel();
@@ -328,8 +446,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
           ? {}
           : {
               for (final entry in fields.entries)
-                if (entry.value.text.trim().isNotEmpty)
+                if (entry.value.text.trim().isNotEmpty && entry.key != 'year')
                   entry.key: entry.value.text.trim(),
+              if (yearRange(fields['year']!.text) case final range?) ...{
+                'dateFrom': range.from,
+                'dateTo': range.to,
+              },
               'registrationStatus': ?registration,
             };
       searchInfo = null;
@@ -431,10 +553,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
   void clearSearch() {
     if (loading) return;
     phrase.clear();
+    // Primeiro o reset do formulário (ele devolve ao seletor o valor antigo e dispara o onChanged);
+    // só depois limpo os campos, para o último valor valer.
+    form.currentState?.reset();
     for (final controller in fields.values) {
       controller.clear();
     }
-    form.currentState?.reset();
     setState(() {
       registration = null;
       registrationEpoch++;
@@ -447,30 +571,22 @@ class _CatalogScreenState extends State<CatalogScreen> {
     String label, {
     String? Function(String)? validate,
     int? maxLength,
+    String? hint,
+    bool required = false,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: TextFormField(
       controller: fields[key],
       maxLength: maxLength,
-      decoration: InputDecoration(labelText: label),
+      decoration: InputDecoration(labelText: label, helperText: hint),
       keyboardType: key == 'distanceKm'
           ? const TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
       validator: (value) => value == null || value.trim().isEmpty
-          ? null
+          ? (required ? 'Informe o nome da corrida.' : null)
           : validate?.call(value.trim()),
     ),
   );
-
-  String? dateValidator(String value) {
-    final parsed = DateTime.tryParse(value);
-    if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value) ||
-        parsed == null ||
-        parsed.toIso8601String().substring(0, 10) != value) {
-      return 'Use uma data válida no formato AAAA-MM-DD.';
-    }
-    return null;
-  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -556,6 +672,27 @@ class _CatalogScreenState extends State<CatalogScreen> {
               ),
             ),
           ),
+          // Sempre visíveis (não ficam escondidos atrás da lupa): pedir cadastro e acompanhar os pedidos.
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Wrap(
+              spacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  key: const Key('catalog-request-new'),
+                  onPressed: loading ? null : requestRace,
+                  icon: const Icon(Icons.add_circle_outline),
+                  label: const Text('Pedir cadastro da corrida'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('catalog-request-mine'),
+                  onPressed: openMyRequests,
+                  icon: const Icon(Icons.assignment_outlined),
+                  label: const Text('Minhas solicitações'),
+                ),
+              ],
+            ),
+          ),
           if (suggestions.isNotEmpty && phrase.text.trim().length >= 2)
             Card(
               key: const Key('catalog-suggestions'),
@@ -616,22 +753,41 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       const SizedBox(height: 12),
                       filter(
                         'namePrefix',
-                        'Início do nome da corrida',
+                        'Nome da corrida (obrigatório)',
                         maxLength: 160,
+                        required: true,
                       ),
                       filter('city', 'Cidade', maxLength: 100),
-                      filter(
-                        'state',
-                        'Estado (UF)',
-                        maxLength: 2,
-                        validate: (value) =>
-                            RegExp(r'^[A-Za-z]{2}$').hasMatch(value)
-                            ? null
-                            : 'Informe a UF.',
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: DropdownButtonFormField<String?>(
+                          key: ValueKey('filter-state-$registrationEpoch'),
+                          initialValue: fields['state']!.text.isEmpty
+                              ? null
+                              : fields['state']!.text,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Estado (UF)',
+                          ),
+                          items: [
+                            const DropdownMenuItem(
+                              value: null,
+                              child: Text('Todos os estados'),
+                            ),
+                            for (final uf in brazilianStates.entries)
+                              DropdownMenuItem(
+                                value: uf.key,
+                                child: Text('${uf.key} · ${uf.value}'),
+                              ),
+                          ],
+                          onChanged: (value) =>
+                              fields['state']!.text = value ?? '',
+                        ),
                       ),
                       filter(
                         'distanceKm',
-                        'Distância em km',
+                        'Distância em km (opcional)',
+                        hint: 'Ex.: 5, 10, 21 ou 42',
                         validate: (value) {
                           final km = double.tryParse(value);
                           return km != null && km.isFinite && km > 0
@@ -639,15 +795,27 @@ class _CatalogScreenState extends State<CatalogScreen> {
                               : 'Informe uma distância positiva, usando ponto para decimais.';
                         },
                       ),
-                      filter(
-                        'dateFrom',
-                        'Data inicial (AAAA-MM-DD)',
-                        validate: dateValidator,
-                      ),
-                      filter(
-                        'dateTo',
-                        'Data final (AAAA-MM-DD)',
-                        validate: dateValidator,
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: DropdownButtonFormField<String?>(
+                          key: ValueKey('filter-year-$registrationEpoch'),
+                          initialValue: fields['year']!.text.isEmpty
+                              ? null
+                              : fields['year']!.text,
+                          decoration: const InputDecoration(
+                            labelText: 'Ano da prova',
+                          ),
+                          items: [
+                            const DropdownMenuItem(
+                              value: null,
+                              child: Text('Qualquer ano'),
+                            ),
+                            for (final y in filterYears())
+                              DropdownMenuItem(value: '$y', child: Text('$y')),
+                          ],
+                          onChanged: (value) =>
+                              fields['year']!.text = value ?? '',
+                        ),
                       ),
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
@@ -686,39 +854,22 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         ),
                       ),
                       FilledButton(
-                        onPressed: loading ? null : () => load(),
+                        onPressed: loading
+                            ? null
+                            : () {
+                                // Com uma frase acima, o formulário é ignorado: nada a validar.
+                                if (phrase.text.trim().isEmpty &&
+                                    !(form.currentState?.validate() ?? true)) {
+                                  return;
+                                }
+                                load();
+                              },
                         child: const Text('Buscar'),
                       ),
                       const SizedBox(height: 8),
                       OutlinedButton(
                         onPressed: loading ? null : clearSearch,
                         child: const Text('Limpar busca'),
-                      ),
-                      const Divider(height: 32),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Não encontrou a corrida?',
-                          style: TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Peça o cadastro. A equipe pesquisa os pedidos periodicamente, confere a fonte e o resultado aparece em "Minhas solicitações".',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      FilledButton(
-                        key: const Key('catalog-request-new'),
-                        onPressed: loading ? null : requestRace,
-                        child: const Text('Pedir cadastro da corrida'),
-                      ),
-                      TextButton(
-                        key: const Key('catalog-request-mine'),
-                        onPressed: openMyRequests,
-                        child: const Text('Minhas solicitações'),
                       ),
                     ],
                   ),
@@ -801,23 +952,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
                     ? context.archivedText
                     : null,
                 contentPadding: const EdgeInsets.all(16),
-                leading: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: edition['status'] == 'archived'
-                        ? context.panelStrong
-                        : runPassOrange.withValues(alpha: .12),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(
-                    edition['status'] == 'archived'
-                        ? Icons.inventory_2_outlined
-                        : Icons.directions_run,
-                    color: edition['status'] == 'archived'
-                        ? context.archivedText
-                        : runPassOrange,
-                  ),
+                leading: EditionThumb(
+                  gateway: widget.gateway,
+                  edition: edition,
+                  archived: edition['status'] == 'archived',
                 ),
                 title: Text(
                   sort == 'rating' && scoreOf(edition) != null
