@@ -108,7 +108,7 @@ test('operadores: situação e permissões', async () => {
   assert.equal(situacaoOperador(ativo), 'Ativo');
   assert.deepEqual(permissoesDe(ativo), ['cost_read']);
   assert.equal(situacaoOperador({ ...ativo, enabled: false }), 'Desativado');
-  assert.equal(situacaoOperador({ enabled: true, access: null }), 'Sem acesso');
+  assert.match(situacaoOperador({ enabled: true, access: null }), /Sem acesso/);
   assert.equal(situacaoOperador({ enabled: true, access: { state: 'revoked', permissions: [] } }), 'Acesso retirado');
   assert.equal(situacaoOperador({ ...ativo, status: 'FORCE_CHANGE_PASSWORD' }), 'Convite enviado (ainda não entrou)');
   assert.deepEqual(permissoesDe({ access: null }), []);
@@ -135,4 +135,11 @@ test('motivo da falha da OpenAI vira frase útil sem vazar detalhes', async () =
   assert.match(motivoOpenAi('http_500'), /\(500\)/);
   assert.match(motivoOpenAi('network'), /Sem resposta/);
   assert.equal(motivoOpenAi(undefined), 'Motivo não identificado.');
+});
+
+test('acesso ao portal: mensagens de conta sem acesso', async () => {
+  const { situacaoOperador } = await import('./lib.js');
+  assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);
+  assert.match(mensagem('ACCESS_ALREADY_EXISTS'), /reative/);
+  assert.match(situacaoOperador({ enabled: true, access: null }), /Sem acesso ao portal/);
 });

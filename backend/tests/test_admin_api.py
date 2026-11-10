@@ -766,6 +766,67 @@ class AdminApiTests(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 409)  # revogado
 
+    def test_conceder_acesso_a_quem_existe_no_pool_sem_acesso(self):
+        self.operadores()
+        self.cognito.operators["rafael@e.invalid"] = {"sub": "rafael-sub", "enabled": True}
+        h = self.auth(token("adm"))
+        # sem acesso, o login do Cognito nao basta: a API recusa
+        self.assertEqual(
+            self.client.get("/admin/session", headers=self.auth(token("rafael-sub"))).status_code,
+            401,
+        )
+        itens = self.client.get("/admin/operators", headers=h).json()["items"]
+        self.assertIsNone(next(i for i in itens if i["subject"] == "rafael-sub")["access"])
+        self.assertEqual(
+            self.client.post(
+                "/admin/operators/rafael-sub/grant",
+                json={"permissions": ["catalog_admin"]},
+                headers=self.auth(token("op")),
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/admin/operators/rafael-sub/grant", json={"permissions": ["root"]}, headers=h
+            ).status_code,
+            422,
+        )
+        r = self.client.post(
+            "/admin/operators/rafael-sub/grant",
+            json={"permissions": ["catalog_admin", "user_admin"]},
+            headers=h,
+        )
+        self.assertEqual(r.status_code, 201, r.text)
+        acesso = self.store.get(("identity", "OPERATOR#rafael-sub", "ACCESS"))
+        self.assertEqual((acesso["state"], acesso["grantedBy"]), ("active", "adm"))
+        self.assertEqual(
+            self.client.get("/admin/session", headers=self.auth(token("rafael-sub"))).status_code,
+            200,
+        )
+        # quem ja tem acesso nao e "concedido" de novo (alterar permissoes ou reativar); nem o proprio nem quem nao existe
+        self.assertEqual(
+            self.client.post(
+                "/admin/operators/rafael-sub/grant",
+                json={"permissions": ["catalog_admin"]},
+                headers=h,
+            ).status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/admin/operators/adm/grant", json={"permissions": ["catalog_admin"]}, headers=h
+            ).status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/admin/operators/nao-existe/grant",
+                json={"permissions": ["catalog_admin"]},
+                headers=h,
+            ).status_code,
+            404,
+        )
+
     def test_reset_apaga_e_recria_com_as_mesmas_permissoes(self):
         self.operadores()
         h = self.auth(token("adm"))

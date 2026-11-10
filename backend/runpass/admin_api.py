@@ -346,6 +346,10 @@ def create_admin_app(
     def operator_permissions(subject: Subject, payload: Permissions, op: Operator):
         return users.set_permissions(need_users(op), subject, payload.permissions)
 
+    @app.post("/admin/operators/{subject}/grant", status_code=201)
+    def operator_grant(subject: Subject, payload: Permissions, op: Operator):
+        return users.grant_existing(need_users(op), subject, payload.permissions)
+
     @app.post("/admin/operators/{subject}/revoke")
     def operator_revoke(subject: Subject, op: Operator):
         return users.revoke(need_users(op), subject)

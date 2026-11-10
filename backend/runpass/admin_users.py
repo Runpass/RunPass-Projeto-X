@@ -237,6 +237,29 @@ class AdminUsers:
         )
         return {"subject": subject, "permissions": wanted}
 
+    def grant_existing(self, actor, subject, permissions):
+        """Operador que ja existe no pool (criado fora do portal) mas nunca recebeu acesso."""
+        wanted = sorted(set(permissions or []))
+        if not wanted or set(wanted) - set(PERMISSIONS):
+            raise Problem(422, "INVALID_INPUT")
+        target = self._guard(actor, subject, True)
+        if target["access"]:
+            raise Problem(
+                409, "ACCESS_ALREADY_EXISTS"
+            )  # ja tem acesso: alterar permissoes ou reativar
+        try:
+            grant_access(self.store, subject, wanted, actor, _now(self.clock))
+        except (ValueError, Problem) as error:
+            raise Problem(409, "ACCESS_CONFLICT") from error
+        audit(
+            self.store,
+            actor,
+            "operator.grant",
+            {"subject": subject, "permissions": wanted},
+            self.clock,
+        )
+        return {"subject": subject, "permissions": wanted}
+
     def revoke(self, actor, subject):
         """Retira o acesso na hora (a API confere o acesso a cada chamada), desativa o login e derruba as sessoes."""
         target = self._guard(actor, subject, False)

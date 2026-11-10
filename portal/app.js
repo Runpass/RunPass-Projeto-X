@@ -43,7 +43,9 @@ async function api(caminho, opcoes = {}) {
   const json = await resposta.json().catch(() => ({}));
   if (resposta.status === 401) {
     sair('INVALID_TOKEN');
-    throw new Error('sessão');
+    const sessao = new Error('sessão');
+    sessao.tratado = true; // a mensagem ja foi mostrada: os formulários de login não a sobrescrevem
+    throw sessao;
   }
   if (!resposta.ok) {
     const erro = new Error(json.code || 'erro');
@@ -544,14 +546,15 @@ async function acaoOperador(caminho, metodo, corpo, sucesso) {
   }
 }
 
-function editorPermissoes(op, area) {
+function editorPermissoes(op, area, conceder = false) {
   const atuais = new Set(permissoesDe(op));
   const caixas = Object.entries(PERMISSOES).map(([v, t]) => el('label', {}, el('input', { type: 'checkbox', value: v, checked: atuais.has(v) }), t));
-  const salvar = el('button', { type: 'button', class: 'ok' }, 'Salvar permissões');
+  const salvar = el('button', { type: 'button', class: 'ok' }, conceder ? 'Conceder acesso' : 'Salvar permissões');
   salvar.addEventListener('click', () => {
     const escolhidas = [...area.querySelectorAll('input:checked')].map((i) => i.value);
     if (!escolhidas.length) return aviso('Escolha ao menos uma permissão (ou retire o acesso).', 'erro');
-    acaoOperador(`${op.subject}/permissions`, 'PUT', { permissions: escolhidas }, 'Permissões atualizadas.');
+    if (conceder) acaoOperador(`${op.subject}/grant`, 'POST', { permissions: escolhidas }, 'Acesso concedido. Peça para a pessoa entrar de novo.');
+    else acaoOperador(`${op.subject}/permissions`, 'PUT', { permissions: escolhidas }, 'Permissões atualizadas.');
   });
   area.replaceChildren(el('fieldset', {}, el('legend', {}, 'Permissões'), caixas), salvar);
 }
@@ -566,6 +569,8 @@ function cartaoOperador(op) {
       botoes.push(el('button', { type: 'button', class: 'sec', onclick: () => editorPermissoes(op, area) }, 'Alterar permissões'));
       botoes.push(el('button', { type: 'button', class: 'perigo', onclick: () => window.confirm(`Retirar o acesso de ${op.email}? A sessão dele cai agora.`) && acaoOperador(`${op.subject}/revoke`, 'POST', null, 'Acesso retirado.') }, 'Retirar acesso'));
       botoes.push(el('button', { type: 'button', class: 'sec', onclick: () => window.confirm(`Esqueceu senha ou autenticador? Vamos apagar o login de ${op.email} e enviar um convite novo, com as mesmas permissões. Continuar?`) && acaoOperador(`${op.subject}/reset`, 'POST', null, 'Login recriado: o operador recebeu um convite novo por e-mail.') }, 'Refazer senha e autenticador'));
+    } else if (!op.access && op.enabled) {
+      botoes.push(el('button', { type: 'button', class: 'ok', onclick: () => editorPermissoes(op, area, true) }, 'Conceder acesso ao portal'));
     } else if (op.access) {
       botoes.push(el('button', { type: 'button', class: 'ok', onclick: () => acaoOperador(`${op.subject}/reactivate`, 'POST', null, 'Acesso reativado.') }, 'Reativar acesso'));
     }
@@ -751,7 +756,17 @@ function etapa(nome) {
 
 async function abrirPainel(t) {
   iniciarSessao(t, emailTentativa);
-  const info = await api('/admin/session');
+  let info;
+  try {
+    info = await api('/admin/session');
+  } catch (erro) {
+    if (erro.tratado) {
+      aviso(mensagem('NO_PORTAL_ACCESS'), 'erro'); // o login do Cognito passou, mas não há acesso ativo
+      return;
+    }
+    aviso(mensagem(erro.codigo), 'erro'); // por ex. serviço indisponível: o painel não abre, mas a razão aparece
+    throw erro;
+  }
   permissoes = info.permissions || [];
   meuId = info.subject;
   if (!permissoes.some((p) => ['catalog_admin', 'user_admin', 'cost_read'].includes(p))) {
@@ -807,7 +822,7 @@ $('form-setup').addEventListener('submit', async (evento) => {
     $('codigo-setup').value = '';
     await abrirPainel(t);
   } catch (erro) {
-    if (token) return;
+    if (token || erro.tratado) return;
     aviso(mensagem(erro.codigo), 'erro');
     if (erro.codigo !== 'CodeMismatchException' && erro.codigo !== 'ExpiredCodeException') voltarAoInicio();
   }
@@ -826,7 +841,7 @@ $('form-mfa').addEventListener('submit', async (evento) => {
     const t = await confirmarMfa(cfg, emailTentativa, sessaoMfa, $('codigo').value.trim());
     await abrirPainel(t);
   } catch (erro) {
-    if (token) return;
+    if (token || erro.tratado) return;
     aviso(mensagem(erro.codigo), 'erro');
     if (erro.codigo === 'CodeMismatchException' || erro.codigo === 'ExpiredCodeException') return;
     voltarAoInicio();

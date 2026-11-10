@@ -13,6 +13,8 @@ export const MENSAGENS = {
   PASSWORD_RESET_REQUIRED: 'É preciso redefinir a senha antes de entrar.',
   MFA_SETUP: 'Este usuário ainda não cadastrou o autenticador (MFA).',
   InvalidPasswordException: 'A senha não atende às regras (12+ caracteres com maiúscula, minúscula, número e símbolo).',
+  NO_PORTAL_ACCESS: 'Login correto, mas esta conta não tem acesso ativo ao portal. Peça a um administrador para conceder o acesso (aba Operadores).',
+  ACCESS_ALREADY_EXISTS: 'Este operador já tem acesso: altere as permissões ou reative.',
   OPERATOR_EXISTS: 'Já existe um operador com este e-mail.',
   CANNOT_CHANGE_SELF: 'Você não pode alterar o seu próprio acesso. Peça a outro administrador.',
   LAST_ADMIN: 'Esta ação deixaria a conta sem nenhum administrador de usuários ativo.',
@@ -216,7 +218,7 @@ export function mesBr(m) {
 export function situacaoOperador(o) {
   if (!o.enabled) return 'Desativado';
   const estado = o.access && o.access.state;
-  if (!estado) return 'Sem acesso';
+  if (!estado) return 'Sem acesso ao portal (conta existe)';
   if (estado === 'revoked') return 'Acesso retirado';
   if (o.status === 'FORCE_CHANGE_PASSWORD') return 'Convite enviado (ainda não entrou)';
   return 'Ativo';
