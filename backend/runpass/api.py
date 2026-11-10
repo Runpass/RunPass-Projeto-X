@@ -22,6 +22,7 @@ from .models import (
     PatchEditionRequest,
     PatchParticipation,
     PatchProfile,
+    PutRacePlan,
     ReplaceReview,
     ResubmitEditionRequest,
     StartUpload,
@@ -240,6 +241,33 @@ def create_app(
             raise Unavailable()
         catalog.detail(actor, id)  # 404 para edicao inexistente
         return friends().edition_reviews(actor, id, distanceId, limit, cursor)
+
+    @app.get("/me/race-plans", operation_id="listMyRacePlans")
+    def list_my_race_plans(
+        actor: Actor, status: str | None = Query(None, pattern="^(wanted|registered)$")
+    ):
+        if participations is None:
+            raise Unavailable()
+        return participations.list_plans(actor, status)
+
+    @app.put("/me/race-plans/{editionId}", operation_id="putMyRacePlan")
+    def put_my_race_plan(editionId: str, body: PutRacePlan, actor: Actor):
+        if participations is None:
+            raise Unavailable()
+        return participations.put_plan(actor, editionId, body.status, body.distanceId)
+
+    @app.get("/me/race-plans/{editionId}", operation_id="getMyRacePlan")
+    def get_my_race_plan(editionId: str, actor: Actor):
+        if participations is None:
+            raise Unavailable()
+        return participations.get_plan(actor, editionId)
+
+    @app.delete("/me/race-plans/{editionId}", status_code=204, operation_id="deleteMyRacePlan")
+    def delete_my_race_plan(editionId: str, actor: Actor):
+        if participations is None:
+            raise Unavailable()
+        participations.delete_plan(actor, editionId)
+        return Response(status_code=204)
 
     @app.post("/participations", status_code=201, operation_id="createParticipationDraft")
     def create_participation(

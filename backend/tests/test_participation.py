@@ -270,6 +270,42 @@ class ParticipationTests(unittest.TestCase):
         self.assertTrue(all("runScore" not in e for e in listed))
         self.assertNotIn("runScore", self.catalog.detail(reader, "synthetic-sp-2024"))
 
+    def test_race_plans_set_change_list_and_delete(self):
+        other = self.admit("other")
+        with self.assertRaises(Problem) as none:
+            self.service.get_plan(self.actor, "synthetic-sp-2026")
+        self.assertEqual(none.exception.code, "PLAN_NOT_FOUND")
+        wanted = self.service.put_plan(self.actor, "synthetic-sp-2026", "wanted")
+        self.assertEqual((wanted["status"], wanted["version"]), ("wanted", 1))
+        again = self.service.put_plan(self.actor, "synthetic-sp-2026", "wanted")
+        self.assertEqual(again["version"], 2)  # idempotente no efeito; so conta a revisao
+        signed = self.service.put_plan(self.actor, "synthetic-sp-2026", "registered", "21k")
+        self.assertEqual((signed["status"], signed["distanceId"]), ("registered", "21k"))
+        self.service.put_plan(self.actor, "synthetic-sp-2025", "wanted")
+        everything = self.service.list_plans(self.actor)["items"]
+        self.assertEqual(
+            [i["editionId"] for i in everything], ["synthetic-sp-2025", "synthetic-sp-2026"]
+        )
+        self.assertEqual(everything[1]["edition"]["name"], "Corrida Sintética São Paulo")
+        only = self.service.list_plans(self.actor, "registered")["items"]
+        self.assertEqual([i["editionId"] for i in only], ["synthetic-sp-2026"])
+        self.assertEqual(self.service.list_plans(other)["items"], [])  # nunca de outra pessoa
+        self.service.delete_plan(self.actor, "synthetic-sp-2026")
+        self.service.delete_plan(self.actor, "synthetic-sp-2026")  # repetir e seguro
+        with self.assertRaises(Problem):
+            self.service.get_plan(self.actor, "synthetic-sp-2026")
+
+    def test_race_plan_refuses_unknown_edition_bad_distance_and_archived(self):
+        with self.assertRaises(Problem) as missing:
+            self.service.put_plan(self.actor, "nao-existe", "wanted")
+        self.assertEqual(missing.exception.code, "EDITION_NOT_FOUND")
+        with self.assertRaises(Problem) as distance:
+            self.service.put_plan(self.actor, "synthetic-sp-2026", "wanted", "42k")
+        self.assertEqual(distance.exception.code, "DISTANCE_NOT_IN_EDITION")
+        with self.assertRaises(Problem) as archived:
+            self.service.put_plan(self.actor, "synthetic-archived", "wanted")
+        self.assertEqual(archived.exception.code, "EDITION_ARCHIVED")
+
     def test_completion_is_atomic_idempotent_and_pins_image(self):
         draft = self.service.create(self.actor, "create", self.payload(timeSeconds=3600))
         payload = self.completion(draft, comment="Ótima prova")

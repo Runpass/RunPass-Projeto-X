@@ -29,6 +29,17 @@ def _write_review_pointer(read, write, pk, edition_id, participation_id, item, o
     write(ref, {"sharedKeys": [list(pointer), *kept]})
 
 
+PLAN_STATES = ("wanted", "registered")
+MAX_PLANS = 200
+
+
+def plan_projection(item):
+    out = {k: item[k] for k in ("editionId", "status", "version", "updatedAt") if k in item}
+    if item.get("distanceId"):
+        out["distanceId"] = item["distanceId"]
+    return out
+
+
 class ParticipationService:
     def __init__(self, identity, catalog, cursor_key):
         self.identity, self.catalog = identity, catalog
@@ -283,6 +294,78 @@ class ParticipationService:
         return self.identity.transact(
             actor, "completeParticipation", key, payload, work, admitted=True
         )
+
+    # ---- planos de corrida: "quero correr" (wanted) e "vou correr / inscrito" (registered) ----
+
+    def put_plan(self, actor, edition_id, status, distance_id=None):
+        """Define a situacao da pessoa numa corrida futura ou do catalogo. Idempotente (PUT)."""
+        edition = self.catalog.detail(actor, edition_id)  # 404 se nao existe
+        if edition["status"] == "archived":
+            raise Problem(409, "EDITION_ARCHIVED")
+        if distance_id is not None and not any(
+            d["id"] == distance_id for d in edition["distances"]
+        ):
+            raise Problem(422, "DISTANCE_NOT_IN_EDITION")
+        key = ("history", "USER#" + actor.subject, "PLAN#" + edition_id)
+
+        def work(read, write, account, now, replay):
+            old = read(key)
+            item = {
+                "editionId": edition_id,
+                "status": status,
+                "version": (old["version"] + 1) if old else 1,
+                "createdAt": old["createdAt"] if old else stamp(now),
+                "updatedAt": stamp(now),
+            }
+            if distance_id:
+                item["distanceId"] = distance_id
+            write(key, item)
+            return plan_projection(item), {}
+
+        return self.identity.transact(actor, "putRacePlan", None, {}, work, admitted=True)
+
+    def get_plan(self, actor, edition_id):
+        key = ("history", "USER#" + actor.subject, "PLAN#" + edition_id)
+
+        def work(read, write, account, now, replay):
+            item = read(key)
+            if not item:
+                raise Problem(404, "PLAN_NOT_FOUND")
+            return plan_projection(item), {}
+
+        return self.identity.transact(actor, "getRacePlan", None, {}, work, admitted=True)
+
+    def delete_plan(self, actor, edition_id):
+        key = ("history", "USER#" + actor.subject, "PLAN#" + edition_id)
+
+        def work(read, write, account, now, replay):
+            if read(key):
+                write(key, None)
+            return None, {}
+
+        self.identity.transact(actor, "deleteRacePlan", None, {}, work, admitted=True)
+
+    def list_plans(self, actor, status=None):
+        """Planos da propria pessoa com um resumo da edicao, por data (agenda)."""
+        self.identity.authorize(actor, admitted=True)
+        rows, _ = self.store.query(
+            "history", "USER#" + actor.subject, prefix="PLAN#", limit=MAX_PLANS
+        )
+        items = []
+        for _, item in rows:
+            if status and item.get("status") != status:
+                continue
+            edition = self.catalog._edition(item["editionId"])
+            if edition is None:
+                continue
+            summary = {
+                k: edition[k]
+                for k in ("id", "name", "date", "city", "state", "status", "distances")
+                if k in edition
+            }
+            items.append({**plan_projection(item), "edition": summary})
+        items.sort(key=lambda i: (i["edition"]["date"], i["editionId"]))
+        return {"items": items}
 
     @staticmethod
     def review_projection(item):

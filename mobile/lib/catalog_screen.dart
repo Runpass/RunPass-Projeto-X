@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -166,6 +168,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
       key: TextEditingController(),
   };
   final form = GlobalKey<FormState>();
+  // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
+  List<Map<String, dynamic>> suggestions = [];
+  Timer? suggestTimer;
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
   final phrase = TextEditingController();
   Map<String, dynamic>? searchInfo;
@@ -194,6 +199,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   @override
   void dispose() {
+    suggestTimer?.cancel();
     phrase.dispose();
     for (final controller in fields.values) {
       controller.dispose();
@@ -255,11 +261,59 @@ class _CatalogScreenState extends State<CatalogScreen> {
     }
   }
 
+  void onPhraseChanged(String text) {
+    setState(() {});
+    suggestTimer?.cancel();
+    if (text.trim().length < 2) {
+      if (suggestions.isNotEmpty) setState(() => suggestions = []);
+      return;
+    }
+    suggestTimer = Timer(
+      const Duration(milliseconds: 400),
+      () => suggest(text.trim()),
+    );
+  }
+
+  Future<void> suggest(String text) async {
+    try {
+      final page = await widget.gateway.request(
+        '/editions',
+        query: {'q': text, 'limit': '8'},
+      );
+      // Resposta atrasada de um texto que já mudou é descartada.
+      if (!mounted || phrase.text.trim() != text) return;
+      setState(
+        () => suggestions = (page['items'] as List? ?? const [])
+            .cast<Map<String, dynamic>>(),
+      );
+    } on Exception {
+      // Sugestão é só ajuda: nunca mostra erro.
+      if (mounted) {
+        setState(() => suggestions = []);
+      }
+    }
+  }
+
+  Future<void> openSuggestion(Map<String, dynamic> edition) async {
+    setState(() => suggestions = []);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EditionScreen(
+          gateway: widget.gateway,
+          editionId: edition['id'] as String,
+        ),
+      ),
+    );
+    loadMine();
+  }
+
   Future<void> load({bool more = false}) async {
     if (loading) return;
     if (!more && !(form.currentState?.validate() ?? true)) return;
     final sentence = phrase.text.trim();
     if (!more) {
+      suggestTimer?.cancel();
+      suggestions = [];
       activeFilters = sentence.isNotEmpty
           ? {}
           : {
@@ -452,8 +506,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 maxLength,
               }) => null,
               textInputAction: TextInputAction.search,
-              onSubmitted: (_) => load(),
-              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) {
+                suggestTimer?.cancel();
+                setState(() => suggestions = []);
+                load();
+              },
+              onChanged: onPhraseChanged,
               decoration: InputDecoration(
                 labelText: 'Descreva a corrida',
                 hintText: 'Ex.: meia maratona em abril',
@@ -468,12 +526,46 @@ class _CatalogScreenState extends State<CatalogScreen> {
                             ? null
                             : () {
                                 phrase.clear();
+                                suggestTimer?.cancel();
+                                setState(() => suggestions = []);
                                 load();
                               },
                       ),
               ),
             ),
           ),
+          if (suggestions.isNotEmpty && phrase.text.trim().length >= 2)
+            Card(
+              key: const Key('catalog-suggestions'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      suggestions.length > 1
+                          ? 'Encontramos ${suggestions.length} corridas. Escolha uma:'
+                          : 'Encontramos esta corrida:',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  for (final edition in suggestions)
+                    ListTile(
+                      key: Key('suggestion-${edition['id']}'),
+                      dense: true,
+                      leading: const Icon(
+                        Icons.directions_run,
+                        color: runPassOrange,
+                      ),
+                      title: Text(edition['name'] as String),
+                      subtitle: Text(
+                        '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
+                      ),
+                      onTap: () => openSuggestion(edition),
+                    ),
+                ],
+              ),
+            ),
           if (showFilters)
             Card(
               child: Padding(
@@ -771,6 +863,8 @@ class _EditionScreenState extends State<EditionScreen> {
   Map<String, dynamic>? reviewSummary;
   bool showAllReviews = false;
   Map<String, dynamic>? mine;
+  Map<String, dynamic>? plan;
+  bool savingPlan = false;
   Map<String, dynamic>? myReview;
 
   static const criteria = [
@@ -810,7 +904,137 @@ class _EditionScreenState extends State<EditionScreen> {
     if (mounted && edition != null) {
       loadReviews();
       loadMyParticipation();
+      loadPlan();
     }
+  }
+
+  /// Situação da pessoa nesta corrida: `wanted` (quero correr) ou `registered` (inscrito).
+  Future<void> loadPlan() async {
+    try {
+      final found = await widget.gateway.request(
+        '/me/race-plans/${Uri.encodeComponent(widget.editionId)}',
+      );
+      if (mounted) setState(() => plan = found);
+    } on Exception {
+      if (mounted) setState(() => plan = null);
+    }
+  }
+
+  /// Marca ou, se já estava marcado, desmarca (toque de novo para tirar).
+  Future<void> setPlan(String status) async {
+    if (savingPlan) return;
+    setState(() {
+      savingPlan = true;
+      error = null;
+    });
+    final id = Uri.encodeComponent(widget.editionId);
+    try {
+      if (plan?['status'] == status) {
+        await widget.gateway.request('/me/race-plans/$id', method: 'DELETE');
+        if (mounted) setState(() => plan = null);
+      } else {
+        final saved = await widget.gateway.request(
+          '/me/race-plans/$id',
+          method: 'PUT',
+          body: {'status': status, 'distanceId': ?selectedDistance},
+        );
+        if (mounted) setState(() => plan = saved);
+      }
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = catalogError(issue));
+    } on Exception {
+      if (mounted) {
+        setState(
+          () => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => savingPlan = false);
+    }
+  }
+
+  /// Escolha da situação: quero correr, inscrito (vou correr) e já corri (registro da participação).
+  Widget situation(Map<String, dynamic> body) {
+    final past = body['status'] == 'past';
+    final archived = body['status'] == 'archived';
+    final current = plan?['status'] as String?;
+    Widget choice(
+      String key,
+      IconData icon,
+      String label,
+      bool selected,
+      VoidCallback? onTap,
+    ) => selected
+        ? FilledButton.icon(
+            key: Key(key),
+            onPressed: onTap,
+            icon: Icon(icon),
+            label: Text(label),
+          )
+        : OutlinedButton.icon(
+            key: Key(key),
+            onPressed: onTap,
+            icon: Icon(icon),
+            label: Text(label),
+          );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Minha situação nesta corrida',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (!past && !archived)
+              choice(
+                'plan-wanted',
+                current == 'wanted' ? Icons.favorite : Icons.favorite_border,
+                'Quero correr',
+                current == 'wanted',
+                savingPlan ? null : () => setPlan('wanted'),
+              ),
+            if (!past && !archived)
+              choice(
+                'plan-registered',
+                Icons.how_to_reg_outlined,
+                'Inscrito',
+                current == 'registered',
+                savingPlan ? null : () => setPlan('registered'),
+              ),
+            if (mine == null && selectedDistance != null && !archived)
+              choice(
+                'plan-ran',
+                Icons.directions_run,
+                saving ? 'Salvando...' : 'Já corri',
+                false,
+                saving ? null : createDraft,
+              ),
+          ],
+        ),
+        if (current != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              current == 'wanted'
+                  ? 'Esta corrida está na sua agenda, em Desejadas.'
+                  : 'Esta corrida está na sua agenda, em Inscritas.',
+              key: const Key('plan-note'),
+            ),
+          ),
+        if (!past && !archived && selectedDistance == null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Escolha uma distância para registrar que você já correu.',
+              style: TextStyle(color: context.muted),
+            ),
+          ),
+      ],
+    );
   }
 
   /// Participação desta pessoa nesta edição, se já existir (rascunho ou concluída).
@@ -931,68 +1155,68 @@ class _EditionScreenState extends State<EditionScreen> {
     (_) => '.',
   );
 
-  Widget hero(Map<String, dynamic> body) => Container(
-    height: 200,
-    width: double.infinity,
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+  Widget hero(Map<String, dynamic> body) {
+    final wanted = plan?['status'] == 'wanted';
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 170),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+        ),
       ),
-    ),
-    child: SafeArea(
-      bottom: false,
-      child: Stack(
-        children: [
-          Positioned(
-            left: 8,
-            top: 4,
-            child: IconButton(
-              tooltip: 'Voltar',
-              color: Colors.white,
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => Navigator.of(context).maybePop(),
-            ),
-          ),
-          Positioned(
-            right: 8,
-            top: 4,
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: 'Quero correr',
-                  color: Colors.white,
-                  icon: const Icon(Icons.favorite_border),
-                  onPressed: () => soon('Lista Quero correr em breve.'),
-                ),
-                IconButton(
-                  tooltip: 'Compartilhar',
-                  color: Colors.white,
-                  icon: const Icon(Icons.ios_share),
-                  onPressed: () => soon('Compartilhamento em breve.'),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            left: 20,
-            right: 20,
-            bottom: 20,
-            child: Text(
-              (body['name'] as String).toUpperCase(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: 24,
-                letterSpacing: 1,
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Os ícones ficam numa linha própria: o título longo nunca passa por cima deles.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Voltar',
+                    color: Colors.white,
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: () => Navigator.of(context).maybePop(),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    key: const Key('hero-wanted'),
+                    tooltip: wanted ? 'Tirar de Quero correr' : 'Quero correr',
+                    color: Colors.white,
+                    icon: Icon(wanted ? Icons.favorite : Icons.favorite_border),
+                    onPressed: savingPlan ? null : () => setPlan('wanted'),
+                  ),
+                  IconButton(
+                    tooltip: 'Compartilhar',
+                    color: Colors.white,
+                    icon: const Icon(Icons.ios_share),
+                    onPressed: () => soon('Compartilhamento em breve.'),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Text(
+                (body['name'] as String).toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 24,
+                  letterSpacing: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget distanceSelector(Map<String, dynamic> body) {
     final archived = body['status'] == 'archived';
@@ -1131,13 +1355,9 @@ class _EditionScreenState extends State<EditionScreen> {
                 : 'Editar meu rascunho',
           ),
         ),
-      ] else if (selectedDistance != null) ...[
-        const SizedBox(height: 16),
-        FilledButton(
-          onPressed: saving ? null : createDraft,
-          child: Text(saving ? 'Salvando...' : 'Criar rascunho'),
-        ),
       ],
+      const SizedBox(height: 16),
+      situation(body),
       // Informacoes da fonte ao fim da aba, sem empurrar as acoes da pessoa.
       const SizedBox(height: 16),
       if (body['venue'] != null)

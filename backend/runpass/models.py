@@ -85,6 +85,11 @@ class Eligibility(Input):
         return date.fromisoformat(value)
 
 
+class PutRacePlan(Input):
+    status: Literal["wanted", "registered"]
+    distanceId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+
+
 class CreateParticipation(Input):
     editionId: Annotated[str, Field(min_length=1, max_length=100)]
     distanceId: Annotated[str, Field(min_length=1, max_length=100)]

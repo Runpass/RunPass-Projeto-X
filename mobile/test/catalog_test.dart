@@ -244,6 +244,7 @@ void main() {
         '/editions',
         '/editions/A',
         '/editions/A/reviews',
+        '/me/race-plans/A',
         '/editions/A/reviews',
       ]);
     },
@@ -287,7 +288,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('10K'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Criar rascunho'));
+    await tester.tap(find.text('Já corri'));
     await tester.pumpAndSettle();
     expect(find.text('Rascunho da participação'), findsOneWidget);
     expect(find.textContaining('Você já possui'), findsNothing);
@@ -350,7 +351,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('10K'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Criar rascunho'));
+    await tester.tap(find.text('Já corri'));
     await tester.pumpAndSettle();
     expect(find.text('Rascunho da participação'), findsOneWidget);
     expect(find.textContaining('não gera medalha'), findsOneWidget);
@@ -368,6 +369,7 @@ void main() {
       [
         'GET /editions/A',
         'GET /editions/A/reviews',
+        'GET /me/race-plans/A',
         'GET /editions/A/reviews',
         'POST /participations',
         'GET /editions/A',
@@ -815,7 +817,7 @@ void main() {
     expect(find.text('Corrida já cadastrada'), findsNothing);
     expect(find.byType(EditionScreen), findsOneWidget);
     expect(find.byKey(const Key('already-mine')), findsOneWidget);
-    expect(find.text('Criar rascunho'), findsNothing);
+    expect(find.text('Já corri'), findsNothing);
     await tester.scrollUntilVisible(
       find.text('Editar meu rascunho'),
       200,

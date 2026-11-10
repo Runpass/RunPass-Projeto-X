@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'agenda.dart';
 import 'catalog_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
@@ -596,6 +597,16 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => FriendSearchScreen(gateway: widget.gateway),
+            ),
+          ),
+        ),
+        IconButton(
+          key: const Key('home-agenda'),
+          tooltip: 'Minha agenda',
+          icon: const Icon(Icons.calendar_month_rounded),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => AgendaScreen(gateway: widget.gateway),
             ),
           ),
         ),

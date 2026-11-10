@@ -9,6 +9,8 @@ class DemoTransport {
   final participations = <String, Map<String, dynamic>>{};
   final uploads = <String, Map<String, dynamic>>{};
   final editionRequests = <Map<String, dynamic>>[];
+  // Planos de corrida por pessoa: e-mail -> id da edição -> plano.
+  final racePlans = <String, Map<String, Map<String, dynamic>>>{};
   int sequence = 0;
 
   DemoTransport({this.capacity = 1000}) {
@@ -439,6 +441,63 @@ class DemoTransport {
       };
       editionRequests.insert(0, request);
       return JsonReply(201, {...request}..remove('owner'));
+    }
+    if (uri.path == '/me/race-plans' && method == 'GET') {
+      final mine = racePlans[email] ?? const {};
+      return JsonReply(200, {
+        'items': [
+          for (final plan in mine.values)
+            if (uri.queryParameters['status'] == null ||
+                uri.queryParameters['status'] == plan['status'])
+              {
+                ...plan,
+                'edition': {
+                  for (final e in editions.where(
+                    (e) => e['id'] == plan['editionId'],
+                  )) ...{
+                    for (final k in [
+                      'id',
+                      'name',
+                      'date',
+                      'city',
+                      'state',
+                      'status',
+                      'distances',
+                    ])
+                      k: e[k],
+                  },
+                },
+              },
+        ],
+      });
+    }
+    final planRoute = RegExp(r'^/me/race-plans/([^/]+)$').firstMatch(uri.path);
+    if (planRoute != null) {
+      final id = Uri.decodeComponent(planRoute.group(1)!);
+      final mine = racePlans.putIfAbsent(email, () => {});
+      if (method == 'GET') {
+        return mine[id] == null
+            ? failure('PLAN_NOT_FOUND', 404)
+            : JsonReply(200, mine[id]!);
+      }
+      if (method == 'DELETE') {
+        mine.remove(id);
+        return const JsonReply(204, {});
+      }
+      if (method == 'PUT') {
+        if (!editions.any((e) => e['id'] == id)) {
+          return failure('EDITION_NOT_FOUND', 404);
+        }
+        final old = mine[id];
+        mine[id] = {
+          'editionId': id,
+          'status': data['status'],
+          'distanceId': ?data['distanceId'],
+          'version': ((old?['version'] as int?) ?? 0) + 1,
+          'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        };
+        return JsonReply(200, mine[id]!);
+      }
     }
     if (uri.path == '/me/edition-requests' && method == 'GET') {
       return JsonReply(200, {
