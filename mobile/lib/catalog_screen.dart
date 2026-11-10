@@ -155,8 +155,7 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
 /// cor), silhueta de corredor e a maior distância. Não é foto nem logo da prova: só uma identidade visual.
 class RaceArt extends StatelessWidget {
   final Map<String, dynamic> edition;
-  final bool compact;
-  const RaceArt({super.key, required this.edition, this.compact = false});
+  const RaceArt({super.key, required this.edition});
 
   static const palettes = [
     [runPassNavy, Color(0xff5a2a1c), runPassOrange],
@@ -192,27 +191,7 @@ class RaceArt extends StatelessWidget {
         end: Alignment.bottomRight,
         colors: colors,
       ),
-      borderRadius: compact ? BorderRadius.circular(14) : null,
     );
-    if (compact) {
-      return Container(
-        key: const Key('race-art-thumb'),
-        width: 48,
-        height: 48,
-        decoration: decoration,
-        alignment: Alignment.center,
-        child: label == null
-            ? const Icon(Icons.directions_run, color: Colors.white, size: 26)
-            : Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 15,
-                ),
-              ),
-      );
-    }
     return DecoratedBox(
       key: const Key('race-art'),
       decoration: decoration,
@@ -264,27 +243,22 @@ class _ArtLabelPainter extends CustomPainter {
   bool shouldRepaint(_ArtLabelPainter old) => old.label != label;
 }
 
-/// Miniatura da corrida na lista: a imagem aprovada (banner ou logo) quando existe; senão o ícone.
-/// Só corridas com `imageReference` pedem o link, e ele fica em cache por alguns minutos.
-class EditionThumb extends StatefulWidget {
+/// Fundo do cartão da corrida na lista: ocupa o espaço todo. A imagem aprovada (banner ou logo) quando
+/// existe; senão a arte padrão da corrida. Só corridas com `imageReference` pedem o link, e ele fica
+/// em cache por alguns minutos.
+class EditionCover extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> edition;
-  final bool archived;
-  const EditionThumb({
-    super.key,
-    required this.gateway,
-    required this.edition,
-    this.archived = false,
-  });
+  const EditionCover({super.key, required this.gateway, required this.edition});
 
   /// Links temporários já obtidos (corrida -> url, instante), para a rolagem não repetir pedidos.
   static final Map<String, (String, DateTime)> cache = {};
 
   @override
-  State<EditionThumb> createState() => _EditionThumbState();
+  State<EditionCover> createState() => _EditionCoverState();
 }
 
-class _EditionThumbState extends State<EditionThumb> {
+class _EditionCoverState extends State<EditionCover> {
   String? url;
 
   @override
@@ -296,7 +270,7 @@ class _EditionThumbState extends State<EditionThumb> {
   Future<void> resolve() async {
     final id = widget.edition['id'] as String;
     if (widget.edition['imageReference'] == null) return;
-    final hit = EditionThumb.cache[id];
+    final hit = EditionCover.cache[id];
     if (hit != null && DateTime.now().difference(hit.$2).inMinutes < 4) {
       url = hit.$1;
       return;
@@ -307,42 +281,30 @@ class _EditionThumbState extends State<EditionThumb> {
       );
       final found = link['url'] as String?;
       if (found == null) return;
-      EditionThumb.cache[id] = (found, DateTime.now());
+      EditionCover.cache[id] = (found, DateTime.now());
       if (mounted) setState(() => url = found);
     } on Exception {
-      // Sem imagem, fica o ícone: a lista nunca depende dela.
+      // Sem imagem, fica a arte padrão: a lista nunca depende dela.
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final archived = widget.archived;
-    final icon = archived
-        ? Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: context.panelStrong,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              Icons.inventory_2_outlined,
-              color: context.archivedText,
-            ),
-          )
-        : RaceArt(edition: widget.edition, compact: true);
-    final shown = url;
-    if (shown == null) return icon;
-    return ClipRRect(
-      key: const Key('edition-thumb'),
-      borderRadius: BorderRadius.circular(14),
-      child: Image.network(
-        shown,
-        width: 48,
-        height: 48,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => icon,
-      ),
+    if (widget.edition['status'] == 'archived') {
+      return ColoredBox(color: context.panelStrong);
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RaceArt(edition: widget.edition),
+        if (url != null)
+          Image.network(
+            url!,
+            key: const Key('edition-cover-image'),
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
+      ],
     );
   }
 }
@@ -506,63 +468,137 @@ class _CatalogScreenState extends State<CatalogScreen> {
     loadMine();
   }
 
+  /// Cartão da corrida: a imagem (ou a arte padrão) cobre o cartão todo; o texto e os atalhos ficam por cima.
+  Widget editionCard(Map<String, dynamic> edition) {
+    final archived = edition['status'] == 'archived';
+    final lines = [
+      '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
+      (edition['distances'] as List)
+          .map((d) => '${d['kilometers']} km')
+          .join(' · '),
+      if (archived)
+        'Arquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}',
+      if (scoreOf(edition) != null)
+        '★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações',
+      if (mine.containsKey(edition['id'])) 'Já está na sua lista',
+    ];
+    const shadow = [Shadow(blurRadius: 6, color: Colors.black54)];
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: loading ? null : () => openEdition(edition['id'] as String),
+        child: SizedBox(
+          height: 200,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              EditionCover(gateway: widget.gateway, edition: edition),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0x33000000), Color(0xD9000000)],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 12,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      edition['name'] as String,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: archived ? context.archivedText : Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 17,
+                        shadows: shadow,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      lines.join('\n'),
+                      style: TextStyle(
+                        color: archived ? context.archivedText : Colors.white,
+                        fontSize: 12.5,
+                        height: 1.3,
+                        shadows: shadow,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(top: 6, right: 6, child: quickActions(edition)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget quickActions(Map<String, dynamic> edition) {
     final id = edition['id'] as String;
     final status = edition['status'];
     if (status == 'archived') return const SizedBox.shrink();
     final upcoming = status != 'past';
+    // Ícones sobre a imagem: círculo escuro translúcido; marcado fica laranja.
     Widget action(
       String key,
       IconData icon,
       String label,
       bool on,
       VoidCallback onTap,
-    ) => IconButton(
-      key: Key('$key-$id'),
-      tooltip: label,
-      visualDensity: VisualDensity.compact,
-      isSelected: on,
-      selectedIcon: Icon(icon, color: runPassOrange),
-      icon: Icon(icon),
-      onPressed: loading ? null : onTap,
-    );
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Padding(
-        padding: const EdgeInsets.only(right: 8, bottom: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (upcoming) ...[
-              action(
-                'quick-wanted',
-                plans[id] == 'wanted' ? Icons.favorite : Icons.favorite_border,
-                plans[id] == 'wanted'
-                    ? 'Tirar de Quero correr'
-                    : 'Quero correr',
-                plans[id] == 'wanted',
-                () => togglePlan(edition, 'wanted'),
-              ),
-              action(
-                'quick-registered',
-                Icons.how_to_reg_outlined,
-                plans[id] == 'registered' ? 'Tirar de Inscrito' : 'Inscrito',
-                plans[id] == 'registered',
-                () => togglePlan(edition, 'registered'),
-              ),
-            ],
-            action(
-              'quick-ran',
-              mine.containsKey(id)
-                  ? Icons.check_circle_rounded
-                  : Icons.directions_run,
-              mine.containsKey(id) ? 'Ver meu registro' : 'Já corri',
-              mine.containsKey(id),
-              () => markRan(edition),
-            ),
-          ],
+    ) => Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: Material(
+        color: on ? runPassOrange : Colors.black54,
+        shape: const CircleBorder(),
+        child: IconButton(
+          key: Key('$key-$id'),
+          tooltip: label,
+          visualDensity: VisualDensity.compact,
+          color: Colors.white,
+          icon: Icon(icon, size: 22),
+          onPressed: loading ? null : onTap,
         ),
       ),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (upcoming) ...[
+          action(
+            'quick-wanted',
+            plans[id] == 'wanted' ? Icons.favorite : Icons.favorite_border,
+            plans[id] == 'wanted' ? 'Tirar de Quero correr' : 'Quero correr',
+            plans[id] == 'wanted',
+            () => togglePlan(edition, 'wanted'),
+          ),
+          action(
+            'quick-registered',
+            Icons.how_to_reg_outlined,
+            plans[id] == 'registered' ? 'Tirar de Inscrito' : 'Inscrito',
+            plans[id] == 'registered',
+            () => togglePlan(edition, 'registered'),
+          ),
+        ],
+        action(
+          'quick-ran',
+          mine.containsKey(id)
+              ? Icons.check_circle_rounded
+              : Icons.directions_run,
+          mine.containsKey(id) ? 'Ver meu registro' : 'Já corri',
+          mine.containsKey(id),
+          () => markRan(edition),
+        ),
+      ],
     );
   }
 
@@ -1174,38 +1210,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 child: const Text('Não encontrou? Pedir cadastro da corrida'),
               ),
             ),
-          for (final edition in view)
-            Card(
-              color: edition['status'] == 'archived' ? context.panelCard : null,
-              child: Column(
-                children: [
-                  ListTile(
-                    textColor: edition['status'] == 'archived'
-                        ? context.archivedText
-                        : null,
-                    contentPadding: const EdgeInsets.all(16),
-                    leading: EditionThumb(
-                      gateway: widget.gateway,
-                      edition: edition,
-                      archived: edition['status'] == 'archived',
-                    ),
-                    title: Text(edition['name'] as String),
-                    subtitle: Text(
-                      '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}\n'
-                      '${(edition['distances'] as List).map((d) => '${d['kilometers']} km').join(' · ')}'
-                      '${edition['status'] == 'archived' ? '\nArquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}' : ''}'
-                      '${scoreOf(edition) != null ? '\n★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações' : ''}'
-                      '${mine.containsKey(edition['id']) ? '\nJá está na sua lista' : ''}',
-                    ),
-                    isThreeLine: true,
-                    onTap: loading
-                        ? null
-                        : () => openEdition(edition['id'] as String),
-                  ),
-                  quickActions(edition),
-                ],
-              ),
-            ),
+          for (final edition in view) editionCard(edition),
           if (nextCursor != null)
             TextButton(
               onPressed: loading ? null : () => load(more: true),

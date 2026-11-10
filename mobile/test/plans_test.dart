@@ -643,7 +643,7 @@ void searchTests() {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      EditionThumb.cache.clear();
+      EditionCover.cache.clear();
       final banners = <String>[];
       final gateway = await signed((uri, method, headers, body) async {
         if (uri.path == '/editions') {
@@ -669,9 +669,9 @@ void searchTests() {
       );
       await tester.pumpAndSettle();
       expect(banners, ['/editions/EA/banner']);
-      expect(find.byKey(const Key('edition-thumb')), findsOneWidget);
+      expect(find.byKey(const Key('edition-cover-image')), findsOneWidget);
       // A outra corrida segue com o ícone, sem imagem.
-      expect(find.byType(EditionThumb), findsNWidgets(2));
+      expect(find.byType(EditionCover), findsNWidgets(2));
     },
   );
 }
