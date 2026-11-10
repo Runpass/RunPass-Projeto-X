@@ -15,6 +15,7 @@ Map<String, dynamic> upcoming(String id, {String date = '2099-05-01'}) => {
 };
 
 void main() {
+  participantsTests();
   void big(WidgetTester tester) {
     tester.view.physicalSize = const Size(800, 3000);
     tester.view.devicePixelRatio = 1;
@@ -315,6 +316,79 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(AgendaScreen), findsOneWidget);
       expect(find.text('Minha agenda'), findsOneWidget);
+    },
+  );
+}
+
+void participantsTests() {
+  Future<void> openTab(WidgetTester tester, Map<String, dynamic> page) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions/EA') return JsonReply(200, upcoming('A'));
+      if (uri.path == '/editions/EA/participants') return JsonReply(200, page);
+      if (uri.path.startsWith('/me/race-plans/')) {
+        return const JsonReply(404, {'code': 'PLAN_NOT_FOUND'});
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'EA'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Participantes'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('aba Participantes lista nome, distância, tempo e colocação', (
+    tester,
+  ) async {
+    await openTab(tester, {
+      'total': 3,
+      'items': [
+        {
+          'participationId': 'p1',
+          'author': {
+            'id': 'u1',
+            'displayName': 'Ana Souza',
+            'username': 'ana',
+            'version': 1,
+          },
+          'distanceId': '10k',
+          'timeSeconds': 3125,
+          'placement': 12,
+        },
+        {
+          'participationId': 'p2',
+          'author': {
+            'id': 'u2',
+            'displayName': 'Bruno Lima',
+            'username': 'bruno',
+            'version': 1,
+          },
+          'distanceId': '5k',
+        },
+      ],
+    });
+    expect(find.text('3 corredores concluíram esta prova'), findsOneWidget);
+    expect(find.text('Ana Souza'), findsOneWidget);
+    expect(find.textContaining('10K · 52:05 · 12º lugar'), findsOneWidget);
+    expect(find.textContaining('@bruno'), findsOneWidget);
+    expect(find.byKey(const Key('participants-hidden')), findsOneWidget);
+    expect(find.textContaining('1 participante não aparece'), findsOneWidget);
+  });
+
+  testWidgets(
+    'sem ninguém, convida a registrar; falha do servidor diz o que houve',
+    (tester) async {
+      await openTab(tester, {'total': 0, 'items': []});
+      expect(
+        find.textContaining('Ninguém concluiu esta prova'),
+        findsOneWidget,
+      );
     },
   );
 }

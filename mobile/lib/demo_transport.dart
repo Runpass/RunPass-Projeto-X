@@ -780,6 +780,34 @@ class DemoTransport {
         ],
       });
     }
+    final people = RegExp(r'^/editions/([^/]+)/participants$')
+        .firstMatch(uri.path);
+    if (people != null && method == 'GET') {
+      final edition = editions
+          .where((e) => e['id'] == people.group(1))
+          .firstOrNull;
+      if (edition == null) return failure('EDITION_NOT_FOUND', 404);
+      final distance = (edition['distances'] as List).first as Map;
+      const names = ['Juliana Martins', 'Rafael Souza', 'Camila Ribeiro'];
+      return JsonReply(200, {
+        'total': names.length + 1,
+        'items': [
+          for (var i = 0; i < names.length; i++)
+            {
+              'participationId': 'demo-part-${edition['id']}-$i',
+              'author': {
+                'id': 'demo-runner-$i',
+                'displayName': names[i],
+                'username': names[i].split(' ').first.toLowerCase(),
+                'version': 1,
+              },
+              'distanceId': distance['id'],
+              'completedAt': '2026-10-0${i + 1}T10:00:00Z',
+              'timeSeconds': 3000 + i * 240,
+            },
+        ],
+      });
+    }
     final reviews = RegExp(r'^/editions/([^/]+)/reviews$').firstMatch(uri.path);
     if (reviews != null && method == 'GET') {
       final known = editions.any((e) => e['id'] == reviews.group(1));

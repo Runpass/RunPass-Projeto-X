@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'agenda.dart';
+import 'friends.dart';
 import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
@@ -882,6 +883,9 @@ class _EditionScreenState extends State<EditionScreen> {
   bool loading = true, saving = false, loadingReviews = false;
   List<Map<String, dynamic>>? reviews;
   Map<String, dynamic>? reviewSummary;
+  List<Map<String, dynamic>>? participants;
+  int participantTotal = 0;
+  bool loadingParticipants = false;
   bool showAllReviews = false;
   Map<String, dynamic>? mine;
   Map<String, dynamic>? plan;
@@ -924,8 +928,30 @@ class _EditionScreenState extends State<EditionScreen> {
     }
     if (mounted && edition != null) {
       loadReviews();
+      loadParticipants();
       loadMyParticipation();
       loadPlan();
+    }
+  }
+
+  /// Quem concluiu esta corrida. O servidor só lista perfis que a pessoa pode ver; `total` é a
+  /// contagem de todas as conclusões, sem identificar ninguém.
+  Future<void> loadParticipants() async {
+    setState(() => loadingParticipants = true);
+    try {
+      final page = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/participants',
+        query: {'limit': '50'},
+      );
+      if (mounted) {
+        participants = (page['items'] as List? ?? const [])
+            .cast<Map<String, dynamic>>();
+        participantTotal = (page['total'] as num?)?.toInt() ?? 0;
+      }
+    } on Exception {
+      if (mounted) participants = null;
+    } finally {
+      if (mounted) setState(() => loadingParticipants = false);
     }
   }
 
@@ -1721,12 +1747,95 @@ class _EditionScreenState extends State<EditionScreen> {
   );
 
   Widget participantsTab(Map<String, dynamic> body) {
-    final count = (body['participantCount'] as num?)?.toInt();
-    return emptyTab(
-      Icons.groups_outlined,
-      count == null
-          ? 'A lista de participantes estará disponível em breve.'
-          : '${thousands(count)} corredores já concluíram esta prova.\nA lista de participantes estará disponível em breve.',
+    final list = participants;
+    if (loadingParticipants && list == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (list == null) {
+      return emptyTab(
+        Icons.groups_outlined,
+        'Não foi possível carregar os participantes agora.',
+      );
+    }
+    if (participantTotal == 0) {
+      return emptyTab(
+        Icons.groups_outlined,
+        'Ninguém concluiu esta prova no RunPass ainda.\nSeja a primeira pessoa a registrar.',
+      );
+    }
+    final kmById = {
+      for (final d in (body['distances'] as List))
+        (d as Map)['id'] as String: (d['kilometers'] as num).toDouble(),
+    };
+    final hidden = participantTotal - list.length;
+    return ListView(
+      key: const Key('participants-list'),
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          participantTotal == 1
+              ? '1 corredor concluiu esta prova'
+              : '${thousands(participantTotal)} corredores concluíram esta prova',
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        const SizedBox(height: 8),
+        for (final item in list) _participantTile(item, kmById),
+        if (hidden > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              hidden == 1
+                  ? '1 participante não aparece porque o perfil é privado.'
+                  : '$hidden participantes não aparecem porque os perfis são privados.',
+              key: const Key('participants-hidden'),
+              style: TextStyle(color: context.muted),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _participantTile(
+    Map<String, dynamic> item,
+    Map<String, double> kmById,
+  ) {
+    final author = Map<String, dynamic>.from(item['author'] as Map);
+    final name = (author['displayName'] as String?) ?? 'Corredor RunPass';
+    final km = kmById[item['distanceId']];
+    final time = item['timeSeconds'] as num?;
+    final place = item['placement'] as num?;
+    final details = [
+      if (km != null) distanceLabel(km),
+      if (time != null) formatDuration(time),
+      if (place != null) '${place.toInt()}º lugar',
+    ].join(' · ');
+    return Card(
+      key: Key('participant-${item['participationId']}'),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: context.softFill,
+          child: Text(
+            name.isEmpty ? '?' : name.characters.first.toUpperCase(),
+            style: const TextStyle(
+              color: runPassOrange,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        title: Text(name, style: const TextStyle(fontWeight: FontWeight.w800)),
+        subtitle: Text(
+          '@${author['username'] ?? ''}${details.isEmpty ? '' : '\n$details'}',
+        ),
+        isThreeLine: details.isNotEmpty,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => PublicProfileScreen(
+              gateway: widget.gateway,
+              profileId: author['id'] as String,
+            ),
+          ),
+        ),
+      ),
     );
   }
 

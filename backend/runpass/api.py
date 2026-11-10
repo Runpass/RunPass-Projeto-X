@@ -269,6 +269,20 @@ def create_app(
         participations.delete_plan(actor, editionId)
         return Response(status_code=204)
 
+    @app.get("/editions/{id}/participants", operation_id="listEditionParticipants")
+    def edition_participants(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+        distanceId: str | None = Query(None, min_length=1, max_length=100),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_participants(actor, id, distanceId, limit, cursor)
+
     @app.post("/participations", status_code=201, operation_id="createParticipationDraft")
     def create_participation(
         body: CreateParticipation, actor: Actor, idempotency_key: IdempotencyKey

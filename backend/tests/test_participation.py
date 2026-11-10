@@ -241,6 +241,37 @@ class ParticipationTests(unittest.TestCase):
         self.assertEqual(after["summary"]["reviewCount"], 1)
         self.assertEqual(after["summary"]["recommendPercent"], 100)
 
+    def test_edition_participants_respect_privacy_and_hide_time_unless_shown(self):
+        social = SocialService(self.identity)
+        reader = self.admit("reader")
+        self.assertEqual(social.edition_participants(reader, "synthetic-sp-2024")["total"], 0)
+        self.finish("owner", 5)
+        private, _ = self.finish("secret", 4)
+        # perfil privado: so o dono e amigos aceitos veem quem e
+        profile_key = ("identity", "USER#secret", "PROFILE")
+        self.store.commit(
+            {profile_key: self.store.get(profile_key)},
+            {profile_key: {**self.store.get(profile_key), "isPrivate": True}},
+        )
+        page = social.edition_participants(reader, "synthetic-sp-2024")
+        self.assertEqual(page["total"], 2)  # contagem agregada, sem identificar
+        self.assertEqual([i["author"]["username"] for i in page["items"]], ["owner"])
+        mine = social.edition_participants(private, "synthetic-sp-2024")
+        self.assertEqual({i["author"]["username"] for i in mine["items"]}, {"owner", "secret"})
+        owner_row = page["items"][0]
+        self.assertEqual(owner_row["timeSeconds"], 3600)  # padrao do app: mostrar o tempo
+        self.assertEqual(owner_row["distanceId"], "10k")
+        # quem escolheu esconder o tempo nao o expoe a outros (mas o proprio dono ainda ve)
+        part_key = ("history", "USER#owner", "P#" + owner_row["participationId"] + "#PART")
+        part = self.store.get(part_key)
+        self.store.commit({part_key: part}, {part_key: {**part, "showTime": False}})
+        hidden = social.edition_participants(reader, "synthetic-sp-2024")["items"][0]
+        self.assertNotIn("timeSeconds", hidden)
+        own = social.edition_participants(self.actor, "synthetic-sp-2024")["items"]
+        self.assertTrue(any(i.get("timeSeconds") == 3600 for i in own))
+        self.assertEqual(social.edition_participants(reader, "synthetic-sp-2025")["items"], [])
+        self.assertEqual(social.edition_participants(reader, "synthetic-sp-2024", "5k")["total"], 0)
+
     def test_edition_carries_the_public_score_only_when_there_are_reviews(self):
         reader = self.admit("reader")
         key = ("projections", "EDITION#synthetic-sp-2024", "SCORE#current")

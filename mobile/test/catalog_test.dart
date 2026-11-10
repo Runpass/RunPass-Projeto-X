@@ -253,6 +253,7 @@ void main() {
         '/editions',
         '/editions/A',
         '/editions/A/reviews',
+        '/editions/A/participants',
         '/me/race-plans/A',
         '/editions/A/reviews',
       ]);
@@ -378,6 +379,7 @@ void main() {
       [
         'GET /editions/A',
         'GET /editions/A/reviews',
+        'GET /editions/A/participants',
         'GET /me/race-plans/A',
         'GET /editions/A/reviews',
         'POST /participations',
