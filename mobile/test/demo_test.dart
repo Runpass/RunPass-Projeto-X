@@ -115,7 +115,7 @@ void main() {
       expect(find.text('Mariana Lopes'), findsOneWidget);
       await tester.tap(find.text('Medalhas'));
       await tester.pumpAndSettle();
-      expect(find.text('Meu Medalheiro'), findsOneWidget);
+      expect(find.text('Minhas Medalhas'), findsOneWidget);
       await tester.tap(find.text('Perfil'));
       await tester.pumpAndSettle();
       expect(find.text('Corredor Demo'), findsOneWidget);

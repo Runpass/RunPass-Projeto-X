@@ -128,6 +128,65 @@ class ParticipationTests(unittest.TestCase):
             )
         self.assertEqual(error.exception.code, "VERSION_CONFLICT")
 
+    def test_patch_sets_and_clears_medal_shelf_customization(self):
+        draft = self.service.create(self.actor, "create", self.payload(timeSeconds=3600))
+        done = self.service.complete(self.actor, draft["id"], "done", self.completion(draft))
+        customized = self.service.patch(
+            self.actor,
+            draft["id"],
+            "customize",
+            {
+                "expectedVersion": done["version"],
+                "medalShape": "shield",
+                "medalCordColor": "#ff5500",
+                "medalDescription": "Minha prova especial",
+                "medalCity": "Santos",
+                "medalState": "SP",
+                "medalYear": 2023,
+            },
+        )
+        self.assertEqual(customized["medalShape"], "shield")
+        self.assertEqual(customized["medalCordColor"], "#ff5500")
+        self.assertEqual(customized["medalDescription"], "Minha prova especial")
+        self.assertEqual(customized["medalCity"], "Santos")
+        self.assertEqual(customized["medalState"], "SP")
+        self.assertEqual(customized["medalYear"], 2023)
+        reset = self.service.patch(
+            self.actor,
+            draft["id"],
+            "reset",
+            {
+                "expectedVersion": customized["version"],
+                "medalShape": None,
+                "medalCordColor": None,
+                "medalDescription": None,
+                "medalCity": None,
+                "medalState": None,
+                "medalYear": None,
+            },
+        )
+        for field in (
+            "medalShape",
+            "medalCordColor",
+            "medalDescription",
+            "medalCity",
+            "medalState",
+            "medalYear",
+        ):
+            self.assertNotIn(field, reset)
+
+    def test_medal_customization_rejects_invalid_color_and_state(self):
+        from pydantic import ValidationError
+
+        from runpass.models import PatchParticipation
+
+        with self.assertRaises(ValidationError):
+            PatchParticipation(expectedVersion=1, medalCordColor="orange")
+        with self.assertRaises(ValidationError):
+            PatchParticipation(expectedVersion=1, medalState="sp")
+        with self.assertRaises(ValidationError):
+            PatchParticipation(expectedVersion=1, medalShape="triangle")
+
     def test_completed_race_can_swap_its_medal_photo_and_refs_follow(self):
         draft = self.service.create(self.actor, "c", self.payload(timeSeconds=3600))
         with self.assertRaises(Problem) as early:

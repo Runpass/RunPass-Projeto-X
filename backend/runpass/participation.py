@@ -35,6 +35,12 @@ class ParticipationService:
                 "completedAt",
                 "medalImageReference",
                 "publishToFeed",
+                "medalShape",
+                "medalCordColor",
+                "medalDescription",
+                "medalCity",
+                "medalState",
+                "medalYear",
             )
             if key in item
         }
@@ -586,6 +592,12 @@ class ParticipationService:
                 "bibNumber",
                 "showTime",
                 "showPlacement",
+                "medalShape",
+                "medalCordColor",
+                "medalDescription",
+                "medalCity",
+                "medalState",
+                "medalYear",
             ):
                 if field not in payload:
                     continue

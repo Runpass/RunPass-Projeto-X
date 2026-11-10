@@ -1,7 +1,7 @@
 import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -110,6 +110,14 @@ class PatchParticipation(Input):
     showTime: bool | None = None
     showPlacement: bool | None = None
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    # Customizacao visual da medalha na prateleira; None mantem/limpa o valor
+    # padrao (forma redonda, cor extraida da foto, dados do catalogo).
+    medalShape: Literal["round", "shield", "star", "hexagon"] | None = None
+    medalCordColor: Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")] | None = None
+    medalDescription: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    medalCity: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    medalState: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] | None = None
+    medalYear: Annotated[int, Field(ge=1900, le=2100)] | None = None
 
     @model_validator(mode="after")
     def changes(self):

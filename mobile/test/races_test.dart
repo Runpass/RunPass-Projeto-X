@@ -93,17 +93,15 @@ void main() {
         MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Meu Medalheiro'), findsOneWidget);
+      expect(find.text('Minhas Medalhas'), findsOneWidget);
       expect(find.text('Corrida A'), findsOneWidget);
       expect(find.text('Corrida B'), findsOneWidget);
       // Two completed races in two cities; the draft is not a medal.
-      expect(find.text('medalhas'), findsOneWidget);
-      expect(find.text("km's\ncorridos"), findsOneWidget);
+      expect(find.text('provas\nconcluídas'), findsOneWidget);
+      expect(find.text('medalhas\nna coleção'), findsOneWidget);
       expect(find.text('cidades\nvisitadas'), findsOneWidget);
-      expect(find.text('países\nvisitados'), findsOneWidget);
-      // Medalhas e cidades valem 2; edicoes sem pais contam como Brasil (1 pais).
-      expect(find.text('2'), findsNWidgets(2));
-      expect(find.text('1'), findsOneWidget);
+      // Provas, medalhas e cidades valem 2.
+      expect(find.text('2'), findsNWidgets(3));
       await tester.tap(find.text('Por ano'));
       await tester.pumpAndSettle();
       expect(find.text('2026'), findsOneWidget);
@@ -129,6 +127,97 @@ void main() {
       expect(find.text('10K'), findsOneWidget);
     },
   );
+
+  testWidgets('tocar na foto de perfil na tela de medalhas abre o Perfil', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(RunnerProfileScreen), findsNothing);
+    await tester.tap(find.byKey(const Key('medals-profile-avatar')));
+    await tester.pumpAndSettle();
+    expect(find.byType(RunnerProfileScreen), findsOneWidget);
+    expect(find.byType(MedalCollectionScreen), findsNothing);
+  });
+
+  testWidgets('editar medalha: muda forma, cor e legenda e salva via PATCH', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    var patchBody = <String, dynamic>{};
+    final editions = {
+      'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+    };
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.example'),
+      api: Uri.parse('https://api.example'),
+      clientId: 'synthetic',
+      transport: (uri, method, headers, body) async {
+        calls.add('$method ${uri.path}');
+        if (uri.host == 'cognito.example') {
+          return const JsonReply(200, {
+            'AuthenticationResult': {'AccessToken': 'synthetic'},
+          });
+        }
+        if (uri.path == '/me') {
+          return const JsonReply(200, {
+            'displayName': 'Corredor Teste',
+            'username': 'teste',
+            'version': 1,
+          });
+        }
+        if (uri.path == '/me/participations') {
+          return JsonReply(200, {
+            'items': [done('p1', 'a', seconds: 1500)],
+          });
+        }
+        if (uri.path == '/participations/p1' && method == 'PATCH') {
+          patchBody = Map<String, dynamic>.from(body as Map);
+          return const JsonReply(200, {'id': 'p1'});
+        }
+        final match = editions[uri.pathSegments.last];
+        return match == null
+            ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
+            : JsonReply(200, match);
+      },
+    );
+    await gateway.signIn('synthetic@example.test', 'synthetic');
+
+    await tester.pumpWidget(
+      MaterialApp(home: MedalCollectionScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('medal-edit-p1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Personalizar medalha'), findsOneWidget);
+
+    await tester.tap(find.text('Escudo'));
+    await tester.tap(find.byKey(const Key('medal-cord-#4a8cf0')));
+    await tester.enterText(find.widgetWithText(TextField, 'Descrição'), '');
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Descrição'),
+      'Minha prova especial',
+    );
+    await tester.enterText(find.widgetWithText(TextField, 'Cidade'), '');
+    await tester.enterText(find.widgetWithText(TextField, 'Cidade'), 'Santos');
+    await tester.enterText(find.widgetWithText(TextField, 'UF'), 'sp');
+    await tester.enterText(find.widgetWithText(TextField, 'Ano'), '2023');
+    await tester.tap(find.byKey(const Key('medal-edit-save')));
+    await tester.pumpAndSettle();
+
+    expect(patchBody['expectedVersion'], 2);
+    expect(patchBody['medalShape'], 'shield');
+    expect(patchBody['medalCordColor'], '#4a8cf0');
+    expect(patchBody['medalDescription'], 'Minha prova especial');
+    expect(patchBody['medalCity'], 'Santos');
+    expect(patchBody['medalState'], 'SP');
+    expect(patchBody['medalYear'], 2023);
+    expect(calls.where((c) => c == 'PATCH /participations/p1').length, 1);
+    expect(find.text('Personalizar medalha'), findsNothing);
+  });
 
   testWidgets(
     'medal collection without completed races keeps the empty state',

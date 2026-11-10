@@ -5419,6 +5419,31 @@
           },
           "medalImageReference": {
             "type": "string"
+          },
+          "medalShape": {
+            "type": "string",
+            "enum": ["round", "shield", "star", "hexagon"]
+          },
+          "medalCordColor": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
+          },
+          "medalDescription": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "medalCity": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "medalState": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$"
+          },
+          "medalYear": {
+            "type": "integer",
+            "minimum": 1900,
+            "maximum": 2100
           }
         }
       },
@@ -5662,6 +5687,45 @@
             "minimum": 0,
             "exclusiveMinimum": true,
             "description": "Only for a missing-edition request draft before it has a catalog distanceId. Final completion resolves a valid catalog distance."
+          },
+          "medalShape": {
+            "type": "string",
+            "enum": ["round", "shield", "star", "hexagon"],
+            "nullable": true,
+            "description": "Forma exibida na prateleira de medalhas; null volta ao padrão (round)."
+          },
+          "medalCordColor": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "nullable": true,
+            "description": "Cor da fita/cordão em hex; null volta a usar a cor extraída da foto da medalha."
+          },
+          "medalDescription": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "nullable": true,
+            "description": "Legenda da medalha; null volta a usar o nome da edição do catálogo."
+          },
+          "medalCity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "nullable": true,
+            "description": "Cidade exibida na legenda da medalha; null volta a usar a cidade da edição do catálogo."
+          },
+          "medalState": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "nullable": true,
+            "description": "UF exibida na legenda da medalha; null volta a usar a UF da edição do catálogo."
+          },
+          "medalYear": {
+            "type": "integer",
+            "minimum": 1900,
+            "maximum": 2100,
+            "nullable": true,
+            "description": "Ano exibido na legenda da medalha; null volta a usar o ano da data da edição do catálogo."
           }
         }
       },
