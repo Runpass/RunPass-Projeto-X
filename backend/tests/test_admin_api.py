@@ -16,7 +16,7 @@ from runpass.identity import AuthFailure, Principal
 from runpass.models import EditionRequestFields
 from runpass.operator_admin import grant_access
 from runpass.service import IdentityService
-from runpass.store import MemoryStore
+from runpass.store import MemoryStore, Unavailable
 
 ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 11, 10, 15, tzinfo=timezone.utc)
@@ -128,6 +128,16 @@ class FakeScheduler:
         }
 
 
+class FakeCosts:
+    def __init__(self, value=None):
+        self.value = value
+
+    def report(self):
+        if self.value is None:
+            raise Unavailable()
+        return self.value
+
+
 class FakeLambda:
     def __init__(self):
         self.calls, self.fail = [], False
@@ -151,6 +161,10 @@ class AdminApiTests(unittest.TestCase):
         self.now = NOW.timestamp()
         self.cognito, self.lam, self.logs = FakeUsers(), FakeLambda(), FakeLogs()
         self.sched = FakeScheduler()
+        self.aws_costs, self.openai_costs = (
+            FakeCosts({"totalUsd": 5}),
+            FakeCosts({"month": "2026-11"}),
+        )
 
         def verify(tok):
             try:
@@ -185,6 +199,8 @@ class AdminApiTests(unittest.TestCase):
                 schedules=CatalogSchedules(
                     self.sched, "runpass-dev-catalogo-semanal", lambda: self.now
                 ),
+                aws_costs=self.aws_costs,
+                openai_usage=self.openai_costs,
                 site={
                     "directory": self.portal_dir,
                     "region": "sa-east-1",
@@ -194,6 +210,7 @@ class AdminApiTests(unittest.TestCase):
         )
         grant_access(self.store, "op", ["catalog_admin"], "outro", NOW)
         grant_access(self.store, "adm", ["user_admin"], "outro", NOW)
+        grant_access(self.store, "fin", ["cost_read"], "outro", NOW)
         grant_access(self.store, "mod", ["moderation"], "outro", NOW)
 
     def auth(self, tok=None):
@@ -538,6 +555,21 @@ class AdminApiTests(unittest.TestCase):
         self.assertIsNone(next_run("at(2020-01-01T08:00:00)", "UTC", agora))
         for ruim in ("rate(5 minutes)", "cron(*/5 * * * ? *)", "cron(0 7 ? * MON-FRI *)", "", None):
             self.assertIsNone(next_run(ruim, "UTC", agora))
+
+    def test_custos_exigem_cost_read_e_uma_fonte_fora_do_ar_nao_esconde_a_outra(self):
+        for quem in ("op", "adm"):
+            self.assertEqual(
+                self.client.get("/admin/costs", headers=self.auth(token(quem))).status_code, 403
+            )
+        h = self.auth(token("fin"))
+        r = self.client.get("/admin/costs", headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(
+            r.json(), {"aws": {"totalUsd": 5}, "openai": {"month": "2026-11"}, "errors": []}
+        )
+        self.openai_costs.value = None
+        r = self.client.get("/admin/costs", headers=h).json()
+        self.assertEqual((r["aws"], r["openai"], r["errors"]), ({"totalUsd": 5}, None, ["openai"]))
 
     def test_falha_ao_disparar_nao_trava_o_intervalo(self):
         h = self.auth(token("op"))

@@ -84,6 +84,7 @@ export const PERMISSOES = {
   moderation: 'Moderação',
   lake_read: 'Leitura de dados analíticos',
   user_admin: 'Usuários (cadastros e operadores)',
+  cost_read: 'Custos (AWS e OpenAI)',
 };
 
 export const MODOS_CATALOGO = {
@@ -155,4 +156,37 @@ export function descreverAgendamento(a) {
     oque: a.description || a.name,
     situacao: a.enabled ? 'Ativo' : 'Desativado',
   };
+}
+
+export function usd(v) {
+  return Number.isFinite(v) ? `US$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+}
+
+export function compacto(n) {
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 1e6) return `${(n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi`;
+  if (n >= 1e3) return `${(n / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`;
+  return String(n);
+}
+
+/** Percentual inteiro de `valor` sobre `limite` (sem limite = null). */
+export function percentual(valor, limite) {
+  return Number.isFinite(valor) && Number.isFinite(limite) && limite > 0 ? Math.round((valor / limite) * 100) : null;
+}
+
+/** Retângulos de um gráfico de barras: valores -> {x, y, w, h} dentro de largura x altura. */
+export function barras(valores, largura, altura) {
+  const maximo = Math.max(...valores, 0);
+  const n = valores.length || 1;
+  const passo = largura / n;
+  return valores.map((v, i) => {
+    const h = maximo > 0 ? Math.max(v > 0 ? 1 : 0, (v / maximo) * altura) : 0;
+    return { x: i * passo + passo * 0.1, y: altura - h, w: passo * 0.8, h };
+  });
+}
+
+/** "2026-11" -> "11/2026". */
+export function mesBr(m) {
+  const [a, b] = (m || '').split('-');
+  return a && b ? `${b}/${a}` : '';
 }

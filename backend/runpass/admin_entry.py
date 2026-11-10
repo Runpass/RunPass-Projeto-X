@@ -7,6 +7,25 @@ from .composition import create_admin_aws_app
 from .lambda_entry import _boto_client, _settings
 
 
+def _number(name):
+    value = os.environ.get(name, "").strip()
+    return float(value) if value else None
+
+
+def _costs_config():
+    return {
+        # O Cost Explorer so existe em us-east-1, qualquer que seja a regiao da conta.
+        "ce": _boto_client("ce", region_name="us-east-1"),
+        "budget": _number("RUNPASS_AWS_BUDGET_USD"),
+        "limit": _number("RUNPASS_OPENAI_LIMIT_USD"),
+        "prices": {
+            "in": _number("RUNPASS_OPENAI_PRICE_IN_PER_MTOK"),
+            "out": _number("RUNPASS_OPENAI_PRICE_OUT_PER_MTOK"),
+            "search": _number("RUNPASS_OPENAI_PRICE_PER_SEARCH"),
+        },
+    }
+
+
 @lru_cache(maxsize=1)
 def _admin():
     from mangum import Mangum
@@ -24,6 +43,7 @@ def _admin():
         os.environ.get("RUNPASS_CATALOG_FUNCTION", ""),
         _boto_client("logs"),
         _boto_client("scheduler"),
+        _costs_config(),
     )
     return Mangum(app, lifespan="off")
 

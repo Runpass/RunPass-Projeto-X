@@ -36,6 +36,28 @@ Parameters:
     Type: String
     Default: ''
     Description: Lambda da rotina do catalogo (RunPass-Catalogo). Vazio = o portal nao dispara a atualizacao
+  AwsMonthlyBudgetUsd:
+    Type: Number
+    Default: 54.61
+    Description: Teto mensal de custo da AWS mostrado no painel (o mesmo da stack de orcamento)
+  OpenAiMonthlyLimitUsd:
+    Type: Number
+    Default: 10
+    Description: Limite mensal da OpenAI definido no console, mostrado no painel
+  OpenAiPriceInPerMTok:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([0-9]+(\.[0-9]+)?)?$'
+    Description: USD por 1 milhao de tokens de entrada (pagina oficial de precos da OpenAI). Vazio = so mostra o consumo
+  OpenAiPriceOutPerMTok:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([0-9]+(\.[0-9]+)?)?$'
+  OpenAiPricePerSearch:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([0-9]+(\.[0-9]+)?)?$'
+    Description: USD por chamada de busca na web
   ApiRateLimit:
     Type: Number
     Default: 10
@@ -123,7 +145,9 @@ Resources:
                 - Sid: LerExecucoesDoCatalogo
                   Effect: Allow
                   Action: logs:FilterLogEvents
-                  Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${CatalogFunctionName}:*'
+                  Resource:
+                    - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${CatalogFunctionName}:*'
+                    - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/runpass-${Environment}-catalogo-busca:*'
                 - !Ref AWS::NoValue
               - !If
                 - HasCatalogFunction
@@ -139,6 +163,10 @@ Resources:
                   Action: scheduler:ListSchedules
                   Resource: '*'
                 - !Ref AWS::NoValue
+              - Sid: LerCustosDaConta
+                Effect: Allow
+                Action: [ce:GetCostAndUsage, ce:GetCostForecast]
+                Resource: '*'
               - Sid: SegredosNaInicializacao
                 Effect: Allow
                 Action: ssm:GetParameter
@@ -178,6 +206,11 @@ Resources:
           RUNPASS_OPERATOR_CLIENT_ID: !Ref OperatorClientId
           RUNPASS_OPERATOR_POOL_ID: !Ref OperatorUserPoolId
           RUNPASS_CATALOG_FUNCTION: !Ref CatalogFunctionName
+          RUNPASS_AWS_BUDGET_USD: !Ref AwsMonthlyBudgetUsd
+          RUNPASS_OPENAI_LIMIT_USD: !Ref OpenAiMonthlyLimitUsd
+          RUNPASS_OPENAI_PRICE_IN_PER_MTOK: !Ref OpenAiPriceInPerMTok
+          RUNPASS_OPENAI_PRICE_OUT_PER_MTOK: !Ref OpenAiPriceOutPerMTok
+          RUNPASS_OPENAI_PRICE_PER_SEARCH: !Ref OpenAiPricePerSearch
       Tags:
         - {Key: Project, Value: RunPass}
         - {Key: Environment, Value: !Ref Environment}

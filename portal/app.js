@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  MODOS_CATALOGO, PERMISSOES, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  MODOS_CATALOGO, PERMISSOES, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -64,6 +64,7 @@ function sair(motivo) {
   etapa('senha');
   $('segredo').textContent = '';
   $('cadastros').replaceChildren();
+  $('custos').replaceChildren();
   $('senha').value = '';
   $('codigo').value = '';
   $('pedidos').replaceChildren();
@@ -199,6 +200,112 @@ function painelRecusa(area, pedido) {
   area.replaceChildren(el('label', {}, 'Motivo da recusa', motivo), confirmar);
 }
 
+// ---- custos -------------------------------------------------------------------------------------
+
+const NS = 'http://www.w3.org/2000/svg';
+
+function grafico(valores, rotulos, descricao) {
+  const L = 600;
+  const A = 120;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${L} ${A + 16}`);
+  svg.setAttribute('class', 'grafico');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', descricao);
+  barras(valores, L, A).forEach((b, i) => {
+    const r = document.createElementNS(NS, 'rect');
+    for (const [k, v] of Object.entries({ x: b.x, y: b.y, width: b.w, height: b.h })) r.setAttribute(k, v.toFixed(1));
+    const t = document.createElementNS(NS, 'title');
+    t.textContent = `${rotulos[i]}: ${usd(valores[i])}`;
+    r.append(t);
+    svg.append(r);
+  });
+  if (rotulos.length) {
+    for (const i of [0, rotulos.length - 1]) {
+      const tx = document.createElementNS(NS, 'text');
+      tx.setAttribute('x', i === 0 ? '0' : String(L));
+      tx.setAttribute('y', String(A + 12));
+      tx.setAttribute('text-anchor', i === 0 ? 'start' : 'end');
+      tx.textContent = rotulos[i];
+      svg.append(tx);
+    }
+  }
+  return svg;
+}
+
+function cartaoNumero(rotulo, valor, detalhe, pct) {
+  const caixa = el('article', { class: 'cartao' }, el('div', { class: 'rot' }, rotulo), el('div', { class: 'num' }, valor), detalhe ? el('div', { class: 'meta' }, detalhe) : '');
+  if (pct != null) {
+    const barra = el('div', { class: `barra-uso${pct >= 100 ? ' estouro' : pct >= 80 ? ' alerta' : ''}` }, el('span'));
+    barra.firstChild.style.width = `${Math.min(pct, 100)}%`;
+    caixa.append(barra);
+  }
+  return caixa;
+}
+
+function tabela(cabecalho, linhas, direita = []) {
+  return el(
+    'table',
+    { class: 'tabela' },
+    el('thead', {}, el('tr', {}, cabecalho.map((t, i) => el('th', { class: direita.includes(i) ? 'direita' : '' }, t)))),
+    el('tbody', {}, linhas.map((l) => el('tr', {}, l.map((c, i) => el('td', { class: direita.includes(i) ? 'direita' : '' }, c))))),
+  );
+}
+
+async function carregarCustos() {
+  const alvo = $('custos');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/costs');
+    const partes = [];
+    const a = r.aws;
+    partes.push(el('h2', {}, 'AWS (conta inteira)'));
+    if (!a) {
+      partes.push(el('p', { class: 'meta' }, 'Não foi possível ler os custos da AWS agora (o Cost Explorer precisa estar habilitado na conta).'));
+    } else {
+      partes.push(
+        el(
+          'div',
+          { class: 'grade' },
+          cartaoNumero(`Gasto em ${mesBr(a.month)}`, usd(a.totalUsd), a.budgetUsd ? `Teto mensal ${usd(a.budgetUsd)}` : '', percentual(a.totalUsd, a.budgetUsd)),
+          cartaoNumero('Previsão do mês', usd(a.forecastUsd), a.forecastUsd == null ? 'Sem histórico suficiente' : 'Gasto até agora + previsão do restante', percentual(a.forecastUsd, a.budgetUsd)),
+        ),
+        a.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por dia no mês'), grafico(a.daily.map((d) => d.usd), a.daily.map((d) => d.date.slice(8) + '/' + d.date.slice(5, 7)), 'Custo diário da AWS no mês')) : '',
+        el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por serviço (mês)'), tabela(['Serviço', 'Custo'], a.byService.map((s) => [s.service, usd(s.usd)]), [1])),
+        el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Últimos meses'), tabela(['Mês', 'Custo'], a.months.map((m) => [mesBr(m.month) + (m.estimated ? ' (parcial)' : ''), usd(m.usd)]), [1])),
+        el('p', { class: 'meta' }, 'Valores em dólar, sem converter. Dados do Cost Explorer podem atrasar até 1 dia; a consulta é cobrada pela AWS e fica em cache por 15 minutos.'),
+      );
+    }
+    const o = r.openai;
+    partes.push(el('h2', {}, 'OpenAI (estimativa)'));
+    if (!o) {
+      partes.push(el('p', { class: 'meta' }, 'Não foi possível ler o consumo da OpenAI agora.'));
+    } else {
+      const mes = o.thisMonth;
+      partes.push(
+        el(
+          'div',
+          { class: 'grade' },
+          cartaoNumero(`Custo estimado em ${mesBr(o.month)}`, o.priced ? usd(mes.estimatedUsd) : 'Preços não informados', o.limitUsd ? `Limite no console ${usd(o.limitUsd)}` : '', o.priced ? percentual(mes.estimatedUsd, o.limitUsd) : null),
+          cartaoNumero('Chamadas no mês', String(mes.chamadas), `${compacto(mes.entrada)} tokens de entrada · ${compacto(mes.saida)} de saída`),
+          cartaoNumero('Buscas na web no mês', String(mes.buscas), `Mês anterior: ${o.previousMonth.chamadas} chamadas`),
+        ),
+        o.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, o.priced ? 'Custo estimado por dia' : 'Chamadas por dia'), grafico(o.daily.map((d) => (o.priced ? d.estimatedUsd : d.chamadas)), o.daily.map((d) => d.date.slice(8) + '/' + d.date.slice(5, 7)), 'Consumo diário da OpenAI')) : '',
+        o.daily.length ? el('div', { class: 'cartao' }, tabela(['Dia', 'Chamadas', 'Entrada', 'Saída', 'Buscas', 'Custo est.'], o.daily.slice().reverse().map((d) => [d.date.split('-').reverse().join('/'), d.chamadas, compacto(d.entrada), compacto(d.saida), d.buscas, d.estimatedUsd == null ? '—' : usd(d.estimatedUsd)]), [1, 2, 3, 4, 5])) : el('p', { class: 'vazio' }, 'Nenhum consumo registrado neste mês ainda.'),
+        el('p', { class: 'meta' }, o.priced
+          ? 'Estimativa a partir das chamadas registradas pelas rotinas do catálogo e da busca por linguagem natural, com os preços configurados no portal. Não inclui testes feitos fora delas nem o consumo anterior a esta medição. A fatura da OpenAI é a referência.'
+          : 'Só o consumo medido aparece. Para estimar o custo, informe os preços da página oficial da OpenAI na implantação do portal (entrada, saída e busca). A fatura da OpenAI é a referência.'),
+      );
+    }
+    alvo.replaceChildren(...partes);
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
 // ---- cadastros, operadores e atualização do catálogo ------------------------------------------
 
 let permissoes = [];
@@ -210,6 +317,7 @@ function mostrarAba(nome) {
   if (nome === 'pedidos') carregarPedidos();
   if (nome === 'catalogo') carregarUltimoDisparo();
   if (nome === 'cadastros') carregarCadastros();
+  if (nome === 'custos') carregarCustos();
 }
 
 async function carregarCadastros() {
@@ -330,14 +438,14 @@ $('form-operador').addEventListener('submit', async (evento) => {
 });
 
 function prepararAbas() {
-  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin' };
+  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin', custos: 'cost_read' };
   for (const [nome, perm] of Object.entries(abas)) $(`aba-${nome}`).hidden = !permissoes.includes(perm);
   $('modo-catalogo').replaceChildren(...Object.entries(MODOS_CATALOGO).map(([v, t]) => el('option', { value: v }, t)));
   $('op-permissoes').replaceChildren(
     el('legend', {}, 'Permissões'),
     ...Object.entries(PERMISSOES).map(([v, t]) => el('label', {}, el('input', { type: 'checkbox', value: v }), t)),
   );
-  mostrarAba(permissoes.includes('catalog_admin') ? 'pedidos' : permissoes.includes('user_admin') ? 'cadastros' : '');
+  mostrarAba(permissoes.includes('catalog_admin') ? 'pedidos' : permissoes.includes('user_admin') ? 'cadastros' : permissoes.includes('cost_read') ? 'custos' : '');
 }
 
 for (const b of document.querySelectorAll('[data-aba]')) b.addEventListener('click', () => mostrarAba(b.dataset.aba));
@@ -352,7 +460,7 @@ async function abrirPainel(t) {
   iniciarSessao(t, emailTentativa);
   const info = await api('/admin/session');
   permissoes = info.permissions || [];
-  if (!permissoes.some((p) => p === 'catalog_admin' || p === 'user_admin')) {
+  if (!permissoes.some((p) => ['catalog_admin', 'user_admin', 'cost_read'].includes(p))) {
     aviso('Seu acesso não inclui permissão para este portal. Peça a ativação.', 'erro');
     return;
   }
@@ -435,4 +543,5 @@ $('voltar').addEventListener('click', () => sair());
 $('sair').addEventListener('click', () => sair());
 $('atualizar').addEventListener('click', carregarPedidos);
 $('atualizar-cadastros').addEventListener('click', carregarCadastros);
+$('atualizar-custos').addEventListener('click', carregarCustos);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);

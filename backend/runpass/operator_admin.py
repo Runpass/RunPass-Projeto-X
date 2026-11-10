@@ -15,7 +15,7 @@ from .service import Problem
 from .store import Conflict
 from .upload import CATALOG_OWNER, UploadService
 
-PERMISSIONS = ("catalog_admin", "moderation", "lake_read", "user_admin")
+PERMISSIONS = ("catalog_admin", "moderation", "lake_read", "user_admin", "cost_read")
 FIXTURE_ORIGIN = "https://runpass.invalid/fixture-sintetica"
 
 

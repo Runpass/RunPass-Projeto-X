@@ -75,3 +75,23 @@ test('agendamentos: descrição', async () => {
   assert.equal(descreverAgendamento({ enabled: true, name: 'x', description: 'Calendário', expression: 'rate(1 day)', nextRun: null }).quando, 'Ver expressão: rate(1 day)');
   assert.equal(descreverAgendamento({ enabled: true, name: 'n', description: '', nextRun: '2026-11-16T10:00:00Z' }).oque, 'n');
 });
+
+test('custos: formatação, percentual e barras', async () => {
+  const { usd, compacto, percentual, barras, mesBr } = await import('./lib.js');
+  assert.match(usd(5.5), /^US\$\s5,50$/);
+  assert.equal(usd(undefined), '—');
+  assert.equal(compacto(1_502_000), '1,5 mi');
+  assert.equal(compacto(2500), '2,5 mil');
+  assert.equal(compacto(12), '12');
+  assert.equal(percentual(5, 10), 50);
+  assert.equal(percentual(5, null), null);
+  assert.equal(percentual(5, 0), null);
+  assert.equal(mesBr('2026-11'), '11/2026');
+  const b = barras([0, 5, 10], 300, 100);
+  assert.equal(b[2].h, 100);
+  assert.equal(b[1].h, 50);
+  assert.equal(b[0].h, 0);
+  assert.ok(barras([0, 0], 100, 50).every((x) => x.h === 0));
+  assert.ok(barras([0.0001, 100], 100, 50)[0].h >= 1); // valor pequeno continua visível
+  assert.deepEqual(barras([], 100, 50), []);
+});

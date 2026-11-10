@@ -52,6 +52,7 @@
         <button role="tab" id="aba-pedidos" data-aba="pedidos" aria-selected="true">Pedidos de corrida</button>
         <button role="tab" id="aba-catalogo" data-aba="catalogo" aria-selected="false">Atualizar catálogo</button>
         <button role="tab" id="aba-cadastros" data-aba="cadastros" aria-selected="false">Cadastros no app</button>
+        <button role="tab" id="aba-custos" data-aba="custos" aria-selected="false">Custos</button>
         <button role="tab" id="aba-operadores" data-aba="operadores" aria-selected="false">Operadores</button>
       </nav>
       <section id="sec-pedidos" data-sec="pedidos">
@@ -89,6 +90,13 @@
         <p class="ajuda">Quem já criou conta no aplicativo. E-mails aparecem mascarados e cada consulta fica registrada.</p>
         <p id="resumo-cadastros" class="linha"></p>
         <div id="cadastros"></div>
+      </section>
+      <section id="sec-custos" data-sec="custos" hidden>
+        <div class="barra">
+          <h1>Custos</h1>
+          <button id="atualizar-custos" type="button" class="sec">Atualizar</button>
+        </div>
+        <div id="custos"></div>
       </section>
       <section id="sec-operadores" data-sec="operadores" hidden>
         <div class="barra"><h1>Criar operador</h1></div>

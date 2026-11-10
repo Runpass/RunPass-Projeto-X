@@ -42,3 +42,15 @@ fieldset input { width: auto; margin: 0; }
 .abas button[aria-selected="false"] { border-bottom-color: transparent; color: var(--suave); }
 .tabela { width: 100%; border-collapse: collapse; font-size: 14px; }
 .tabela th, .tabela td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--linha); }
+
+.grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 12px 0; }
+.num { font-size: 24px; font-weight: 700; margin: 4px 0; }
+.rot { font-size: 13px; color: var(--suave); }
+.barra-uso { height: 8px; border-radius: 4px; background: var(--linha); overflow: hidden; margin-top: 6px; }
+.barra-uso > span { display: block; height: 100%; background: var(--verde); }
+.barra-uso.alerta > span { background: var(--laranja); }
+.barra-uso.estouro > span { background: var(--erro); }
+.grafico { width: 100%; height: auto; display: block; }
+.grafico rect { fill: var(--laranja); }
+.grafico text { fill: var(--suave); font-size: 10px; }
+.direita { text-align: right !important; }

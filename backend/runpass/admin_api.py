@@ -166,6 +166,8 @@ def create_admin_app(
     users=None,
     runner=None,
     schedules=None,
+    aws_costs=None,
+    openai_usage=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
@@ -321,6 +323,18 @@ def create_admin_app(
         if schedules is None:
             raise Unavailable()
         return schedules.upcoming()
+
+    @app.get("/admin/costs")
+    def costs(op: Operator):
+        need(op, "cost_read")
+        out = {}
+        for name, source in (("aws", aws_costs), ("openai", openai_usage)):
+            try:  # uma fonte fora do ar nao esconde a outra
+                out[name] = source.report() if source else None
+            except Unavailable:
+                out[name] = None
+        out["errors"] = [k for k in ("aws", "openai") if out[k] is None]
+        return out
 
     @app.post("/admin/catalog/run", status_code=202)
     def start_run(payload: CatalogRun, op: Operator):
