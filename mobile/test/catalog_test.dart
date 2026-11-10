@@ -96,6 +96,16 @@ Future<void> openSearch(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// O nome é o único campo obrigatório do formulário de filtros.
+Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
+  final field = find.widgetWithText(
+    TextFormField,
+    'Nome da corrida (obrigatório)',
+  );
+  await reveal(tester, field, backwards: true);
+  await tester.enterText(field, name);
+}
+
 void main() {
   defaultOrderTests();
   test('query parameters preserve stage and encode filters without leaking into path', () async {
@@ -115,6 +125,9 @@ void main() {
   testWidgets(
     'catalog filters and empty page keep continuation and append results',
     (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       final calls = <Map<String, String>>[];
       final gateway = await signed((uri, method, headers, body) async {
         expect(uri.path, '/editions');
@@ -158,10 +171,13 @@ void main() {
         find.widgetWithText(TextFormField, 'Cidade'),
         'Santos',
       );
-      await reveal(tester, find.text('Buscar'));
+      await fillName(tester);
+      await tester.ensureVisible(find.text('Buscar'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Buscar'));
       await tester.pumpAndSettle();
       expect(calls.last['city'], 'Santos');
+      expect(calls.last['namePrefix'], 'Corrida');
       expect(calls.last.containsKey('cursor'), false);
       await reveal(
         tester,
@@ -177,6 +193,9 @@ void main() {
   testWidgets('clear search empties filters and reloads without them', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     final calls = <Map<String, String>>[];
     final gateway = await signed((uri, method, headers, body) async {
       calls.add(uri.queryParameters);
@@ -194,31 +213,34 @@ void main() {
       find.widgetWithText(TextFormField, 'Cidade'),
       'Santos',
     );
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Estado (UF)'),
-      'S',
-    );
-    await reveal(tester, find.text('Buscar'));
+    await fillName(tester);
+    await reveal(tester, find.byKey(const ValueKey('filter-state-0')));
+    await tester.tap(find.byKey(const ValueKey('filter-state-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SP · São Paulo').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Buscar'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Buscar'));
     await tester.pumpAndSettle();
-    expect(find.text('Informe a UF.'), findsOneWidget);
+    expect(calls.last['city'], 'Santos');
+    expect(calls.last['state'], 'SP');
     await reveal(tester, find.text('Limpar busca'));
     await tester.tap(find.text('Limpar busca'));
     await tester.pumpAndSettle();
-    expect(find.text('Informe a UF.'), findsNothing);
     expect(calls.last.containsKey('city'), false);
     expect(calls.last.containsKey('state'), false);
-    for (final label in ['Cidade', 'Estado (UF)']) {
-      await reveal(
-        tester,
-        find.widgetWithText(TextFormField, label),
-        backwards: true,
-      );
-      final field = tester.widget<TextFormField>(
-        find.widgetWithText(TextFormField, label),
-      );
-      expect(field.controller!.text, '');
-    }
+    expect(calls.last.containsKey('namePrefix'), false);
+    await reveal(
+      tester,
+      find.widgetWithText(TextFormField, 'Cidade'),
+      backwards: true,
+    );
+    final city = tester.widget<TextFormField>(
+      find.widgetWithText(TextFormField, 'Cidade'),
+    );
+    expect(city.controller!.text, '');
+    expect(find.text('Todos os estados'), findsOneWidget);
   });
 
   testWidgets(
@@ -253,6 +275,7 @@ void main() {
         '/editions',
         '/editions/A',
         '/editions/A/reviews',
+        '/editions/A/participants',
         '/me/race-plans/A',
         '/editions/A/reviews',
       ]);
@@ -378,6 +401,7 @@ void main() {
       [
         'GET /editions/A',
         'GET /editions/A/reviews',
+        'GET /editions/A/participants',
         'GET /me/race-plans/A',
         'GET /editions/A/reviews',
         'POST /participations',
@@ -1111,6 +1135,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Abertas').last);
       await tester.pumpAndSettle();
+      await fillName(tester);
       await tester.ensureVisible(find.text('Buscar'));
       await tester.tap(find.text('Buscar'));
       await tester.pumpAndSettle();
@@ -1299,6 +1324,7 @@ void main() {
         find.widgetWithText(TextFormField, 'Cidade'),
         'Sao Paulo',
       );
+      await fillName(tester);
       await tester.ensureVisible(find.text('Buscar'));
       await tester.tap(find.text('Buscar'));
       await tester.pumpAndSettle();
@@ -1361,10 +1387,9 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        // O pedido fica junto da pesquisa, na lupa: fechada, nao aparece no fim da lista.
-        expect(find.byKey(const Key('catalog-request-new')), findsNothing);
-        await openSearch(tester);
-        await reveal(tester, find.byKey(const Key('catalog-request-new')));
+        // Pedir cadastro e acompanhar os pedidos ficam sempre visiveis, sem abrir a lupa.
+        expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
+        expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
         await tester.tap(find.byKey(const Key('catalog-request-new')));
         await tester.pumpAndSettle();
         expect(find.text('Pedir cadastro da corrida'), findsWidgets);
@@ -1595,7 +1620,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
-    expect(find.byKey(const Key('catalog-request-new')), findsNothing);
+    // O atalho fixo do topo continua: nao depende de a lista estar vazia.
+    expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
   });
 
   testWidgets('ordenar a lista por data e por nota (ranking das melhores)', (

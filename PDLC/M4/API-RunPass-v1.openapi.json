@@ -5572,6 +5572,139 @@
         ],
         "x-requires-beta-admission": true
       }
+    },
+    "/editions/{id}/participants": {
+      "get": {
+        "operationId": "listEditionParticipants",
+        "description": "Who completed this edition, newest first. Lists only profiles the viewer may see (public, own, or friends of a private profile); `total` counts every valid completion without identifying anyone. Time and placement appear only when the runner chose to show them.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "distanceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
+    "/editions/{id}/banner": {
+      "get": {
+        "operationId": "getEditionBanner",
+        "description": "Short-lived signed link to the operator-approved banner of the edition, with the credit to display. 404 IMAGE_NOT_AVAILABLE when none was approved. The image is a sanitized copy kept by RunPass, never a hotlink to the organizer.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionBannerLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
     }
   },
   "components": {
@@ -6366,6 +6499,11 @@
           "sourceExternalId": {
             "type": "string",
             "description": "Identificador da prova na fonte."
+          },
+          "imageCredit": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Credit shown with the edition banner; present only with imageReference."
           }
         }
       },
@@ -9058,6 +9196,84 @@
             "items": {
               "$ref": "#/components/schemas/RacePlan"
             }
+          }
+        }
+      },
+      "ParticipantPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionParticipant"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "EditionParticipant": {
+        "type": "object",
+        "required": [
+          "participationId",
+          "author"
+        ],
+        "properties": {
+          "participationId": {
+            "type": "string"
+          },
+          "author": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Public profile card."
+          },
+          "distanceId": {
+            "type": "string"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "timeSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "placement": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "EditionBannerLink": {
+        "type": "object",
+        "required": [
+          "url",
+          "contentType",
+          "expiresAt"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "credit": {
+            "type": "string"
           }
         }
       }

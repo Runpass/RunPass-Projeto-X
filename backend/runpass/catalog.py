@@ -359,6 +359,8 @@ class ImportEdition(Input):
     officialUrl: str | None = None
     registrationUrl: str | None = None
     imageReference: str | None = None
+    # Credito exibido junto do banner (ex.: "Divulgação: Organizador"); so com imageReference.
+    imageCredit: str | None = Field(default=None, min_length=1, max_length=200)
     medalImageReference: str | None = None
     archived: bool = False
     # Por que a edição saiu de circulação; só vale com archived=True.
@@ -408,6 +410,8 @@ class ImportEdition(Input):
     def unique_distances(self):
         if len({d.id for d in self.distances}) != len(self.distances):
             raise ValueError("Duplicate distance ID")
+        if self.imageCredit and not self.imageReference:
+            raise ValueError("imageCredit requires imageReference")
         if self.archivedReason and not self.archived:
             raise ValueError("archivedReason requires an archived edition")
         return self
