@@ -180,6 +180,29 @@ test('agendamento: validação do formulário e texto de quando roda', async () 
   assert.equal(quandoTexto([], '06:00'), '');
 });
 
+test('divergência: números de distância e validação da decisão', async () => {
+  const { listaKm, validarDecisao } = await import('./lib.js');
+  assert.deepEqual(listaKm('5, 10 km; 21,0975'), ['5', '10', '21,0975']);
+  assert.deepEqual(listaKm('5|10'), ['5', '10']);
+  assert.deepEqual(listaKm(''), []);
+  assert.deepEqual(listaKm('sem numero'), []);
+  const ok = { decisao: 'accepted', distancias: ['5', '10'], fonte: 'https://corrida.exemplo/regulamento', trecho: 'Percursos de 5 km e 10 km' };
+  assert.equal(validarDecisao(ok), '');
+  assert.match(validarDecisao({ ...ok, distancias: [] }), /distância/);
+  assert.match(validarDecisao({ ...ok, distancias: ['0'] }), /inválida/);
+  assert.match(validarDecisao({ ...ok, distancias: ['1001'] }), /inválida/);
+  assert.match(validarDecisao({ ...ok, distancias: Array(9).fill('5') }), /8/);
+  assert.match(validarDecisao({ ...ok, fonte: '' }), /fonte/);
+  assert.match(validarDecisao({ ...ok, fonte: 'http://x.test/a' }), /https/);
+  assert.match(validarDecisao({ ...ok, fonte: 'https://u:p@x.test/a' }), /https/);
+  assert.match(validarDecisao({ ...ok, fonte: 'javascript:alert(1)' }), /https/);
+  assert.match(validarDecisao({ ...ok, trecho: '  ' }), /trecho/);
+  assert.match(validarDecisao({ ...ok, trecho: 'x'.repeat(161) }), /160/);
+  assert.equal(validarDecisao({ decisao: 'rejected', motivo: '' }), '');
+  assert.match(validarDecisao({ decisao: 'rejected', motivo: 'x'.repeat(201) }), /200/);
+  assert.match(validarDecisao({ decisao: 'talvez' }), /desconhecida/);
+});
+
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
   const { situacaoOperador } = await import('./lib.js');
   assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);

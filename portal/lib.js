@@ -42,6 +42,8 @@ export const MENSAGENS = {
   SCHEDULE_EXISTS: 'Já existe um agendamento com esse nome. Escolha outro.',
   SCHEDULE_LIMIT: 'Limite de 20 agendamentos criados pelo portal. Apague algum antes de criar outro.',
   SCHEDULE_NOT_FOUND: 'Agendamento não encontrado. Atualize a lista.',
+  ALREADY_DECIDED: 'Esta divergência já foi decidida. Atualize a lista.',
+  DIVERGENCE_NOT_FOUND: 'Divergência não encontrada na coleta mais recente. Atualize a lista.',
 };
 
 export function mensagem(codigo) {
@@ -337,5 +339,34 @@ export function validarAgendamento({ novo, nome, tipo, dias, horario, rodada, ma
     if (!Number.isInteger(max) || max < 1 || max > MAX_PROVAS_POR_EXECUCAO) return `O máximo de provas por execução vai de 1 a ${MAX_PROVAS_POR_EXECUCAO}.`;
   }
   if (tipo === 'calendario' && (!Number.isInteger(meses) || meses < 1 || meses > 6)) return 'Os meses do calendário vão de 1 a 6.';
+  return '';
+}
+
+export const TIPO_DIVERGENCIA = {
+  parcial: 'Pista parcial: a prova existe, mas falta a distância',
+  ambigua: 'Ambígua: há mais de uma prova parecida na mesma data',
+  sugestao: 'Sugestão: dados vêm de outra edição, não confirmados',
+};
+
+/** "5, 10 km; 21,0975" -> ['5', '10', '21,0975'] (só os números; o servidor valida de novo). */
+export function listaKm(texto) {
+  return (String(texto || '').match(/\d+(?:[.,]\d+)?/g) || []);
+}
+
+/** Confere a decisão antes de enviar. Devolve o texto do erro, ou '' quando está tudo certo.
+ *  Aceitar exige distância, fonte https e trecho curto (regra do projeto: fato sem evidência é anulado). */
+export function validarDecisao({ decisao, distancias, fonte, trecho, motivo }) {
+  if (decisao === 'rejected') return (motivo || '').length > 200 ? 'O motivo pode ter até 200 caracteres.' : '';
+  if (decisao !== 'accepted') return 'Decisão desconhecida.';
+  const km = Array.isArray(distancias) ? distancias : [];
+  if (!km.length) return 'Informe ao menos uma distância em km.';
+  if (km.length > 8) return 'No máximo 8 distâncias.';
+  if (km.some((d) => { const n = Number(String(d).replace(',', '.')); return !(n > 0 && n <= 1000); })) return 'Distância inválida (use números entre 0 e 1000).';
+  let url;
+  try { url = new URL(fonte || ''); } catch { return 'Informe o link da fonte (começa com https://).'; }
+  if (url.protocol !== 'https:' || url.username || url.password || (fonte || '').length > 500) return 'O link da fonte deve começar com https:// e não pode ter usuário ou senha.';
+  const t = (trecho || '').trim();
+  if (!t) return 'Cole o trecho da fonte que comprova a distância (até 160 caracteres).';
+  if (t.length > 160) return 'O trecho da fonte pode ter até 160 caracteres.';
   return '';
 }
