@@ -203,6 +203,13 @@ test('divergência: números de distância e validação da decisão', async () 
   assert.match(validarDecisao({ decisao: 'talvez' }), /desconhecida/);
 });
 
+test('revocação: das nada encontrado conferidas, quantas tinham informação', async () => {
+  const { textoRevocacao } = await import('./lib.js');
+  assert.deepEqual(textoRevocacao({ total: 18, checked: 0, hadInfo: 0 }), { valor: '—', detalhe: '18 sem informação para conferir' });
+  assert.deepEqual(textoRevocacao({ total: 18, checked: 4, hadInfo: 1 }), { valor: '1 de 4 (25%)', detalhe: 'a rotina deixou de achar · 14 ainda por conferir' });
+  assert.equal(textoRevocacao(undefined).valor, '—');
+});
+
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
   const { situacaoOperador } = await import('./lib.js');
   assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);

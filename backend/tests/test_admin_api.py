@@ -1362,9 +1362,19 @@ class AdminApiTests(unittest.TestCase):
         r = self.client.get("/admin/divergences", headers=h).json()
         self.assertEqual(r["run"], "2026-11-10")  # a coleta mais recente
         self.assertEqual(
-            sorted(i["name"] for i in r["items"]), ["AMBIGUA RUN", "PARCIAL RUN", "SUGESTAO RUN"]
+            [i["name"] for i in r["items"]],
+            ["PARCIAL RUN", "AMBIGUA RUN", "SUGESTAO RUN", "NADA RUN"],
+        )  # parcial, ambigua, sugestao e "nada encontrado" (nessa ordem); "pronta" nao entra
+        self.assertEqual(
+            r["summary"],
+            {
+                "total": 4,
+                "pending": 4,
+                "accepted": 0,
+                "rejected": 0,
+                "nothingFound": {"total": 1, "checked": 0, "hadInfo": 0},
+            },
         )
-        self.assertEqual(r["summary"], {"total": 3, "pending": 3, "accepted": 0, "rejected": 0})
         por = {i["name"]: i for i in r["items"]}
         self.assertEqual(
             (por["PARCIAL RUN"]["kind"], por["AMBIGUA RUN"]["kind"], por["SUGESTAO RUN"]["kind"]),
@@ -1417,13 +1427,14 @@ class AdminApiTests(unittest.TestCase):
             r = self.decidir(h, ident, **{**ok, **mudanca})
             self.assertIn(r.status_code, (400, 422), mudanca)
         self.assertEqual(
-            self.client.get("/admin/divergences", headers=h).json()["summary"]["pending"], 3
+            self.client.get("/admin/divergences", headers=h).json()["summary"]["pending"], 4
         )
         r = self.decidir(h, ident, **ok)
         self.assertEqual(r.status_code, 201, r.text)
         self.assertEqual(list(catalogo()), antes)  # aceitar nao publica nada no catalogo
         lista = self.client.get("/admin/divergences", headers=h).json()
-        self.assertEqual(lista["summary"], {"total": 3, "pending": 2, "accepted": 1, "rejected": 0})
+        self.assertEqual(lista["summary"]["accepted"], 1)
+        self.assertEqual(lista["summary"]["pending"], 3)
         feita = next(i for i in lista["items"] if i["id"] == ident)["decision"]
         self.assertEqual(
             (feita["result"], feita["distances"]), ("accepted", ["5", "10"])
@@ -1446,12 +1457,53 @@ class AdminApiTests(unittest.TestCase):
             201,
         )
         resumo = self.client.get("/admin/divergences", headers=h).json()["summary"]
-        self.assertEqual(resumo, {"total": 3, "pending": 1, "accepted": 1, "rejected": 1})
+        self.assertEqual((resumo["pending"], resumo["accepted"], resumo["rejected"]), (2, 1, 1))
         trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
         acoes = sorted(
             row["action"] for _, row in trilha if row["action"].startswith("catalog.divergence.")
         )
         self.assertEqual(acoes, ["catalog.divergence.accept", "catalog.divergence.reject"])
+
+    def test_nada_encontrado_mede_a_revocacao_e_descartar_nao_precisa_de_dados(self):
+        h = self.prepara_divergencias()
+        extra = self.linha("NADA DOIS", "2026-11-02", "em_revisao", "nada encontrado") + self.linha(
+            "NADA TRES", "2026-11-03", "em_revisao", "nada encontrado"
+        )
+        self.s3.objects["semanal/2026-11-10/enriquecimento/catalogo-completo.csv"] += extra
+        itens = {
+            i["name"]: i for i in self.client.get("/admin/divergences", headers=h).json()["items"]
+        }
+        self.assertEqual(
+            self.client.get("/admin/divergences", headers=h).json()["summary"]["nothingFound"],
+            {"total": 3, "checked": 0, "hadInfo": 0},
+        )
+        self.assertEqual(itens["NADA RUN"]["kind"], "nada")
+        # descartar (sem informacao util): so decisao, sem distancia nem fonte
+        r = self.decidir(
+            h, itens["NADA RUN"]["id"], decision="rejected", reason="sem informacao util"
+        )
+        self.assertEqual(r.status_code, 201, r.text)
+        # existe informacao: aceitar exige os dados e a fonte, como nas outras divergencias
+        r = self.decidir(h, itens["NADA DOIS"]["id"], decision="accepted", distances=["5"])
+        self.assertEqual(r.status_code, 422)
+        r = self.decidir(
+            h,
+            itens["NADA DOIS"]["id"],
+            decision="accepted",
+            distances=["5"],
+            sourceUrl="https://corrida.exemplo/nada-dois",
+            snippet="Corrida de 5 km",
+        )
+        self.assertEqual(r.status_code, 201, r.text)
+        resumo = self.client.get("/admin/divergences", headers=h).json()["summary"]
+        self.assertEqual(
+            resumo["nothingFound"], {"total": 3, "checked": 2, "hadInfo": 1}
+        )  # a rotina deixou de achar 1 de 2
+        self.assertEqual(resumo["pending"], 4)  # parcial, ambigua, sugestao e a terceira "nada"
+        # a aceita entra no CSV do importador; a descartada nao
+        csv_texto = self.client.get("/admin/divergences/accepted.csv", headers=h).text
+        self.assertIn("NADA DOIS", csv_texto)
+        self.assertNotIn("NADA RUN", csv_texto)
 
     def test_csv_das_aceitas_passa_pela_validacao_do_importador(self):
         from runpass.catalog_import import parse_csv

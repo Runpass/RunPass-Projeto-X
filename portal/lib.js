@@ -346,6 +346,7 @@ export const TIPO_DIVERGENCIA = {
   parcial: 'Pista parcial: a prova existe, mas falta a distância',
   ambigua: 'Ambígua: há mais de uma prova parecida na mesma data',
   sugestao: 'Sugestão: dados vêm de outra edição, não confirmados',
+  nada: 'Nada encontrado: a rotina não achou informação. Confira à mão',
 };
 
 /** "5, 10 km; 21,0975" -> ['5', '10', '21,0975'] (só os números; o servidor valida de novo). */
@@ -369,4 +370,11 @@ export function validarDecisao({ decisao, distancias, fonte, trecho, motivo }) {
   if (!t) return 'Cole o trecho da fonte que comprova a distância (até 160 caracteres).';
   if (t.length > 160) return 'O trecho da fonte pode ter até 160 caracteres.';
   return '';
+}
+
+/** Texto do indicador de revocação: das "nada encontrado" já conferidas, quantas tinham informação. */
+export function textoRevocacao(n) {
+  if (!n || !n.checked) return { valor: '—', detalhe: `${n ? n.total : 0} sem informação para conferir` };
+  const pct = Math.round((n.hadInfo / n.checked) * 100);
+  return { valor: `${n.hadInfo} de ${n.checked} (${pct}%)`, detalhe: `a rotina deixou de achar · ${n.total - n.checked} ainda por conferir` };
 }

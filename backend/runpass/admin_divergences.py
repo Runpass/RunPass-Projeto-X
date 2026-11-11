@@ -2,7 +2,10 @@
 
 Fonte: o `catalogo-completo.csv` do enriquecimento mais recente no bucket de relatorios (so leitura). Entram
 so as provas em revisao com um destes resultados: pista parcial (prova confirmada, sem distancia), ambigua (duas
-ou mais provas parecidas na mesma data) e sugestao (dados de outra edicao). "Nada encontrado" nao e divergencia.
+ou mais provas parecidas na mesma data), sugestao (dados de outra edicao) e "nada encontrado".
+
+Em "nada encontrado" a pessoa confere a mao: se EXISTE informacao util, aceita (com os dados e a fonte) e isso conta
+como o que a rotina deixou de achar; se NAO existe, descarta. Esses numeros medem a revocacao do enriquecimento.
 
 Aceitar EXIGE as distancias e a fonte com um trecho curto (regra do projeto: fato sem evidencia e anulado) e
 NAO publica nada: so grava a decisao e permite baixar um CSV no formato do importador, que o operador importa
@@ -24,7 +27,9 @@ KINDS = {
     "pista parcial, não confirmada": "parcial",
     "enriquecida - conflito, vai para revisão": "ambigua",
     "sugestão da edição anterior": "sugestao",
+    "nada encontrado": "nada",
 }
+KIND_ORDER = {"parcial": 0, "ambigua": 1, "sugestao": 2, "nada": 3}
 MAX_DISTANCES = 8
 MAX_SNIPPET = 160
 EXPORT_COLUMNS = (
@@ -138,6 +143,7 @@ class DivergenceReview:
                     "_row": row,
                 }
             )
+        items.sort(key=lambda i: (KIND_ORDER[i["kind"]], i["name"]))
         return run, items
 
     def list(self):
@@ -152,6 +158,13 @@ class DivergenceReview:
             "rejected": sum(
                 1 for i in public if i["decision"] and i["decision"]["result"] == "rejected"
             ),
+        }
+        # Revocacao: das "nada encontrado" ja conferidas, quantas tinham informacao util (a rotina deixou de achar).
+        checked = [i for i in public if i["kind"] == "nada" and i["decision"]]
+        summary["nothingFound"] = {
+            "total": sum(1 for i in public if i["kind"] == "nada"),
+            "checked": len(checked),
+            "hadInfo": sum(1 for i in checked if i["decision"]["result"] == "accepted"),
         }
         return {"run": run, "summary": summary, "items": public}
 
