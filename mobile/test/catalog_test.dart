@@ -1165,6 +1165,79 @@ void main() {
     expect(find.text('Local: Parque Exemplo'), findsOneWidget);
   });
 
+  testWidgets('detalhe mostra site e compra so com links https validos', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final opened = <Uri>[];
+    final original = linkOpener;
+    linkOpener = (uri) async {
+      opened.add(uri);
+      return true;
+    };
+    addTearDown(() => linkOpener = original);
+    Future<void> open(Map<String, dynamic> extra) async {
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions/E1') {
+          return JsonReply(200, {...entry('A'), 'id': 'E1', ...extra});
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditionScreen(gateway: gateway, editionId: 'E1'),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await open({});
+    expect(find.byKey(const Key('link-compra')), findsNothing);
+    expect(find.byKey(const Key('link-site')), findsNothing);
+
+    // Esquemas perigosos, http puro e usuario/senha embutidos nunca viram botao.
+    await open({
+      'officialUrl': 'javascript:alert(1)',
+      'registrationUrl': 'http://exemplo.test/inscricao',
+    });
+    expect(find.byKey(const Key('link-compra')), findsNothing);
+    expect(find.byKey(const Key('link-site')), findsNothing);
+    await open({'registrationUrl': 'https://user:senha@exemplo.test/x'});
+    expect(find.byKey(const Key('link-compra')), findsNothing);
+
+    await open({
+      'officialUrl': 'https://corrida.exemplo.test/',
+      'registrationUrl': 'https://ingressos.exemplo.test/e/1',
+      'registrationStatus': 'open',
+    });
+    expect(find.text('Comprar inscrição'), findsOneWidget);
+    expect(find.text('Site da corrida'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('link-compra')));
+    await tester.tap(find.byKey(const Key('link-site')));
+    await tester.pump();
+    expect(opened.map((u) => u.toString()), [
+      'https://ingressos.exemplo.test/e/1',
+      'https://corrida.exemplo.test/',
+    ]);
+
+    // Inscricao encerrada: o botao nao convida a comprar.
+    await open({
+      'registrationUrl': 'https://ingressos.exemplo.test/e/1',
+      'registrationStatus': 'closed',
+    });
+    expect(find.text('Comprar inscrição'), findsNothing);
+    expect(find.text('Página de inscrição'), findsOneWidget);
+
+    // Falha ao abrir avisa a pessoa em vez de ficar em silencio.
+    linkOpener = (uri) async => false;
+    await tester.tap(find.byKey(const Key('link-compra')));
+    await tester.pump();
+    expect(find.text('Não foi possível abrir o link.'), findsOneWidget);
+  });
+
   group('busca por frase livre', () {
     Future<void> typePhrase(WidgetTester tester, String text) async {
       await tester.enterText(find.byKey(const Key('catalog-phrase')), text);

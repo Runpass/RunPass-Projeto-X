@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'agenda.dart';
 import 'friends.dart';
@@ -18,6 +19,21 @@ export 'home_screen.dart';
 export 'my_races.dart';
 
 typedef PhotoSelector = Future<List<int>?> Function();
+
+/// Abre um link fora do app. Troque nos testes para nao abrir o navegador de verdade.
+typedef LinkOpener = Future<bool> Function(Uri uri);
+LinkOpener linkOpener = (uri) =>
+    launchUrl(uri, mode: LaunchMode.externalApplication);
+
+/// So devolve links https com dominio e sem usuario/senha embutidos; qualquer outra coisa vira null
+/// (a fonte do catalogo nunca decide abrir esquemas como javascript: ou intent:).
+Uri? safeHttpsUri(Object? value) {
+  if (value is! String || value.length > 500) return null;
+  final uri = Uri.tryParse(value.trim());
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return null;
+  if (uri.userInfo.isNotEmpty) return null;
+  return uri;
+}
 
 String registrationText(String? status) => switch (status) {
   'open' => 'Inscrições abertas.',
@@ -1795,6 +1811,53 @@ class _EditionScreenState extends State<EditionScreen> {
     ],
   );
 
+  Future<void> openLink(Uri uri) async {
+    var opened = false;
+    try {
+      opened = await linkOpener(uri);
+    } on Exception {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Não foi possível abrir o link.')),
+      );
+    }
+  }
+
+  /// Site da corrida e pagina de inscricao, so quando a fonte informou um link https valido.
+  Widget linksSection(Map<String, dynamic> body) {
+    final site = safeHttpsUri(body['officialUrl']);
+    final buy = safeHttpsUri(body['registrationUrl']);
+    if (site == null && buy == null) return const SizedBox.shrink();
+    final closed =
+        body['registrationStatus'] == 'closed' ||
+        body['registrationStatus'] == 'sold_out';
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          if (buy != null)
+            FilledButton.icon(
+              key: const Key('link-compra'),
+              onPressed: () => openLink(buy),
+              icon: const Icon(Icons.confirmation_number_outlined),
+              label: Text(closed ? 'Página de inscrição' : 'Comprar inscrição'),
+            ),
+          if (site != null)
+            OutlinedButton.icon(
+              key: const Key('link-site'),
+              onPressed: () => openLink(site),
+              icon: const Icon(Icons.public_rounded),
+              label: const Text('Site da corrida'),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget aboutTab(Map<String, dynamic> body) => ListView(
     padding: const EdgeInsets.all(20),
     children: [
@@ -1805,6 +1868,7 @@ class _EditionScreenState extends State<EditionScreen> {
           padding: const EdgeInsets.only(top: 12),
           child: Text('Organização: ${body['organizerName']}'),
         ),
+      linksSection(body),
       if ((body['distances'] as List).any(
         (d) =>
             d['medalImageReference'] != null ||

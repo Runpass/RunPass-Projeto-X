@@ -268,3 +268,17 @@ export function motivoOpenAi(codigo) {
   if (mapa[c]) return mapa[c];
   return c.startsWith('http_') ? `A OpenAI respondeu com erro (${c.slice(5)}).` : 'Motivo não identificado.';
 }
+
+/** "42 de 44 (95%)": parte, total e porcentagem inteira; sem total válido, só o número. */
+export function taxa(parte, total) {
+  if (!Number.isFinite(parte)) return '—';
+  if (!Number.isFinite(total) || total <= 0) return String(parte);
+  return `${parte} de ${total} (${Math.round((parte / total) * 100)}%)`;
+}
+
+export const RESULTADO_CONFERENCIA = {
+  confere: 'Confere',
+  parcial: 'Confere em parte',
+  nao_verificado: 'Não verificado',
+  errada: 'Errada',
+};

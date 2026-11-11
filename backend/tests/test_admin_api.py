@@ -624,6 +624,25 @@ class AdminApiTests(unittest.TestCase):
         for ruim in ("rate(5 minutes)", "cron(*/5 * * * ? *)", "cron(0 7 ? * MON-FRI *)", "", None):
             self.assertIsNone(next_run(ruim, "UTC", agora))
 
+    def test_relatorio_de_qualidade_exige_catalog_admin_e_e_coerente(self):
+        self.assertEqual(
+            self.client.get("/admin/quality", headers=self.auth(token("fin"))).status_code, 403
+        )
+        r = self.client.get("/admin/quality", headers=self.auth(token("op")))
+        self.assertEqual(r.status_code, 200, r.text)
+        rel = r.json()
+        ext, enr = rel["extraction"], rel["enrichment"]
+        self.assertLessEqual(ext["matched"], ext["extracted"])
+        self.assertEqual(ext["extracted"] + len(ext["notExtracted"]), ext["inPage"])
+        self.assertEqual(enr["ready"] + enr["notFound"] + enr["partial"], enr["total"])
+        self.assertLessEqual(max(enr["filled"].values()), enr["total"])
+        self.assertTrue(
+            all(
+                c["result"] in ("confere", "parcial", "nao_verificado", "errada")
+                for c in rel["spotCheck"]
+            )
+        )
+
     def test_custos_exigem_cost_read_e_uma_fonte_fora_do_ar_nao_esconde_a_outra(self):
         for quem in ("op", "adm"):
             self.assertEqual(
@@ -873,6 +892,41 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual([i["name"] for i in r["items"]], ["Corrida Sintética São Paulo", "Outra"])
         self.assertEqual(r["items"][0]["edition"]["id"], "synthetic-sp-2026")
         self.assertIsNone(r["items"][1]["edition"])
+
+    def test_candidata_aprovada_ou_de_corrida_com_banner_sai_da_lista(self):
+        h = self.auth(token("op"))
+        url = "https://o.exemplo/b.png"
+        self.pages[url] = (200, {"content-type": "image/png"}, self.png())
+        cab = "source_external_id,nome,data,pagina_oficial,imagem_url,tipo,tamanho_bytes,credito_sugerido,direitos,situacao,observacao,aprovada\n"
+        self.s3.objects["semanal/2026-11-16/imagens/candidatas.csv"] = (
+            cab
+            + f"a,Corrida Sintética São Paulo,2026-11-08,https://o.exemplo/p,{url},image/png,100,Divulgação: Org,nao_verificado,candidata,,\n"
+        )
+        antes = self.client.get("/admin/banners/candidates", headers=h).json()
+        self.assertEqual([i["name"] for i in antes["items"]], ["Corrida Sintética São Paulo"])
+        corpo = {
+            "editionId": "synthetic-sp-2026",
+            "imageUrl": url,
+            "credit": "Divulgação: Org",
+            "rightsNote": "Imagem da pagina oficial; risco assumido pelo responsavel",
+            "confirmRights": True,
+        }
+        self.assertEqual(
+            self.client.post("/admin/banners/approve", json=corpo, headers=h).status_code, 201
+        )
+        depois = self.client.get("/admin/banners/candidates", headers=h).json()
+        self.assertEqual(depois["items"], [])  # aprovada: nao aparece mais
+        # retirar o banner devolve a candidata para a lista
+        self.assertEqual(
+            self.client.post(
+                "/admin/banners/remove",
+                json={"editionId": "synthetic-sp-2026", "reason": "teste de retorno"},
+                headers=h,
+            ).status_code,
+            200,
+        )
+        volta = self.client.get("/admin/banners/candidates", headers=h).json()
+        self.assertEqual([i["name"] for i in volta["items"]], ["Corrida Sintética São Paulo"])
 
     def test_banner_preview_aprovar_e_retirar(self):
         h = self.auth(token("op"))
