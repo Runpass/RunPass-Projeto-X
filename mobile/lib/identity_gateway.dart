@@ -119,24 +119,52 @@ Future<JsonReply> sendJson(
 
 /// Guarda o token de renovacao do Cognito (30 dias) para "manter conectado". So o token de
 /// renovacao e gravado, nunca a senha.
+///
+/// "Trancar" (Sair com biometria ligada) move o token para um item do Keychain que o iOS
+/// so entrega com rosto/digital (biometryCurrentSet) e registra quando foi trancado, para
+/// o gateway descartar a sessao trancada depois do prazo.
 abstract class TokenStore {
+  /// Le o token (na sessao trancada, o sistema pede a biometria aqui).
   Future<String?> read();
+
+  /// Grava o token em uso e destrava: apaga a copia protegida e a data da tranca.
   Future<void> write(String token);
+
+  /// Apaga tudo: token em uso, copia protegida e data da tranca.
   Future<void> clear();
+
+  /// Quando a sessao foi trancada; nulo se nao esta trancada. Nao pede biometria.
+  Future<DateTime?> lockedAt();
+
+  /// Move o token para o item protegido por biometria e registra `at`.
+  Future<void> lock(DateTime at);
 }
 
 /// iOS Keychain / Android Keystore.
 class SecureTokenStore implements TokenStore {
   static const _key = 'runpass-refresh-token';
+  static const _lockedKey = 'runpass-refresh-token-locked';
+  static const _lockedAtKey = 'runpass-refresh-token-locked-at';
   final _storage = const FlutterSecureStorage(
     iOptions: IOSOptions(
       accessibility: KeychainAccessibility.first_unlock_this_device,
     ),
   );
+  static const _protected = IOSOptions(
+    accessibility: KeychainAccessibility.passcode,
+    accessControlFlags: [AccessControlFlag.biometryCurrentSet],
+  );
 
   @override
   Future<String?> read() async {
     try {
+      if (await lockedAt() != null) {
+        final locked = await _storage.read(
+          key: _lockedKey,
+          iOptions: _protected,
+        );
+        if (locked != null && locked.isNotEmpty) return locked;
+      }
       return await _storage.read(key: _key);
     } on Object {
       return null;
@@ -150,6 +178,7 @@ class SecureTokenStore implements TokenStore {
     } on Object {
       // Sem armazenamento seguro: a pessoa so precisa entrar de novo na proxima vez.
     }
+    await _dropLock();
   }
 
   @override
@@ -159,18 +188,73 @@ class SecureTokenStore implements TokenStore {
     } on Object {
       // Nada a limpar.
     }
+    await _dropLock();
+  }
+
+  @override
+  Future<DateTime?> lockedAt() async {
+    try {
+      final text = await _storage.read(key: _lockedAtKey);
+      return text == null ? null : DateTime.tryParse(text);
+    } on Object {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> lock(DateTime at) async {
+    try {
+      final token = await _storage.read(key: _key);
+      if (token != null && token.isNotEmpty) {
+        try {
+          await _storage.write(
+            key: _lockedKey,
+            value: token,
+            iOptions: _protected,
+          );
+          await _storage.delete(key: _key);
+        } on Object {
+          // Aparelho sem biometria/senha para proteger o item: o token segue no item comum.
+        }
+      }
+      await _storage.write(key: _lockedAtKey, value: at.toIso8601String());
+    } on Object {
+      // Sem armazenamento seguro: nada a trancar.
+    }
+  }
+
+  Future<void> _dropLock() async {
+    try {
+      await _storage.delete(key: _lockedAtKey);
+      await _storage.delete(key: _lockedKey, iOptions: _protected);
+    } on Object {
+      // Nada a limpar.
+    }
   }
 }
 
 /// Memoria apenas; usado nos testes.
 class MemoryTokenStore implements TokenStore {
   String? value;
+  DateTime? locked;
   @override
   Future<String?> read() async => value;
   @override
-  Future<void> write(String token) async => value = token;
+  Future<void> write(String token) async {
+    value = token;
+    locked = null;
+  }
+
   @override
-  Future<void> clear() async => value = null;
+  Future<void> clear() async {
+    value = null;
+    locked = null;
+  }
+
+  @override
+  Future<DateTime?> lockedAt() async => locked;
+  @override
+  Future<void> lock(DateTime at) async => locked = at;
 }
 
 class IdentityGateway {
@@ -181,6 +265,7 @@ class IdentityGateway {
   final ByteTransport byteTransport;
   final Sleeper sleeper;
   final TokenStore? tokenStore;
+  final DateTime Function() clock;
   String? _accessToken;
   String? _refreshToken;
   String? _pendingCommand;
@@ -194,6 +279,7 @@ class IdentityGateway {
     this.byteTransport = sendBytes,
     this.sleeper = wait,
     this.tokenStore,
+    this.clock = DateTime.now,
   }) {
     if (cognito.scheme != 'https' ||
         api.scheme != 'https' ||
@@ -345,6 +431,8 @@ class IdentityGateway {
   /// Renova o acesso com o token guardado. Falso se nao ha token ou o Cognito o recusou
   /// (expirado, revogado); falha de rede lanca `IdentityIssue` e mantem o token guardado.
   Future<bool> restoreSession() async {
+    if (await _lockExpired()) return false;
+    final wasLocked = await isLocked;
     final stored = _refreshToken ?? await tokenStore?.read();
     if (stored == null || stored.isEmpty) return false;
     final result = await transport(
@@ -369,6 +457,7 @@ class IdentityGateway {
         token.isNotEmpty) {
       _accessToken = token;
       _refreshToken = stored;
+      if (wasLocked) await tokenStore?.write(stored); // destranca
       return true;
     }
     if (result.status >= 500 || result.status == 429) {
@@ -376,6 +465,39 @@ class IdentityGateway {
     }
     await forgetSession();
     return false;
+  }
+
+  /// Ha um token de renovacao guardado neste aparelho (base do "entrar com o rosto").
+  /// Nao pede biometria: na sessao trancada so confere a data da tranca.
+  Future<bool> get hasStoredSession async {
+    if (await _lockExpired()) return false;
+    if (await isLocked) return true;
+    final stored = _refreshToken ?? await tokenStore?.read();
+    return stored != null && stored.isNotEmpty;
+  }
+
+  /// Quanto tempo a sessao trancada (Sair com biometria) continua valendo no aparelho.
+  static const lockTtl = Duration(days: 7);
+
+  /// A sessao foi trancada com "Sair" e o token esta atras da biometria do aparelho.
+  Future<bool> get isLocked async => (await tokenStore?.lockedAt()) != null;
+
+  /// Passou do prazo da sessao trancada: esquece o token e a pessoa entra com a senha.
+  Future<bool> _lockExpired() async {
+    final at = await tokenStore?.lockedAt();
+    if (at == null || clock().difference(at) <= lockTtl) return false;
+    await forgetSession();
+    return true;
+  }
+
+  /// Sai da conta neste aparelho SEM revogar o token guardado: a proxima entrada e feita
+  /// com a biometria. So vale com a biometria ligada; sem ela, use `signOut`.
+  /// O token passa para um item do Keychain que so abre com rosto/digital e a tranca vale
+  /// por `lockTtl`.
+  Future<void> lockSession() async {
+    clearSession();
+    _refreshToken = null;
+    await tokenStore?.lock(clock());
   }
 
   /// Esquece a sessao neste aparelho, inclusive a guardada para "manter conectado".
