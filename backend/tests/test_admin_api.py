@@ -132,35 +132,95 @@ class FakeLogs:
         return {"events": self.events}
 
 
+class ConflictException(Exception):
+    """Mesmo nome da excecao do boto3 (o codigo reconhece pelo nome da classe)."""
+
+
+class ResourceNotFoundException(Exception):
+    pass
+
+
 class FakeScheduler:
     def __init__(self):
         self.fail = False
+        self.created, self.updated, self.deleted = [], [], []
         self.items = {
             "runpass-dev-catalogo-enriquecimento-1": (
                 "cron(30 7 ? * MON *)",
                 "ENABLED",
                 "Enriquecimento",
+                '{"enriquecer": {"relatorio": "latest", "rodada": 1, "max": 25, "csv_semanal": "latest"}}',
             ),
-            "runpass-dev-catalogo-calendario": ("cron(0 7 ? * MON *)", "ENABLED", "Calendario"),
-            "runpass-dev-catalogo-imagens": ("cron(30 9 ? * MON *)", "DISABLED", "Imagens"),
-            "runpass-dev-catalogo-estranho": ("rate(1 day)", "ENABLED", "Rate"),
+            "runpass-dev-catalogo-calendario": (
+                "cron(0 7 ? * MON *)",
+                "ENABLED",
+                "Calendario",
+                '{"calendario": "https://prefeitura.sp.gov.br/web/esportes/w/corridas_de_rua/8722", "meses": 3}',
+            ),
+            "runpass-dev-catalogo-imagens": (
+                "cron(30 9 ? * MON *)",
+                "DISABLED",
+                "Imagens",
+                '{"imagens": {"csv": "latest"}}',
+            ),
+            "runpass-dev-catalogo-estranho": ("rate(1 day)", "ENABLED", "Rate", '{"outra": 1}'),
         }
 
     def list_schedules(self, **args):
         if self.fail:
             raise RuntimeError("negado")
         self.args = args
-        return {"Schedules": [{"Name": n} for n in self.items]}
+        prefix = args.get("NamePrefix", "")
+        return {"Schedules": [{"Name": n} for n in self.items if n.startswith(prefix)]}
 
     def get_schedule(self, Name):
-        e, st, d = self.items[Name]
+        if Name not in self.items:
+            raise ResourceNotFoundException(Name)
+        e, st, d, entry = self.items[Name]
         return {
             "Name": Name,
             "ScheduleExpression": e,
             "State": st,
             "Description": d,
             "ScheduleExpressionTimezone": "America/Sao_Paulo",
+            "FlexibleTimeWindow": {"Mode": "OFF"},
+            "Target": {
+                "Arn": "arn:aws:lambda:sa-east-1:111122223333:function:runpass-dev-catalogo-semanal",
+                "RoleArn": "arn:aws:iam::111122223333:role/runpass-dev-catalogo-semanal-SchedulerRole-X",
+                "Input": entry,
+                "RetryPolicy": {"MaximumRetryAttempts": 0},
+            },
         }
+
+    def create_schedule(self, **args):
+        if self.fail:
+            raise RuntimeError("negado")
+        if args["Name"] in self.items:
+            raise ConflictException(args["Name"])
+        self.created.append(args)
+        self.items[args["Name"]] = (
+            args["ScheduleExpression"],
+            args["State"],
+            args["Description"],
+            args["Target"]["Input"],
+        )
+
+    def update_schedule(self, **args):
+        if self.fail:
+            raise RuntimeError("negado")
+        self.updated.append(args)
+        self.items[args["Name"]] = (
+            args["ScheduleExpression"],
+            args["State"],
+            args.get("Description", ""),
+            args["Target"]["Input"],
+        )
+
+    def delete_schedule(self, Name):
+        if self.fail:
+            raise RuntimeError("negado")
+        self.deleted.append(Name)
+        del self.items[Name]
 
 
 class FakeCosts:
@@ -250,7 +310,12 @@ class AdminApiTests(unittest.TestCase):
                     self.logs,
                 ),
                 schedules=CatalogSchedules(
-                    self.sched, "runpass-dev-catalogo-semanal", lambda: self.now
+                    self.sched,
+                    "runpass-dev-catalogo-semanal",
+                    lambda: self.now,
+                    "arn:aws:iam::111122223333:role/runpass-dev-catalogo-semanal-SchedulerRole-X",
+                    "arn:aws:lambda:sa-east-1:111122223333:function:runpass-dev-catalogo-semanal",
+                    self.store,
                 ),
                 banners=BannerAdmin(
                     self.store,
@@ -610,6 +675,311 @@ class AdminApiTests(unittest.TestCase):
         self.assertIsNone(itens[3]["nextRun"])
         self.sched.fail = True
         self.assertEqual(self.client.get("/admin/catalog/schedules", headers=h).status_code, 503)
+
+    def test_lista_devolve_tipo_parametros_dias_e_horario_para_a_tela_editar(self):
+        h = self.auth(token("op"))
+        itens = {
+            i["name"]: i
+            for i in self.client.get("/admin/catalog/schedules", headers=h).json()["items"]
+        }
+        enr = itens["enriquecimento-1"]
+        self.assertEqual(
+            (enr["kind"], enr["params"], enr["days"], enr["time"]),
+            ("enriquecer", {"rodada": 1, "max": 25}, ["MON"], "07:30"),
+        )
+        self.assertEqual(itens["calendario"]["kind"], "calendario")
+        self.assertEqual(itens["calendario"]["params"], {"meses": 3})
+        self.assertEqual(itens["imagens"]["kind"], "imagens")
+        self.assertIsNone(
+            itens["estranho"]["kind"]
+        )  # entrada desconhecida: nao se edita o conteudo
+        self.assertIsNone(itens["estranho"]["days"])
+        self.assertFalse(any(i["createdByPortal"] for i in itens.values()))
+
+    def corpo_agendamento(self, **mudanca):
+        return {
+            "name": "enriq-quinta",
+            "kind": "enriquecer",
+            "days": ["THU", "MON"],
+            "time": "06:05",
+            "rodada": 2,
+            "max": 20,
+            **mudanca,
+        }
+
+    def test_criar_agendamento_exige_catalog_admin_e_usa_so_a_lista_fechada(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/schedules"
+        self.assertEqual(
+            self.client.post(
+                url, json=self.corpo_agendamento(), headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        r = self.client.post(url, json=self.corpo_agendamento(), headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        feito = self.sched.created[0]
+        self.assertEqual(feito["Name"], "runpass-dev-catalogo-portal-enriq-quinta")
+        self.assertEqual(
+            feito["ScheduleExpression"], "cron(5 6 ? * MON,THU *)"
+        )  # dias em ordem, sem rate()
+        self.assertEqual(feito["ScheduleExpressionTimezone"], "America/Sao_Paulo")
+        self.assertEqual(feito["Target"]["RetryPolicy"], {"MaximumRetryAttempts": 0})
+        self.assertEqual(
+            feito["Target"]["RoleArn"].split("/")[-1],
+            "runpass-dev-catalogo-semanal-SchedulerRole-X",
+        )
+        import json as _json
+
+        self.assertEqual(
+            _json.loads(feito["Target"]["Input"]),
+            {
+                "enriquecer": {
+                    "relatorio": "latest",
+                    "rodada": 2,
+                    "max": 20,
+                    "csv_semanal": "latest",
+                }
+            },
+        )
+        # nome repetido
+        self.assertEqual(
+            self.client.post(url, json=self.corpo_agendamento(), headers=h).status_code, 409
+        )
+        # tudo que foge da lista fechada e recusado e nada e criado
+        ruins = [
+            {"kind": "rm-rf"},
+            {"kind": "historico"},
+            {"days": []},
+            {"days": ["MON", "MON"]},
+            {"days": ["FUN"]},
+            {"time": "25:00"},
+            {"time": "6:5"},
+            {"name": "Nome Ruim!"},
+            {"name": "../x"},
+            {"max": 26},
+            {"max": 0},
+            {"rodada": 4},
+            {"extra": "campo livre"},
+        ]
+        for mudanca in ruins:
+            antes = len(self.sched.created)
+            r = self.client.post(url, json=self.corpo_agendamento(**mudanca), headers=h)
+            self.assertIn(r.status_code, (400, 422), mudanca)
+            self.assertEqual(len(self.sched.created), antes, mudanca)
+        sem_dias = {k: v for k, v in self.corpo_agendamento().items() if k != "days"}
+        self.assertEqual(self.client.post(url, json=sem_dias, headers=h).status_code, 422)
+
+    def test_criar_agendamento_respeita_o_teto_e_audita(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/schedules"
+        for i in range(20):
+            self.sched.items[f"runpass-dev-catalogo-portal-x{i}"] = (
+                "cron(0 6 ? * MON *)",
+                "ENABLED",
+                "x",
+                "{}",
+            )
+        r = self.client.post(url, json=self.corpo_agendamento(), headers=h)
+        self.assertEqual((r.status_code, r.json().get("code")), (409, "SCHEDULE_LIMIT"))
+        self.sched.items = {k: v for k, v in self.sched.items.items() if "portal-x" not in k}
+        self.assertEqual(
+            self.client.post(url, json=self.corpo_agendamento(), headers=h).status_code, 201
+        )
+        trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
+        criou = [row for _, row in trilha if row["action"] == "catalog.schedule.create"]
+        self.assertEqual(len(criou), 1)
+        self.assertEqual(criou[0]["schedule"], "runpass-dev-catalogo-portal-enriq-quinta")
+        self.assertEqual(criou[0]["kind"], "enriquecer")
+
+    def test_alterar_agendamento_existente_mantem_o_resto_e_so_aceita_o_que_o_tipo_permite(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/schedules/enriquecimento-1"
+        self.assertEqual(
+            self.client.put(
+                url, json={"enabled": False}, headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        r = self.client.put(
+            url,
+            json={
+                "days": ["TUE", "FRI"],
+                "time": "08:00",
+                "rodada": 3,
+                "max": 10,
+                "enabled": False,
+            },
+            headers=h,
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        feito = self.sched.updated[-1]
+        self.assertEqual(feito["ScheduleExpression"], "cron(0 8 ? * TUE,FRI *)")
+        self.assertEqual(feito["State"], "DISABLED")
+        self.assertEqual(
+            feito["Target"]["RoleArn"].split("/")[-1],
+            "runpass-dev-catalogo-semanal-SchedulerRole-X",
+        )  # alvo preservado
+        self.assertEqual(feito["Target"]["RetryPolicy"], {"MaximumRetryAttempts": 0})
+        self.assertEqual(feito["Description"], "Enriquecimento")
+        self.assertEqual(feito["ScheduleExpressionTimezone"], "America/Sao_Paulo")
+        import json as _json
+
+        self.assertEqual(
+            _json.loads(feito["Target"]["Input"])["enriquecer"],
+            {"relatorio": "latest", "rodada": 3, "max": 10, "csv_semanal": "latest"},
+        )
+        # so pausar/ativar nao toca no horario nem na entrada
+        antes = self.sched.items["runpass-dev-catalogo-calendario"]
+        self.assertEqual(
+            self.client.put(
+                "/admin/catalog/schedules/calendario", json={"enabled": False}, headers=h
+            ).status_code,
+            200,
+        )
+        depois = self.sched.items["runpass-dev-catalogo-calendario"]
+        self.assertEqual((depois[0], depois[3]), (antes[0], antes[3]))
+        self.assertEqual(depois[1], "DISABLED")
+        # dias sem horario (ou o contrario), parametro de outro tipo e entrada desconhecida: recusados
+        for caminho, corpo in (
+            ("enriquecimento-1", {"days": ["MON"]}),
+            ("enriquecimento-1", {"time": "07:00"}),
+            ("imagens", {"max": 5}),
+            ("estranho", {"rodada": 2}),
+            ("enriquecimento-1", {"max": 99}),
+        ):
+            r = self.client.put("/admin/catalog/schedules/" + caminho, json=corpo, headers=h)
+            self.assertIn(r.status_code, (400, 422), (caminho, corpo))
+        # o desconhecido pode ser pausado, mas a entrada dele nunca e reescrita
+        n = len(self.sched.updated)
+        self.assertEqual(
+            self.client.put(
+                "/admin/catalog/schedules/estranho", json={"enabled": False}, headers=h
+            ).status_code,
+            200,
+        )
+        self.assertEqual(self.sched.updated[n]["Target"]["Input"], '{"outra": 1}')
+        self.assertEqual(
+            self.client.put(
+                "/admin/catalog/schedules/nao-existe", json={"enabled": False}, headers=h
+            ).status_code,
+            404,
+        )
+
+    def test_execucao_unica_em_uma_data_valida_futuro_e_limite_de_um_ano(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/schedules"
+        base = {"name": "uma-vez", "kind": "imagens", "time": "06:00"}
+        # NOW = terca 10/11/2026 12:00 em SP
+        r = self.client.post(url, json={**base, "date": "2026-11-20"}, headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        feito = self.sched.created[-1]
+        self.assertEqual(feito["ScheduleExpression"], "at(2026-11-20T06:00:00)")
+        self.assertEqual(feito["ScheduleExpressionTimezone"], "America/Sao_Paulo")
+        self.assertEqual(feito["ActionAfterCompletion"], "DELETE")  # some sozinho depois de rodar
+        # recorrente continua sem apagar
+        r = self.client.post(url, json={**base, "name": "toda-seg", "days": ["MON"]}, headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(self.sched.created[-1]["ActionAfterCompletion"], "NONE")
+        ruins = [
+            {"date": "2026-11-10", "time": "11:59"},  # hoje, mas ja passou
+            {"date": "2026-11-10", "time": "12:00"},  # agora nao e futuro
+            {"date": "2026-11-09"},  # ontem
+            {"date": "2027-11-12"},  # a mais de 1 ano
+            {"date": "2026-02-30"},  # data que nao existe
+            {"date": "20/11/2026"},
+            {"date": "2026-11-20", "days": ["MON"]},  # as duas formas juntas
+            {"date": "2026-11-20", "time": "24:00"},
+        ]
+        for i, mudanca in enumerate(ruins):
+            antes = len(self.sched.created)
+            corpo = {**base, "name": f"ruim-{i}", **mudanca}
+            r = self.client.post(url, json=corpo, headers=h)
+            self.assertIn(r.status_code, (400, 422), mudanca)
+            self.assertEqual(len(self.sched.created), antes, mudanca)
+        # nem data nem dias
+        self.assertEqual(
+            self.client.post(url, json={**base, "name": "sem-quando"}, headers=h).status_code, 422
+        )
+        # hoje mais tarde e o limite de um ano (366 dias) valem
+        self.assertEqual(
+            self.client.post(
+                url,
+                json={**base, "name": "hoje-tarde", "date": "2026-11-10", "time": "18:30"},
+                headers=h,
+            ).status_code,
+            201,
+        )
+        self.assertEqual(
+            self.client.post(
+                url,
+                json={**base, "name": "um-ano", "date": "2027-11-10", "time": "11:00"},
+                headers=h,
+            ).status_code,
+            201,
+        )
+
+    def test_alterar_a_data_de_um_agendamento_e_trocar_entre_repetir_e_uma_vez(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/schedules/calendario"
+        r = self.client.put(url, json={"date": "2026-11-25", "time": "07:15"}, headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        feito = self.sched.updated[-1]
+        self.assertEqual(feito["ScheduleExpression"], "at(2026-11-25T07:15:00)")
+        self.assertEqual(feito["ActionAfterCompletion"], "DELETE")
+        # a lista devolve data e horario para a tela editar
+        itens = {
+            i["name"]: i
+            for i in self.client.get("/admin/catalog/schedules", headers=h).json()["items"]
+        }
+        self.assertEqual(
+            (itens["calendario"]["date"], itens["calendario"]["time"], itens["calendario"]["days"]),
+            ("2026-11-25", "07:15", None),
+        )
+        self.assertEqual(itens["calendario"]["nextRun"], "2026-11-25T10:15:00Z")
+        # volta a repetir toda semana
+        r = self.client.put(url, json={"days": ["MON", "THU"], "time": "07:00"}, headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.sched.updated[-1]["ScheduleExpression"], "cron(0 7 ? * MON,THU *)")
+        self.assertEqual(self.sched.updated[-1]["ActionAfterCompletion"], "NONE")
+        # data sem horario, data no passado e as duas formas juntas: recusados e nada muda
+        n = len(self.sched.updated)
+        for corpo in (
+            {"date": "2026-11-25"},
+            {"date": "2026-11-01", "time": "07:00"},
+            {"date": "2026-11-25", "days": ["MON"], "time": "07:00"},
+        ):
+            self.assertIn(
+                self.client.put(url, json=corpo, headers=h).status_code, (400, 422), corpo
+            )
+        self.assertEqual(len(self.sched.updated), n)
+
+    def test_apagar_agendamento_so_do_catalogo_e_so_com_catalog_admin(self):
+        h = self.auth(token("op"))
+        self.assertEqual(
+            self.client.delete(
+                "/admin/catalog/schedules/imagens", headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.delete("/admin/catalog/schedules/nao-existe", headers=h).status_code, 404
+        )
+        for nome in ("..%2Fx", "Nome%20Ruim", "a" * 61):
+            self.assertIn(
+                self.client.delete("/admin/catalog/schedules/" + nome, headers=h).status_code,
+                (404, 422),
+            )
+        self.assertEqual(self.sched.deleted, [])
+        r = self.client.delete("/admin/catalog/schedules/imagens", headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(
+            self.sched.deleted, ["runpass-dev-catalogo-imagens"]
+        )  # so o prefixo do catalogo
+        self.sched.fail = True
+        self.assertEqual(
+            self.client.delete("/admin/catalog/schedules/calendario", headers=h).status_code, 503
+        )
 
     def test_next_run_formas_simples_e_nao_suportadas(self):
         agora = datetime(2026, 11, 16, 9, 59, tzinfo=timezone.utc)  # 06:59 em SP, segunda

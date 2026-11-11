@@ -170,7 +170,14 @@ def create_admin_aws_app(
             (costs or {}).get("openai_project", ""),
             (costs or {}).get("limit"),
         ),
-        schedules=CatalogSchedules(scheduler_client, catalog_function, clock),
+        schedules=CatalogSchedules(
+            scheduler_client,
+            catalog_function,
+            clock,
+            (costs or {}).get("scheduler_role_arn", ""),
+            (costs or {}).get("catalog_function_arn", ""),
+            service.store,
+        ),
         aws_costs=AwsCosts((costs or {}).get("ce"), clock, (costs or {}).get("budget")),
         openai_usage=OpenAiUsage(
             logs_client,
