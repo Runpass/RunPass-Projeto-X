@@ -43,6 +43,36 @@ class DeviceBiometricGate implements BiometricGate {
 /// Trocavel nos testes.
 BiometricGate biometricGate = DeviceBiometricGate();
 
+/// E-mail da ultima conta que entrou neste aparelho (nao e segredo; a senha nunca e guardada).
+class SavedAccount {
+  static const _key = 'saved-email';
+
+  static Future<String?> email() async {
+    try {
+      final value = (await SharedPreferences.getInstance()).getString(_key);
+      return value == null || value.isEmpty ? null : value;
+    } on Object {
+      return null;
+    }
+  }
+
+  static Future<void> save(String email) async {
+    try {
+      await (await SharedPreferences.getInstance()).setString(_key, email);
+    } on Object {
+      // Sem armazenamento: so nao preenche da proxima vez.
+    }
+  }
+
+  static Future<void> clear() async {
+    try {
+      await (await SharedPreferences.getInstance()).remove(_key);
+    } on Object {
+      // Nada a limpar.
+    }
+  }
+}
+
 class BiometricPrefs {
   static const _enabled = 'biometric-lock';
   static const _asked = 'biometric-asked';

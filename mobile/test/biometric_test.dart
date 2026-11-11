@@ -135,6 +135,142 @@ void main() {
     expect(find.byType(RunPassHomeScreen), findsOneWidget);
   });
 
+  testWidgets(
+    'e-mail salvo vem preenchido e o rosto entra sem senha so para esse e-mail',
+    (tester) async {
+      tall(tester);
+      SharedPreferences.setMockInitialValues({
+        'biometric-lock': true,
+        'saved-email': 'eu@x.test',
+      });
+      final fake = FakeGate();
+      biometricGate = fake;
+      final store = MemoryTokenStore()..value = 'r1';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IdentityScreen(gateway: gateway(store), autoRestore: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final field = find.widgetWithText(TextFormField, 'E-mail');
+      expect(tester.widget<TextFormField>(field).controller!.text, 'eu@x.test');
+      expect(find.byKey(const Key('biometric-retry')), findsOneWidget);
+      expect(fake.asked, 0); // nao dispara sozinho
+
+      await tester.enterText(field, 'outro@x.test');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('biometric-retry')), findsNothing);
+
+      await tester.enterText(field, 'EU@x.test ');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('biometric-retry')));
+      await tester.pumpAndSettle();
+      expect(fake.asked, 1);
+      expect(find.byType(RunPassHomeScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'sem token guardado o e-mail vem salvo, mas nao ha botao do rosto',
+    (tester) async {
+      tall(tester);
+      SharedPreferences.setMockInitialValues({
+        'biometric-lock': true,
+        'saved-email': 'eu@x.test',
+      });
+      biometricGate = FakeGate();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IdentityScreen(
+            gateway: gateway(MemoryTokenStore()),
+            autoRestore: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('biometric-retry')), findsNothing);
+    },
+  );
+
+  testWidgets('Sair com biometria ligada guarda o token e nao entra sozinho', (
+    tester,
+  ) async {
+    tall(tester);
+    SharedPreferences.setMockInitialValues({
+      'biometric-lock': true,
+      'saved-email': 'eu@x.test',
+    });
+    biometricGate = FakeGate();
+    final store = MemoryTokenStore()..value = 'r1';
+    final g = gateway(store);
+    expect(await g.restoreSession(), isTrue);
+    await tester.pumpWidget(MaterialApp(home: SettingsScreen(gateway: g)));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('sign-out')));
+    await tester.tap(find.byKey(const Key('sign-out')));
+    await tester.pumpAndSettle();
+    expect(store.value, 'r1'); // token segue no Keychain
+    expect(await BiometricPrefs.enabled(), isTrue);
+    expect(g.signedIn, isFalse);
+    expect(find.text('Entre no RunPass'), findsOneWidget);
+    expect(find.byKey(const Key('biometric-retry')), findsOneWidget);
+  });
+
+  testWidgets('Sair e esquecer apaga token, biometria e e-mail salvo', (
+    tester,
+  ) async {
+    tall(tester);
+    SharedPreferences.setMockInitialValues({
+      'biometric-lock': true,
+      'saved-email': 'eu@x.test',
+    });
+    biometricGate = FakeGate();
+    final store = MemoryTokenStore()..value = 'r1';
+    final g = gateway(store);
+    expect(await g.restoreSession(), isTrue);
+    await tester.pumpWidget(MaterialApp(home: SettingsScreen(gateway: g)));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('sign-out-forget')));
+    await tester.tap(find.byKey(const Key('sign-out-forget')));
+    await tester.pumpAndSettle();
+    expect(store.value, isNull);
+    expect(await BiometricPrefs.enabled(), isFalse);
+    expect(await SavedAccount.email(), isNull);
+    expect(find.byKey(const Key('biometric-retry')), findsNothing);
+  });
+
+  test(
+    'sessao trancada: nao pede biometria para checar, vale 7 dias e destranca',
+    () async {
+      var now = DateTime(2026, 11, 11, 10);
+      final store = MemoryTokenStore()..value = 'r1';
+      final g = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        tokenStore: store,
+        clock: () => now,
+        transport: (uri, method, headers, body) async => const JsonReply(200, {
+          'AuthenticationResult': {'AccessToken': 'a'},
+        }),
+      );
+      await g.lockSession();
+      expect(await g.isLocked, isTrue);
+      expect(await g.hasStoredSession, isTrue);
+      now = now.add(const Duration(days: 6));
+      expect(await g.hasStoredSession, isTrue);
+      expect(await g.restoreSession(), isTrue); // entrou: destranca
+      expect(await g.isLocked, isFalse);
+      expect(store.value, 'r1');
+
+      await g.lockSession();
+      now = now.add(const Duration(days: 8));
+      expect(await g.hasStoredSession, isFalse); // venceu: esquecida
+      expect(store.value, isNull);
+      expect(await g.restoreSession(), isFalse);
+    },
+  );
+
   testWidgets('aparelho sem biometria nao mostra oferta nem chave', (
     tester,
   ) async {
