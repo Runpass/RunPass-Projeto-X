@@ -114,10 +114,14 @@ String photoError(Object error) => error is IdentityIssue
 class ProfilePhotoCropScreen extends StatefulWidget {
   final Uint8List image;
   final bool banner;
+  final String? title;
+  final String? instructions;
   const ProfilePhotoCropScreen({
     super.key,
     required this.image,
     this.banner = false,
+    this.title,
+    this.instructions,
   });
 
   @override
@@ -149,7 +153,9 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
     appBar: AppBar(
       backgroundColor: Colors.black,
       foregroundColor: Colors.white,
-      title: Text(widget.banner ? 'Recortar banner' : 'Recortar foto'),
+      title: Text(
+        widget.title ?? (widget.banner ? 'Recortar banner' : 'Recortar foto'),
+      ),
     ),
     body: SafeArea(
       child: Column(
@@ -157,9 +163,10 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
           Padding(
             padding: const EdgeInsets.all(12),
             child: Text(
-              widget.banner
-                  ? 'Arraste e use dois dedos para ampliar. A parte dentro do quadro será o banner.'
-                  : 'Arraste e use dois dedos para ampliar. Deixe só o rosto dentro do círculo.',
+              widget.instructions ??
+                  (widget.banner
+                      ? 'Arraste e use dois dedos para ampliar. A parte dentro do quadro será o banner.'
+                      : 'Arraste e use dois dedos para ampliar. Deixe só o rosto dentro do círculo.'),
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white70),
             ),

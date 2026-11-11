@@ -519,7 +519,10 @@ void main() {
       expect(find.byType(MedalCollectionScreen), findsOneWidget);
       expect(
         calls.where(
-          (c) => !c.contains('/me/participations') && !c.endsWith('/image'),
+          (c) =>
+              !c.contains('/me/participations') &&
+              !c.endsWith('/image') &&
+              c != 'GET /me',
         ),
         [
           'GET /editions/A',

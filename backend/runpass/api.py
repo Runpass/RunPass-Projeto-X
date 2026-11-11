@@ -578,6 +578,12 @@ def create_app(
             raise Unavailable()
         return uploads.medal_image(actor, id)
 
+    @app.get("/participations/{id}/display-image", operation_id="getParticipationDisplayImage")
+    def participation_display_image(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.medal_display_image(actor, id)
+
     @app.get("/uploads/{id}/status", operation_id="getUploadStatus")
     def upload_status(id: str, actor: Actor):
         if uploads is None:
