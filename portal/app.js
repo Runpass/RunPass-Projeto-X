@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -231,8 +231,9 @@ function cartaoDivergencia(d) {
   const fonte = el('input', { type: 'url', placeholder: 'https://... (página que comprova)', maxlength: '500', autocomplete: 'off' });
   const trecho = el('input', { type: 'text', placeholder: 'Trecho da fonte (até 160 caracteres)', maxlength: '160', autocomplete: 'off' });
   const erro = el('p', { class: 'aviso erro', hidden: true });
-  const aceitar = el('button', { type: 'button', class: 'ok' }, 'Aceitar');
-  const reprovar = el('button', { type: 'button', class: 'perigo' }, 'Reprovar');
+  const nada = d.kind === 'nada';
+  const aceitar = el('button', { type: 'button', class: 'ok' }, nada ? 'Existe informação (aceitar)' : 'Aceitar');
+  const reprovar = el('button', { type: 'button', class: 'perigo' }, nada ? 'Descartar (sem informação útil)' : 'Reprovar');
   const decidir = async (decisao, extra) => {
     const dados = { decisao, distancias: listaKm(distancias.value), fonte: fonte.value.trim(), trecho: trecho.value.trim(), ...extra };
     const problema = validarDecisao(dados);
@@ -254,6 +255,7 @@ function cartaoDivergencia(d) {
   };
   aceitar.addEventListener('click', () => decidir('accepted', {}));
   reprovar.addEventListener('click', () => {
+    if (nada) return decidir('rejected', { motivo: 'sem informação útil' });
     const motivo = window.prompt(`Reprovar "${d.name}". Motivo (opcional, até 200 caracteres):`, '');
     if (motivo === null) return;
     decidir('rejected', { motivo: motivo.trim() });
@@ -290,6 +292,7 @@ async function carregarDivergencias() {
         cartaoNumero('Pendentes', String(r.summary.pending)),
         cartaoNumero('Aceitas', String(r.summary.accepted)),
         cartaoNumero('Reprovadas', String(r.summary.rejected)),
+        cartaoNumero('Rotina deixou de achar', textoRevocacao(r.summary.nothingFound).valor, textoRevocacao(r.summary.nothingFound).detalhe),
       ),
       ...(pendentes.length ? pendentes.map(cartaoDivergencia) : [el('p', { class: 'vazio' }, r.summary.total ? 'Nenhuma divergência pendente.' : 'Nenhuma divergência nesta coleta.')]),
       decididas.length
