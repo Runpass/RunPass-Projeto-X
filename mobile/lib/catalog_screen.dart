@@ -345,9 +345,17 @@ class _EditionCoverState extends State<EditionCover> {
 }
 
 /// Anos oferecidos no filtro: do próximo ano até 2024, do mais recente para o mais antigo.
-List<int> filterYears([DateTime? now]) {
-  final top = (now ?? DateTime.now()).year + 1;
-  return [for (var y = top; y >= 2024; y--) y];
+List<int> filterYears([DateTime? now, Iterable<int> extra = const []]) {
+  // A faixa padrão vai do próximo ano até 2024; corridas cadastradas com data fora dela (mais antigas ou mais
+  // adiante) estendem a faixa, para o ano de qualquer corrida do catálogo poder ser escolhido.
+  final extras = extra.toList();
+  var top = (now ?? DateTime.now()).year + 1;
+  var bottom = 2024;
+  for (final y in extras) {
+    if (y > top) top = y;
+    if (y < bottom) bottom = y;
+  }
+  return [for (var y = top; y >= bottom; y--) y];
 }
 
 class CatalogScreen extends StatefulWidget {
@@ -389,6 +397,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
       0; // recria o seletor ao limpar (reset() devolveria o valor antigo)
   bool loading = false;
   bool showFilters = false;
+
+  int? get selectedYear => int.tryParse(fields['year']!.text);
+
+  /// Anos das corridas já vistas (qualquer busca), para o filtro de ano alcançar todas as datas do catálogo.
+  final Set<int> knownYears = {};
 
   /// Ordem da lista: 'date' (padrão) ou 'rating'. Cada ícone liga a sua ordem; tocar de novo inverte.
   String sortBy = 'date';
@@ -841,6 +854,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
       for (final entry
           in (page['items'] as List).cast<Map<String, dynamic>>()) {
         if (known.add(entry['id'])) items.add(entry);
+        final year = int.tryParse('${entry['date']}'.split('-').first);
+        if (year != null && year >= 1990 && year <= 2100) knownYears.add(year);
       }
       nextCursor = page['nextCursor'] as String?;
     } on IdentityIssue catch (issue) {
@@ -1290,7 +1305,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       value: null,
                       child: Text('Qualquer ano'),
                     ),
-                    for (final y in filterYears())
+                    for (final y in filterYears(null, {
+                      ...knownYears,
+                      ?selectedYear,
+                    }))
                       DropdownMenuItem(value: '$y', child: Text('$y')),
                   ],
                   // O ano filtra na hora: é a única forma de escolher a data.

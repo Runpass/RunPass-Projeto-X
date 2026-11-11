@@ -201,6 +201,42 @@ void main() {
     expect(find.byKey(const Key('agenda-EB')), findsNothing);
   });
 
+  testWidgets(
+    'o filtro de ano alcança corridas cadastradas fora da faixa padrão',
+    (tester) async {
+      big(tester);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              upcoming('A', date: '2019-05-01'),
+              upcoming('B', date: '2029-03-01'),
+              upcoming('C', date: '2026-11-08'),
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      final box = find.byKey(const ValueKey('filter-year-0'));
+      await tester.ensureVisible(box);
+      await tester.tap(box);
+      await tester.pumpAndSettle();
+      for (final year in ['2029', '2019', '2024']) {
+        expect(find.text(year), findsWidgets, reason: 'ano $year no seletor');
+      }
+      // escolher um ano antigo filtra por ele e o ano continua disponível depois
+      await tester.tap(find.text('2019').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('filter-year-0')));
+      await tester.pumpAndSettle();
+      expect(find.text('2019'), findsWidgets);
+    },
+  );
+
   testWidgets('ao digitar o nome, sugere as corridas para escolher uma', (
     tester,
   ) async {
@@ -536,6 +572,29 @@ void searchTests() {
       expect(yearRange(bad), isNull, reason: bad);
     }
     expect(filterYears(DateTime(2026, 11, 10)), [2027, 2026, 2025, 2024]);
+    // Corridas fora da faixa estendem a lista: mais antigas e mais adiante.
+    expect(filterYears(DateTime(2026, 11, 10), [2022, 2026]), [
+      2027,
+      2026,
+      2025,
+      2024,
+      2023,
+      2022,
+    ]);
+    expect(filterYears(DateTime(2026, 11, 10), [2029]), [
+      2029,
+      2028,
+      2027,
+      2026,
+      2025,
+      2024,
+    ]);
+    expect(filterYears(DateTime(2026, 11, 10), const []), [
+      2027,
+      2026,
+      2025,
+      2024,
+    ]);
   });
 
   Future<List<Map<String, String>>> openForm(WidgetTester tester) async {
