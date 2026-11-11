@@ -10,6 +10,7 @@ String requestStatusLabel(String? status) => switch (status) {
   'pending' => 'Em análise pela equipe',
   'approved' => 'Aprovada: já está no catálogo',
   'linked' => 'Esta corrida já existia: vinculamos o seu pedido a ela',
+  'awaiting_load' => 'Aprovada pela equipe: assim que a corrida entrar no catálogo ela é vinculada ao seu pedido',
   'rejected' => 'Não aprovada',
   _ => 'Situação desconhecida',
 };

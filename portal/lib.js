@@ -44,6 +44,7 @@ export const MENSAGENS = {
   SCHEDULE_NOT_FOUND: 'Agendamento não encontrado. Atualize a lista.',
   ALREADY_DECIDED: 'Esta divergência já foi decidida. Atualize a lista.',
   DIVERGENCE_NOT_FOUND: 'Divergência não encontrada na coleta mais recente. Atualize a lista.',
+  INVALID_CATALOG_ENTRY: 'Os dados do pedido não formam uma corrida válida (confira nome, data, cidade, estado e distâncias).',
 };
 
 export function mensagem(codigo) {
@@ -415,4 +416,33 @@ export function abaInicial(preferida, permissoes) {
   if (pode('cadastros')) return 'cadastros';
   if (pode('custos')) return 'custos';
   return Object.keys(ABAS).find(pode) || '';
+}
+
+/** Corpo do POST de aprovação (cria a corrida e vincula). Estado e distâncias são opcionais: sem estado, o pedido
+ *  fica aguardando a carga. Lança Error com texto para a pessoa quando algo estiver errado. */
+export function montarAprovacao({ versao, estado, distancias }) {
+  const v = Number(versao);
+  if (!Number.isInteger(v) || v < 1) throw new Error('Versão do pedido inválida. Atualize a lista.');
+  const corpo = { expectedVersion: v };
+  const uf = (estado || '').trim().toUpperCase();
+  if (uf) {
+    if (!/^[A-Z]{2}$/.test(uf)) throw new Error('O estado deve ter 2 letras (ex.: SP).');
+    corpo.state = uf;
+  }
+  const km = Array.isArray(distancias) ? distancias : listaKm(distancias);
+  if (km.length > 8) throw new Error('No máximo 8 distâncias.');
+  if (km.some((d) => { const n = Number(String(d).replace(',', '.')); return !(n > 0 && n <= 1000); })) throw new Error('Distância inválida (use números entre 0 e 1000).');
+  if (km.length) corpo.distances = km.map(String);
+  return corpo;
+}
+
+/** Frase para o resultado da aprovação, conforme o que o sistema fez. */
+export function textoAprovacao(resultado) {
+  return (
+    {
+      created: 'Corrida criada e usuário vinculado.',
+      linked: 'Já existia uma corrida igual no catálogo: o usuário foi vinculado a ela.',
+      awaiting: 'Aprovado. Falta o estado (UF) para criar a corrida: o pedido ficou aguardando e será vinculado sozinho quando a corrida entrar no catálogo.',
+    }[resultado] || 'Pedido aprovado.'
+  );
 }

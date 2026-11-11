@@ -271,8 +271,32 @@ def create_admin_app(
     @app.get("/admin/edition-requests")
     def pending(op: Operator, limit: int = Query(50, ge=1, le=100)):
         actor = need(op, "catalog_admin")
+        try:  # vincula sozinho o que ja entrou no catalogo; falha aqui nunca esconde a lista
+            linked, _ = review.sweep(actor)
+        except (Problem, Unavailable):
+            linked = 0
         items, _ = review.pending(actor, limit)
-        return {"items": items}
+        return {"items": items, "awaiting": review.waiting(actor), "linkedNow": linked}
+
+    class RequestApproval(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        expectedVersion: int = Field(ge=1)
+        state: str | None = Field(default=None, pattern=r"^[A-Za-z]{2}$")
+        distances: list[str] | None = Field(default=None, min_length=1, max_length=8)
+
+    @app.post("/admin/edition-requests/sweep")
+    def sweep_requests(op: Operator):
+        actor = need(op, "catalog_admin")
+        linked, waiting = review.sweep(actor)
+        return {"linked": linked, "waiting": waiting}
+
+    @app.post("/admin/edition-requests/{request_id}/approve")
+    def approve_request(request_id: str, payload: RequestApproval, op: Operator):
+        actor = need(op, "catalog_admin")
+        outcome, item = review.approve_and_load(
+            actor, request_id, payload.expectedVersion, payload.state, payload.distances
+        )
+        return {"outcome": outcome, "request": item}
 
     @app.post("/admin/edition-requests/{request_id}/decision")
     def decide(request_id: str, decision: ReviewRequestDecision, op: Operator):

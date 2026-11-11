@@ -3855,7 +3855,8 @@
                 "pending",
                 "rejected",
                 "approved",
-                "linked"
+                "linked",
+                "awaiting_load"
               ]
             }
           }
@@ -7035,7 +7036,8 @@
               "pending",
               "approved",
               "linked",
-              "rejected"
+              "rejected",
+              "awaiting_load"
             ]
           },
           "details": {

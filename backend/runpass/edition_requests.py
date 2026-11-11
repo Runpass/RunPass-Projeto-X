@@ -15,14 +15,20 @@ from zoneinfo import ZoneInfo
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import ValidationError
 
-from .catalog import CatalogImporter
+from .catalog import CatalogFilters, CatalogImporter, normalized
+from .catalog_import import distance_entry, parse_km, slug
 from .identity import require_operator
-from .models import EditionRequestFields
+from .models import EditionRequestFields, ReviewRequestDecision
 from .service import Problem, stamp
 from .store import Conflict
 
 MAX_PENDING = 10  # pedidos aguardando revisao por pessoa: freia abuso sem atrapalhar uso real
 QUEUE = "EREQ_QUEUE#pending"
+# Pedido aprovado pela equipe cuja corrida ainda nao esta no catalogo (falta dado para cria-la). Quando a corrida
+# aparecer, o vinculo e feito sozinho (`sweep`).
+QUEUE_AWAITING = "EREQ_QUEUE#awaiting"
+AWAITING = "awaiting_load"
+REVIEWABLE = ("pending", AWAITING)
 FIRST_DATE = date(1990, 1, 1)
 LOCAL_ZONE = ZoneInfo("America/Sao_Paulo")
 
@@ -245,7 +251,7 @@ class EditionRequestReview:
         item = self.store.get(ikey)
         if not item:
             raise Problem(404, "EDITION_REQUEST_NOT_FOUND")
-        if item["status"] != "pending":
+        if item["status"] not in REVIEWABLE:
             raise Problem(409, "REQUEST_NOT_PENDING")
         if item["version"] != decision.expectedVersion:
             raise Problem(409, "VERSION_CONFLICT")
@@ -256,7 +262,7 @@ class EditionRequestReview:
             if not head or head.get("publicationState") != "approved" or head.get("archived"):
                 raise Problem(422, "EDITION_NOT_LINKABLE")
             expected[head_key] = head
-        queue = next(k for k in map(tuple, item["sharedKeys"]) if k[1] == QUEUE)
+        queue = next(k for k in map(tuple, item["sharedKeys"]) if k[1] in (QUEUE, QUEUE_AWAITING))
         owner_row = owner_key(request_id)
         expected[queue] = self.store.get(queue)
         now = self.clock()
@@ -288,3 +294,148 @@ class EditionRequestReview:
         except Conflict as error:
             raise Problem(409, "CONCURRENT_RETRY_REQUIRED") from error
         return projection(new_item)
+
+    # ---- aprovar criando a corrida e vinculando ------------------------------------------------
+
+    def _load(self, request_id):
+        owner = self.store.get(owner_key(request_id))
+        if not owner:
+            raise Problem(404, "EDITION_REQUEST_NOT_FOUND")
+        ikey = item_key(owner["owner"], request_id)
+        item = self.store.get(ikey)
+        if not item:
+            raise Problem(404, "EDITION_REQUEST_NOT_FOUND")
+        return ikey, item
+
+    def _matches(self, name, day):
+        """Corridas do catalogo na mesma data com nome igual ou contido um no outro (a pessoa confirma antes)."""
+        pk, query = CatalogFilters(dateFrom=day, dateTo=day, limit=100).plan()
+        rows, _ = self.store.query("catalog", pk, limit=100, **query)
+        wanted, seen, found = normalized(name), set(), []
+        for _, row in rows:
+            body = self.catalog._edition(row["editionId"], row["version"])
+            if body is None or body["id"] in seen or body.get("status") == "archived":
+                continue
+            other = normalized(body["name"])
+            if wanted and (wanted == other or wanted in other or other in wanted):
+                seen.add(body["id"])
+                found.append(body)
+        return found
+
+    def approve_and_load(self, actor, request_id, expected_version, state=None, distances=None):
+        """Aprova o pedido: acha a corrida no catalogo e vincula; se nao existir, CRIA a partir dos dados do pedido
+        (a pessoa da equipe confere UF e distancias antes) e vincula; se faltar dado essencial, fica aguardando.
+
+        Devolve (resultado, pedido): resultado e "linked", "created" ou "awaiting"."""
+        ikey, item = self._load(request_id)
+        if item["status"] not in REVIEWABLE:
+            raise Problem(409, "REQUEST_NOT_PENDING")
+        if item["version"] != expected_version:
+            raise Problem(409, "VERSION_CONFLICT")
+        details = item["details"]
+        day = date.fromisoformat(details["date"])
+        found = self._matches(details["name"], day)
+        if found:
+            decision = ReviewRequestDecision(
+                expectedVersion=expected_version, decision="link", editionId=found[0]["id"]
+            )
+            return "linked", self.decide(actor, request_id, decision)
+        uf = (state or details.get("state") or "").strip().upper()
+        try:
+            kms = [parse_km(str(d)) for d in (distances or [details["distanceKm"]])]
+        except (ValueError, KeyError) as error:
+            raise Problem(422, "INVALID_INPUT") from error
+        if len(uf) != 2 or not uf.isalpha() or not kms or len(kms) > 8:
+            if item["status"] == AWAITING:  # continua aguardando: nada muda
+                return "awaiting", projection(item)
+            return "awaiting", self._await(actor, request_id, ikey, item)
+        edition_id = f"pedido-{slug(details['name'])[:60]}-{details['date']}-{request_id[-6:]}"
+        payload = {
+            "id": edition_id,
+            "name": details["name"],
+            "date": details["date"],
+            "city": details["city"],
+            "state": uf,
+            "distances": [distance_entry(k) for k in dict.fromkeys(kms)],
+            "sourceCode": "pedido-usuario",
+            "sourceExternalId": request_id,
+        }
+        if details.get("officialUrl"):
+            payload["officialUrl"] = details["officialUrl"]
+        CatalogImporter(self.catalog).put(
+            payload,
+            expected_version=0,
+            origin=f"https://portal.runpass.invalid/pedido/{request_id}",
+            actor=actor,
+        )
+        decision = ReviewRequestDecision(
+            expectedVersion=expected_version, decision="approve", editionId=edition_id
+        )
+        return "created", self.decide(actor, request_id, decision)
+
+    def _await(self, actor, request_id, ikey, item):
+        """Aprovado, mas sem dado para criar a corrida: sai da fila de revisao e entra na de espera."""
+        guards = CatalogImporter(self.catalog)._authorization(actor, False)
+        now = self.clock()
+        version = item["version"] + 1
+        pending_queue = next(k for k in map(tuple, item["sharedKeys"]) if k[1] == QUEUE)
+        waiting_queue = ("history", QUEUE_AWAITING, pending_queue[2])
+        new_item = {
+            **item,
+            "status": AWAITING,
+            "version": version,
+            "updatedAt": stamp(now),
+            "sharedKeys": [list(owner_key(request_id)), list(waiting_queue)],
+        }
+        audit = ("operations", "EREQ#" + request_id, f"REV#{version}")
+        record = {"operator": actor.subject, "decision": "await", "at": stamp(now)}
+        expected = {
+            **guards,
+            ikey: item,
+            pending_queue: self.store.get(pending_queue),
+            waiting_queue: None,
+            audit: None,
+        }
+        try:
+            self.store.commit(
+                expected,
+                {
+                    ikey: new_item,
+                    pending_queue: None,
+                    waiting_queue: {"id": request_id},
+                    audit: record,
+                },
+            )
+        except Conflict as error:
+            raise Problem(409, "CONCURRENT_RETRY_REQUIRED") from error
+        return projection(new_item)
+
+    def waiting(self, actor, limit=50):
+        require_operator(self.store, actor, "catalog_admin", self.clock())
+        rows, _ = self.store.query("history", QUEUE_AWAITING, limit=limit)
+        out = []
+        for _, entry in rows:
+            owner = self.store.get(owner_key(entry["id"]))
+            item = owner and self.store.get(item_key(owner["owner"], entry["id"]))
+            if item and item["status"] == AWAITING:
+                out.append({**projection(item), "createdAt": item["createdAt"]})
+        return out
+
+    def sweep(self, actor, limit=50):
+        """Vincula sozinho os pedidos aguardando cuja corrida ja entrou no catalogo. Devolve (vinculados, restantes)."""
+        waiting, linked = self.waiting(actor, limit), 0
+        for item in waiting:
+            found = self._matches(
+                item["details"]["name"], date.fromisoformat(item["details"]["date"])
+            )
+            if not found:
+                continue
+            decision = ReviewRequestDecision(
+                expectedVersion=item["version"], decision="link", editionId=found[0]["id"]
+            )
+            try:
+                self.decide(actor, item["id"], decision)
+                linked += 1
+            except Problem:
+                continue  # mudou no meio do caminho: a proxima verificacao tenta de novo
+        return linked, len(waiting) - linked

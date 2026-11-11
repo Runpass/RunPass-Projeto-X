@@ -61,9 +61,13 @@
       </nav>
       <section id="sec-pedidos" data-sec="pedidos">
         <div class="barra">
-          <h1>Pedidos de corrida pendentes</h1>
-          <button id="atualizar" type="button" class="sec">Atualizar</button>
+          <h1>Pedidos de corrida</h1>
+          <div class="acoes">
+            <button id="verificar-vinculos" type="button" class="sec">Verificar vínculos</button>
+            <button id="atualizar" type="button" class="sec">Atualizar</button>
+          </div>
         </div>
+        <p class="ajuda">Aprovar cria a corrida com os dados do pedido (confira o estado e as distâncias) e vincula o usuário na hora. Sem o estado, o pedido fica aguardando e é vinculado sozinho quando a corrida entrar no catálogo; isso é verificado toda vez que você abre esta aba. Com o vínculo, o usuário passa a poder registrar a participação e sugerir a imagem e a medalha da corrida.</p>
         <div id="pedidos"></div>
       </section>
       <section id="sec-catalogo" data-sec="catalogo" hidden>
