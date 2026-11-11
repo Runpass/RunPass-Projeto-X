@@ -259,8 +259,10 @@ Resources:
       Code:
         S3Bucket: !Ref ArtifactBucket
         S3Key: !Ref ArtifactKey
-      MemorySize: 512
-      Timeout: 20
+      # 1769 MB = 1 vCPU inteira: tratar um PNG 1920x1080 (previa do banner) estourava os 20 s com 512 MB.
+      # 29 s fica abaixo do limite de 30 s do API Gateway.
+      MemorySize: 1769
+      Timeout: 29
       Role: !GetAtt AdminFunctionRole.Arn
       LoggingConfig:
         LogGroup: !Ref AdminFunctionLogs

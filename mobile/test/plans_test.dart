@@ -581,10 +581,13 @@ void searchTests() {
     await tester.ensureVisible(find.text('Buscar'));
     await tester.tap(find.text('Buscar'));
     await tester.pumpAndSettle();
-    expect(find.text('Informe o nome da corrida.'), findsOneWidget);
+    expect(
+      find.text('Informe o nome da corrida ou escolha outro filtro.'),
+      findsOneWidget,
+    );
     expect(calls.length, before, reason: 'sem nome nada é enviado');
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Nome da corrida (obrigatório)'),
+      find.widgetWithText(TextFormField, 'Nome da corrida'),
       'meia',
     );
     await pickLocation(tester);
@@ -603,10 +606,48 @@ void searchTests() {
     ); // distância e o resto são opcionais
   });
 
+  testWidgets('com outro filtro o nome deixa de ser obrigatório', (
+    tester,
+  ) async {
+    final calls = await openForm(tester);
+    await pick(tester, 'filter-year', '2026');
+    await tester.ensureVisible(find.text('Buscar'));
+    await tester.tap(find.text('Buscar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Informe o nome da corrida ou escolha outro filtro.'),
+      findsNothing,
+    );
+    expect(calls.last.containsKey('namePrefix'), isFalse);
+    expect(calls.last['dateFrom'], '2026-01-01');
+    expect(calls.last['dateTo'], '2026-12-31');
+  });
+
+  testWidgets('atalhos de km preenchem a distância e a busca a envia', (
+    tester,
+  ) async {
+    final calls = await openForm(tester);
+    final chip = find.byKey(const Key('km-chip-10'));
+    await tester.ensureVisible(chip);
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextFormField, '10'), findsOneWidget);
+    await tester.ensureVisible(find.text('Buscar'));
+    await tester.tap(find.text('Buscar'));
+    await tester.pumpAndSettle();
+    expect(calls.last['distanceKm'], '10');
+    expect(calls.last.containsKey('namePrefix'), isFalse);
+    // tocar de novo no atalho selecionado limpa a distância
+    await tester.ensureVisible(chip);
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextFormField, '10'), findsNothing);
+  });
+
   testWidgets('limpar a busca zera UF e ano nos seletores', (tester) async {
     final calls = await openForm(tester);
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Nome da corrida (obrigatório)'),
+      find.widgetWithText(TextFormField, 'Nome da corrida'),
       'meia',
     );
     await pickLocation(tester);

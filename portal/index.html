@@ -13,7 +13,6 @@
     <div id="sessao" class="sessao" hidden>
       <span id="quem"></span>
       <span id="expira"></span>
-      <button id="sair" type="button" class="sec">Sair</button>
     </div>
   </header>
   <main>
@@ -57,6 +56,8 @@
         <button role="tab" id="aba-qualidade" data-aba="qualidade" aria-selected="false">Qualidade da busca</button>
         <button role="tab" id="aba-custos" data-aba="custos" aria-selected="false">Custos</button>
         <button role="tab" id="aba-operadores" data-aba="operadores" aria-selected="false">Operadores</button>
+        <button role="tab" id="aba-preferencias" data-aba="preferencias" aria-selected="false" class="rodape">Preferências</button>
+        <button id="sair" type="button" class="sair">Sair</button>
       </nav>
       <section id="sec-pedidos" data-sec="pedidos">
         <div class="barra">
@@ -132,6 +133,16 @@
           <button id="atualizar-custos" type="button" class="sec">Atualizar</button>
         </div>
         <div id="custos"></div>
+      </section>
+      <section id="sec-preferencias" data-sec="preferencias" hidden>
+        <div class="barra"><h1>Preferências</h1></div>
+        <p class="ajuda">Valem só neste navegador: ficam salvas nele, não na sua conta.</p>
+        <article class="cartao">
+          <label>Tema <select id="pref-tema"></select></label>
+          <label>Aba que abre ao entrar <select id="pref-aba"></select></label>
+          <div class="acoes"><button id="pref-padrao" type="button" class="sec">Restaurar o padrão</button></div>
+          <p id="pref-aviso" class="meta" role="status"></p>
+        </article>
       </section>
       <section id="sec-operadores" data-sec="operadores" hidden>
         <div class="barra">

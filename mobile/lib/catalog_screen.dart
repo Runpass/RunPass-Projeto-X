@@ -390,6 +390,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
   bool loading = false;
   bool showFilters = false;
 
+  /// Ícone de estrela: coloca as corridas mais bem avaliadas primeiro (sem nota por último).
+  bool bestRatedFirst = false;
+
   @override
   void initState() {
     super.initState();
@@ -640,9 +643,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
     super.dispose();
   }
 
-  /// Ordem por data: decrescente (mais recentes primeiro) por padrão; o ícone alterna.
-  bool descending = true;
-
   /// Itens por página da busca atual. O cursor do servidor é amarrado aos filtros (inclui o limite),
   /// então o limite não pode mudar no meio de uma busca.
   late String pageLimit = widget.serverPaging ? '20' : '100';
@@ -667,18 +667,27 @@ class _CatalogScreenState extends State<CatalogScreen> {
     };
   }
 
-  /// Itens na ordem escolhida: primeiro as minhas (por prioridade), depois as demais; dentro de cada
-  /// grupo, por data (o ícone alterna crescente/decrescente) e, em empate, pelo nome.
+  /// Itens na ordem da tela: primeiro as minhas (por prioridade), depois as demais. Dentro de cada grupo,
+  /// as mais recentes primeiro (a data se escolhe pelo filtro de ano, não por ordenação) ou, com a estrela
+  /// ligada, as mais bem avaliadas primeiro. Em empate, mais avaliações e depois o nome.
   List<Map<String, dynamic>> get view {
     final list = [...items];
     if (widget.serverPaging) return list;
     list.sort((a, b) {
       final byPriority = priority(a).compareTo(priority(b));
       if (byPriority != 0) return byPriority;
+      if (bestRatedFirst) {
+        final sa = scoreOf(a);
+        final sb = scoreOf(b);
+        // Sem avaliação sempre por último.
+        if ((sa == null) != (sb == null)) return sa == null ? 1 : -1;
+        if (sa != null && sb != null && sa != sb) return sb.compareTo(sa);
+        final byReviews = reviewsOf(b).compareTo(reviewsOf(a));
+        if (byReviews != 0) return byReviews;
+      }
       final byDate = (a['date'] as String).compareTo(b['date'] as String);
       final byName = '${a['name']}'.compareTo('${b['name']}');
-      if (byDate == 0) return byName;
-      return descending ? -byDate : byDate;
+      return byDate == 0 ? byName : -byDate;
     });
     return list;
   }
@@ -694,8 +703,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
       if (error != null) return;
     }
   }
-
-  void toggleSort() => setState(() => descending = !descending);
 
   void onPhraseChanged(String text) {
     setState(() {});
@@ -873,6 +880,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
     load();
   }
 
+  /// Há algum filtro além do nome? Se houver, o nome deixa de ser obrigatório.
+  bool get hasOtherFilter =>
+      fields['distanceKm']!.text.trim().isNotEmpty ||
+      fields['year']!.text.trim().isNotEmpty ||
+      fields['state']!.text.trim().isNotEmpty ||
+      fields['city']!.text.trim().isNotEmpty ||
+      registration != null;
+
   Widget filter(
     String key,
     String label, {
@@ -890,7 +905,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
           ? const TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
       validator: (value) => value == null || value.trim().isEmpty
-          ? (required ? 'Informe o nome da corrida.' : null)
+          ? (required && !hasOtherFilter
+                ? 'Informe o nome da corrida ou escolha outro filtro.'
+                : null)
           : validate?.call(value.trim()),
     ),
   );
@@ -1060,8 +1077,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       const SizedBox(height: 12),
                       filter(
                         'namePrefix',
-                        'Nome da corrida (obrigatório)',
+                        'Nome da corrida',
                         maxLength: 160,
+                        hint: 'Obrigatório se você não escolher estado, ano, distância ou inscrições',
                         required: true,
                       ),
                       // Mesmo seletor do editar perfil: lista fechada de estado e cidade, sem digitar.
@@ -1109,6 +1127,25 @@ class _CatalogScreenState extends State<CatalogScreen> {
                           ),
                         ),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Wrap(
+                          spacing: 8,
+                          children: [
+                            for (final km in const ['5', '10', '21', '42'])
+                              ChoiceChip(
+                                key: Key('km-chip-$km'),
+                                label: Text('$km km'),
+                                selected: fields['distanceKm']!.text == km,
+                                onSelected: (picked) => setState(
+                                  () => fields['distanceKm']!.text = picked
+                                      ? km
+                                      : '',
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                       filter(
                         'distanceKm',
                         'Distância em km (opcional)',
@@ -1119,28 +1156,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                               ? null
                               : 'Informe uma distância positiva, usando ponto para decimais.';
                         },
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: DropdownButtonFormField<String?>(
-                          key: ValueKey('filter-year-$registrationEpoch'),
-                          initialValue: fields['year']!.text.isEmpty
-                              ? null
-                              : fields['year']!.text,
-                          decoration: const InputDecoration(
-                            labelText: 'Ano da prova',
-                          ),
-                          items: [
-                            const DropdownMenuItem(
-                              value: null,
-                              child: Text('Qualquer ano'),
-                            ),
-                            for (final y in filterYears())
-                              DropdownMenuItem(value: '$y', child: Text('$y')),
-                          ],
-                          onChanged: (value) =>
-                              fields['year']!.text = value ?? '',
-                        ),
                       ),
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
@@ -1217,25 +1232,51 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
-          if (items.length > 1)
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                key: const Key('catalog-sort'),
-                tooltip: descending
-                    ? 'Mais recentes primeiro (toque para inverter)'
-                    : 'Mais antigas primeiro (toque para inverter)',
-                icon: Icon(
-                  descending
-                      ? Icons.arrow_downward_rounded
-                      : Icons.arrow_upward_rounded,
-                  semanticLabel: descending
-                      ? 'Ordem decrescente'
-                      : 'Ordem crescente',
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String?>(
+                  key: ValueKey('filter-year-$registrationEpoch'),
+                  initialValue: fields['year']!.text.isEmpty
+                      ? null
+                      : fields['year']!.text,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Ano',
+                    isDense: true,
+                    prefixIcon: Icon(Icons.calendar_today_rounded, size: 18),
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: null,
+                      child: Text('Qualquer ano'),
+                    ),
+                    for (final y in filterYears())
+                      DropdownMenuItem(value: '$y', child: Text('$y')),
+                  ],
+                  // O ano filtra na hora: é a única forma de escolher a data.
+                  onChanged: loading
+                      ? null
+                      : (value) {
+                          fields['year']!.text = value ?? '';
+                          load();
+                        },
                 ),
-                onPressed: loading ? null : toggleSort,
               ),
-            ),
+              const SizedBox(width: 8),
+              IconButton(
+                key: const Key('catalog-sort-rating'),
+                tooltip: bestRatedFirst
+                    ? 'Melhores avaliações primeiro (toque para desligar)'
+                    : 'Ordenar pelas melhores avaliações',
+                isSelected: bestRatedFirst,
+                icon: const Icon(Icons.star_border_rounded),
+                selectedIcon: const Icon(Icons.star_rounded),
+                onPressed: () =>
+                    setState(() => bestRatedFirst = !bestRatedFirst),
+              ),
+            ],
+          ),
           if (loading) const Center(child: CircularProgressIndicator()),
           if (!loading && error == null && items.isEmpty)
             Text(

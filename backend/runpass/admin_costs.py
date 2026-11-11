@@ -224,7 +224,11 @@ def openai_transport(path, params, key, timeout=15):
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             return response.status, json.loads(response.read(5_000_000))
     except urllib.error.HTTPError as error:
-        return error.code, {"error": _error_code(error)}
+        retry = str(error.headers.get("Retry-After", "")) if error.headers else ""
+        return error.code, {
+            "error": _error_code(error),
+            "retry": int(retry) if retry.isdigit() and int(retry) <= 3600 else 0,
+        }
     except (urllib.error.URLError, OSError, ValueError):
         return 0, {}
 
@@ -272,8 +276,17 @@ class OpenAiOrg:
             status, body = self.transport(path, query, key)
             if status != 200:
                 code = (body or {}).get("error", "")
+                retry = int((body or {}).get("retry") or 0)
+                where = path.rstrip("/").rsplit("/", 1)[
+                    -1
+                ]  # costs, completions: qual consulta falhou
                 raise OrgUnavailable(
-                    "network" if status == 0 else f"http_{status}" + (f":{code}" if code else "")
+                    "network"
+                    if status == 0
+                    else f"http_{status}"
+                    + (f":{code}" if code else "")
+                    + f"@{where}"
+                    + (f"~{retry}" if retry else "")
                 )
             buckets += body.get("data", [])
             page = body.get("next_page") if body.get("has_more") else None

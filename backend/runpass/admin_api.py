@@ -390,6 +390,15 @@ def create_admin_app(
             raise Unavailable()
         return actor
 
+    class BannerDismiss(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        imageUrl: str = Field(max_length=2000)
+
+    @app.post("/admin/banners/dismiss")
+    def banner_dismiss(payload: BannerDismiss, op: Operator):
+        actor = need_banners(op)
+        return banners.dismiss(actor, payload.imageUrl)
+
     @app.get("/admin/banners/candidates")
     def banner_candidates(op: Operator):
         need_banners(op)

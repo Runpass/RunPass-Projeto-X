@@ -8,6 +8,7 @@ resposta); o pedido so e enviado depois dessa conferencia.
 """
 
 import csv
+import hashlib
 import http.client
 import io
 import ipaddress
@@ -19,7 +20,7 @@ from .admin_users import audit
 from .catalog import normalized
 from .operator_admin import approve_banner, normalize_image, remove_banner
 from .service import Problem
-from .store import Unavailable
+from .store import Conflict, Unavailable
 from .upload import UploadService
 
 MAX_BYTES = 6_000_000
@@ -178,11 +179,14 @@ class BannerAdmin:
     def candidates(self):
         """Candidatas da coleta mais recente com a corrida do catalogo que parece ser a mesma (a pessoa confirma).
 
-        Candidata cuja corrida do catalogo ja tem banner nao aparece: depois de aprovada ela sai da lista."""
+        Some da lista a candidata que: (1) tem a MESMA IMAGEM de um banner ja publicado (mesmo que a pessoa
+        tenha escolhido a mao outra corrida), (2) combina com QUALQUER corrida do catalogo que ja tem banner
+        (nao so a primeira) ou (3) foi excluida pela pessoa. Retirar o banner a devolve para a lista."""
         key, text = self._latest_csv()
         if key is None:
             return {"source": None, "items": []}
         editions = self._editions()
+        approved = self._approved_urls(editions)
         items = []
         for row in csv.DictReader(io.StringIO(text)):
             if row.get("situacao") != "candidata" or not row.get("imagem_url", "").startswith(
@@ -190,22 +194,24 @@ class BannerAdmin:
             ):
                 continue
             name = normalized(row.get("nome", ""))
-            match = next(
-                (
-                    e
-                    for e in editions
-                    if e["date"] == row.get("data")
-                    and name
-                    and (
-                        name == normalized(e["name"])
-                        or name in normalized(e["name"])
-                        or normalized(e["name"]) in name
-                    )
-                ),
-                None,
-            )
-            if match is not None and match.get("imageReference"):
-                continue  # corrida que ja tem banner: sai da lista (trocar e pelo formulario manual)
+            matches = [
+                e
+                for e in editions
+                if e["date"] == row.get("data")
+                and name
+                and (
+                    name == normalized(e["name"])
+                    or name in normalized(e["name"])
+                    or normalized(e["name"]) in name
+                )
+            ]
+            match = matches[0] if matches else None
+            if (
+                row["imagem_url"] in approved
+                or any(m.get("imageReference") for m in matches)
+                or self._dismissed(row["imagem_url"])
+            ):
+                continue  # ja publicada, corrida com banner ou excluida: sai da lista
             items.append(
                 {
                     "name": row.get("nome", ""),
@@ -221,7 +227,43 @@ class BannerAdmin:
                 break
         return {"source": key.split("/")[1], "items": items}
 
+    def _approved_urls(self, editions):
+        """Enderecos das imagens dos banners publicados agora (lidos do registro de cada banner)."""
+        urls = set()
+        for e in editions:
+            ref = e.get("imageReference")
+            if not ref:
+                continue
+            record = self.catalog.store.get(("operations", "EDITION#" + e["id"], "IMAGE#" + ref))
+            if record and record.get("sourceUrl"):
+                urls.add(record["sourceUrl"])
+        return urls
+
+    @staticmethod
+    def _dismiss_key(image_url):
+        digest = hashlib.sha256(image_url.strip().encode()).hexdigest()[:32]
+        return ("operations", "CATALOG", "BANNER_DISMISSED#" + digest)
+
+    def _dismissed(self, image_url):
+        return self.store.get(self._dismiss_key(image_url)) is not None
+
     # ---- acoes -------------------------------------------------------------------------------
+
+    def dismiss(self, actor, image_url):
+        """Exclui uma candidata da lista (nao apaga a imagem da coleta; a coleta seguinte nao a traz de volta)."""
+        url = (image_url or "").strip()
+        if not url.startswith("https://") or len(url) > 2000:
+            raise Problem(422, "INVALID_INPUT")
+        key = self._dismiss_key(url)
+        try:
+            self.store.commit(
+                {key: None},
+                {key: {"by": actor.subject, "at": _stamp(self.clock), "imageUrl": url[:200]}},
+            )
+        except Conflict:
+            return {"dismissed": True}  # ja estava excluida: o resultado e o mesmo
+        audit(self.store, actor.subject, "banner.dismiss", {"imageUrl": url[:200]}, self.clock)
+        return {"dismissed": True}
 
     def preview(self, image_url):
         """A imagem como seria publicada (ja sem metadados), para a pessoa ver antes de aprovar."""
@@ -274,3 +316,9 @@ class BannerAdmin:
             self.clock,
         )
         return result
+
+
+def _stamp(clock):
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(clock(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

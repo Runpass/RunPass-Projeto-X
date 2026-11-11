@@ -249,12 +249,15 @@ export function dataHojeIso(agora = new Date()) {
 /** Motivo (código curto vindo da API) -> frase para a pessoa. Nunca mostra detalhes da chave. */
 export function motivoOpenAi(codigo) {
   const c = codigo || '';
-  const [base, detalhe] = c.split(':');
-  if (base === 'http_429' && detalhe === 'insufficient_quota') {
-    return 'A OpenAI recusou por cota: a conta está sem crédito ou estourou o limite de gasto. Confira Billing e Limits no console.';
-  }
-  if (base === 'http_429' && detalhe) {
-    return `A OpenAI limitou as consultas (${detalhe}). Tente de novo em instantes.`;
+  // http_<status>[:<codigo>][@<consulta>][~<espera em segundos>], ex.: http_429:rate_limit_exceeded@costs~30
+  const m = /^http_(\d{3})(?::([a-z0-9_]+))?(?:@([a-z_]+))?(?:~(\d+))?$/.exec(c);
+  if (m && m[1] === '429') {
+    const [, , detalhe, consulta, espera] = m;
+    if (detalhe === 'insufficient_quota') {
+      return 'A OpenAI recusou por cota: a conta está sem crédito ou estourou o limite de gasto. Confira Billing e Limits no console.';
+    }
+    const quando = espera ? `Tente de novo em ${espera} s.` : 'Tente de novo em instantes.';
+    return `A OpenAI limitou as consultas${detalhe ? ` (${detalhe})` : ''}${consulta ? ` na consulta "${consulta}"` : ''}. ${quando}`;
   }
   if (c.startsWith('key_read_failed')) {
     const tipo = c.split(':')[1] || '';
@@ -270,8 +273,9 @@ export function motivoOpenAi(codigo) {
     network: 'Sem resposta da OpenAI agora.',
     not_configured: 'A chave de administrador não está configurada neste deploy.',
   };
-  if (mapa[c]) return mapa[c];
-  return c.startsWith('http_') ? `A OpenAI respondeu com erro (${c.slice(5)}).` : 'Motivo não identificado.';
+  const base = m ? `http_${m[1]}` : c;
+  if (mapa[base]) return mapa[base];
+  return base.startsWith('http_') ? `A OpenAI respondeu com erro (${base.slice(5)}).` : 'Motivo não identificado.';
 }
 
 /** "42 de 44 (95%)": parte, total e porcentagem inteira; sem total válido, só o número. */
@@ -377,4 +381,38 @@ export function textoRevocacao(n) {
   if (!n || !n.checked) return { valor: '—', detalhe: `${n ? n.total : 0} sem informação para conferir` };
   const pct = Math.round((n.hadInfo / n.checked) * 100);
   return { valor: `${n.hadInfo} de ${n.checked} (${pct}%)`, detalhe: `a rotina deixou de achar · ${n.total - n.checked} ainda por conferir` };
+}
+
+/** Abas do painel: [rótulo, permissão exigida]. A ordem é a do menu. */
+export const ABAS = {
+  pedidos: ['Pedidos de corrida', 'catalog_admin'],
+  catalogo: ['Atualizar catálogo', 'catalog_admin'],
+  cadastros: ['Cadastros no app', 'user_admin'],
+  banners: ['Banners', 'catalog_admin'],
+  divergencias: ['Divergências', 'catalog_admin'],
+  qualidade: ['Qualidade da busca', 'catalog_admin'],
+  custos: ['Custos', 'cost_read'],
+  operadores: ['Operadores', 'user_admin'],
+};
+
+export const TEMAS = { auto: 'Automático (segue o sistema)', claro: 'Claro', escuro: 'Escuro' };
+
+/** Preferências salvas (texto JSON do navegador) -> valores válidos; qualquer coisa estranha vira o padrão. */
+export function lerPrefs(texto) {
+  let bruto = {};
+  try { bruto = JSON.parse(texto || '{}') || {}; } catch { bruto = {}; }
+  return {
+    tema: Object.keys(TEMAS).includes(bruto.tema) ? bruto.tema : 'auto',
+    abaInicial: typeof bruto.abaInicial === 'string' && Object.keys(ABAS).includes(bruto.abaInicial) ? bruto.abaInicial : '',
+  };
+}
+
+/** Aba que abre ao entrar: a preferida se a pessoa tem permissão; senão a primeira que ela pode ver. */
+export function abaInicial(preferida, permissoes) {
+  const pode = (nome) => ABAS[nome] && permissoes.includes(ABAS[nome][1]);
+  if (preferida && pode(preferida)) return preferida;
+  if (pode('pedidos')) return 'pedidos';
+  if (pode('cadastros')) return 'cadastros';
+  if (pode('custos')) return 'custos';
+  return Object.keys(ABAS).find(pode) || '';
 }
