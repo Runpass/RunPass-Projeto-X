@@ -31,6 +31,7 @@ from .catalog import normalized
 from .edition_requests import EditionRequestReview
 from .identity import AuthFailure
 from .models import ReviewRequestDecision
+from .quality_report import REPORT as QUALITY_REPORT
 from .service import Problem
 from .store import Conflict, Unavailable
 
@@ -421,6 +422,11 @@ def create_admin_app(
         if schedules is None:
             raise Unavailable()
         return schedules.upcoming()
+
+    @app.get("/admin/quality")
+    def quality(op: Operator):
+        need(op, "catalog_admin")
+        return QUALITY_REPORT
 
     @app.get("/admin/costs")
     def costs(op: Operator):

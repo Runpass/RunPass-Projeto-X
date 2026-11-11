@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -204,6 +204,54 @@ function painelRecusa(area, pedido) {
   const confirmar = el('button', { type: 'button', class: 'perigo' }, 'Confirmar recusa');
   confirmar.addEventListener('click', () => decidir(pedido, { decisao: 'reject', motivo: motivo.value }, confirmar));
   area.replaceChildren(el('label', {}, 'Motivo da recusa', motivo), confirmar);
+}
+
+// ---- qualidade da busca ---------------------------------------------------------------------------
+
+async function carregarQualidade() {
+  const alvo = $('qualidade');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/quality');
+    const x = r.extraction;
+    const e = r.enrichment;
+    const f = e.filled;
+    const contagem = r.spotCheck.reduce((a, c) => ({ ...a, [c.result]: (a[c.result] || 0) + 1 }), {});
+    const decidir = x.notExtracted.filter((i) => i.decision === 'decidir').length;
+    alvo.replaceChildren(
+      el('p', { class: 'meta' }, `Medição de ${dataBr(r.date)}. ${r.scope}`),
+      el('h2', {}, 'Extração do calendário da prefeitura'),
+      el(
+        'div',
+        { class: 'grade' },
+        cartaoNumero('Extraídas que existem na página', taxa(x.matched, x.extracted), 'Mesmo nome e mesma data. Nenhuma inventada quando 100%.'),
+        cartaoNumero('Cobertura das corridas', taxa(x.extracted, x.extracted + decidir), decidir ? `${decidir} item(ns) esperam decisão humana` : 'Sem itens em dúvida'),
+        cartaoNumero('Itens na página oficial', String(x.inPage), `${x.notExtracted.length} não extraídos`),
+      ),
+      el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Não extraídos'), tabela(['Item', 'Data', 'Motivo', 'Situação'], x.notExtracted.map((i) => [i.name, dataBr(i.date), i.reason, i.decision === 'decidir' ? 'Decidir' : 'Correto excluir']))),
+      el('h2', {}, 'Enriquecimento (distância, local e inscrição)'),
+      el(
+        'div',
+        { class: 'grade' },
+        cartaoNumero('Prontas para importar', taxa(e.ready, e.total), undefined, percentual(e.ready, e.total)),
+        cartaoNumero('Nada encontrado', taxa(e.notFound, e.total)),
+        cartaoNumero('Pista parcial', taxa(e.partial, e.total)),
+      ),
+      el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Campos preenchidos'), tabela(['Campo', 'Provas'], [['Distâncias', taxa(f.distances, e.total)], ['Local de largada', taxa(f.venue, e.total)], ['Organizador', taxa(f.organizer, e.total)], ['Link de inscrição', taxa(f.registrationUrl, e.total)], ['Horário de largada', taxa(f.startTime, e.total)]], [1])),
+      el('h2', {}, 'Conferência por amostra das provas prontas'),
+      el('p', { class: 'meta' }, `${contagem.confere || 0} conferem por inteiro, ${contagem.parcial || 0} em parte, ${contagem.nao_verificado || 0} não verificadas, ${contagem.errada || 0} erradas (de ${r.spotCheck.length}). É amostra pequena: não prova uma taxa.`),
+      el('div', { class: 'cartao' }, tabela(['Prova', 'Resultado', 'Observação'], r.spotCheck.map((c) => [c.name, RESULTADO_CONFERENCIA[c.result] || c.result, c.note]))),
+      el('h2', {}, 'O que esta medição não cobre'),
+      el('ul', {}, r.notCovered.map((t) => el('li', {}, t))),
+      el('h2', {}, 'Próximos passos'),
+      el('ul', {}, r.nextSteps.map((t) => el('li', {}, t))),
+    );
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
 }
 
 // ---- custos -------------------------------------------------------------------------------------
@@ -612,6 +660,7 @@ function mostrarAba(nome) {
   if (nome === 'pedidos') carregarPedidos();
   if (nome === 'catalogo') carregarUltimoDisparo();
   if (nome === 'cadastros') carregarCadastros();
+  if (nome === 'qualidade') carregarQualidade();
   if (nome === 'custos') carregarCustos();
   if (nome === 'banners') carregarBanners();
   if (nome === 'operadores') carregarOperadores();
@@ -736,7 +785,7 @@ $('form-operador').addEventListener('submit', async (evento) => {
 });
 
 function prepararAbas() {
-  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', banners: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin', custos: 'cost_read' };
+  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', banners: 'catalog_admin', qualidade: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin', custos: 'cost_read' };
   for (const [nome, perm] of Object.entries(abas)) $(`aba-${nome}`).hidden = !permissoes.includes(perm);
   $('modo-catalogo').replaceChildren(...Object.entries(MODOS_CATALOGO).map(([v, t]) => el('option', { value: v }, t)));
   $('op-permissoes').replaceChildren(
@@ -855,4 +904,5 @@ $('atualizar-cadastros').addEventListener('click', carregarCadastros);
 $('atualizar-banners').addEventListener('click', carregarBanners);
 $('atualizar-operadores').addEventListener('click', carregarOperadores);
 $('atualizar-custos').addEventListener('click', carregarCustos);
+$('atualizar-qualidade').addEventListener('click', carregarQualidade);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);

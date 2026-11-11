@@ -140,6 +140,15 @@ test('motivo da falha da OpenAI vira frase útil sem vazar detalhes', async () =
   assert.equal(motivoOpenAi(undefined), 'Motivo não identificado.');
 });
 
+test('taxa: parte de total com porcentagem e valores inválidos', async () => {
+  const { taxa, RESULTADO_CONFERENCIA } = await import('./lib.js');
+  assert.equal(taxa(42, 44), '42 de 44 (95%)');
+  assert.equal(taxa(0, 44), '0 de 44 (0%)');
+  assert.equal(taxa(5, 0), '5');
+  assert.equal(taxa(NaN, 10), '—');
+  assert.equal(RESULTADO_CONFERENCIA.nao_verificado, 'Não verificado');
+});
+
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
   const { situacaoOperador } = await import('./lib.js');
   assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);

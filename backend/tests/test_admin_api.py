@@ -624,6 +624,25 @@ class AdminApiTests(unittest.TestCase):
         for ruim in ("rate(5 minutes)", "cron(*/5 * * * ? *)", "cron(0 7 ? * MON-FRI *)", "", None):
             self.assertIsNone(next_run(ruim, "UTC", agora))
 
+    def test_relatorio_de_qualidade_exige_catalog_admin_e_e_coerente(self):
+        self.assertEqual(
+            self.client.get("/admin/quality", headers=self.auth(token("fin"))).status_code, 403
+        )
+        r = self.client.get("/admin/quality", headers=self.auth(token("op")))
+        self.assertEqual(r.status_code, 200, r.text)
+        rel = r.json()
+        ext, enr = rel["extraction"], rel["enrichment"]
+        self.assertLessEqual(ext["matched"], ext["extracted"])
+        self.assertEqual(ext["extracted"] + len(ext["notExtracted"]), ext["inPage"])
+        self.assertEqual(enr["ready"] + enr["notFound"] + enr["partial"], enr["total"])
+        self.assertLessEqual(max(enr["filled"].values()), enr["total"])
+        self.assertTrue(
+            all(
+                c["result"] in ("confere", "parcial", "nao_verificado", "errada")
+                for c in rel["spotCheck"]
+            )
+        )
+
     def test_custos_exigem_cost_read_e_uma_fonte_fora_do_ar_nao_esconde_a_outra(self):
         for quem in ("op", "adm"):
             self.assertEqual(
