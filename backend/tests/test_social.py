@@ -65,6 +65,36 @@ class SocialTests(unittest.TestCase):
             {"expectedVersion": profile["version"], "isPrivate": True},
         )
 
+    # ---- suggestions ----
+    def test_suggestions_without_query_exclude_self_and_people_already_followed(self):
+        names = lambda a: sorted(p["username"] for p in self.social.suggestions(a)["items"])  # noqa: E731
+        self.assertEqual(names(self.bia), ["ana_runs", "caio"])
+        self.social.follow(self.bia, "ana", "s1")
+        self.assertEqual(names(self.bia), ["caio"])
+
+    def test_suggestions_never_query_with_an_empty_prefix(self):
+        # O DynamoDB recusa begins_with com texto vazio; o MemoryStore aceitaria.
+        real = self.store.query
+
+        def strict(table, pk, **kw):
+            if kw.get("prefix") == "":
+                raise AssertionError("begins_with vazio")
+            return real(table, pk, **kw)
+
+        self.store.query = strict
+        self.assertTrue(self.social.suggestions(self.bia)["items"])
+
+    def test_suggestions_find_profiles_in_any_index_partition(self):
+        self.person("zeca", "Zeca Quintanilha", "zq_runs")
+        found = [p["username"] for p in self.social.suggestions(self.bia)["items"]]
+        self.assertIn("zq_runs", found)
+
+    def test_suggestions_prefer_people_followed_by_the_ones_i_follow(self):
+        self.social.follow(self.bia, "ana", "s2")
+        self.social.follow(self.ana, "caio", "s3")
+        first = self.social.suggestions(self.bia)["items"][0]
+        self.assertEqual(first["username"], "caio")
+
     # ---- search ----
     def test_search_by_username_and_by_name_ignoring_accents_and_excluding_self(self):
         self.assertEqual(

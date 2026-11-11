@@ -43,7 +43,9 @@ void main() {
       final calls = <String>[];
       var state = 'none';
       final gateway = await gatewayWith((uri, method, headers, body) async {
-        calls.add('$method ${uri.path} ${uri.queryParameters}');
+        if (uri.path != '/profiles/suggestions') {
+          calls.add('$method ${uri.path} ${uri.queryParameters}');
+        }
         if (uri.path == '/profiles') {
           return JsonReply(200, {
             'items': [person('ana', state: state)],
@@ -141,6 +143,61 @@ void main() {
       expect(find.text('Corridas'), findsNothing);
     },
   );
+
+  testWidgets('a busca já abre com sugestões de pessoas, antes de digitar', (
+    tester,
+  ) async {
+    final gateway = await gatewayWith((uri, method, headers, body) async {
+      if (uri.path == '/profiles/suggestions') {
+        return JsonReply(200, {
+          'items': [person('bia'), person('caio')],
+        });
+      }
+      if (uri.path == '/profiles') {
+        return JsonReply(200, {
+          'items': [person('ana')],
+        });
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: FriendSearchScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('friend-suggestions-title')), findsOneWidget);
+    expect(find.byKey(const Key('friend-bia')), findsOneWidget);
+    expect(find.byKey(const Key('friend-caio')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('friend-search-field')), 'ana');
+    await tester.tap(find.byKey(const Key('friend-search-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('friend-ana')), findsOneWidget);
+    expect(find.byKey(const Key('friend-bia')), findsNothing);
+    expect(find.byKey(const Key('friend-suggestions-title')), findsNothing);
+  });
+
+  testWidgets('sugestões: avisa quando falha, permite tentar de novo e avisa '
+      'quando não há ninguém', (tester) async {
+    var calls = 0;
+    final gateway = await gatewayWith((uri, method, headers, body) async {
+      if (uri.path == '/profiles/suggestions') {
+        calls++;
+        if (calls == 1) {
+          return const JsonReply(503, {'code': 'SERVICE_UNAVAILABLE'});
+        }
+        return const JsonReply(200, {'items': []});
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: FriendSearchScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('friend-suggestions-failed')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('friend-suggestions-retry')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('friend-suggestions-failed')), findsNothing);
+    expect(find.byKey(const Key('friend-suggestions-empty')), findsOneWidget);
+  });
 
   testWidgets('friend requests can be accepted', (tester) async {
     final calls = <String>[];

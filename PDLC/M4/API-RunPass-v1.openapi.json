@@ -1236,6 +1236,61 @@
         "x-requires-beta-admission": true
       }
     },
+    "/profiles/suggestions": {
+      "get": {
+        "operationId": "listProfileSuggestions",
+        "description": "Suggestions shown before any query: people followed by people the caller follows, followers, then search-index profiles. Excludes self, already followed/friends, deleted and suspended accounts.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Profiles"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 12
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
     "/profiles/{id}": {
       "get": {
         "operationId": "getPublicProfile",
