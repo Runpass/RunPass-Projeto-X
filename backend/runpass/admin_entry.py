@@ -12,9 +12,9 @@ def _number(name):
     return float(value) if value else None
 
 
-def _openai_key_loader():
-    """Chave de administrador da OpenAI (opcional): le do SSM so quando o painel precisa e a guarda em memoria."""
-    name = os.environ.get("RUNPASS_OPENAI_ADMIN_KEY_PARAM", "").strip()
+def _admin_key_loader(variable):
+    """Chave de administrador (OpenAI ou Anthropic, opcional): le do SSM so quando o painel precisa e a guarda em memoria."""
+    name = os.environ.get(variable, "").strip()
     if not name:
         return None
     cache = {}
@@ -30,7 +30,9 @@ def _openai_key_loader():
 
 def _costs_config():
     return {
-        "openai_key_loader": _openai_key_loader(),
+        "openai_key_loader": _admin_key_loader("RUNPASS_OPENAI_ADMIN_KEY_PARAM"),
+        "claude_key_loader": _admin_key_loader("RUNPASS_ANTHROPIC_ADMIN_KEY_PARAM"),
+        "claude_limit": _number("RUNPASS_CLAUDE_LIMIT_USD"),
         "openai_project": os.environ.get("RUNPASS_OPENAI_PROJECT_ID", "").strip(),
         # O Cost Explorer so existe em us-east-1, qualquer que seja a regiao da conta.
         "ce": _boto_client("ce", region_name="us-east-1"),

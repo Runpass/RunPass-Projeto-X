@@ -45,6 +45,16 @@ Parameters:
     Default: ''
     AllowedPattern: '^(/.+)?$'
     Description: Nome do parametro SSM (SecureString) com a chave de ADMINISTRADOR da OpenAI. Vazio = o painel usa so a estimativa pelos logs
+  AnthropicAdminKeyParameter:
+    Type: String
+    Default: ''
+    AllowedPattern: '^(/.+)?$'
+    Description: Nome do parametro SSM (SecureString) com a chave de ADMINISTRADOR da Anthropic (sk-ant-admin01-...), para o uso do Claude Code da equipe. Vazio = a aba mostra "nao configurado"
+  ClaudeMonthlyLimitUsd:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([0-9]+(\.[0-9]+)?)?$'
+    Description: Teto mensal de referencia do Claude Code mostrado no painel (opcional)
   OpenAiProjectId:
     Type: String
     Default: ''
@@ -83,6 +93,7 @@ Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   HasCatalogFunction: !Not [!Equals [!Ref CatalogFunctionName, '']]
   HasOpenAiAdminKey: !Not [!Equals [!Ref OpenAiAdminKeyParameter, '']]
+  HasAnthropicAdminKey: !Not [!Equals [!Ref AnthropicAdminKeyParameter, '']]
   HasReportBucket: !Not [!Equals [!Ref CatalogReportBucket, '']]
 
 Resources:
@@ -214,6 +225,13 @@ Resources:
                   Action: ssm:GetParameter
                   Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${OpenAiAdminKeyParameter}'
                 - !Ref AWS::NoValue
+              - !If
+                - HasAnthropicAdminKey
+                - Sid: LerChaveAdminDaAnthropic
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AnthropicAdminKeyParameter}'
+                - !Ref AWS::NoValue
               - Sid: LerCustosDaConta
                 Effect: Allow
                 Action: [ce:GetCostAndUsage, ce:GetCostForecast]
@@ -261,6 +279,8 @@ Resources:
           RUNPASS_CATALOG_REPORT_BUCKET: !Ref CatalogReportBucket
           RUNPASS_AWS_BUDGET_USD: !Ref AwsMonthlyBudgetUsd
           RUNPASS_OPENAI_ADMIN_KEY_PARAM: !Ref OpenAiAdminKeyParameter
+          RUNPASS_ANTHROPIC_ADMIN_KEY_PARAM: !Ref AnthropicAdminKeyParameter
+          RUNPASS_CLAUDE_LIMIT_USD: !Ref ClaudeMonthlyLimitUsd
           RUNPASS_OPENAI_PROJECT_ID: !Ref OpenAiProjectId
           RUNPASS_OPENAI_LIMIT_USD: !Ref OpenAiMonthlyLimitUsd
           RUNPASS_OPENAI_PRICE_IN_PER_MTOK: !Ref OpenAiPriceInPerMTok

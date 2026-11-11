@@ -137,6 +137,16 @@ test('motivo da falha da OpenAI vira frase útil sem vazar detalhes', async () =
   assert.equal(motivoOpenAi(undefined), 'Motivo não identificado.');
 });
 
+test('motivo da falha do Claude Code vira frase útil sem vazar detalhes', async () => {
+  const { motivoClaude } = await import('./lib.js');
+  assert.match(motivoClaude('key_read_failed:ParameterNotFound'), /ParameterNotFound.*SecureString/);
+  assert.match(motivoClaude('http_401'), /sk-ant-admin01/);
+  assert.match(motivoClaude('http_403'), /organização/);
+  assert.match(motivoClaude('http_500'), /\(500\)/);
+  assert.match(motivoClaude('not_configured'), /não está configurada/);
+  assert.equal(motivoClaude(undefined), 'Motivo não identificado.');
+});
+
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
   const { situacaoOperador } = await import('./lib.js');
   assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);

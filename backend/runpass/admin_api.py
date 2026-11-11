@@ -171,6 +171,7 @@ def create_admin_app(
     aws_costs=None,
     openai_usage=None,
     openai_org=None,
+    claude_code=None,
     banners=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
@@ -438,6 +439,13 @@ def create_admin_app(
         else:
             out["openaiOrg"] = None
         out["openaiOrgStatus"] = org_status
+        out["claude"], out["claudeStatus"], out["claudeReason"] = None, "not_configured", None
+        if claude_code is not None and claude_code.configured:
+            try:  # uso do Claude Code da equipe (Admin API da Anthropic); falha aqui nao esconde o resto
+                out["claude"], out["claudeStatus"] = claude_code.report(), "ok"
+            except Unavailable as error:
+                out["claudeStatus"] = "error"
+                out["claudeReason"] = getattr(error, "reason", "unknown")
         for name, source in (("aws", aws_costs), ("openai", openai_usage)):
             try:  # uma fonte fora do ar nao esconde a outra
                 out[name] = source.report() if source else None

@@ -25,5 +25,6 @@ aws cloudformation deploy --stack-name "$STACK" --template-file "$ROOT/infra/por
     "CatalogReportBucket=runpass-dev-catalogo-relatorios-$(aws sts get-caller-identity --query Account --output text)" \
     "OpenAiAdminKeyParameter=${OPENAI_ADMIN_KEY_PARAM:-}" "OpenAiProjectId=${OPENAI_PROJECT_ID:-}" \
     "OpenAiPriceInPerMTok=${OPENAI_PRICE_IN_PER_MTOK:-}" "OpenAiPriceOutPerMTok=${OPENAI_PRICE_OUT_PER_MTOK:-}" \
-    "OpenAiPricePerSearch=${OPENAI_PRICE_PER_SEARCH:-}"
+    "OpenAiPricePerSearch=${OPENAI_PRICE_PER_SEARCH:-}" \
+    "AnthropicAdminKeyParameter=${ANTHROPIC_ADMIN_KEY_PARAM:-}" "ClaudeMonthlyLimitUsd=${CLAUDE_LIMIT_USD:-}"
 echo "Portal: $(aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='PortalUrl'].OutputValue" --output text)"
