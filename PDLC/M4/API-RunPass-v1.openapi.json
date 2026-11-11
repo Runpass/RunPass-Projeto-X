@@ -5902,13 +5902,20 @@
           "medalImageReference": {
             "type": "string"
           },
-          "medalShape": {
+          "medalFrameId": {
             "type": "string",
-            "enum": ["round", "shield", "star", "hexagon"]
-          },
-          "medalCordColor": {
-            "type": "string",
-            "pattern": "^#[0-9A-Fa-f]{6}$"
+            "enum": [
+              "circular_prata_azul",
+              "circular_rose_rosa",
+              "circular_grafite_preto",
+              "hexagonal_bronze_verde",
+              "hexagonal_rose_lilas",
+              "quadrada_rose_malva",
+              "escudo_grafite_azul",
+              "assimetrica_prata_lima",
+              "triangular_grafite_preto",
+              "triangular_rose_rosa"
+            ]
           },
           "medalDescription": {
             "type": "string",
@@ -6181,17 +6188,22 @@
             "exclusiveMinimum": true,
             "description": "Only for a missing-edition request draft before it has a catalog distanceId. Final completion resolves a valid catalog distance."
           },
-          "medalShape": {
+          "medalFrameId": {
             "type": "string",
-            "enum": ["round", "shield", "star", "hexagon"],
+            "enum": [
+              "circular_prata_azul",
+              "circular_rose_rosa",
+              "circular_grafite_preto",
+              "hexagonal_bronze_verde",
+              "hexagonal_rose_lilas",
+              "quadrada_rose_malva",
+              "escudo_grafite_azul",
+              "assimetrica_prata_lima",
+              "triangular_grafite_preto",
+              "triangular_rose_rosa"
+            ],
             "nullable": true,
-            "description": "Forma exibida na prateleira de medalhas; null volta ao padrão (round)."
-          },
-          "medalCordColor": {
-            "type": "string",
-            "pattern": "^#[0-9A-Fa-f]{6}$",
-            "nullable": true,
-            "description": "Cor da fita/cordão em hex; null volta a usar a cor extraída da foto da medalha."
+            "description": "Modelo de medalha do catálogo (imagem com furo central); null volta ao padrão (circular_prata_azul)."
           },
           "medalDescription": {
             "type": "string",

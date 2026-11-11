@@ -115,10 +115,23 @@ class PatchParticipation(Input):
     showTime: bool | None = None
     showPlacement: bool | None = None
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
-    # Customizacao visual da medalha na prateleira; None mantem/limpa o valor
-    # padrao (forma redonda, cor extraida da foto, dados do catalogo).
-    medalShape: Literal["round", "shield", "star", "hexagon"] | None = None
-    medalCordColor: Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")] | None = None
+    # Modelo de medalha (catalogo fixo de imagens); None volta ao padrao
+    # (circular_prata_azul). Customizacao visual da legenda abaixo tambem opcional.
+    medalFrameId: (
+        Literal[
+            "circular_prata_azul",
+            "circular_rose_rosa",
+            "circular_grafite_preto",
+            "hexagonal_bronze_verde",
+            "hexagonal_rose_lilas",
+            "quadrada_rose_malva",
+            "escudo_grafite_azul",
+            "assimetrica_prata_lima",
+            "triangular_grafite_preto",
+            "triangular_rose_rosa",
+        ]
+        | None
+    ) = None
     medalDescription: Annotated[str, Field(min_length=1, max_length=200)] | None = None
     medalCity: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     medalState: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] | None = None

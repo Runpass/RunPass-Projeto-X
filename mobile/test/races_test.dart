@@ -111,16 +111,22 @@ void main() {
       await tester.tap(find.text('Por ano'));
       await tester.pumpAndSettle();
       expect(find.text('2026'), findsOneWidget);
+      final medalsList = find
+          .descendant(
+            of: find.byKey(const Key('medals-list')),
+            matching: find.byType(Scrollable),
+          )
+          .first;
       await tester.scrollUntilVisible(
         find.text('2025'),
         200,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: medalsList,
       );
       expect(find.text('2025'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('Por distância'),
-        -200,
-        scrollable: find.byType(Scrollable).first,
+        -2000,
+        scrollable: medalsList,
       );
       await tester.tap(find.text('Por distância'));
       await tester.pumpAndSettle();
@@ -128,7 +134,7 @@ void main() {
       await tester.scrollUntilVisible(
         find.text('10K'),
         200,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: medalsList,
       );
       expect(find.text('10K'), findsOneWidget);
     },
@@ -145,6 +151,25 @@ void main() {
     await tester.tap(find.byKey(const Key('medals-profile-avatar')));
     await tester.pumpAndSettle();
     expect(find.byType(RunnerProfileScreen), findsOneWidget);
+    expect(find.byType(MedalCollectionScreen), findsNothing);
+  });
+
+  testWidgets('tocar no "+" da prateleira abre o cadastro de corridas', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(CatalogScreen), findsNothing);
+    await tester.drag(
+      find.byKey(const Key('medals-list')),
+      const Offset(0, -400),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('medal-add-tile')));
+    await tester.pumpAndSettle();
+    expect(find.byType(CatalogScreen), findsOneWidget);
     expect(find.byType(MedalCollectionScreen), findsNothing);
   });
 
@@ -200,8 +225,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Personalizar medalha'), findsOneWidget);
 
-    await tester.tap(find.text('Escudo'));
-    await tester.tap(find.byKey(const Key('medal-cord-#4a8cf0')));
+    await tester.tap(
+      find.byKey(const Key('medal-frame-hexagonal_bronze_verde')),
+    );
     await tester.enterText(find.widgetWithText(TextField, 'Descrição'), '');
     await tester.enterText(
       find.widgetWithText(TextField, 'Descrição'),
@@ -215,8 +241,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(patchBody['expectedVersion'], 2);
-    expect(patchBody['medalShape'], 'shield');
-    expect(patchBody['medalCordColor'], '#4a8cf0');
+    expect(patchBody['medalFrameId'], 'hexagonal_bronze_verde');
     expect(patchBody['medalDescription'], 'Minha prova especial');
     expect(patchBody['medalCity'], 'Santos');
     expect(patchBody['medalState'], 'SP');
@@ -257,7 +282,7 @@ void main() {
               'items': [done('p1', 'a', seconds: 1500)],
             });
           }
-          if (uri.path == '/participations/p1/display-image') {
+          if (uri.path == '/participations/p1/image') {
             return const JsonReply(200, {
               'url': 'https://signed.example/current.jpg',
               'contentType': 'image/png',
@@ -296,7 +321,7 @@ void main() {
           home: MedalCollectionScreen(
             gateway: gateway,
             fetchDisplayPhoto: (url) async => onePixelPng,
-            openCropScreen: (context, image) async => image,
+            openCropScreen: (context, image, frame) async => image,
           ),
         ),
       );
@@ -314,7 +339,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(patchBody['medalDisplayImageReference'], 'img-cropped');
-      expect(calls, contains('GET /participations/p1/display-image'));
+      expect(calls, contains('GET /participations/p1/image'));
       expect(calls, contains('POST /uploads/up1/finalize'));
     },
   );

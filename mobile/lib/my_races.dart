@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' show cos, pi, sin;
+import 'dart:math' show max;
 import 'dart:typed_data' show Uint8List;
 import 'dart:ui' as ui;
 
@@ -64,8 +64,8 @@ class RaceRecord {
 
   // Customizacao da medalha na prateleira: cada campo tem o dado do catalogo
   // como padrao e so usa o valor salvo quando a pessoa o personalizou.
-  String get medalShape => participation['medalShape'] as String? ?? 'round';
-  String? get medalCordColor => participation['medalCordColor'] as String?;
+  String get medalFrameId =>
+      participation['medalFrameId'] as String? ?? defaultMedalFrameId;
   String? get medalDisplayImageReference =>
       participation['medalDisplayImageReference'] as String?;
   String get medalDescription =>
@@ -84,202 +84,410 @@ class RaceRecord {
       : '$medalCity - $medalState';
 }
 
-/// Converte uma Color para "#rrggbb" para enviar ao backend.
-String colorToHex(Color color) {
-  int channel(double value) => (value * 255).round().clamp(0, 255);
-  final argb = color.toARGB32();
-  return '#'
-      '${channel(((argb >> 16) & 0xff) / 255).toRadixString(16).padLeft(2, '0')}'
-      '${channel(((argb >> 8) & 0xff) / 255).toRadixString(16).padLeft(2, '0')}'
-      '${channel((argb & 0xff) / 255).toRadixString(16).padLeft(2, '0')}';
+/// Catalogo fixo de modelos de medalha: cada imagem ja traz a forma, o metal
+/// e a fita prontos, com um furo transparente onde a foto do usuario aparece.
+/// As fracoes do furo sao medidas sobre a propria imagem (uma unica vez,
+/// offline) e expressas como fracao da LARGURA da imagem — usando a mesma
+/// unidade nos dois eixos, a geometria fica correta em qualquer tamanho de
+/// tela, desde que a imagem seja exibida respeitando sua proporcao nativa.
+enum MedalHoleShape { circle, hexagon, roundedSquare, polygon }
+
+class MedalFrame {
+  final String id;
+  final String label;
+  final String asset;
+  final double aspectRatio; // largura / altura da imagem
+  final MedalHoleShape shape;
+  final double holeCenterXFrac;
+  final double holeCenterYFrac;
+  final double holeHalfWidthFrac;
+  final double holeHalfHeightFrac;
+  // Usado so quando shape == roundedSquare: fracao do raio do canto em
+  // relacao a largura do furo.
+  final double cornerRadiusFrac;
+  // Usado so quando shape == polygon: contorno exato do furo, medido sobre
+  // o canal alpha da imagem, em fracao da LARGURA da imagem (mesma unidade
+  // nos dois eixos, igual ao resto da geometria desta classe).
+  final List<Offset>? holeOutlineFrac;
+  const MedalFrame({
+    required this.id,
+    required this.label,
+    required this.asset,
+    required this.aspectRatio,
+    required this.shape,
+    this.holeCenterXFrac = 0,
+    this.holeCenterYFrac = 0,
+    this.holeHalfWidthFrac = 0,
+    this.holeHalfHeightFrac = 0,
+    this.cornerRadiusFrac = 0,
+    this.holeOutlineFrac,
+  });
 }
 
-/// Converte "#rrggbb" (como salvo pelo backend) de volta para Color.
-Color colorFromHex(String hex) {
-  final value = int.parse(hex.replaceFirst('#', ''), radix: 16);
-  return Color.fromARGB(
-    255,
-    (value >> 16) & 0xff,
-    (value >> 8) & 0xff,
-    value & 0xff,
-  );
-}
+const defaultMedalFrameId = 'circular_prata_azul';
 
-const medalShapeOptions = [
-  ('round', 'Redonda'),
-  ('shield', 'Escudo'),
-  ('star', 'Estrela'),
-  ('hexagon', 'Hexágono'),
+const medalFrames = <MedalFrame>[
+  MedalFrame(
+    id: 'circular_prata_azul',
+    label: 'Circular · prata/azul',
+    asset: 'assets/medal_frames/circular_prata_azul.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.circle,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3100,
+    holeHalfHeightFrac: 0.3100,
+  ),
+  MedalFrame(
+    id: 'circular_rose_rosa',
+    label: 'Circular · rosé/rosa',
+    asset: 'assets/medal_frames/circular_rose_rosa.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.circle,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3100,
+    holeHalfHeightFrac: 0.3100,
+  ),
+  MedalFrame(
+    id: 'circular_grafite_preto',
+    label: 'Circular · grafite/preto',
+    asset: 'assets/medal_frames/circular_grafite_preto.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.circle,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3100,
+    holeHalfHeightFrac: 0.3100,
+  ),
+  MedalFrame(
+    id: 'hexagonal_bronze_verde',
+    label: 'Hexagonal · bronze/verde',
+    asset: 'assets/medal_frames/hexagonal_bronze_verde.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.hexagon,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3705,
+    holeHalfHeightFrac: 0.3090,
+  ),
+  MedalFrame(
+    id: 'hexagonal_rose_lilas',
+    label: 'Hexagonal · rosé/lilás',
+    asset: 'assets/medal_frames/hexagonal_rose_lilas.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.hexagon,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3705,
+    holeHalfHeightFrac: 0.3090,
+  ),
+  MedalFrame(
+    id: 'quadrada_rose_malva',
+    label: 'Quadrada · rosé/malva',
+    asset: 'assets/medal_frames/quadrada_rose_malva.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.roundedSquare,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3100,
+    holeHalfHeightFrac: 0.3100,
+    cornerRadiusFrac: 0.14,
+  ),
+  MedalFrame(
+    id: 'escudo_grafite_azul',
+    label: 'Escudo · grafite/azul',
+    asset: 'assets/medal_frames/escudo_grafite_azul.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.polygon,
+    holeOutlineFrac: [
+      Offset(0.4996, 0.5087),
+      Offset(0.3237, 0.5367),
+      Offset(0.2178, 0.5767),
+      Offset(0.2162, 0.6167),
+      Offset(0.2162, 0.6567),
+      Offset(0.2178, 0.6967),
+      Offset(0.2203, 0.7367),
+      Offset(0.2253, 0.7767),
+      Offset(0.2320, 0.8167),
+      Offset(0.2420, 0.8558),
+      Offset(0.2553, 0.8958),
+      Offset(0.2737, 0.9358),
+      Offset(0.2978, 0.9758),
+      Offset(0.3303, 1.0158),
+      Offset(0.3728, 1.0558),
+      Offset(0.4312, 1.0958),
+      Offset(0.4996, 1.1238),
+      Offset(0.5680, 1.0958),
+      Offset(0.6263, 1.0558),
+      Offset(0.6688, 1.0158),
+      Offset(0.7013, 0.9758),
+      Offset(0.7255, 0.9358),
+      Offset(0.7438, 0.8958),
+      Offset(0.7572, 0.8558),
+      Offset(0.7672, 0.8167),
+      Offset(0.7738, 0.7767),
+      Offset(0.7788, 0.7367),
+      Offset(0.7813, 0.6967),
+      Offset(0.7830, 0.6567),
+      Offset(0.7830, 0.6167),
+      Offset(0.7813, 0.5767),
+      Offset(0.6755, 0.5367),
+    ],
+  ),
+  MedalFrame(
+    id: 'assimetrica_prata_lima',
+    label: 'Assimétrica · prata/lima',
+    asset: 'assets/medal_frames/assimetrica_prata_lima.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.polygon,
+    holeOutlineFrac: [
+      Offset(0.4988, 0.5078),
+      Offset(0.3737, 0.5275),
+      Offset(0.3220, 0.5600),
+      Offset(0.2870, 0.5917),
+      Offset(0.2595, 0.6242),
+      Offset(0.2395, 0.6558),
+      Offset(0.2245, 0.6875),
+      Offset(0.2128, 0.7200),
+      Offset(0.2045, 0.7517),
+      Offset(0.1995, 0.7842),
+      Offset(0.1978, 0.8158),
+      Offset(0.1995, 0.8475),
+      Offset(0.2037, 0.8800),
+      Offset(0.2103, 0.9117),
+      Offset(0.2212, 0.9442),
+      Offset(0.2362, 0.9758),
+      Offset(0.2553, 1.0075),
+      Offset(0.2812, 1.0400),
+      Offset(0.3162, 1.0717),
+      Offset(0.3687, 1.1042),
+      Offset(0.4729, 1.1238),
+      Offset(0.4647, 1.1042),
+      Offset(0.4705, 1.0717),
+      Offset(0.4805, 1.0400),
+      Offset(0.4938, 1.0075),
+      Offset(0.5122, 0.9758),
+      Offset(0.5363, 0.9442),
+      Offset(0.5680, 0.9117),
+      Offset(0.6088, 0.8800),
+      Offset(0.6680, 0.8475),
+      Offset(0.8005, 0.8158),
+      Offset(0.7988, 0.7842),
+      Offset(0.7947, 0.7517),
+      Offset(0.7863, 0.7200),
+      Offset(0.7755, 0.6875),
+      Offset(0.7605, 0.6558),
+      Offset(0.7413, 0.6242),
+      Offset(0.7147, 0.5917),
+      Offset(0.6805, 0.5600),
+      Offset(0.6288, 0.5275),
+    ],
+  ),
+  MedalFrame(
+    id: 'triangular_grafite_preto',
+    label: 'Triangular · grafite/preto',
+    asset: 'assets/medal_frames/triangular_grafite_preto.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.polygon,
+    holeOutlineFrac: [
+      Offset(0.1912, 0.5078),
+      Offset(0.1912, 0.5408),
+      Offset(0.1912, 0.5867),
+      Offset(0.1912, 0.6325),
+      Offset(0.1912, 0.6775),
+      Offset(0.2070, 0.7225),
+      Offset(0.2412, 0.7683),
+      Offset(0.2753, 0.8142),
+      Offset(0.3087, 0.8592),
+      Offset(0.3420, 0.9042),
+      Offset(0.3762, 0.9500),
+      Offset(0.4103, 0.9958),
+      Offset(0.4437, 1.0408),
+      Offset(0.4770, 1.0858),
+      Offset(0.4996, 1.1197),
+      Offset(0.5222, 1.0858),
+      Offset(0.5555, 1.0408),
+      Offset(0.5888, 0.9958),
+      Offset(0.6230, 0.9500),
+      Offset(0.6572, 0.9042),
+      Offset(0.6905, 0.8592),
+      Offset(0.7238, 0.8142),
+      Offset(0.7580, 0.7683),
+      Offset(0.7922, 0.7225),
+      Offset(0.8080, 0.6775),
+      Offset(0.8080, 0.6325),
+      Offset(0.8080, 0.5867),
+      Offset(0.8080, 0.5408),
+      Offset(0.8080, 0.5078),
+    ],
+  ),
+  MedalFrame(
+    id: 'triangular_rose_rosa',
+    label: 'Triangular · rosé/rosa',
+    asset: 'assets/medal_frames/triangular_rose_rosa.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.polygon,
+    holeOutlineFrac: [
+      Offset(0.1912, 0.5078),
+      Offset(0.1912, 0.5408),
+      Offset(0.1912, 0.5867),
+      Offset(0.1912, 0.6325),
+      Offset(0.1912, 0.6775),
+      Offset(0.2070, 0.7225),
+      Offset(0.2412, 0.7683),
+      Offset(0.2753, 0.8142),
+      Offset(0.3087, 0.8592),
+      Offset(0.3420, 0.9042),
+      Offset(0.3762, 0.9500),
+      Offset(0.4103, 0.9958),
+      Offset(0.4437, 1.0408),
+      Offset(0.4770, 1.0858),
+      Offset(0.4996, 1.1197),
+      Offset(0.5222, 1.0858),
+      Offset(0.5555, 1.0408),
+      Offset(0.5888, 0.9958),
+      Offset(0.6230, 0.9500),
+      Offset(0.6572, 0.9042),
+      Offset(0.6905, 0.8592),
+      Offset(0.7238, 0.8142),
+      Offset(0.7580, 0.7683),
+      Offset(0.7922, 0.7225),
+      Offset(0.8080, 0.6775),
+      Offset(0.8080, 0.6325),
+      Offset(0.8080, 0.5867),
+      Offset(0.8080, 0.5408),
+      Offset(0.8080, 0.5078),
+    ],
+  ),
 ];
 
-const medalCordPalette = <Color>[
-  runPassOrange,
-  Color(0xffe8b23a),
-  Color(0xff4cc38a),
-  Color(0xff4a8cf0),
-  Color(0xff9b59b6),
-  Color(0xffe74c3c),
-  Color(0xff1abc9c),
-  Color(0xff34495e),
-  Color(0xfff1c40f),
-  Color(0xffff6fa3),
-  Color(0xff2ecc71),
-  Color(0xff7f8c8d),
-];
+MedalFrame medalFrameFor(String? id) =>
+    medalFrames.firstWhere((f) => f.id == id, orElse: () => medalFrames.first);
 
-/// Desenha o contorno da medalha conforme a forma escolhida; "round" (padrao)
-/// e as demais sao polígonos regulares simples.
-Path medalShapePath(String shape, Size size) {
-  final w = size.width, h = size.height;
-  switch (shape) {
-    case 'star':
-      return _polygonPath(w, h, points: 5, star: true);
-    case 'hexagon':
-      return _polygonPath(w, h, points: 6, star: false);
-    case 'shield':
-      return Path()
-        ..moveTo(w / 2, 0)
-        ..lineTo(w, h * 0.22)
-        ..lineTo(w, h * 0.55)
-        ..cubicTo(w, h * 0.85, w * 0.7, h, w / 2, h)
-        ..cubicTo(w * 0.3, h, 0, h * 0.85, 0, h * 0.55)
-        ..lineTo(0, h * 0.22)
-        ..close();
-    default:
-      return Path()..addOval(Rect.fromLTWH(0, 0, w, h));
-  }
-}
-
-Path _polygonPath(
-  double w,
-  double h, {
-  required int points,
-  required bool star,
-}) {
-  final path = Path();
-  final cx = w / 2, cy = h / 2;
-  final outerR = w / 2;
-  final innerR = outerR * 0.45;
-  final vertices = star ? points * 2 : points;
-  final step = 360 / vertices;
-  for (var i = 0; i < vertices; i++) {
-    final angle = (-90 + i * step) * pi / 180;
-    final r = star && i.isOdd ? innerR : outerR;
-    final x = cx + r * cos(angle);
-    final y = cy + r * sin(angle);
-    if (i == 0) {
-      path.moveTo(x, y);
-    } else {
-      path.lineTo(x, y);
-    }
-  }
-  path.close();
-  return path;
-}
-
-class _MedalShapeClipper extends CustomClipper<Path> {
-  final String shape;
-  const _MedalShapeClipper(this.shape);
+/// Recorte hexagonal (pontas na esquerda/direita, topo e base retos) usado
+/// para encaixar a foto exatamente no furo dos modelos hexagonais.
+class _HexagonHoleClipper extends CustomClipper<Path> {
+  const _HexagonHoleClipper();
   @override
-  Path getClip(Size size) => medalShapePath(shape, size);
-  @override
-  bool shouldReclip(covariant _MedalShapeClipper oldClipper) =>
-      oldClipper.shape != shape;
-}
-
-/// Contorno colorido acompanhando exatamente a forma da medalha (redonda,
-/// escudo, estrela ou hexagono), para dar o acabamento de "medalha" a foto.
-/// Fita/cordao em formato de bandeirola (como no template): duas tiras que se
-/// abrem a partir do centro e terminam com um recorte em V.
-class _RibbonPainter extends CustomPainter {
-  final Color color;
-  const _RibbonPainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color;
-    final centerX = size.width / 2;
-    final halfGap = size.width * 0.05;
-    final width = size.width * 0.12;
-    final notch = size.height * 0.3;
-    for (final side in [-1, 1]) {
-      final topInner = centerX + side * halfGap;
-      final topOuter = centerX + side * (halfGap + width);
-      final bottomInner = centerX + side * (halfGap - size.width * 0.03);
-      final bottomOuter =
-          centerX + side * (halfGap + width - size.width * 0.03);
-      final path = Path()
-        ..moveTo(topInner, 0)
-        ..lineTo(topOuter, 0)
-        ..lineTo(bottomOuter, size.height)
-        ..lineTo((bottomOuter + bottomInner) / 2, size.height - notch)
-        ..lineTo(bottomInner, size.height)
-        ..close();
-      canvas.drawPath(path, paint);
-    }
+  Path getClip(Size size) {
+    final w = size.width, h = size.height;
+    return Path()
+      ..moveTo(w, h / 2)
+      ..lineTo(w * 0.75, 0)
+      ..lineTo(w * 0.25, 0)
+      ..lineTo(0, h / 2)
+      ..lineTo(w * 0.25, h)
+      ..lineTo(w * 0.75, h)
+      ..close();
   }
 
   @override
-  bool shouldRepaint(covariant _RibbonPainter oldDelegate) =>
-      oldDelegate.color != color;
+  bool shouldReclip(covariant _HexagonHoleClipper oldClipper) => false;
 }
 
-class _MedalRingPainter extends CustomPainter {
-  final String shape;
-  final Color color;
-  const _MedalRingPainter(this.shape, this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final inset = size.width * 0.02;
-    final path = medalShapePath(
-      shape,
-      Size(size.width - inset * 2, size.height - inset * 2),
-    ).shift(Offset(inset, inset));
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = size.width * 0.045,
+/// Composicao da medalha na prateleira: a foto do usuario atras, recortada no
+/// formato do furo, com a imagem do modelo (metal + fita) por cima.
+Widget medalFrameWidget({required MedalFrame frame, required Widget photo}) =>
+    AspectRatio(
+      aspectRatio: frame.aspectRatio,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          // Contorno em polígono: medido direto sobre a imagem inteira, então
+          // o recorte usa o Stack completo (sem sub-retângulo posicionado).
+          if (frame.shape == MedalHoleShape.polygon) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipPath(
+                  clipper: _PolygonHoleClipper(frame.holeOutlineFrac!),
+                  child: photo,
+                ),
+                Image.asset(frame.asset, fit: BoxFit.fill),
+              ],
+            );
+          }
+          final holeCx = frame.holeCenterXFrac * w;
+          final holeCy = frame.holeCenterYFrac * w;
+          final holeW = frame.holeHalfWidthFrac * w * 2;
+          final holeH = frame.holeHalfHeightFrac * w * 2;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned(
+                left: holeCx - holeW / 2,
+                top: holeCy - holeH / 2,
+                width: holeW,
+                height: holeH,
+                child: ClipPath(
+                  clipper: switch (frame.shape) {
+                    MedalHoleShape.hexagon => const _HexagonHoleClipper(),
+                    MedalHoleShape.roundedSquare => _RoundedSquareHoleClipper(
+                      frame.cornerRadiusFrac,
+                    ),
+                    _ => const _CircleClipper(),
+                  },
+                  child: photo,
+                ),
+              ),
+              Image.asset(frame.asset, fit: BoxFit.fill),
+            ],
+          );
+        },
+      ),
     );
+
+class _CircleClipper extends CustomClipper<Path> {
+  const _CircleClipper();
+  @override
+  Path getClip(Size size) =>
+      Path()..addOval(Rect.fromLTWH(0, 0, size.width, size.height));
+  @override
+  bool shouldReclip(covariant _CircleClipper oldClipper) => false;
+}
+
+class _RoundedSquareHoleClipper extends CustomClipper<Path> {
+  final double cornerRadiusFrac;
+  const _RoundedSquareHoleClipper(this.cornerRadiusFrac);
+  @override
+  Path getClip(Size size) => Path()
+    ..addRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, size.width, size.height),
+        Radius.circular(size.width * cornerRadiusFrac),
+      ),
+    );
+  @override
+  bool shouldReclip(covariant _RoundedSquareHoleClipper oldClipper) =>
+      oldClipper.cornerRadiusFrac != cornerRadiusFrac;
+}
+
+/// Recorte por contorno exato, medido sobre o canal alpha da imagem do
+/// modelo (fracoes da LARGURA da imagem nos dois eixos). Usado para furos
+/// com formato irregular (escudo, assimetrica) que um simples circulo/
+/// hexagono nao reproduz sem sobrar foto fora do contorno metalico.
+class _PolygonHoleClipper extends CustomClipper<Path> {
+  final List<Offset> pointsFrac;
+  const _PolygonHoleClipper(this.pointsFrac);
+  @override
+  Path getClip(Size size) {
+    final w = size.width;
+    final path = Path();
+    for (var i = 0; i < pointsFrac.length; i++) {
+      final p = pointsFrac[i] * w;
+      if (i == 0) {
+        path.moveTo(p.dx, p.dy);
+      } else {
+        path.lineTo(p.dx, p.dy);
+      }
+    }
+    return path..close();
   }
 
   @override
-  bool shouldRepaint(covariant _MedalRingPainter oldDelegate) =>
-      oldDelegate.shape != shape || oldDelegate.color != color;
+  bool shouldReclip(covariant _PolygonHoleClipper oldClipper) => false;
 }
-
-final Map<String, Color> _medalCordColorCache = {};
-
-/// Cor dominante extraida da foto da medalha exibida na prateleira (o recorte
-/// reposicionado, quando existir), para servir de cor padrao do cordao quando
-/// a pessoa nao escolheu uma cor manualmente. Calculada uma vez por
-/// participacao e reaproveitada ate a proxima customizacao.
-Future<Color> dominantCordColor(
-  IdentityGateway gateway,
-  String participationId,
-) async {
-  final cached = _medalCordColorCache[participationId];
-  if (cached != null) return cached;
-  try {
-    final reply = await gateway.request(
-      '/participations/${Uri.encodeComponent(participationId)}/display-image',
-    );
-    final link = reply['url'] as String?;
-    if (link == null) return runPassOrange;
-    final color = await _sampleDominantColor(link) ?? runPassOrange;
-    _medalCordColorCache[participationId] = color;
-    return color;
-  } on Exception {
-    return runPassOrange;
-  }
-}
-
-/// Esquece a cor dominante guardada, depois de reposicionar a foto (a cor
-/// automatica pode ter mudado com o novo recorte).
-void forgetDominantCordColor(String participationId) =>
-    _medalCordColorCache.remove(participationId);
 
 /// Baixa os bytes de um link assinado (S3), para reabrir num editor de
 /// recorte local. Lanca [IdentityIssue] se a resposta nao for 200.
@@ -300,43 +508,6 @@ Future<List<int>> fetchImageBytes(String url) async {
     return bytes;
   } finally {
     client.close(force: true);
-  }
-}
-
-Future<Color?> _sampleDominantColor(String url) async {
-  try {
-    final completer = Completer<ui.Image>();
-    final stream = NetworkImage(url).resolve(const ImageConfiguration());
-    late ImageStreamListener listener;
-    listener = ImageStreamListener(
-      (info, _) {
-        completer.complete(info.image);
-        stream.removeListener(listener);
-      },
-      onError: (error, stack) {
-        if (!completer.isCompleted) completer.completeError(error, stack);
-        stream.removeListener(listener);
-      },
-    );
-    stream.addListener(listener);
-    final image = await completer.future;
-    final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-    if (data == null) return null;
-    final bytes = data.buffer.asUint8List();
-    var r = 0, g = 0, b = 0, count = 0;
-    final pixels = bytes.length ~/ 4;
-    final stride = (pixels / 2000).ceil().clamp(1, 1 << 20);
-    for (var i = 0; i + 3 < bytes.length; i += 4 * stride) {
-      if (bytes[i + 3] < 128) continue;
-      r += bytes[i];
-      g += bytes[i + 1];
-      b += bytes[i + 2];
-      count++;
-    }
-    if (count == 0) return null;
-    return Color.fromARGB(255, r ~/ count, g ~/ count, b ~/ count);
-  } on Exception {
-    return null;
   }
 }
 
@@ -781,23 +952,312 @@ typedef ImageBytesFetcher = Future<List<int>> Function(String url);
 typedef MedalCropOpener = Future<List<int>?> Function(
   BuildContext context,
   Uint8List image,
+  MedalFrame frame,
 );
 
 Future<List<int>?> openMedalCropScreen(
   BuildContext context,
   Uint8List image,
+  MedalFrame frame,
 ) => Navigator.of(context).push<List<int>>(
   MaterialPageRoute(
     fullscreenDialog: true,
-    builder: (_) => ProfilePhotoCropScreen(
-      image: image,
-      title: 'Reposicionar foto',
-      instructions:
-          'Arraste e use dois dedos para ampliar. Essa área é o que aparece '
-          'na prateleira de medalhas.',
-    ),
+    builder: (_) => TouchCropScreen(image: image, frame: frame),
   ),
 );
+
+/// Razao largura/altura da area que a foto realmente preenche no furo do
+/// modelo escolhido: para os formatos com sub-retangulo posicionado
+/// (circulo, hexagono, quadrada) e a razao do proprio furo; para contorno em
+/// poligono (escudo, assimetrica) a foto preenche o quadro inteiro antes do
+/// recorte, entao e a razao do quadro. Usada para o recorte de reposicionar
+/// a foto exportar no mesmo formato que vai aparecer na prateleira, sem
+/// sobra nem corte extra por um BoxFit.cover posterior.
+double medalCropAspectRatio(MedalFrame frame) =>
+    frame.shape == MedalHoleShape.polygon
+    ? frame.aspectRatio
+    : frame.holeHalfWidthFrac / frame.holeHalfHeightFrac;
+
+/// Mesmo contorno usado para recortar a foto na prateleira (circulo,
+/// hexagono, quadrada arredondada ou poligono), mas calculado direto para um
+/// [Size] arbitrario — usado so para desenhar o guia de recorte, sem
+/// precisar montar a arvore de widgets da prateleira.
+Path medalHolePath(MedalFrame frame, Size size) => switch (frame.shape) {
+  MedalHoleShape.hexagon => const _HexagonHoleClipper().getClip(size),
+  MedalHoleShape.roundedSquare => _RoundedSquareHoleClipper(
+    frame.cornerRadiusFrac,
+  ).getClip(size),
+  MedalHoleShape.polygon => _PolygonHoleClipper(
+    frame.holeOutlineFrac!,
+  ).getClip(size),
+  MedalHoleShape.circle => const _CircleClipper().getClip(size),
+};
+
+/// Desenha a foto aplicando zoom/giro/arrasto; usado tanto na pre-visualizacao
+/// ao vivo quanto na exportacao final, pra garantir que os dois batem pixel a
+/// pixel (sem essa garantia, o recorte exportado poderia ficar diferente do
+/// que a pessoa viu na tela).
+class TouchCropPainter extends CustomPainter {
+  final ui.Image image;
+  final double scale;
+  final double rotation;
+  final Offset offset;
+  const TouchCropPainter({
+    required this.image,
+    required this.scale,
+    required this.rotation,
+    required this.offset,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cover = max(size.width / image.width, size.height / image.height);
+    canvas.save();
+    canvas.translate(size.width / 2 + offset.dx, size.height / 2 + offset.dy);
+    canvas.rotate(rotation);
+    canvas.scale(cover * scale);
+    canvas.translate(-image.width / 2, -image.height / 2);
+    canvas.drawImage(image, Offset.zero, Paint());
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant TouchCropPainter oldDelegate) =>
+      oldDelegate.image != image ||
+      oldDelegate.scale != scale ||
+      oldDelegate.rotation != rotation ||
+      oldDelegate.offset != offset;
+}
+
+/// Mascara semitransparente por cima do recorte, no formato exato do furo
+/// do modelo escolhido (circulo, hexagono, quadrada ou poligono) — so pra
+/// orientar, nao afeta o que e exportado. O contorno e desenhado em duas
+/// camadas (preta larga por baixo, branca estreita por cima) pra continuar
+/// visivel mesmo sobre fotos escuras ou claras.
+class _FrameGuidePainter extends CustomPainter {
+  final MedalFrame frame;
+  const _FrameGuidePainter(this.frame);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final hole = medalHolePath(frame, size);
+    final mask = Path.combine(
+      PathOperation.difference,
+      Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height)),
+      hole,
+    );
+    canvas.drawPath(mask, Paint()..color = const Color(0x99000000));
+    canvas.drawPath(
+      hole,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4
+        ..color = const Color(0xaa000000),
+    );
+    canvas.drawPath(
+      hole,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..color = Colors.white,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _FrameGuidePainter oldDelegate) =>
+      oldDelegate.frame.id != frame.id;
+}
+
+/// Tela de reposicionamento por toque: arrastar com um dedo move a foto,
+/// pinçar com dois dedos amplia/reduz, e girar com dois dedos gira a foto —
+/// tudo junto, como em qualquer editor de foto. Devolve um PNG no mesmo
+/// formato do furo do modelo escolhido (circulo, hexagono, quadrada ou
+/// poligono — ver [medalCropAspectRatio]), ou nulo se a pessoa desistir.
+class TouchCropScreen extends StatefulWidget {
+  final Uint8List image;
+  final MedalFrame frame;
+  const TouchCropScreen({super.key, required this.image, required this.frame});
+
+  @override
+  State<TouchCropScreen> createState() => _TouchCropScreenState();
+}
+
+class _TouchCropScreenState extends State<TouchCropScreen> {
+  ui.Image? decoded;
+  double scale = 1;
+  double rotation = 0;
+  Offset offset = Offset.zero;
+  double _baseScale = 1;
+  double _baseRotation = 0;
+  Size viewportSize = const Size(320, 320);
+  bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _decode();
+  }
+
+  Future<void> _decode() async {
+    final codec = await ui.instantiateImageCodec(widget.image);
+    final codecFrame = await codec.getNextFrame();
+    if (!mounted) return;
+    setState(() => decoded = codecFrame.image);
+  }
+
+  void _onScaleStart(ScaleStartDetails details) {
+    _baseScale = scale;
+    _baseRotation = rotation;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    setState(() {
+      scale = (_baseScale * details.scale).clamp(0.2, 8.0);
+      rotation = _baseRotation + details.rotation;
+      offset += details.focalPointDelta;
+    });
+  }
+
+  Future<void> _confirm(Size viewport) async {
+    final image = decoded;
+    if (image == null || busy) return;
+    setState(() => busy = true);
+    try {
+      final width = viewport.width.round();
+      final height = viewport.height.round();
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      TouchCropPainter(
+        image: image,
+        scale: scale,
+        rotation: rotation,
+        offset: offset,
+      ).paint(canvas, viewport);
+      final output = await recorder.endRecording().toImage(width, height);
+      final data = await output.toByteData(format: ui.ImageByteFormat.png);
+      if (!mounted) return;
+      Navigator.of(context).pop<List<int>>(data!.buffer.asUint8List());
+    } on Exception {
+      if (!mounted) return;
+      setState(() => busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível recortar a foto. Tente de novo.'),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: const Text('Reposicionar foto'),
+    ),
+    body: SafeArea(
+      child: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(12),
+            child: Text(
+              'Arraste para posicionar, pinça para o zoom e gire com dois '
+              'dedos. Essa área é o que aparece na prateleira de medalhas.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          Expanded(
+            child: decoded == null
+                ? const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  )
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final aspect = medalCropAspectRatio(widget.frame);
+                      final available = constraints.biggest;
+                      var viewport = Size(
+                        available.width,
+                        available.width / aspect,
+                      );
+                      if (viewport.height > available.height) {
+                        viewport = Size(
+                          available.height * aspect,
+                          available.height,
+                        );
+                      }
+                      viewportSize = viewport;
+                      return Center(
+                        child: ClipRect(
+                          child: GestureDetector(
+                            key: const Key('crop-touch-area'),
+                            onScaleStart: _onScaleStart,
+                            onScaleUpdate: _onScaleUpdate,
+                            child: SizedBox(
+                              width: viewport.width,
+                              height: viewport.height,
+                              child: Stack(
+                                children: [
+                                  CustomPaint(
+                                    size: viewport,
+                                    painter: TouchCropPainter(
+                                      image: decoded!,
+                                      scale: scale,
+                                      rotation: rotation,
+                                      offset: offset,
+                                    ),
+                                  ),
+                                  IgnorePointer(
+                                    child: CustomPaint(
+                                      size: viewport,
+                                      painter: _FrameGuidePainter(widget.frame),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('crop-cancel'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: busy ? null : () => Navigator.of(context).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('crop-confirm'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: runPassOrange,
+                    ),
+                    onPressed: busy || decoded == null
+                        ? null
+                        : () => _confirm(viewportSize),
+                    child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
 class MedalCollectionScreen extends StatefulWidget {
   final IdentityGateway gateway;
@@ -842,7 +1302,6 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       );
       if (result.containsKey('medalDisplayImageReference')) {
         forgetMedalDisplayImage(id);
-        forgetDominantCordColor(id);
       }
       setState(() {
         races = loadMyRaces(widget.gateway);
@@ -856,23 +1315,6 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       );
     }
   }
-
-  /// Cor do cordao/anel da medalha: a escolhida pela pessoa, ou a dominante da
-  /// foto por padrao. Resolvida uma unica vez e compartilhada entre a fita e o
-  /// contorno da foto, para os dois ficarem com a mesma cor.
-  Future<Color> _cordColorFor(RaceRecord race) {
-    final override = race.medalCordColor;
-    if (override != null) return Future.value(colorFromHex(override));
-    final id = race.participation['id'] as String?;
-    if (id == null) return Future.value(runPassOrange);
-    return dominantCordColor(widget.gateway, id);
-  }
-
-  Widget _ribbon(Color color) => SizedBox(
-    width: double.infinity,
-    height: 26,
-    child: CustomPaint(painter: _RibbonPainter(color)),
-  );
 
   Widget _woodShelf() => Container(
     height: 10,
@@ -902,49 +1344,30 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
           // Sem card/borda/sombra: a medalha fica direto no fundo da tela,
           // como no template.
           padding: const EdgeInsets.symmetric(horizontal: 2),
-          child: FutureBuilder<Color>(
-            future: _cordColorFor(race),
-            builder: (context, snapshot) {
-              final color = snapshot.data ?? runPassOrange;
-              return Column(
-                children: [
-                  _ribbon(color),
-                  Expanded(
-                    flex: 5,
-                    child:
-                        // AspectRatio garante um recorte sempre quadrado: sem
-                        // isso, o Expanded entrega uma area retangular e a
-                        // medalha "redonda" sai achatada em oval.
-                        Center(
-                          child: AspectRatio(
-                            aspectRatio: 1,
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                ClipPath(
-                                  clipper: _MedalShapeClipper(race.medalShape),
-                                  child: MedalPhoto(
-                                    gateway: widget.gateway,
-                                    participationId:
-                                        race.participation['id'] as String?,
-                                    useDisplayImage: true,
-                                  ),
-                                ),
-                                CustomPaint(
-                                  painter: _MedalRingPainter(
-                                    race.medalShape,
-                                    color,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                  ),
-                  const SizedBox(height: 4),
-                  _woodShelf(),
-                  const SizedBox(height: 4),
-                  Text(
+          child: Column(
+            // Altura fixa (sem Expanded/Center) para a imagem e para os
+            // blocos de texto: assim a medalha e a prateleira ficam na
+            // mesma posicao em todos os cards, mesmo quando a legenda de
+            // um deles quebra em 2 linhas e a do vizinho cabe em 1.
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              medalFrameWidget(
+                frame: medalFrameFor(race.medalFrameId),
+                photo: MedalPhoto(
+                  gateway: widget.gateway,
+                  participationId: race.participation['id'] as String?,
+                  useDisplayImage: true,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(height: 4),
+              _woodShelf(),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 32,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Text(
                     race.medalDescription,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -954,19 +1377,19 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                       fontSize: 12,
                     ),
                   ),
-                  Text(
-                    [
-                      if (race.medalPlace.isNotEmpty) race.medalPlace,
-                      if (race.medalYear != null) '${race.medalYear}',
-                    ].join(' · '),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: context.muted, fontSize: 10),
-                  ),
-                ],
-              );
-            },
+                ),
+              ),
+              Text(
+                [
+                  if (race.medalPlace.isNotEmpty) race.medalPlace,
+                  if (race.medalYear != null) '${race.medalYear}',
+                ].join(' · '),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: context.muted, fontSize: 10),
+              ),
+            ],
           ),
         ),
       ),
@@ -990,16 +1413,58 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ],
   );
 
-  Widget grid(List<RaceRecord> list) => GridView.count(
-    crossAxisCount: 3,
-    shrinkWrap: true,
-    physics: const NeverScrollableScrollPhysics(),
-    mainAxisSpacing: 10,
-    crossAxisSpacing: 10,
-    // Baixo o suficiente para a foto da medalha caber com a largura inteira do
-    // card (quadrada), sem sobrar espaco vazio acima/abaixo dela.
-    childAspectRatio: 0.56,
-    children: [for (final race in list) tile(race)],
+  Widget grid(List<RaceRecord> list, {bool showAddTile = false}) =>
+      GridView.count(
+        crossAxisCount: 3,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 4,
+        // Baixo o suficiente para o modelo de medalha mais alto (os
+        // hexagonais) caber usando a largura inteira do card, sem cortar.
+        childAspectRatio: 0.46,
+        children: [
+          for (final race in list) tile(race),
+          if (showAddTile) _addTile(),
+        ],
+      );
+
+  /// Ultimo card da prateleira: leva para o cadastro de uma nova corrida, o
+  /// mesmo fluxo ja usado no resto do app (CatalogScreen).
+  Widget _addTile() => InkWell(
+    key: const Key('medal-add-tile'),
+    borderRadius: BorderRadius.circular(14),
+    onTap: () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CatalogScreen(gateway: widget.gateway),
+      ),
+    ),
+    child: Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: runPassOrange, width: 2),
+            ),
+            child: const Icon(Icons.add, color: runPassOrange, size: 22),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Adicionar\nmedalha',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: context.muted,
+            ),
+          ),
+        ],
+      ),
+    ),
   );
 
   List<Widget> sections(List<RaceRecord> races) {
@@ -1014,7 +1479,9 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
         ),
       ];
     }
-    if (grouping == MedalGrouping.all) return [grid(ordered)];
+    if (grouping == MedalGrouping.all) {
+      return [grid(ordered, showAddTile: true)];
+    }
     final groups = <String, List<RaceRecord>>{};
     for (final race in ordered) {
       final key = grouping == MedalGrouping.year
@@ -1150,7 +1617,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             }
             final stats = RaceStats.of(data);
             return ListView(
-              padding: const EdgeInsets.all(16),
+              key: const Key('medals-list'),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
               children: [
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -1227,8 +1695,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   );
 }
 
-/// Bottom sheet para personalizar a medalha: forma, cor do cordao e legenda
-/// (descricao, cidade, UF, ano). Devolve o corpo pronto para PATCH
+/// Bottom sheet para personalizar a medalha: modelo (catalogo de imagens) e
+/// legenda (descricao, cidade, UF, ano). Devolve o corpo pronto para PATCH
 /// /participations/{id}, ou nulo se a pessoa cancelar.
 class _MedalEditSheet extends StatefulWidget {
   final IdentityGateway gateway;
@@ -1247,8 +1715,7 @@ class _MedalEditSheet extends StatefulWidget {
 }
 
 class _MedalEditSheetState extends State<_MedalEditSheet> {
-  late String shape = widget.race.medalShape;
-  late String? cordColor = widget.race.medalCordColor;
+  late String frameId = widget.race.medalFrameId;
   late final description = TextEditingController(
     text: widget.race.medalDescription,
   );
@@ -1282,8 +1749,12 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
     if (id == null || repositioning) return;
     setState(() => repositioning = true);
     try {
+      // Sempre parte da foto oficial (nunca alterada), nao do recorte
+      // anterior: senao, cada reposicionamento encolheria o enquadramento a
+      // partir do corte ja feito, em vez de deixar escolher de novo na foto
+      // inteira.
       final reply = await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(id)}/display-image',
+        '/participations/${Uri.encodeComponent(id)}/image',
       );
       final url = reply['url'] as String?;
       if (url == null) throw const IdentityIssue('IMAGE_NOT_AVAILABLE');
@@ -1292,6 +1763,7 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
       final cropped = await widget.openCropScreen(
         context,
         Uint8List.fromList(bytes),
+        medalFrameFor(frameId),
       );
       if (cropped == null || !mounted) return;
       final reference = await uploadProfilePhoto(widget.gateway, cropped);
@@ -1320,8 +1792,7 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
     final parsedYear = int.tryParse(year.text.trim());
     final uf = state.text.trim().toUpperCase();
     Navigator.pop<Map<String, dynamic>>(context, {
-      'medalShape': shape,
-      'medalCordColor': cordColor,
+      'medalFrameId': frameId,
       'medalDescription': _blankToNull(description.text),
       'medalCity': _blankToNull(city.text),
       'medalState': uf.length == 2 ? uf : null,
@@ -1379,87 +1850,62 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
               ],
             ),
             const SizedBox(height: 16),
-            const Text('Forma', style: TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final option in medalShapeOptions)
-                  ChoiceChip(
-                    label: Text(option.$2),
-                    selected: shape == option.$1,
-                    onSelected: (_) => setState(() => shape = option.$1),
-                    showCheckmark: false,
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
             const Text(
-              'Cor do cordão',
+              'Modelo da medalha',
               style: TextStyle(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                InkWell(
-                  key: const Key('medal-cord-automatic'),
-                  customBorder: const CircleBorder(),
-                  onTap: () => setState(() => cordColor = null),
-                  child: Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const SweepGradient(
-                        colors: [
-                          runPassOrange,
-                          Color(0xff4cc38a),
-                          Color(0xff4a8cf0),
-                          runPassOrange,
-                        ],
-                      ),
-                      border: Border.all(
-                        color: cordColor == null
-                            ? Colors.black
-                            : Colors.transparent,
-                        width: 2,
-                      ),
-                    ),
-                    child: cordColor == null
-                        ? const Icon(Icons.check, color: Colors.white, size: 16)
-                        : null,
-                  ),
-                ),
-                for (final color in medalCordPalette)
-                  InkWell(
-                    key: Key('medal-cord-${colorToHex(color)}'),
-                    customBorder: const CircleBorder(),
-                    onTap: () => setState(() => cordColor = colorToHex(color)),
+            SizedBox(
+              height: 140,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: medalFrames.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  final option = medalFrames[index];
+                  final selected = frameId == option.id;
+                  return InkWell(
+                    key: Key('medal-frame-${option.id}'),
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => setState(() => frameId = option.id),
                     child: Container(
-                      width: 32,
-                      height: 32,
+                      width: 92,
+                      padding: const EdgeInsets.all(6),
                       decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: color,
+                        borderRadius: BorderRadius.circular(10),
                         border: Border.all(
-                          color: cordColor == colorToHex(color)
-                              ? Colors.black
-                              : Colors.transparent,
+                          color: selected ? runPassOrange : Colors.transparent,
                           width: 2,
                         ),
                       ),
-                      child: cordColor == colorToHex(color)
-                          ? const Icon(
-                              Icons.check,
-                              color: Colors.white,
-                              size: 16,
-                            )
-                          : null,
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: medalFrameWidget(
+                              frame: option,
+                              photo: MedalPhoto(
+                                gateway: widget.gateway,
+                                participationId:
+                                    widget.race.participation['id'] as String?,
+                                useDisplayImage: true,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            option.label,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 10),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-              ],
+                  );
+                },
+              ),
             ),
             const SizedBox(height: 16),
             TextField(

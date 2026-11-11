@@ -138,16 +138,14 @@ class ParticipationTests(unittest.TestCase):
             "customize",
             {
                 "expectedVersion": done["version"],
-                "medalShape": "shield",
-                "medalCordColor": "#ff5500",
+                "medalFrameId": "hexagonal_bronze_verde",
                 "medalDescription": "Minha prova especial",
                 "medalCity": "Santos",
                 "medalState": "SP",
                 "medalYear": 2023,
             },
         )
-        self.assertEqual(customized["medalShape"], "shield")
-        self.assertEqual(customized["medalCordColor"], "#ff5500")
+        self.assertEqual(customized["medalFrameId"], "hexagonal_bronze_verde")
         self.assertEqual(customized["medalDescription"], "Minha prova especial")
         self.assertEqual(customized["medalCity"], "Santos")
         self.assertEqual(customized["medalState"], "SP")
@@ -158,8 +156,7 @@ class ParticipationTests(unittest.TestCase):
             "reset",
             {
                 "expectedVersion": customized["version"],
-                "medalShape": None,
-                "medalCordColor": None,
+                "medalFrameId": None,
                 "medalDescription": None,
                 "medalCity": None,
                 "medalState": None,
@@ -167,8 +164,7 @@ class ParticipationTests(unittest.TestCase):
             },
         )
         for field in (
-            "medalShape",
-            "medalCordColor",
+            "medalFrameId",
             "medalDescription",
             "medalCity",
             "medalState",
@@ -176,17 +172,15 @@ class ParticipationTests(unittest.TestCase):
         ):
             self.assertNotIn(field, reset)
 
-    def test_medal_customization_rejects_invalid_color_and_state(self):
+    def test_medal_customization_rejects_invalid_state_and_frame(self):
         from pydantic import ValidationError
 
         from runpass.models import PatchParticipation
 
         with self.assertRaises(ValidationError):
-            PatchParticipation(expectedVersion=1, medalCordColor="orange")
-        with self.assertRaises(ValidationError):
             PatchParticipation(expectedVersion=1, medalState="sp")
         with self.assertRaises(ValidationError):
-            PatchParticipation(expectedVersion=1, medalShape="triangle")
+            PatchParticipation(expectedVersion=1, medalFrameId="ouro_brilhante")
 
     def test_medal_display_image_is_separate_from_the_official_photo(self):
         draft = self.service.create(self.actor, "c", self.payload(timeSeconds=3600))
