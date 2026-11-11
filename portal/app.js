@@ -650,6 +650,7 @@ async function carregarBanners() {
               el('div', { class: 'linha' }, `${dataBr(c.date)} · direitos: ${c.rights || 'não verificado'}`),
               linkSeguro(c.officialPage) ? el('div', { class: 'meta' }, 'Página oficial: ', el('a', { href: linkSeguro(c.officialPage), target: '_blank', rel: 'noopener noreferrer' }, c.officialPage)) : '',
               formularioBanner({ imagem: c.imageUrl, credito: c.credit, pagina: c.officialPage, edicao: c.edition, nomeBusca: c.name }),
+              el('div', { class: 'acoes' }, el('button', { type: 'button', class: 'perigo', onclick: () => excluirCandidata(c) }, 'Excluir candidata')),
             ),
           )
         : [el('p', { class: 'vazio' }, 'Nenhuma imagem candidata pendente. Para trocar o banner de uma corrida, retire o atual ou use o formulário manual.')]),
@@ -663,7 +664,7 @@ async function carregarBanners() {
               { class: 'cartao' },
               el('h2', {}, e.name),
               el('div', { class: 'linha' }, `${dataBr(e.date)} · ${e.city}/${e.state} · crédito: ${e.credit || '—'}`),
-              el('button', { type: 'button', class: 'perigo', onclick: () => retirarBanner(e) }, 'Retirar banner'),
+              el('button', { type: 'button', class: 'perigo', onclick: () => retirarBanner(e) }, 'Excluir banner'),
             ),
           )
         : [el('p', { class: 'vazio' }, 'Nenhum banner publicado.')]),
@@ -676,8 +677,20 @@ async function carregarBanners() {
   }
 }
 
+async function excluirCandidata(c) {
+  if (!window.confirm(`Excluir a candidata "${c.name}"? Ela sai da lista e não volta nas próximas coletas. A imagem publicada, se houver, não é afetada.`)) return;
+  try {
+    await api('/admin/banners/dismiss', { method: 'POST', body: JSON.stringify({ imageUrl: c.imageUrl }) });
+    candidatasPublicadas.add(c.imageUrl);
+    aviso('Candidata excluída.', 'ok');
+    await carregarBanners();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
 async function retirarBanner(e) {
-  const motivo = window.prompt(`Retirar o banner de "${e.name}". Motivo (fica registrado):`, '');
+  const motivo = window.prompt(`Excluir o banner de "${e.name}". Motivo (fica registrado):`, '');
   if (!motivo || motivo.trim().length < 5) return;
   try {
     await api('/admin/banners/remove', { method: 'POST', body: JSON.stringify({ editionId: e.id, reason: motivo.trim() }) });

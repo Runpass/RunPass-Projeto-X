@@ -282,9 +282,9 @@ class OpenAiOrgTests(unittest.TestCase):
             return ctx.exception.reason
 
         for status, esperado in (
-            (401, "http_401"),
-            (403, "http_403"),
-            (400, "http_400"),
+            (401, "http_401@costs"),
+            (403, "http_403@costs"),
+            (400, "http_400@costs"),
             (0, "network"),
         ):
             self.api.status = status
@@ -353,7 +353,7 @@ class OpenAiResilienciaTests(unittest.TestCase):
         for _ in range(3):  # cliques repetidos em "Atualizar"
             with self.assertRaises(Unavailable) as erro:
                 usage.report()
-            self.assertEqual(erro.exception.reason, "http_429")
+            self.assertEqual(erro.exception.reason, "http_429@costs")
         self.assertEqual(len(chamadas), 1)
         relogio[0] += 61
         with self.assertRaises(Unavailable):
@@ -380,12 +380,12 @@ class CodigoDoErroDaOpenAiTests(unittest.TestCase):
         falha = urllib.error.HTTPError("u", 429, "x", {}, io.BytesIO(corpo))
         with mock.patch("urllib.request.urlopen", side_effect=falha):
             status, body = openai_transport("/v1/x", {}, "k")
-        self.assertEqual((status, body), (429, {"error": "insufficient_quota"}))
+        self.assertEqual((status, body), (429, {"error": "insufficient_quota", "retry": 0}))
         ruim = urllib.error.HTTPError(
             "u", 429, "x", {}, io.BytesIO(b'{"error": {"code": "A mensagem longa!"}}')
         )
         with mock.patch("urllib.request.urlopen", side_effect=ruim):
-            self.assertEqual(openai_transport("/v1/x", {}, "k"), (429, {"error": ""}))
+            self.assertEqual(openai_transport("/v1/x", {}, "k"), (429, {"error": "", "retry": 0}))
         org = OpenAiOrg(
             lambda: "k",
             lambda: NOW.timestamp(),
@@ -395,4 +395,53 @@ class CodigoDoErroDaOpenAiTests(unittest.TestCase):
         )
         with self.assertRaises(Unavailable) as erro:
             org.report()
-        self.assertEqual(erro.exception.reason, "http_429:insufficient_quota")
+        self.assertEqual(erro.exception.reason, "http_429:insufficient_quota@costs")
+
+
+class EsperaDaOpenAiTests(unittest.TestCase):
+    def test_retry_after_vira_espera_e_o_endpoint_aparece_no_motivo(self):
+        import io
+        import urllib.error
+        from email.message import Message
+        from unittest import mock
+
+        from runpass.admin_costs import openai_transport
+
+        def falha(retry):
+            cab = Message()
+            if retry is not None:
+                cab["Retry-After"] = retry
+            corpo = b'{"error": {"code": "rate_limit_exceeded", "message": "segredo"}}'
+            return urllib.error.HTTPError("u", 429, "x", cab, io.BytesIO(corpo))
+
+        for entrada, esperado in (("30", 30), ("0", 0), ("99999", 0), ("abc", 0), (None, 0)):
+            with mock.patch("urllib.request.urlopen", side_effect=falha(entrada)):
+                status, corpo = openai_transport("/v1/organization/costs", {}, "k")
+            self.assertEqual(
+                (status, corpo), (429, {"error": "rate_limit_exceeded", "retry": esperado}), entrada
+            )
+        now = NOW.timestamp()
+        org = OpenAiOrg(
+            lambda: "k",
+            lambda: now,
+            "",
+            None,
+            lambda p, q, k: (429, {"error": "rate_limit_exceeded", "retry": 30}),
+        )
+        with self.assertRaises(Unavailable) as erro:
+            org.report()
+        self.assertEqual(erro.exception.reason, "http_429:rate_limit_exceeded@costs~30")
+        org2 = OpenAiOrg(
+            lambda: "k",
+            lambda: now,
+            "",
+            None,
+            lambda p, q, k: (429, {"error": "rate_limit_exceeded"})
+            if "usage" in p
+            else (200, {"data": [], "has_more": False}),
+        )
+        with self.assertRaises(Unavailable) as erro:
+            org2.report()
+        self.assertEqual(
+            erro.exception.reason, "http_429:rate_limit_exceeded@completions"
+        )  # a segunda consulta falhou

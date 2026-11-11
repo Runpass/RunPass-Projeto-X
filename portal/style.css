@@ -65,3 +65,20 @@ input[type="checkbox"] { display: inline-block; width: auto; margin: 0 8px 0 0; 
 .dias legend { padding: 0; margin-bottom: 6px; color: var(--suave); }
 .dia { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
 .dia input { display: inline-block; width: auto; margin: 0; }
+
+/* Menu vertical a esquerda (painel). No celular volta a ficar no topo, em linha. */
+main:has(#painel:not([hidden])) { max-width: 1240px; }
+#painel:not([hidden]) { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+#painel > .abas { grid-column: 1; grid-row: 1 / span 30; position: sticky; top: 16px; flex-direction: column; flex-wrap: nowrap; gap: 4px; margin: 0; }
+#painel > section { grid-column: 2; min-width: 0; }
+#painel > .abas button { width: 100%; text-align: left; border-bottom: 0; border-left: 4px solid transparent; border-radius: 10px; padding: 10px 12px; }
+#painel > .abas button[aria-selected="true"] { border-left-color: var(--laranja); background: var(--cartao); color: var(--texto); font-weight: 700; }
+#painel > .abas button[aria-selected="false"] { color: var(--suave); }
+#painel > .abas button[aria-selected="false"]:hover { background: color-mix(in srgb, var(--cartao) 70%, transparent); color: var(--texto); }
+@media (max-width: 760px) {
+  main:has(#painel:not([hidden])) { max-width: 860px; }
+  #painel:not([hidden]) { display: block; }
+  #painel > .abas { position: static; flex-direction: row; flex-wrap: wrap; margin-bottom: 8px; }
+  #painel > .abas button { width: auto; border-left: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 8px 4px; }
+  #painel > .abas button[aria-selected="true"] { border-bottom-color: var(--laranja); background: transparent; }
+}

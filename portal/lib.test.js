@@ -135,6 +135,11 @@ test('motivo da falha da OpenAI vira frase útil sem vazar detalhes', async () =
   assert.match(motivoOpenAi('http_500'), /\(500\)/);
   assert.match(motivoOpenAi('network'), /Sem resposta/);
   assert.match(motivoOpenAi('http_429:insufficient_quota'), /sem crédito/);
+  assert.match(motivoOpenAi('http_429:insufficient_quota@costs'), /sem crédito/);
+  assert.match(motivoOpenAi('http_429:rate_limit_exceeded@costs~30'), /"costs".*30 s/);
+  assert.match(motivoOpenAi('http_429:rate_limit_exceeded@completions'), /"completions".*instantes/);
+  assert.match(motivoOpenAi('http_401@costs'), /administrador/);
+  assert.match(motivoOpenAi('http_500@costs'), /\(500\)/);
   assert.match(motivoOpenAi('http_429:rate_limit_exceeded'), /rate_limit_exceeded/);
   assert.match(motivoOpenAi('key_read_failed:ParameterNotFound'), /ParameterNotFound/);
   assert.equal(motivoOpenAi(undefined), 'Motivo não identificado.');

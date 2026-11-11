@@ -1552,6 +1552,127 @@ class AdminApiTests(unittest.TestCase):
         r = self.client.get("/admin/divergences", headers=h).json()
         self.assertEqual((r["run"], r["items"], r["summary"]["total"]), (None, [], 0))
 
+    CAB_IMG = "source_external_id,nome,data,pagina_oficial,imagem_url,tipo,tamanho_bytes,credito_sugerido,direitos,situacao,observacao,aprovada\n"
+
+    def corpo_banner(self, url, **mudanca):
+        return {
+            "editionId": "synthetic-sp-2026",
+            "imageUrl": url,
+            "credit": "Divulgação: Org",
+            "rightsNote": "Imagem da pagina oficial; risco assumido pelo responsavel",
+            "confirmRights": True,
+            **mudanca,
+        }
+
+    def test_candidata_aprovada_para_outra_corrida_tambem_sai_da_lista(self):
+        # A pessoa escolheu a mao uma corrida diferente da que o sistema sugeriu (ou nao havia sugestao):
+        # a candidata some porque a IMAGEM ja foi publicada, e volta se o banner for retirado.
+        h = self.auth(token("op"))
+        manual = "https://o.exemplo/c.png"
+        self.pages[manual] = (200, {"content-type": "image/png"}, self.png())
+        self.s3.objects["semanal/2026-11-16/imagens/candidatas.csv"] = (
+            self.CAB_IMG
+            + f"b,Outra Prova Sem Par,2026-01-01,https://o.exemplo/p,{manual},image/png,100,,nao_verificado,candidata,,\n"
+        )
+        antes = self.client.get("/admin/banners/candidates", headers=h).json()["items"]
+        self.assertEqual([i["name"] for i in antes], ["Outra Prova Sem Par"])
+        self.assertIsNone(antes[0]["edition"])  # sem sugestao automatica
+        r = self.client.post("/admin/banners/approve", json=self.corpo_banner(manual), headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(
+            self.client.get("/admin/banners/candidates", headers=h).json()["items"], []
+        )
+        self.client.post(
+            "/admin/banners/remove",
+            json={"editionId": "synthetic-sp-2026", "reason": "teste de retorno"},
+            headers=h,
+        )
+        volta = self.client.get("/admin/banners/candidates", headers=h).json()["items"]
+        self.assertEqual([i["name"] for i in volta], ["Outra Prova Sem Par"])
+
+    def test_candidata_de_duplicata_some_se_qualquer_corrida_parecida_tem_banner(self):
+        h = self.auth(token("op"))
+        url = "https://o.exemplo/b.png"
+        self.pages[url] = (200, {"content-type": "image/png"}, self.png())
+        # duas imagens diferentes da MESMA corrida (mesmo nome e data): publicar uma tira as duas da lista
+        outra = "https://o.exemplo/d.png"
+        self.s3.objects["semanal/2026-11-16/imagens/candidatas.csv"] = (
+            self.CAB_IMG
+            + f"a,Corrida Sintética São Paulo,2026-11-08,https://o.exemplo/p,{url},image/png,100,,nao_verificado,candidata,,\n"
+            + f"a2,Corrida Sintética São Paulo,2026-11-08,https://o.exemplo/p,{outra},image/png,100,,nao_verificado,candidata,,\n"
+        )
+        self.assertEqual(
+            len(self.client.get("/admin/banners/candidates", headers=h).json()["items"]), 2
+        )
+        self.assertEqual(
+            self.client.post(
+                "/admin/banners/approve", json=self.corpo_banner(url), headers=h
+            ).status_code,
+            201,
+        )
+        self.assertEqual(
+            self.client.get("/admin/banners/candidates", headers=h).json()["items"], []
+        )
+
+    def test_excluir_candidata_so_para_catalog_admin_e_nao_volta_na_coleta_seguinte(self):
+        h = self.auth(token("op"))
+        url = "https://o.exemplo/c.png"
+        self.s3.objects["semanal/2026-11-16/imagens/candidatas.csv"] = (
+            self.CAB_IMG
+            + f"b,Outra,2026-01-01,https://o.exemplo/p,{url},image/png,100,,nao_verificado,candidata,,\n"
+            + "e,Fica,2026-01-02,https://o.exemplo/p,https://o.exemplo/e.png,image/png,100,,nao_verificado,candidata,,\n"
+        )
+        corpo = {"imageUrl": url}
+        self.assertEqual(
+            self.client.post(
+                "/admin/banners/dismiss", json=corpo, headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        for ruim in (
+            {"imageUrl": "http://o.exemplo/c.png"},
+            {"imageUrl": "javascript:alert(1)"},
+            {"imageUrl": ""},
+            {"imageUrl": "https://x/" + "a" * 2000},
+            {"imageUrl": url, "extra": 1},
+        ):
+            self.assertIn(
+                self.client.post("/admin/banners/dismiss", json=ruim, headers=h).status_code,
+                (400, 422),
+                ruim,
+            )
+        self.assertEqual(
+            [
+                i["name"]
+                for i in self.client.get("/admin/banners/candidates", headers=h).json()["items"]
+            ],
+            ["Outra", "Fica"],
+        )
+        self.assertEqual(
+            self.client.post("/admin/banners/dismiss", json=corpo, headers=h).status_code, 200
+        )
+        self.assertEqual(
+            self.client.post("/admin/banners/dismiss", json=corpo, headers=h).status_code, 200
+        )  # repetir e inofensivo
+        self.assertEqual(
+            [
+                i["name"]
+                for i in self.client.get("/admin/banners/candidates", headers=h).json()["items"]
+            ],
+            ["Fica"],
+        )
+        # uma coleta nova, com a mesma imagem, nao a traz de volta
+        self.s3.objects["semanal/2026-11-23/imagens/candidatas.csv"] = (
+            self.CAB_IMG
+            + f"b,Outra,2026-01-01,https://o.exemplo/p,{url},image/png,100,,nao_verificado,candidata,,\n"
+        )
+        r = self.client.get("/admin/banners/candidates", headers=h).json()
+        self.assertEqual((r["source"], r["items"]), ("2026-11-23", []))
+        trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
+        self.assertEqual(
+            sum(1 for _, row in trilha if row["action"] == "banner.dismiss"), 1
+        )  # so a primeira audita
+
     def test_banner_preview_aprovar_e_retirar(self):
         h = self.auth(token("op"))
         url = "https://o.exemplo/b.png"
