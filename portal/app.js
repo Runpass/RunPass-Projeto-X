@@ -1,0 +1,889 @@
+import cfg from './config.js';
+import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
+import {
+  dataBr, motivoClaude, motivoOpenAi, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  resumoPedido, segundosAteExpirar, statusCadastro,
+} from './lib.js';
+
+// O token fica só em memória: recarregar a página ou fechar a aba encerra a sessão.
+let token = null;
+let temporizador = null;
+let sessaoMfa = null;
+let emailTentativa = '';
+
+const $ = (id) => document.getElementById(id);
+
+/** Cria elementos sem innerHTML: todo texto vindo da API entra como texto, nunca como HTML. */
+function el(tag, atributos = {}, ...filhos) {
+  const nó = document.createElement(tag);
+  for (const [chave, valor] of Object.entries(atributos)) {
+    if (chave === 'class') nó.className = valor;
+    else if (chave.startsWith('on')) nó.addEventListener(chave.slice(2), valor);
+    else if (valor !== false && valor != null) nó.setAttribute(chave, valor === true ? '' : valor);
+  }
+  for (const filho of filhos.flat()) nó.append(filho instanceof Node ? filho : String(filho ?? ''));
+  return nó;
+}
+
+function aviso(texto, tipo = '') {
+  const caixa = $('aviso');
+  caixa.hidden = !texto;
+  caixa.textContent = texto || '';
+  caixa.className = `aviso ${tipo}`;
+}
+
+async function api(caminho, opcoes = {}) {
+  const resposta = await fetch(cfg.apiUrl + caminho, {
+    ...opcoes,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(opcoes.body ? { 'Content-Type': 'application/json' } : {}),
+    },
+  });
+  const json = await resposta.json().catch(() => ({}));
+  if (resposta.status === 401) {
+    sair('INVALID_TOKEN');
+    const sessao = new Error('sessão');
+    sessao.tratado = true; // a mensagem ja foi mostrada: os formulários de login não a sobrescrevem
+    throw sessao;
+  }
+  if (!resposta.ok) {
+    const erro = new Error(json.code || 'erro');
+    erro.codigo = json.code;
+    throw erro;
+  }
+  return json;
+}
+
+function sair(motivo) {
+  token = null;
+  sessaoMfa = null;
+  clearInterval(temporizador);
+  clearTimeout(acompanhar);
+  $('painel').hidden = true;
+  $('sessao').hidden = true;
+  $('entrar').hidden = false;
+  etapa('senha');
+  $('segredo').textContent = '';
+  $('cadastros').replaceChildren();
+  $('custos').replaceChildren();
+  $('operadores').replaceChildren();
+  $('banners-candidatas').replaceChildren();
+  $('banner-manual').replaceChildren();
+  $('banners-publicados').replaceChildren();
+  $('senha').value = '';
+  $('codigo').value = '';
+  $('pedidos').replaceChildren();
+  aviso(motivo ? mensagem(motivo) : '', motivo ? 'erro' : '');
+}
+
+function iniciarSessao(t, assunto) {
+  token = t;
+  $('entrar').hidden = true;
+  $('painel').hidden = false;
+  $('sessao').hidden = false;
+  $('quem').textContent = assunto;
+  clearInterval(temporizador);
+  const tick = () => {
+    const restante = segundosAteExpirar(token);
+    if (restante <= 30) return sair('INVALID_TOKEN');
+    $('expira').textContent = `Sessão expira em ${Math.ceil(restante / 60)} min`;
+  };
+  tick();
+  temporizador = setInterval(tick, 15000);
+}
+
+// ---- pedidos de corrida -----------------------------------------------------------------------
+
+async function carregarPedidos() {
+  const lista = $('pedidos');
+  lista.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const { items } = await api('/admin/edition-requests');
+    lista.replaceChildren(
+      ...(items.length
+        ? items.map(cartaoPedido)
+        : [el('p', { class: 'vazio' }, 'Nenhum pedido pendente.')]),
+    );
+  } catch (erro) {
+    if (token) {
+      lista.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+function cartaoPedido(pedido) {
+  const resumo = resumoPedido(pedido);
+  const link = linkSeguro(resumo.fonte);
+  const area = el('div');
+  const cartao = el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, resumo.titulo),
+    el('div', { class: 'linha' }, resumo.linha),
+    link
+      ? el('div', { class: 'meta' }, 'Fonte informada: ', el('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, link))
+      : '',
+    el('div', { class: 'meta' }, `Pedido ${pedido.id} · versão ${pedido.version}`),
+    el(
+      'div',
+      { class: 'acoes' },
+      el('button', { type: 'button', onclick: () => painelVinculo(area, pedido, 'link') }, 'Vincular a corrida existente'),
+      el('button', { type: 'button', class: 'ok', onclick: () => painelVinculo(area, pedido, 'approve') }, 'Aprovar (corrida já importada)'),
+      el('button', { type: 'button', class: 'perigo', onclick: () => painelRecusa(area, pedido) }, 'Recusar'),
+    ),
+    area,
+  );
+  return cartao;
+}
+
+async function decidir(pedido, corpo, botao) {
+  botao.disabled = true;
+  try {
+    const decisao = montarDecisao({ versao: pedido.version, ...corpo });
+    await api(`/admin/edition-requests/${encodeURIComponent(pedido.id)}/decision`, {
+      method: 'POST',
+      body: JSON.stringify(decisao),
+    });
+    aviso('Pedido decidido.', 'ok');
+    await carregarPedidos();
+  } catch (erro) {
+    botao.disabled = false;
+    if (token) aviso(erro.codigo ? mensagem(erro.codigo) : erro.message, 'erro');
+  }
+}
+
+function painelVinculo(area, pedido, decisao) {
+  let escolhida = null;
+  const resultados = el('ul', { class: 'escolhas', role: 'listbox' });
+  const confirmar = el('button', { type: 'button', class: 'ok', disabled: true }, decisao === 'link' ? 'Vincular' : 'Aprovar');
+  const busca = el('input', { type: 'search', placeholder: 'Nome da corrida no catálogo', maxlength: '160', value: (pedido.details || {}).name || '' });
+  let aguardando = null;
+
+  const pesquisar = async () => {
+    escolhida = null;
+    confirmar.disabled = true;
+    try {
+      const { items } = await api(`/admin/editions?q=${encodeURIComponent(busca.value.trim())}&limit=20`);
+      resultados.replaceChildren(
+        ...(items.length
+          ? items.map((e) => {
+              const li = el('li', { role: 'option', 'aria-selected': 'false', tabindex: '0' }, `${e.name} · ${e.date} · ${e.city}/${e.state}`);
+              const marcar = () => {
+                for (const outro of resultados.children) outro.setAttribute('aria-selected', 'false');
+                li.setAttribute('aria-selected', 'true');
+                escolhida = e.id;
+                confirmar.disabled = false;
+              };
+              li.addEventListener('click', marcar);
+              li.addEventListener('keydown', (ev) => ev.key === 'Enter' && marcar());
+              return li;
+            })
+          : [el('li', {}, 'Nenhuma corrida encontrada. Importe a corrida antes de aprovar o pedido.')]),
+      );
+    } catch (erro) {
+      if (token) aviso(mensagem(erro.codigo), 'erro');
+    }
+  };
+  busca.addEventListener('input', () => {
+    clearTimeout(aguardando);
+    aguardando = setTimeout(pesquisar, 350);
+  });
+  confirmar.addEventListener('click', () => decidir(pedido, { decisao: decisao, edicaoId: escolhida }, confirmar));
+  area.replaceChildren(
+    el('label', {}, decisao === 'link' ? 'Corrida do catálogo que este pedido repete:' : 'Corrida do catálogo criada a partir do pedido:', busca),
+    resultados,
+    confirmar,
+  );
+  pesquisar();
+}
+
+function painelRecusa(area, pedido) {
+  const motivo = el('textarea', { rows: '3', maxlength: '500', placeholder: 'Motivo (a pessoa que pediu vai ler)' });
+  const confirmar = el('button', { type: 'button', class: 'perigo' }, 'Confirmar recusa');
+  confirmar.addEventListener('click', () => decidir(pedido, { decisao: 'reject', motivo: motivo.value }, confirmar));
+  area.replaceChildren(el('label', {}, 'Motivo da recusa', motivo), confirmar);
+}
+
+// ---- custos -------------------------------------------------------------------------------------
+
+const NS = 'http://www.w3.org/2000/svg';
+
+function grafico(valores, rotulos, descricao) {
+  const L = 600;
+  const A = 120;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${L} ${A + 16}`);
+  svg.setAttribute('class', 'grafico');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', descricao);
+  barras(valores, L, A).forEach((b, i) => {
+    const r = document.createElementNS(NS, 'rect');
+    for (const [k, v] of Object.entries({ x: b.x, y: b.y, width: b.w, height: b.h })) r.setAttribute(k, v.toFixed(1));
+    const t = document.createElementNS(NS, 'title');
+    t.textContent = `${rotulos[i]}: ${usd(valores[i])}`;
+    r.append(t);
+    svg.append(r);
+  });
+  if (rotulos.length) {
+    for (const i of [0, rotulos.length - 1]) {
+      const tx = document.createElementNS(NS, 'text');
+      tx.setAttribute('x', i === 0 ? '0' : String(L));
+      tx.setAttribute('y', String(A + 12));
+      tx.setAttribute('text-anchor', i === 0 ? 'start' : 'end');
+      tx.textContent = rotulos[i];
+      svg.append(tx);
+    }
+  }
+  return svg;
+}
+
+function cartaoNumero(rotulo, valor, detalhe, pct) {
+  const caixa = el('article', { class: 'cartao' }, el('div', { class: 'rot' }, rotulo), el('div', { class: 'num' }, valor), detalhe ? el('div', { class: 'meta' }, detalhe) : '');
+  if (pct != null) {
+    const barra = el('div', { class: `barra-uso${pct >= 100 ? ' estouro' : pct >= 80 ? ' alerta' : ''}` }, el('span'));
+    barra.firstChild.style.width = `${Math.min(pct, 100)}%`;
+    caixa.append(barra);
+  }
+  return caixa;
+}
+
+function tabela(cabecalho, linhas, direita = []) {
+  return el(
+    'table',
+    { class: 'tabela' },
+    el('thead', {}, el('tr', {}, cabecalho.map((t, i) => el('th', { class: direita.includes(i) ? 'direita' : '' }, t)))),
+    el('tbody', {}, linhas.map((l) => el('tr', {}, l.map((c, i) => el('td', { class: direita.includes(i) ? 'direita' : '' }, c))))),
+  );
+}
+
+async function carregarCustos() {
+  const alvo = $('custos');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/costs');
+    const partes = [];
+    const a = r.aws;
+    partes.push(el('h2', {}, 'AWS (conta inteira)'));
+    if (!a) {
+      partes.push(el('p', { class: 'meta' }, 'Não foi possível ler os custos da AWS agora (o Cost Explorer precisa estar habilitado na conta).'));
+    } else {
+      partes.push(
+        el(
+          'div',
+          { class: 'grade' },
+          cartaoNumero(`Gasto em ${mesBr(a.month)}`, usd(a.totalUsd), a.budgetUsd ? `Teto mensal ${usd(a.budgetUsd)}` : '', percentual(a.totalUsd, a.budgetUsd)),
+          cartaoNumero('Previsão do mês', usd(a.forecastUsd), a.forecastUsd == null ? 'Sem histórico suficiente' : 'Gasto até agora + previsão do restante', percentual(a.forecastUsd, a.budgetUsd)),
+        ),
+        a.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por dia no mês'), grafico(a.daily.map((d) => d.usd), a.daily.map((d) => d.date.slice(8) + '/' + d.date.slice(5, 7)), 'Custo diário da AWS no mês')) : '',
+        el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por serviço (mês)'), tabela(['Serviço', 'Custo'], a.byService.map((s) => [s.service, usd(s.usd)]), [1])),
+        el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Últimos meses'), tabela(['Mês', 'Custo'], a.months.map((m) => [mesBr(m.month) + (m.estimated ? ' (parcial)' : ''), usd(m.usd)]), [1])),
+        el('p', { class: 'meta' }, 'Valores em dólar, sem converter. Dados do Cost Explorer podem atrasar até 1 dia; a consulta é cobrada pela AWS e fica em cache por 15 minutos.'),
+      );
+    }
+    if (r.openaiOrg) {
+      partes.push(...secaoOpenAiReal(r.openaiOrg));
+    } else {
+      if (r.openaiOrgStatus === 'error') {
+        partes.push(el('p', { class: 'aviso erro' }, `Não foi possível ler os dados reais da OpenAI. ${motivoOpenAi(r.openaiOrgReason)} Mostrando a estimativa.`));
+      }
+      partes.push(...secaoOpenAiEstimativa(r.openai, r.openaiOrgStatus === 'not_configured'));
+    }
+    partes.push(...secaoClaude(r));
+    alvo.replaceChildren(...partes);
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+/** Uso do Claude Code da equipe (Admin API da Anthropic). O custo é uma estimativa da Anthropic. */
+function secaoClaude(r) {
+  const n = (v) => Number(v).toLocaleString('pt-BR');
+  const partes = [el('h2', {}, 'Claude Code')];
+  if (r.claudeStatus === 'not_configured') {
+    partes.push(el('p', { class: 'meta' }, `${motivoClaude('not_configured')} Para ver o uso e o custo estimado do Claude Code, crie a organização e a chave de administrador na Anthropic e informe o parâmetro do SSM na implantação do portal.`));
+    return partes;
+  }
+  if (r.claudeStatus === 'error' || !r.claude) {
+    partes.push(el('p', { class: 'aviso erro' }, `Não foi possível ler o uso do Claude Code. ${motivoClaude(r.claudeReason)}`));
+    return partes;
+  }
+  const c = r.claude;
+  const rotulos = c.daily.map((d) => `${d.date.slice(8)}/${d.date.slice(5, 7)}`);
+  partes.push(
+    el(
+      'div',
+      { class: 'grade' },
+      cartaoNumero(`Custo estimado em ${mesBr(c.month)}`, usd(c.totalUsd), c.limitUsd ? `Teto de referência ${usd(c.limitUsd)}` : '', percentual(c.totalUsd, c.limitUsd)),
+      cartaoNumero('Total de tokens', n(c.totalTokens)),
+      cartaoNumero('Sessões', n(c.totalSessions)),
+    ),
+    c.totalUsd || c.totalTokens ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Custo estimado por dia'), grafico(c.daily.map((d) => d.usd), rotulos, 'Custo diário estimado do Claude Code')) : el('p', { class: 'vazio' }, 'Nenhum uso do Claude Code neste mês ainda.'),
+    c.byActor.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por pessoa ou chave'), tabela(['Quem', 'Tipo', 'Sessões', 'Tokens', 'Custo estimado'], c.byActor.map((k) => [k.name, k.type === 'subscription' ? 'assinatura' : k.type === 'api' ? 'API' : '—', n(k.sessions), n(k.tokens), usd(k.usd)]), [2, 3, 4])) : '',
+    c.byModel.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por modelo'), tabela(['Modelo', 'Tokens', 'Custo estimado'], c.byModel.map((k) => [k.name, n(k.tokens), usd(k.usd)]), [1, 2])) : '',
+    el('p', { class: 'meta' }, 'Dados do relatório do Claude Code da Anthropic, em dólar, dias em UTC. O custo é uma estimativa da Anthropic: em assinatura Team ou Enterprise não há fatura por token. Só aparece quem usa o Claude Code autenticado na organização. Atualiza a cada 15 minutos.'),
+  );
+  return partes;
+}
+
+/** Réplica da página Usage do console da OpenAI (dados reais pela API de administração). */
+function secaoOpenAiReal(o) {
+  const n = (v) => Number(v).toLocaleString('pt-BR');
+  const rotulos = o.daily.map((d) => `${d.date.slice(8)}/${d.date.slice(5, 7)}`);
+  return [
+    el('h2', {}, 'OpenAI'),
+    el(
+      'div',
+      { class: 'grade' },
+      cartaoNumero(`Gasto total em ${mesBr(o.month)}`, usd(o.totalUsd), o.limitUsd ? `Limite mensal ${usd(o.limitUsd)}` : '', percentual(o.totalUsd, o.limitUsd)),
+      cartaoNumero('Total de tokens', n(o.totalTokens), `${n(o.inputTokens)} de entrada · ${n(o.outputTokens)} de saída`),
+      cartaoNumero('Total de requisições', n(o.totalRequests)),
+    ),
+    o.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Gasto por dia'), grafico(o.daily.map((d) => d.usd), rotulos, 'Gasto diário da OpenAI')) : '',
+    o.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Requisições por dia'), grafico(o.daily.map((d) => d.requests), rotulos, 'Requisições diárias da OpenAI')) : '',
+    o.daily.length
+      ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por dia'), tabela(['Dia', 'Gasto', 'Requisições', 'Entrada', 'Saída'], o.daily.slice().reverse().map((d) => [d.date.split('-').reverse().join('/'), usd(d.usd), n(d.requests), n(d.inputTokens), n(d.outputTokens)]), [1, 2, 3, 4]))
+      : el('p', { class: 'vazio' }, 'Nenhum uso neste mês ainda.'),
+    o.byApiKey.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por chave de API'), tabela(['Chave', 'Requisições', 'Tokens'], o.byApiKey.map((k) => [k.name, n(k.requests), n(k.tokens)]), [1, 2])) : '',
+    o.byModel.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por modelo'), tabela(['Modelo', 'Requisições', 'Tokens'], o.byModel.map((k) => [k.name, n(k.requests), n(k.tokens)]), [1, 2])) : '',
+    o.byLineItem.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Categorias de gasto'), tabela(['Categoria', 'Gasto'], o.byLineItem.map((k) => [k.name, usd(k.usd)]), [1])) : '',
+    el('p', { class: 'meta' }, 'Dados da API de administração da OpenAI (a mesma fonte da página Usage do console), em dólar, dias em UTC. Mostra o uso de completions/respostas; outros recursos (imagens, embeddings...) não entram aqui. Atualiza a cada 15 minutos.'),
+  ];
+}
+
+function secaoOpenAiEstimativa(o, semChave) {
+  const partes = [el('h2', {}, 'OpenAI (estimativa)')];
+  if (!o) {
+    partes.push(el('p', { class: 'meta' }, 'Não foi possível ler o consumo da OpenAI agora.'));
+    return partes;
+  }
+  const mes = o.thisMonth;
+  const rotulos = o.daily.map((d) => d.date.slice(8) + '/' + d.date.slice(5, 7));
+  partes.push(
+    el(
+      'div',
+      { class: 'grade' },
+      cartaoNumero(`Custo estimado em ${mesBr(o.month)}`, o.priced ? usd(mes.estimatedUsd) : 'Preços não informados', o.limitUsd ? `Limite no console ${usd(o.limitUsd)}` : '', o.priced ? percentual(mes.estimatedUsd, o.limitUsd) : null),
+      cartaoNumero('Chamadas no mês', String(mes.chamadas), `${compacto(mes.entrada)} tokens de entrada · ${compacto(mes.saida)} de saída`),
+      cartaoNumero('Buscas na web no mês', String(mes.buscas), `Mês anterior: ${o.previousMonth.chamadas} chamadas`),
+    ),
+    o.daily.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, o.priced ? 'Custo estimado por dia' : 'Chamadas por dia'), grafico(o.daily.map((d) => (o.priced ? d.estimatedUsd : d.chamadas)), rotulos, 'Consumo diário da OpenAI')) : '',
+    o.daily.length
+      ? el('div', { class: 'cartao' }, tabela(['Dia', 'Chamadas', 'Entrada', 'Saída', 'Buscas', 'Custo est.'], o.daily.slice().reverse().map((d) => [d.date.split('-').reverse().join('/'), d.chamadas, compacto(d.entrada), compacto(d.saida), d.buscas, d.estimatedUsd == null ? '—' : usd(d.estimatedUsd)]), [1, 2, 3, 4, 5]))
+      : el('p', { class: 'vazio' }, 'Nenhum consumo registrado neste mês ainda.'),
+    el(
+      'p',
+      { class: 'meta' },
+      (o.priced
+        ? 'Estimativa a partir das chamadas registradas pelas rotinas do catálogo e da busca por linguagem natural, com os preços configurados no portal. Não inclui testes feitos fora delas nem o consumo anterior a esta medição. '
+        : 'Só o consumo medido aparece. Para estimar o custo, informe os preços da página oficial da OpenAI na implantação do portal. ') +
+        (semChave ? 'Para ver o gasto real por dia (como no console da OpenAI), configure a chave de administrador da OpenAI no portal. ' : '') +
+        'A fatura da OpenAI é a referência.',
+    ),
+  );
+  return partes;
+}
+
+// ---- banners --------------------------------------------------------------------------------------
+
+/** Busca de corrida do catálogo (a mesma busca do vínculo de pedidos). `aoEscolher(edicao)` recebe a escolhida. */
+function seletorEdicao(textoInicial, aoEscolher, idInicial = null) {
+  const lista = el('ul', { class: 'escolhas', role: 'listbox' });
+  const busca = el('input', { type: 'search', placeholder: 'Nome da corrida no catálogo', maxlength: '160', value: textoInicial || '' });
+  let espera = null;
+  let inicial = idInicial;
+  const pesquisar = async () => {
+    aoEscolher(null);
+    try {
+      const { items } = await api(`/admin/editions?q=${encodeURIComponent(busca.value.trim())}&limit=20`);
+      lista.replaceChildren(
+        ...(items.length
+          ? items.map((e) => {
+              const li = el('li', { role: 'option', 'aria-selected': 'false', tabindex: '0', 'data-id': e.id }, `${e.name} · ${e.date} · ${e.city}/${e.state}`);
+              const marcar = () => {
+                for (const outro of lista.children) outro.setAttribute('aria-selected', 'false');
+                li.setAttribute('aria-selected', 'true');
+                aoEscolher(e);
+              };
+              li.addEventListener('click', marcar);
+              li.addEventListener('keydown', (ev) => ev.key === 'Enter' && marcar());
+              return li;
+            })
+          : [el('li', {}, 'Nenhuma corrida encontrada.')]),
+      );
+      const sugerida = inicial && [...lista.children].find((li) => li.dataset.id === inicial);
+      inicial = null;
+      if (sugerida) sugerida.click();
+    } catch (erro) {
+      if (token) aviso(mensagem(erro.codigo), 'erro');
+    }
+  };
+  busca.addEventListener('input', () => {
+    clearTimeout(espera);
+    espera = setTimeout(pesquisar, 350);
+  });
+  return { caixa: el('div', {}, el('label', {}, 'Corrida do catálogo', busca), lista), pesquisar };
+}
+
+/** Formulário de aprovação: imagem (com prévia), crédito, base de autorização e confirmação. */
+function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
+  let escolhida = null;
+  let urlPrevia = null;
+  const campoUrl = imagem ? null : el('input', { type: 'url', placeholder: 'https://...', maxlength: '2000' });
+  const previa = el('div');
+  const campoCredito = el('input', { type: 'text', maxlength: '200', value: credito || '', placeholder: 'Ex.: Divulgação: Organizador' });
+  const campoNota = el('textarea', { rows: '4', maxlength: '1000' });
+  campoNota.value = notaDireitosPadrao(pagina, dataHojeIso());
+  const confirmar = el('input', { type: 'checkbox' });
+  const aprovar = el('button', { type: 'button', class: 'ok', disabled: true }, 'Aprovar e publicar');
+  const seletor = seletorEdicao(
+    edicao ? edicao.name : nomeBusca,
+    (e) => {
+      escolhida = e ? e.id : null;
+      habilitar();
+    },
+    edicao ? edicao.id : null,
+  );
+  const endereco = () => (imagem || campoUrl.value.trim());
+  const habilitar = () => {
+    aprovar.disabled = !(escolhida && endereco() && campoCredito.value.trim() && campoNota.value.trim().length >= 10 && confirmar.checked);
+  };
+  for (const c of [campoCredito, campoNota, confirmar]) c.addEventListener('input', habilitar);
+  if (campoUrl) campoUrl.addEventListener('input', habilitar);
+
+  const verPrevia = el('button', { type: 'button', class: 'sec' }, 'Ver a imagem como ficará no app');
+  verPrevia.addEventListener('click', async () => {
+    if (!endereco()) return aviso('Informe o endereço da imagem.', 'erro');
+    verPrevia.disabled = true;
+    try {
+      const r = await fetch(cfg.apiUrl + '/admin/banners/preview', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageUrl: endereco() }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 401) return sair('INVALID_TOKEN');
+        return aviso(mensagem(j.code), 'erro');
+      }
+      if (urlPrevia) URL.revokeObjectURL(urlPrevia);
+      urlPrevia = URL.createObjectURL(await r.blob());
+      previa.replaceChildren(el('img', { class: 'previa', src: urlPrevia, alt: 'Prévia do banner' }));
+    } finally {
+      verPrevia.disabled = false;
+    }
+  });
+
+  aprovar.addEventListener('click', async () => {
+    if (!window.confirm('Aprovar PUBLICA esta imagem no app, com o crédito informado. Confirmar?')) return;
+    aprovar.disabled = true;
+    try {
+      await api('/admin/banners/approve', {
+        method: 'POST',
+        body: JSON.stringify({ editionId: escolhida, imageUrl: endereco(), credit: campoCredito.value.trim(), rightsNote: campoNota.value.trim(), confirmRights: confirmar.checked }),
+      });
+      aviso('Banner publicado.', 'ok');
+      await carregarBanners();
+    } catch (erro) {
+      habilitar();
+      if (token) aviso(mensagem(erro.codigo), 'erro');
+    }
+  });
+
+  seletor.pesquisar();
+  return el(
+    'div',
+    {},
+    campoUrl ? el('label', {}, 'Endereço da imagem (https)', campoUrl) : '',
+    el('div', { class: 'acoes' }, verPrevia),
+    previa,
+    seletor.caixa,
+    el('label', {}, 'Crédito (aparece no app)', campoCredito),
+    el('label', {}, 'Base de autorização (como você obteve o direito de usar; fica só no registro interno)', campoNota),
+    el('label', { class: 'confirma' }, confirmar, ' Confirmo que a base de autorização acima é verdadeira.'),
+    aprovar,
+  );
+}
+
+async function carregarBanners() {
+  $('banners-candidatas').replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const [cand, pub] = await Promise.all([api('/admin/banners/candidates'), api('/admin/banners/published')]);
+    $('banners-candidatas').replaceChildren(
+      el('h2', {}, cand.source ? `Candidatas da coleta de ${dataBr(cand.source)}` : 'Candidatas'),
+      ...(cand.items.length
+        ? cand.items.map((c) =>
+            el(
+              'article',
+              { class: 'cartao' },
+              el('h2', {}, c.name),
+              el('div', { class: 'linha' }, `${dataBr(c.date)} · direitos: ${c.rights || 'não verificado'}`),
+              linkSeguro(c.officialPage) ? el('div', { class: 'meta' }, 'Página oficial: ', el('a', { href: linkSeguro(c.officialPage), target: '_blank', rel: 'noopener noreferrer' }, c.officialPage)) : '',
+              c.edition && c.edition.hasBanner ? el('div', { class: 'aviso' }, 'Esta corrida já tem banner; aprovar substitui.') : '',
+              formularioBanner({ imagem: c.imageUrl, credito: c.credit, pagina: c.officialPage, edicao: c.edition, nomeBusca: c.name }),
+            ),
+          )
+        : [el('p', { class: 'vazio' }, 'Nenhuma imagem candidata na última coleta.')]),
+    );
+    $('banner-manual').replaceChildren(formularioBanner({ imagem: '', credito: '', pagina: '', edicao: null, nomeBusca: '' }));
+    $('banners-publicados').replaceChildren(
+      ...(pub.items.length
+        ? pub.items.map((e) =>
+            el(
+              'article',
+              { class: 'cartao' },
+              el('h2', {}, e.name),
+              el('div', { class: 'linha' }, `${dataBr(e.date)} · ${e.city}/${e.state} · crédito: ${e.credit || '—'}`),
+              el('button', { type: 'button', class: 'perigo', onclick: () => retirarBanner(e) }, 'Retirar banner'),
+            ),
+          )
+        : [el('p', { class: 'vazio' }, 'Nenhum banner publicado.')]),
+    );
+  } catch (erro) {
+    if (token) {
+      $('banners-candidatas').replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+async function retirarBanner(e) {
+  const motivo = window.prompt(`Retirar o banner de "${e.name}". Motivo (fica registrado):`, '');
+  if (!motivo || motivo.trim().length < 5) return;
+  try {
+    await api('/admin/banners/remove', { method: 'POST', body: JSON.stringify({ editionId: e.id, reason: motivo.trim() }) });
+    aviso('Banner retirado.', 'ok');
+    await carregarBanners();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
+// ---- gestão de operadores -----------------------------------------------------------------------
+
+let meuId = '';
+
+async function acaoOperador(caminho, metodo, corpo, sucesso) {
+  try {
+    await api(`/admin/operators/${encodeURIComponent(caminho)}`, { method: metodo, body: corpo ? JSON.stringify(corpo) : undefined });
+    aviso(sucesso, 'ok');
+    await carregarOperadores();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
+function editorPermissoes(op, area, conceder = false) {
+  const atuais = new Set(permissoesDe(op));
+  const caixas = Object.entries(PERMISSOES).map(([v, t]) => el('label', {}, el('input', { type: 'checkbox', value: v, checked: atuais.has(v) }), t));
+  const salvar = el('button', { type: 'button', class: 'ok' }, conceder ? 'Conceder acesso' : 'Salvar permissões');
+  salvar.addEventListener('click', () => {
+    const escolhidas = [...area.querySelectorAll('input:checked')].map((i) => i.value);
+    if (!escolhidas.length) return aviso('Escolha ao menos uma permissão (ou retire o acesso).', 'erro');
+    if (conceder) acaoOperador(`${op.subject}/grant`, 'POST', { permissions: escolhidas }, 'Acesso concedido. Peça para a pessoa entrar de novo.');
+    else acaoOperador(`${op.subject}/permissions`, 'PUT', { permissions: escolhidas }, 'Permissões atualizadas.');
+  });
+  area.replaceChildren(el('fieldset', {}, el('legend', {}, 'Permissões'), caixas), salvar);
+}
+
+function cartaoOperador(op) {
+  const area = el('div');
+  const eu = op.subject === meuId;
+  const ativo = op.enabled && op.access && op.access.state === 'active';
+  const botoes = [];
+  if (!eu) {
+    if (ativo) {
+      botoes.push(el('button', { type: 'button', class: 'sec', onclick: () => editorPermissoes(op, area) }, 'Alterar permissões'));
+      botoes.push(el('button', { type: 'button', class: 'perigo', onclick: () => window.confirm(`Retirar o acesso de ${op.email}? A sessão dele cai agora.`) && acaoOperador(`${op.subject}/revoke`, 'POST', null, 'Acesso retirado.') }, 'Retirar acesso'));
+      botoes.push(el('button', { type: 'button', class: 'sec', onclick: () => window.confirm(`Esqueceu senha ou autenticador? Vamos apagar o login de ${op.email} e enviar um convite novo, com as mesmas permissões. Continuar?`) && acaoOperador(`${op.subject}/reset`, 'POST', null, 'Login recriado: o operador recebeu um convite novo por e-mail.') }, 'Refazer senha e autenticador'));
+    } else if (!op.access && op.enabled) {
+      botoes.push(el('button', { type: 'button', class: 'ok', onclick: () => editorPermissoes(op, area, true) }, 'Conceder acesso ao portal'));
+    } else if (op.access) {
+      botoes.push(el('button', { type: 'button', class: 'ok', onclick: () => acaoOperador(`${op.subject}/reactivate`, 'POST', null, 'Acesso reativado.') }, 'Reativar acesso'));
+    }
+  }
+  const concedido = op.access && op.access.grantedAt ? ` · concedido em ${dataHoraBr(op.access.grantedAt)}` : '';
+  return el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, op.email + (eu ? ' (você)' : '')),
+    el('div', { class: 'linha' }, `${situacaoOperador(op)}${concedido}`),
+    el('div', { class: 'meta' }, permissoesDe(op).map((p) => PERMISSOES[p] || p).join(' · ') || 'Sem permissões'),
+    el('div', { class: 'acoes' }, botoes),
+    area,
+  );
+}
+
+async function carregarOperadores() {
+  const alvo = $('operadores');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const { items } = await api('/admin/operators');
+    alvo.replaceChildren(...(items.length ? items.map(cartaoOperador) : [el('p', { class: 'vazio' }, 'Nenhum operador.')]));
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+// ---- cadastros, operadores e atualização do catálogo ------------------------------------------
+
+let permissoes = [];
+
+function mostrarAba(nome) {
+  for (const b of document.querySelectorAll('[data-aba]')) b.setAttribute('aria-selected', String(b.dataset.aba === nome));
+  for (const s of document.querySelectorAll('[data-sec]')) s.hidden = s.dataset.sec !== nome;
+  aviso('');
+  if (nome === 'pedidos') carregarPedidos();
+  if (nome === 'catalogo') carregarUltimoDisparo();
+  if (nome === 'cadastros') carregarCadastros();
+  if (nome === 'custos') carregarCustos();
+  if (nome === 'banners') carregarBanners();
+  if (nome === 'operadores') carregarOperadores();
+}
+
+async function carregarCadastros() {
+  const alvo = $('cadastros');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/users/runners');
+    $('resumo-cadastros').textContent = resumoCadastros(r);
+    alvo.replaceChildren(
+      r.items.length
+        ? el(
+            'table',
+            { class: 'tabela' },
+            el('thead', {}, el('tr', {}, el('th', {}, 'Cadastro'), el('th', {}, 'E-mail'), el('th', {}, 'Situação'), el('th', {}, 'Criado em'))),
+            el('tbody', {}, r.items.map((u) => el('tr', {}, el('td', {}, u.id), el('td', {}, u.email), el('td', {}, statusCadastro(u.status) + (u.enabled ? '' : ' (desativado)')), el('td', {}, (u.createdAt || '').slice(0, 10).split('-').reverse().join('/'))))),
+          )
+        : el('p', { class: 'vazio' }, 'Nenhum cadastro ainda.'),
+    );
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+let acompanhar = null;
+
+async function carregarAgendamentos() {
+  try {
+    const { items } = await api('/admin/catalog/schedules');
+    $('agendamentos').replaceChildren(
+      items.length
+        ? el(
+            'table',
+            { class: 'tabela' },
+            el('thead', {}, el('tr', {}, ['Próxima execução', 'O que faz', 'Situação'].map((t) => el('th', {}, t)))),
+            el('tbody', {}, items.map((a) => {
+              const d = descreverAgendamento(a);
+              return el('tr', {}, el('td', {}, d.quando), el('td', {}, d.oque), el('td', {}, d.situacao));
+            })),
+          )
+        : el('p', { class: 'vazio' }, 'Nenhum agendamento encontrado.'),
+    );
+  } catch (erro) {
+    if (token) $('agendamentos').replaceChildren(el('p', { class: 'meta' }, 'Não foi possível ler os agendamentos agora.'));
+  }
+}
+
+async function carregarExecucoes() {
+  clearTimeout(acompanhar);
+  try {
+    const r = await api('/admin/catalog/runs');
+    const linhas = r.items.map((e) =>
+      el(
+        'tr',
+        {},
+        el('td', {}, dataHoraBr(e.at)),
+        el('td', {}, e.origin === 'portal' ? `Portal · ${MODOS_CATALOGO[e.mode] || e.mode}` : 'Agendada'),
+        el('td', {}, e.by ? e.by.slice(0, 8) : '—'),
+        el('td', {}, situacaoExecucao(e.status)),
+        el('td', {}, duracao(e.durationMs)),
+      ),
+    );
+    $('execucoes').replaceChildren(
+      linhas.length
+        ? el('table', { class: 'tabela' }, el('thead', {}, el('tr', {}, ['Início', 'Origem', 'Por', 'Situação', 'Duração'].map((t) => el('th', {}, t)))), el('tbody', {}, linhas))
+        : el('p', { class: 'vazio' }, 'Nenhuma execução nos últimos 7 dias.'),
+      r.logsAvailable ? '' : el('p', { class: 'meta' }, 'Os registros da rotina não puderam ser lidos agora; a lista mostra só os disparos.'),
+    );
+    if (token && ativa(r.items) && !$('sec-catalogo').hidden) acompanhar = setTimeout(carregarExecucoes, 20000);
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
+async function carregarUltimoDisparo() {
+  carregarAgendamentos();
+  carregarExecucoes();
+  try {
+    const { last } = await api('/admin/catalog/run');
+    $('ultimo-disparo').textContent = last
+      ? `Último disparo: ${MODOS_CATALOGO[last.mode] || last.mode} em ${last.startedAt.replace('T', ' ').replace('Z', ' UTC')}`
+      : 'Nenhum disparo registrado.';
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
+$('rodar').addEventListener('click', async () => {
+  const modo = $('modo-catalogo').value;
+  if (!window.confirm(`Disparar agora: ${MODOS_CATALOGO[modo]}? Usa a cota da OpenAI.`)) return;
+  $('rodar').disabled = true;
+  try {
+    await api('/admin/catalog/run', { method: 'POST', body: JSON.stringify({ mode: modo }) });
+    aviso('Rotina disparada. Ela roda em segundo plano; os resultados chegam em revisão.', 'ok');
+    await carregarUltimoDisparo();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  } finally {
+    $('rodar').disabled = false;
+  }
+});
+
+$('form-operador').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  const email = $('op-email').value.trim();
+  const escolhidas = [...document.querySelectorAll('#op-permissoes input:checked')].map((i) => i.value);
+  if (!emailValido(email) || !escolhidas.length) return aviso('Informe um e-mail válido e ao menos uma permissão.', 'erro');
+  if (!window.confirm(`Criar o operador ${email} com: ${escolhidas.join(', ')}?`)) return;
+  try {
+    const r = await api('/admin/operators', { method: 'POST', body: JSON.stringify({ email, permissions: escolhidas }) });
+    aviso(`Operador criado (${r.email}). Ele recebeu um e-mail com a senha temporária.`, 'ok');
+    $('form-operador').reset();
+    carregarOperadores();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+});
+
+function prepararAbas() {
+  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', banners: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin', custos: 'cost_read' };
+  for (const [nome, perm] of Object.entries(abas)) $(`aba-${nome}`).hidden = !permissoes.includes(perm);
+  $('modo-catalogo').replaceChildren(...Object.entries(MODOS_CATALOGO).map(([v, t]) => el('option', { value: v }, t)));
+  $('op-permissoes').replaceChildren(
+    el('legend', {}, 'Permissões'),
+    ...Object.entries(PERMISSOES).map(([v, t]) => el('label', {}, el('input', { type: 'checkbox', value: v }), t)),
+  );
+  mostrarAba(permissoes.includes('catalog_admin') ? 'pedidos' : permissoes.includes('user_admin') ? 'cadastros' : permissoes.includes('cost_read') ? 'custos' : '');
+}
+
+for (const b of document.querySelectorAll('[data-aba]')) b.addEventListener('click', () => mostrarAba(b.dataset.aba));
+
+// ---- login --------------------------------------------------------------------------------------
+
+function etapa(nome) {
+  for (const id of ['form-senha', 'form-nova', 'form-setup', 'form-mfa']) $(id).hidden = id !== `form-${nome}`;
+}
+
+async function abrirPainel(t) {
+  iniciarSessao(t, emailTentativa);
+  let info;
+  try {
+    info = await api('/admin/session');
+  } catch (erro) {
+    if (erro.tratado) {
+      aviso(mensagem('NO_PORTAL_ACCESS'), 'erro'); // o login do Cognito passou, mas não há acesso ativo
+      return;
+    }
+    aviso(mensagem(erro.codigo), 'erro'); // por ex. serviço indisponível: o painel não abre, mas a razão aparece
+    throw erro;
+  }
+  permissoes = info.permissions || [];
+  meuId = info.subject;
+  if (!permissoes.some((p) => ['catalog_admin', 'user_admin', 'cost_read'].includes(p))) {
+    aviso('Seu acesso não inclui permissão para este portal. Peça a ativação.', 'erro');
+    return;
+  }
+  prepararAbas();
+}
+
+$('form-senha').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  aviso('');
+  emailTentativa = $('email').value.trim();
+  try {
+    const r = await entrar(cfg, emailTentativa, $('senha').value);
+    sessaoMfa = r.sessao;
+    if (r.desafio === 'mfa_setup') {
+      const s = await iniciarAutenticador(cfg, sessaoMfa);
+      sessaoMfa = s.sessao;
+      $('segredo').textContent = s.segredo;
+    }
+    $('senha').value = '';
+    etapa({ mfa: 'mfa', nova_senha: 'nova', mfa_setup: 'setup' }[r.desafio]);
+    $({ mfa: 'codigo', nova_senha: 'nova-senha', mfa_setup: 'codigo-setup' }[r.desafio]).focus();
+  } catch (erro) {
+    aviso(mensagem(erro.codigo), 'erro');
+  }
+});
+
+$('form-nova').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  aviso('');
+  try {
+    sessaoMfa = await definirSenha(cfg, emailTentativa, sessaoMfa, $('nova-senha').value);
+    $('nova-senha').value = '';
+    const s = await iniciarAutenticador(cfg, sessaoMfa);
+    sessaoMfa = s.sessao;
+    $('segredo').textContent = s.segredo;
+    etapa('setup');
+    $('codigo-setup').focus();
+  } catch (erro) {
+    aviso(mensagem(erro.codigo), 'erro');
+    if (erro.codigo !== 'InvalidPasswordException') voltarAoInicio();
+  }
+});
+
+$('form-setup').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  aviso('');
+  try {
+    const t = await concluirAutenticador(cfg, emailTentativa, sessaoMfa, $('codigo-setup').value.trim());
+    $('segredo').textContent = '';
+    $('codigo-setup').value = '';
+    await abrirPainel(t);
+  } catch (erro) {
+    if (token || erro.tratado) return;
+    aviso(mensagem(erro.codigo), 'erro');
+    if (erro.codigo !== 'CodeMismatchException' && erro.codigo !== 'ExpiredCodeException') voltarAoInicio();
+  }
+});
+
+function voltarAoInicio() {
+  sessaoMfa = null;
+  $('segredo').textContent = '';
+  etapa('senha');
+}
+
+$('form-mfa').addEventListener('submit', async (evento) => {
+  evento.preventDefault();
+  aviso('');
+  try {
+    const t = await confirmarMfa(cfg, emailTentativa, sessaoMfa, $('codigo').value.trim());
+    await abrirPainel(t);
+  } catch (erro) {
+    if (token || erro.tratado) return;
+    aviso(mensagem(erro.codigo), 'erro');
+    if (erro.codigo === 'CodeMismatchException' || erro.codigo === 'ExpiredCodeException') return;
+    voltarAoInicio();
+  }
+});
+
+$('voltar').addEventListener('click', () => sair());
+$('sair').addEventListener('click', () => sair());
+$('atualizar').addEventListener('click', carregarPedidos);
+$('atualizar-cadastros').addEventListener('click', carregarCadastros);
+$('atualizar-banners').addEventListener('click', carregarBanners);
+$('atualizar-operadores').addEventListener('click', carregarOperadores);
+$('atualizar-custos').addEventListener('click', carregarCustos);
+$('atualizar-execucoes').addEventListener('click', carregarExecucoes);

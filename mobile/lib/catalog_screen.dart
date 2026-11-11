@@ -8,8 +8,10 @@ import 'friends.dart';
 import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
+import 'location_picker.dart';
 import 'my_races.dart';
 import 'notifications.dart';
+import 'profile_photo.dart';
 import 'runpass_theme.dart';
 
 export 'home_screen.dart';
@@ -150,27 +152,125 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
   return mine;
 }
 
-/// Miniatura da corrida na lista: a imagem aprovada (banner ou logo) quando existe; senão o ícone.
-/// Só corridas com `imageReference` pedem o link, e ele fica em cache por alguns minutos.
-class EditionThumb extends StatefulWidget {
+/// Arte padrão de uma corrida sem imagem aprovada: degradê estável (a mesma corrida sempre tem a mesma
+/// cor), silhueta de corredor e a maior distância. Não é foto nem logo da prova: só uma identidade visual.
+class RaceArt extends StatelessWidget {
+  final Map<String, dynamic> edition;
+
+  /// Na lista, a distância fica no canto superior esquerdo (os atalhos ocupam o direito); no banner da
+  /// corrida fica à direita, longe do botão de voltar.
+  final bool labelAtLeft;
+  const RaceArt({super.key, required this.edition, this.labelAtLeft = false});
+
+  static const palettes = [
+    [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+    [Color(0xff0f2a43), Color(0xff1d5d7a), Color(0xff4cb5ae)],
+    [Color(0xff24103f), Color(0xff6a3d9a), Color(0xffff7a59)],
+    [Color(0xff10321f), Color(0xff2f7d4f), Color(0xffd9b44a)],
+    [Color(0xff3a0f1e), Color(0xff9a2e4d), Color(0xffff9d5c)],
+  ];
+
+  List<Color> get colors {
+    final id = '${edition['id'] ?? edition['name'] ?? ''}';
+    final seed = id.codeUnits.fold<int>(7, (h, c) => (h * 31 + c) & 0x7fffffff);
+    return palettes[seed % palettes.length];
+  }
+
+  String? get longest {
+    final km = [
+      for (final d in (edition['distances'] as List? ?? const []))
+        if ((d as Map)['kilometers'] is num)
+          (d['kilometers'] as num).toDouble(),
+    ];
+    if (km.isEmpty) return null;
+    km.sort();
+    return distanceLabel(km.last);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = longest;
+    final decoration = BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: colors,
+      ),
+    );
+    return DecoratedBox(
+      key: const Key('race-art'),
+      decoration: decoration,
+      child: ClipRect(
+        child: Stack(
+          children: [
+            Positioned(
+              right: -14,
+              bottom: -26,
+              child: Icon(
+                Icons.directions_run,
+                size: 170,
+                color: Colors.white.withValues(alpha: .13),
+              ),
+            ),
+            if (label != null)
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _ArtLabelPainter(label, left: labelAtLeft),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Pinta a distância como desenho (marca d'água), para não virar um texto duplicado na tela.
+class _ArtLabelPainter extends CustomPainter {
+  final String label;
+  final bool left;
+  const _ArtLabelPainter(this.label, {this.left = false});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final text = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: .22),
+          fontSize: 56,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    text.paint(
+      canvas,
+      left ? const Offset(16, 10) : Offset(size.width - text.width - 18, 52),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ArtLabelPainter old) =>
+      old.label != label || old.left != left;
+}
+
+/// Fundo do cartão da corrida na lista: ocupa o espaço todo. A imagem aprovada (banner ou logo) quando
+/// existe; senão a arte padrão da corrida. Só corridas com `imageReference` pedem o link, e ele fica
+/// em cache por alguns minutos.
+class EditionCover extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> edition;
-  final bool archived;
-  const EditionThumb({
-    super.key,
-    required this.gateway,
-    required this.edition,
-    this.archived = false,
-  });
+  const EditionCover({super.key, required this.gateway, required this.edition});
 
   /// Links temporários já obtidos (corrida -> url, instante), para a rolagem não repetir pedidos.
   static final Map<String, (String, DateTime)> cache = {};
 
   @override
-  State<EditionThumb> createState() => _EditionThumbState();
+  State<EditionCover> createState() => _EditionCoverState();
 }
 
-class _EditionThumbState extends State<EditionThumb> {
+class _EditionCoverState extends State<EditionCover> {
   String? url;
 
   @override
@@ -182,7 +282,7 @@ class _EditionThumbState extends State<EditionThumb> {
   Future<void> resolve() async {
     final id = widget.edition['id'] as String;
     if (widget.edition['imageReference'] == null) return;
-    final hit = EditionThumb.cache[id];
+    final hit = EditionCover.cache[id];
     if (hit != null && DateTime.now().difference(hit.$2).inMinutes < 4) {
       url = hit.$1;
       return;
@@ -193,42 +293,30 @@ class _EditionThumbState extends State<EditionThumb> {
       );
       final found = link['url'] as String?;
       if (found == null) return;
-      EditionThumb.cache[id] = (found, DateTime.now());
+      EditionCover.cache[id] = (found, DateTime.now());
       if (mounted) setState(() => url = found);
     } on Exception {
-      // Sem imagem, fica o ícone: a lista nunca depende dela.
+      // Sem imagem, fica a arte padrão: a lista nunca depende dela.
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final archived = widget.archived;
-    final icon = Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: archived
-            ? context.panelStrong
-            : runPassOrange.withValues(alpha: .12),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Icon(
-        archived ? Icons.inventory_2_outlined : Icons.directions_run,
-        color: archived ? context.archivedText : runPassOrange,
-      ),
-    );
-    final shown = url;
-    if (shown == null) return icon;
-    return ClipRRect(
-      key: const Key('edition-thumb'),
-      borderRadius: BorderRadius.circular(14),
-      child: Image.network(
-        shown,
-        width: 48,
-        height: 48,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => icon,
-      ),
+    if (widget.edition['status'] == 'archived') {
+      return ColoredBox(color: context.panelStrong);
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RaceArt(edition: widget.edition, labelAtLeft: true),
+        if (url != null)
+          Image.network(
+            url!,
+            key: const Key('edition-cover-image'),
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
+      ],
     );
   }
 }
@@ -246,45 +334,16 @@ List<int> filterYears([DateTime? now]) {
   return [for (var y = top; y >= 2024; y--) y];
 }
 
-const brazilianStates = {
-  'AC': 'Acre',
-  'AL': 'Alagoas',
-  'AP': 'Amapá',
-  'AM': 'Amazonas',
-  'BA': 'Bahia',
-  'CE': 'Ceará',
-  'DF': 'Distrito Federal',
-  'ES': 'Espírito Santo',
-  'GO': 'Goiás',
-  'MA': 'Maranhão',
-  'MT': 'Mato Grosso',
-  'MS': 'Mato Grosso do Sul',
-  'MG': 'Minas Gerais',
-  'PA': 'Pará',
-  'PB': 'Paraíba',
-  'PR': 'Paraná',
-  'PE': 'Pernambuco',
-  'PI': 'Piauí',
-  'RJ': 'Rio de Janeiro',
-  'RN': 'Rio Grande do Norte',
-  'RS': 'Rio Grande do Sul',
-  'RO': 'Rondônia',
-  'RR': 'Roraima',
-  'SC': 'Santa Catarina',
-  'SP': 'São Paulo',
-  'SE': 'Sergipe',
-  'TO': 'Tocantins',
-}; // fmt: skip
-
 class CatalogScreen extends StatefulWidget {
   final IdentityGateway gateway;
 
-  /// Ordem inicial da lista (`dateDesc` por padrão; `dateAsc` usa só a paginação do servidor).
-  final String initialSort;
+  /// Só para testes: mantém a paginação do servidor (20 por página, "Carregar mais", sem reordenar).
+  /// Em uso normal a lista carrega as páginas e ordena por data no aparelho.
+  final bool serverPaging;
   const CatalogScreen({
     super.key,
     required this.gateway,
-    this.initialSort = 'dateDesc',
+    this.serverPaging = false,
   });
   @override
   State<CatalogScreen> createState() => _CatalogScreenState();
@@ -304,6 +363,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Map<String, dynamic>? searchInfo;
   final items = <Map<String, dynamic>>[];
   Map<String, Map<String, dynamic>> mine = {};
+  // Situação da pessoa em cada corrida (desejada ou inscrita): edição -> `wanted` | `registered`.
+  Map<String, String> plans = {};
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
   // Situacao das inscricoes (filtro): nulo = qualquer.
@@ -323,6 +384,234 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Future<void> loadMine() async {
     final result = await loadMyEditions(widget.gateway);
     if (mounted) setState(() => mine = result);
+    loadPlans();
+  }
+
+  /// Atalhos da lista: só ajudam, então uma falha deixa a lista sem marcas, sem erro na tela.
+  Future<void> loadPlans() async {
+    try {
+      final page = await widget.gateway.request('/me/race-plans');
+      if (!mounted) return;
+      setState(
+        () => plans = {
+          for (final p in (page['items'] as List? ?? const []))
+            if ((p as Map)['editionId'] is String && p['status'] is String)
+              p['editionId'] as String: p['status'] as String,
+        },
+      );
+    } on Exception {
+      // Sem marcas.
+    }
+  }
+
+  /// Marca ou desmarca "quero correr" / "inscrito" direto da lista (toque de novo para tirar).
+  Future<void> togglePlan(Map<String, dynamic> edition, String status) async {
+    final id = edition['id'] as String;
+    final path = '/me/race-plans/${Uri.encodeComponent(id)}';
+    try {
+      if (plans[id] == status) {
+        await widget.gateway.request(path, method: 'DELETE');
+        if (mounted) setState(() => plans.remove(id));
+      } else {
+        await widget.gateway.request(
+          path,
+          method: 'PUT',
+          body: {'status': status},
+        );
+        if (mounted) setState(() => plans[id] = status);
+      }
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = catalogError(issue));
+    } on Exception {
+      if (mounted) {
+        setState(
+          () => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.',
+        );
+      }
+    }
+  }
+
+  /// "Já corri" na lista: com uma só distância cria o rascunho e abre o registro; com várias (ou se já
+  /// existe registro) abre a corrida, onde a pessoa escolhe a distância.
+  Future<void> markRan(Map<String, dynamic> edition) async {
+    final id = edition['id'] as String;
+    final distances = (edition['distances'] as List).cast<Map>();
+    if (!mine.containsKey(id) && distances.length == 1) {
+      try {
+        final draft = await widget.gateway.request(
+          '/participations',
+          method: 'POST',
+          body: {'editionId': id, 'distanceId': distances.first['id']},
+        );
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ParticipationDraftScreen(
+              gateway: widget.gateway,
+              initial: draft,
+            ),
+          ),
+        );
+        loadMine();
+        return;
+      } on IdentityIssue catch (issue) {
+        if (issue.code != 'PARTICIPATION_EXISTS' && mounted) {
+          setState(() => error = catalogError(issue));
+          return;
+        }
+      } on Exception {
+        if (mounted) {
+          setState(
+            () => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.',
+          );
+        }
+        return;
+      }
+    }
+    await openEdition(id);
+  }
+
+  Future<void> openEdition(String id) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EditionScreen(gateway: widget.gateway, editionId: id),
+      ),
+    );
+    loadMine();
+  }
+
+  /// Cartão da corrida: a imagem (ou a arte padrão) cobre o cartão todo; o texto e os atalhos ficam por cima.
+  Widget editionCard(Map<String, dynamic> edition) {
+    final archived = edition['status'] == 'archived';
+    final lines = [
+      '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
+      (edition['distances'] as List)
+          .map((d) => '${d['kilometers']} km')
+          .join(' · '),
+      if (archived)
+        'Arquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}',
+      if (scoreOf(edition) != null)
+        '★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações',
+      if (mine.containsKey(edition['id'])) 'Já está na sua lista',
+    ];
+    const shadow = [Shadow(blurRadius: 6, color: Colors.black54)];
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: loading ? null : () => openEdition(edition['id'] as String),
+        child: SizedBox(
+          height: 200,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              EditionCover(gateway: widget.gateway, edition: edition),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0x33000000), Color(0xD9000000)],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 12,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      edition['name'] as String,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: archived ? context.archivedText : Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 17,
+                        shadows: shadow,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      lines.join('\n'),
+                      style: TextStyle(
+                        color: archived ? context.archivedText : Colors.white,
+                        fontSize: 12.5,
+                        height: 1.3,
+                        shadows: shadow,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(top: 6, right: 6, child: quickActions(edition)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget quickActions(Map<String, dynamic> edition) {
+    final id = edition['id'] as String;
+    final status = edition['status'];
+    if (status == 'archived') return const SizedBox.shrink();
+    final upcoming = status != 'past';
+    // Ícones sobre a imagem: círculo escuro translúcido; marcado fica laranja.
+    Widget action(
+      String key,
+      IconData icon,
+      String label,
+      bool on,
+      VoidCallback onTap,
+    ) => Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: Material(
+        color: on ? runPassOrange : Colors.black54,
+        shape: const CircleBorder(),
+        child: IconButton(
+          key: Key('$key-$id'),
+          tooltip: label,
+          visualDensity: VisualDensity.compact,
+          color: Colors.white,
+          icon: Icon(icon, size: 22),
+          onPressed: loading ? null : onTap,
+        ),
+      ),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (upcoming) ...[
+          action(
+            'quick-wanted',
+            plans[id] == 'wanted' ? Icons.favorite : Icons.favorite_border,
+            plans[id] == 'wanted' ? 'Tirar de Quero correr' : 'Quero correr',
+            plans[id] == 'wanted',
+            () => togglePlan(edition, 'wanted'),
+          ),
+          action(
+            'quick-registered',
+            Icons.how_to_reg_outlined,
+            plans[id] == 'registered' ? 'Tirar de Inscrito' : 'Inscrito',
+            plans[id] == 'registered',
+            () => togglePlan(edition, 'registered'),
+          ),
+        ],
+        action(
+          'quick-ran',
+          mine.containsKey(id)
+              ? Icons.check_circle_rounded
+              : Icons.directions_run,
+          mine.containsKey(id) ? 'Ver meu registro' : 'Já corri',
+          mine.containsKey(id),
+          () => markRan(edition),
+        ),
+      ],
+    );
   }
 
   @override
@@ -335,13 +624,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
     super.dispose();
   }
 
-  /// Ordem da lista: `dateDesc` (padrão: mais recentes primeiro), `dateAsc` (a do servidor) ou
-  /// `rating` (ranking das melhores). Só `dateAsc` usa a paginação do servidor com limite 20.
-  late String sort = widget.initialSort;
+  /// Ordem por data: decrescente (mais recentes primeiro) por padrão; o ícone alterna.
+  bool descending = true;
 
   /// Itens por página da busca atual. O cursor do servidor é amarrado aos filtros (inclui o limite),
   /// então o limite não pode mudar no meio de uma busca.
-  late String pageLimit = widget.initialSort == 'dateAsc' ? '20' : '100';
+  late String pageLimit = widget.serverPaging ? '20' : '100';
 
   static num? scoreOf(Map<String, dynamic> edition) {
     final raw = (edition['runScore'] as Map?)?['value'];
@@ -351,44 +639,47 @@ class _CatalogScreenState extends State<CatalogScreen> {
   static int reviewsOf(Map<String, dynamic> edition) =>
       ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
 
-  /// Itens na ordem escolhida. Sem nota, a prova vai para o fim do ranking.
+  /// Prioridade da corrida para ESTA pessoa: 0 já corri (ou tenho registro), 1 inscrito (pretendo correr),
+  /// 2 desejo correr, 3 as demais. Cada perfil vê a sua própria ordem, pois vem das suas marcações.
+  int priority(Map<String, dynamic> edition) {
+    final id = edition['id'] as String;
+    if (mine.containsKey(id)) return 0;
+    return switch (plans[id]) {
+      'registered' => 1,
+      'wanted' => 2,
+      _ => 3,
+    };
+  }
+
+  /// Itens na ordem escolhida: primeiro as minhas (por prioridade), depois as demais; dentro de cada
+  /// grupo, por data (o ícone alterna crescente/decrescente) e, em empate, pelo nome.
   List<Map<String, dynamic>> get view {
     final list = [...items];
-    int byDate(Map<String, dynamic> a, Map<String, dynamic> b) =>
-        (b['date'] as String).compareTo(a['date'] as String);
-    if (sort == 'dateDesc') {
-      list.sort(byDate);
-    } else if (sort == 'rating') {
-      list.sort((a, b) {
-        final sa = scoreOf(a), sb = scoreOf(b);
-        if (sa == null && sb == null) return byDate(a, b);
-        if (sa == null) return 1;
-        if (sb == null) return -1;
-        final c = sb.compareTo(sa);
-        return c != 0 ? c : (reviewsOf(b).compareTo(reviewsOf(a)));
-      });
-    }
+    if (widget.serverPaging) return list;
+    list.sort((a, b) {
+      final byPriority = priority(a).compareTo(priority(b));
+      if (byPriority != 0) return byPriority;
+      final byDate = (a['date'] as String).compareTo(b['date'] as String);
+      final byName = '${a['name']}'.compareTo('${b['name']}');
+      if (byDate == 0) return byName;
+      return descending ? -byDate : byDate;
+    });
     return list;
   }
 
-  /// Ordens por data decrescente e por nota precisam do conjunto todo: carrega as próximas páginas.
+  /// Ordenar por data precisa do conjunto todo: carrega as próximas páginas (até 500 corridas).
   Future<void> loadRest() async {
     var pages = 0;
-    while (mounted && sort != 'dateAsc' && nextCursor != null && pages++ < 5) {
+    while (mounted &&
+        !widget.serverPaging &&
+        nextCursor != null &&
+        pages++ < 5) {
       await load(more: true);
       if (error != null) return;
     }
   }
 
-  Future<void> changeSort(String value) async {
-    setState(() => sort = value);
-    // Páginas já carregadas com limite 20 não continuam com 100: recomeça a mesma busca.
-    if (value != 'dateAsc' && pageLimit != '100' && nextCursor != null) {
-      await load();
-    } else {
-      await loadRest();
-    }
-  }
+  void toggleSort() => setState(() => descending = !descending);
 
   void onPhraseChanged(String text) {
     setState(() {});
@@ -457,7 +748,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
       searchInfo = null;
       items.clear();
       nextCursor = null;
-      pageLimit = sort == 'dateAsc' ? '20' : '100';
+      pageLimit = widget.serverPaging ? '20' : '100';
     }
     setState(() {
       loading = true;
@@ -757,31 +1048,49 @@ class _CatalogScreenState extends State<CatalogScreen> {
                         maxLength: 160,
                         required: true,
                       ),
-                      filter('city', 'Cidade', maxLength: 100),
+                      // Mesmo seletor do editar perfil: lista fechada de estado e cidade, sem digitar.
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
-                        child: DropdownButtonFormField<String?>(
-                          key: ValueKey('filter-state-$registrationEpoch'),
-                          initialValue: fields['state']!.text.isEmpty
-                              ? null
-                              : fields['state']!.text,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Estado (UF)',
-                          ),
-                          items: [
-                            const DropdownMenuItem(
-                              value: null,
-                              child: Text('Todos os estados'),
+                        child: InkWell(
+                          key: const Key('filter-location'),
+                          onTap: () async {
+                            final picked = await pickBrLocation(
+                              context,
+                              initialUf: fields['state']!.text.isEmpty
+                                  ? null
+                                  : fields['state']!.text,
+                              initialCity: fields['city']!.text.isEmpty
+                                  ? null
+                                  : fields['city']!.text,
+                            );
+                            if (picked != null && mounted) {
+                              setState(() {
+                                fields['state']!.text = picked.$1;
+                                fields['city']!.text = picked.$2;
+                              });
+                            }
+                          },
+                          child: InputDecorator(
+                            decoration: InputDecoration(
+                              labelText: 'Estado e cidade (opcional)',
+                              suffixIcon: fields['city']!.text.isEmpty
+                                  ? const Icon(Icons.expand_more)
+                                  : IconButton(
+                                      key: const Key('filter-location-clear'),
+                                      tooltip: 'Limpar estado e cidade',
+                                      icon: const Icon(Icons.close_rounded),
+                                      onPressed: () => setState(() {
+                                        fields['state']!.text = '';
+                                        fields['city']!.text = '';
+                                      }),
+                                    ),
                             ),
-                            for (final uf in brazilianStates.entries)
-                              DropdownMenuItem(
-                                value: uf.key,
-                                child: Text('${uf.key} · ${uf.value}'),
-                              ),
-                          ],
-                          onChanged: (value) =>
-                              fields['state']!.text = value ?? '',
+                            child: Text(
+                              fields['city']!.text.isEmpty
+                                  ? 'Todos os estados e cidades'
+                                  : '${fields['state']!.text} - ${fields['city']!.text}',
+                            ),
+                          ),
                         ),
                       ),
                       filter(
@@ -893,39 +1202,22 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           ],
           if (items.length > 1)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: [
-                  const Icon(Icons.sort, size: 20),
-                  const SizedBox(width: 8),
-                  const Text('Ordenar por'),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButton<String>(
-                      key: const Key('catalog-sort'),
-                      value: sort,
-                      isExpanded: true,
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'dateDesc',
-                          child: Text('Data: mais recentes'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'dateAsc',
-                          child: Text('Data: mais antigas'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'rating',
-                          child: Text('Melhores avaliadas'),
-                        ),
-                      ],
-                      onChanged: loading
-                          ? null
-                          : (value) => changeSort(value ?? 'dateAsc'),
-                    ),
-                  ),
-                ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: IconButton(
+                key: const Key('catalog-sort'),
+                tooltip: descending
+                    ? 'Mais recentes primeiro (toque para inverter)'
+                    : 'Mais antigas primeiro (toque para inverter)',
+                icon: Icon(
+                  descending
+                      ? Icons.arrow_downward_rounded
+                      : Icons.arrow_upward_rounded,
+                  semanticLabel: descending
+                      ? 'Ordem decrescente'
+                      : 'Ordem crescente',
+                ),
+                onPressed: loading ? null : toggleSort,
               ),
             ),
           if (loading) const Center(child: CircularProgressIndicator()),
@@ -944,54 +1236,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 child: const Text('Não encontrou? Pedir cadastro da corrida'),
               ),
             ),
-          for (final (index, edition) in view.indexed)
-            Card(
-              color: edition['status'] == 'archived' ? context.panelCard : null,
-              child: ListTile(
-                textColor: edition['status'] == 'archived'
-                    ? context.archivedText
-                    : null,
-                contentPadding: const EdgeInsets.all(16),
-                leading: EditionThumb(
-                  gateway: widget.gateway,
-                  edition: edition,
-                  archived: edition['status'] == 'archived',
-                ),
-                title: Text(
-                  sort == 'rating' && scoreOf(edition) != null
-                      ? '#${index + 1} · ${edition['name']}'
-                      : edition['name'] as String,
-                ),
-                subtitle: Text(
-                  '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}\n'
-                  '${(edition['distances'] as List).map((d) => '${d['kilometers']} km').join(' · ')}'
-                  '${edition['status'] == 'archived' ? '\nArquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}' : ''}'
-                  '${scoreOf(edition) != null ? '\n★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações' : ''}'
-                  '${mine.containsKey(edition['id']) ? '\nJá está na sua lista' : ''}',
-                ),
-                isThreeLine: true,
-                trailing: mine.containsKey(edition['id'])
-                    ? const Icon(
-                        Icons.check_circle_rounded,
-                        color: runPassOrange,
-                        semanticLabel: 'Já está na sua lista',
-                      )
-                    : null,
-                onTap: loading
-                    ? null
-                    : () async {
-                        await Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => EditionScreen(
-                              gateway: widget.gateway,
-                              editionId: edition['id'] as String,
-                            ),
-                          ),
-                        );
-                        loadMine();
-                      },
-              ),
-            ),
+          for (final edition in view) editionCard(edition),
           if (nextCursor != null)
             TextButton(
               onPressed: loading ? null : () => load(more: true),
@@ -1365,16 +1610,11 @@ class _EditionScreenState extends State<EditionScreen> {
     final wanted = plan?['status'] == 'wanted';
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(minHeight: 170),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
-        ),
-      ),
+      constraints: const BoxConstraints(minHeight: 150),
       child: Stack(
         children: [
+          // Base: arte padrão da corrida; a imagem aprovada, quando existe, cobre por cima.
+          Positioned.fill(child: RaceArt(edition: body)),
           if (bannerUrl != null)
             Positioned.fill(
               child: Image.network(
@@ -1434,14 +1674,15 @@ class _EditionScreenState extends State<EditionScreen> {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
                   child: Text(
-                    (body['name'] as String).toUpperCase(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 24,
-                      letterSpacing: 1,
+                    body['name'] as String,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: .92),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 17,
                     ),
                   ),
                 ),
@@ -2452,12 +2693,21 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       } else {
         final file = await ImagePicker().pickImage(
           source: ImageSource.gallery,
-          maxWidth: 5000,
-          maxHeight: 5000,
-          imageQuality: 85,
+          // Limite menor que o antigo: o recorte devolve a imagem sem reduzir, e o envio aceita até 10 MB.
+          maxWidth: 2800,
+          maxHeight: 2800,
+          imageQuality: 88,
           requestFullMetadata: false,
         );
-        bytes = await file?.readAsBytes();
+        final original = await file?.readAsBytes();
+        if (original == null || !mounted) return;
+        // Ajuste antes de enviar: recortar, ampliar e escolher a proporção. Cancelar não envia nada.
+        bytes = await Navigator.of(context).push<List<int>>(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => RacePhotoCropScreen(image: original),
+          ),
+        );
       }
       if (bytes == null) return;
       final contentType =

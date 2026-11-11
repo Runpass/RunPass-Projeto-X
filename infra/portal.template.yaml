@@ -1,0 +1,347 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  RunPass portal de administracao: UMA Lambda com API HTTP que serve a pagina e as rotas so para
+  operadores (mesma origem, HTTPS do API Gateway; sem S3 nem CloudFront). O login e feito direto no Cognito;
+  a API confere MFA obrigatorio do pool, sessao recente e acesso ativo (ver backend/runpass/admin_api.py).
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+  DataStack:
+    Type: String
+    Description: Stack data.template.yaml aplicada
+  ArtifactBucket:
+    Type: String
+  ArtifactKey:
+    Type: String
+    Description: Zip da API (scripts/package-lambda.sh), o mesmo da API dos corredores
+  RunnerUserPoolId:
+    Type: String
+    AllowedPattern: '^[a-z]{2}-[a-z]+-[0-9]_[A-Za-z0-9]+$'
+  RunnerClientId:
+    Type: String
+  OperatorUserPoolId:
+    Type: String
+    AllowedPattern: '^[a-z]{2}-[a-z]+-[0-9]_[A-Za-z0-9]+$'
+  OperatorClientId:
+    Type: String
+  ErasureHmacParameter:
+    Type: String
+    AllowedPattern: '^/.+'
+  CursorKeyParameter:
+    Type: String
+    AllowedPattern: '^/.+'
+  CatalogFunctionName:
+    Type: String
+    Default: ''
+    Description: Lambda da rotina do catalogo (RunPass-Catalogo). Vazio = o portal nao dispara a atualizacao
+  CatalogReportBucket:
+    Type: String
+    Default: ''
+    Description: Bucket de relatorios do catalogo (RunPass-Catalogo), de onde saem as imagens candidatas. Vazio = sem lista de candidatas
+  OpenAiAdminKeyParameter:
+    Type: String
+    Default: ''
+    AllowedPattern: '^(/.+)?$'
+    Description: Nome do parametro SSM (SecureString) com a chave de ADMINISTRADOR da OpenAI. Vazio = o painel usa so a estimativa pelos logs
+  AnthropicAdminKeyParameter:
+    Type: String
+    Default: ''
+    AllowedPattern: '^(/.+)?$'
+    Description: Nome do parametro SSM (SecureString) com a chave de ADMINISTRADOR da Anthropic (sk-ant-admin01-...), para o uso do Claude Code da equipe. Vazio = a aba mostra "nao configurado"
+  ClaudeMonthlyLimitUsd:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([0-9]+(\.[0-9]+)?)?$'
+    Description: Teto mensal de referencia do Claude Code mostrado no painel (opcional)
+  OpenAiProjectId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^(proj_[A-Za-z0-9]+)?$'
+    Description: Projeto da OpenAI a mostrar (proj_...), o mesmo filtro do console. Vazio = toda a organizacao
+  AwsMonthlyBudgetUsd:
+    Type: Number
+    Default: 54.61
+    Description: Teto mensal de custo da AWS mostrado no painel (o mesmo da stack de orcamento)
+  OpenAiMonthlyLimitUsd:
+    Type: Number
+    Default: 10
+    Description: Limite mensal da OpenAI definido no console, mostrado no painel
+  OpenAiPriceInPerMTok:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([0-9]+(\.[0-9]+)?)?$'
+    Description: USD por 1 milhao de tokens de entrada (pagina oficial de precos da OpenAI). Vazio = so mostra o consumo
+  OpenAiPriceOutPerMTok:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([0-9]+(\.[0-9]+)?)?$'
+  OpenAiPricePerSearch:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([0-9]+(\.[0-9]+)?)?$'
+    Description: USD por chamada de busca na web
+  ApiRateLimit:
+    Type: Number
+    Default: 10
+  ApiBurstLimit:
+    Type: Number
+    Default: 20
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+  HasCatalogFunction: !Not [!Equals [!Ref CatalogFunctionName, '']]
+  HasOpenAiAdminKey: !Not [!Equals [!Ref OpenAiAdminKeyParameter, '']]
+  HasAnthropicAdminKey: !Not [!Equals [!Ref AnthropicAdminKeyParameter, '']]
+  HasReportBucket: !Not [!Equals [!Ref CatalogReportBucket, '']]
+
+Resources:
+  # ---- API so para operadores --------------------------------------------------------------------
+  AdminFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: !If [IsProd, 30, 7]
+
+  AdminFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: minimo-privilegio
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt AdminFunctionLogs.Arn
+              - Sid: AcessoSessaoPedidosEdicoes
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:ConditionCheckItem]
+                Resource:
+                  - !Sub
+                    - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
+                    - Name: {Fn::ImportValue: !Sub '${DataStack}-IdentityTable'}
+                  - !Sub
+                    - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
+                    - Name: {Fn::ImportValue: !Sub '${DataStack}-OperationsTable'}
+                  - !Sub
+                    - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
+                    - Name: {Fn::ImportValue: !Sub '${DataStack}-HistoryTable'}
+                  - !Sub
+                    - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
+                    - Name: {Fn::ImportValue: !Sub '${DataStack}-CatalogTable'}
+              - Sid: LerNotasDasEdicoes
+                Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
+                  - Name: {Fn::ImportValue: !Sub '${DataStack}-ProjectionsTable'}
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys: ['EDITION#*']
+              - Sid: ConferirMfaDoPoolDeOperadores
+                Effect: Allow
+                Action: cognito-idp:DescribeUserPool
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${OperatorUserPoolId}'
+              - Sid: ListarCadastrosDosCorredores
+                Effect: Allow
+                Action: cognito-idp:ListUsers
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${RunnerUserPoolId}'
+              - Sid: GerirOperadores
+                Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:ListUsers
+                  - cognito-idp:AdminDisableUser
+                  - cognito-idp:AdminEnableUser
+                  - cognito-idp:AdminUserGlobalSignOut
+                  - cognito-idp:AdminDeleteUser
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${OperatorUserPoolId}'
+              - !If
+                - HasCatalogFunction
+                - Sid: DispararRotinaDoCatalogo
+                  Effect: Allow
+                  Action: lambda:InvokeFunction
+                  Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${CatalogFunctionName}'
+                - !Ref AWS::NoValue
+              - !If
+                - HasCatalogFunction
+                - Sid: LerExecucoesDoCatalogo
+                  Effect: Allow
+                  Action: logs:FilterLogEvents
+                  Resource:
+                    - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${CatalogFunctionName}:*'
+                    - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/runpass-${Environment}-catalogo-busca:*'
+                - !Ref AWS::NoValue
+              - !If
+                - HasCatalogFunction
+                - Sid: LerAgendamentosDoCatalogo
+                  Effect: Allow
+                  Action: scheduler:GetSchedule
+                  Resource: !Sub 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/runpass-${Environment}-catalogo-*'
+                - !Ref AWS::NoValue
+              - !If
+                - HasCatalogFunction
+                - Sid: ListarAgendamentos
+                  Effect: Allow
+                  Action: scheduler:ListSchedules
+                  Resource: '*'
+                - !Ref AWS::NoValue
+              - Sid: PublicarBannersDoCatalogo
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:s3:::${Name}/derived/catalog/*'
+                  - Name: {Fn::ImportValue: !Sub '${DataStack}-MedalBucket'}
+              - !If
+                - HasReportBucket
+                - Sid: LerImagensCandidatas
+                  Effect: Allow
+                  Action: s3:GetObject
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${CatalogReportBucket}/semanal/*'
+                - !Ref AWS::NoValue
+              - !If
+                - HasReportBucket
+                - Sid: ListarRelatoriosDoCatalogo
+                  Effect: Allow
+                  Action: s3:ListBucket
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${CatalogReportBucket}'
+                  Condition:
+                    StringLike: {s3:prefix: ['semanal/*']}
+                - !Ref AWS::NoValue
+              - !If
+                - HasOpenAiAdminKey
+                - Sid: LerChaveAdminDaOpenAi
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${OpenAiAdminKeyParameter}'
+                - !Ref AWS::NoValue
+              - !If
+                - HasAnthropicAdminKey
+                - Sid: LerChaveAdminDaAnthropic
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AnthropicAdminKeyParameter}'
+                - !Ref AWS::NoValue
+              - Sid: LerCustosDaConta
+                Effect: Allow
+                Action: [ce:GetCostAndUsage, ce:GetCostForecast]
+                Resource: '*'
+              - Sid: SegredosNaInicializacao
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ErasureHmacParameter}'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${CursorKeyParameter}'
+
+  AdminFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: runpass.admin_entry.handler
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+      MemorySize: 512
+      Timeout: 20
+      Role: !GetAtt AdminFunctionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref AdminFunctionLogs
+      Environment:
+        Variables:
+          RUNPASS_ENV: !Ref Environment
+          RUNPASS_RUNNER_ISSUER: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${RunnerUserPoolId}'
+          RUNPASS_RUNNER_CLIENT_ID: !Ref RunnerClientId
+          RUNPASS_RUNNER_USER_POOL_ID: !Ref RunnerUserPoolId
+          RUNPASS_ERASURE_HMAC_PARAM: !Ref ErasureHmacParameter
+          RUNPASS_CURSOR_KEY_PARAM: !Ref CursorKeyParameter
+          RUNPASS_IDENTITY_TABLE: {Fn::ImportValue: !Sub '${DataStack}-IdentityTable'}
+          RUNPASS_OPERATIONS_TABLE: {Fn::ImportValue: !Sub '${DataStack}-OperationsTable'}
+          RUNPASS_ERASURE_TABLE: {Fn::ImportValue: !Sub '${DataStack}-ErasureControlTable'}
+          RUNPASS_CATALOG_TABLE: {Fn::ImportValue: !Sub '${DataStack}-CatalogTable'}
+          RUNPASS_HISTORY_TABLE: {Fn::ImportValue: !Sub '${DataStack}-HistoryTable'}
+          RUNPASS_PROJECTIONS_TABLE: {Fn::ImportValue: !Sub '${DataStack}-ProjectionsTable'}
+          RUNPASS_OPERATOR_ISSUER: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${OperatorUserPoolId}'
+          RUNPASS_OPERATOR_CLIENT_ID: !Ref OperatorClientId
+          RUNPASS_OPERATOR_POOL_ID: !Ref OperatorUserPoolId
+          RUNPASS_CATALOG_FUNCTION: !Ref CatalogFunctionName
+          RUNPASS_MEDAL_BUCKET: {Fn::ImportValue: !Sub '${DataStack}-MedalBucket'}
+          RUNPASS_CATALOG_REPORT_BUCKET: !Ref CatalogReportBucket
+          RUNPASS_AWS_BUDGET_USD: !Ref AwsMonthlyBudgetUsd
+          RUNPASS_OPENAI_ADMIN_KEY_PARAM: !Ref OpenAiAdminKeyParameter
+          RUNPASS_ANTHROPIC_ADMIN_KEY_PARAM: !Ref AnthropicAdminKeyParameter
+          RUNPASS_CLAUDE_LIMIT_USD: !Ref ClaudeMonthlyLimitUsd
+          RUNPASS_OPENAI_PROJECT_ID: !Ref OpenAiProjectId
+          RUNPASS_OPENAI_LIMIT_USD: !Ref OpenAiMonthlyLimitUsd
+          RUNPASS_OPENAI_PRICE_IN_PER_MTOK: !Ref OpenAiPriceInPerMTok
+          RUNPASS_OPENAI_PRICE_OUT_PER_MTOK: !Ref OpenAiPriceOutPerMTok
+          RUNPASS_OPENAI_PRICE_PER_SEARCH: !Ref OpenAiPricePerSearch
+      Tags:
+        - {Key: Project, Value: RunPass}
+        - {Key: Environment, Value: !Ref Environment}
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub 'runpass-${Environment}-admin'
+      ProtocolType: HTTP
+
+  HttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt AdminFunction.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 20000
+
+  HttpApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: $default
+      Target: !Sub 'integrations/${HttpApiIntegration}'
+
+  HttpApiLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: !If [IsProd, 30, 7]
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingRateLimit: !Ref ApiRateLimit
+        ThrottlingBurstLimit: !Ref ApiBurstLimit
+      AccessLogSettings:
+        DestinationArn: !GetAtt HttpApiLogs.Arn
+        # Caminhos trazem ids de pedidos; so metodo, status e latencia sao registrados.
+        Format: '{"requestId":"$context.requestId","method":"$context.httpMethod","status":"$context.status","latencyMs":"$context.responseLatency"}'
+
+  HttpApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AdminFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*'
+
+Outputs:
+  PortalUrl:
+    Description: Abrir no navegador; a pagina e a API ficam nesta mesma origem
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
