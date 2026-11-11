@@ -81,6 +81,49 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
   List<Map<String, dynamic>>? results;
   String? error;
   bool loading = false;
+  List<Map<String, dynamic>> suggestions = const [];
+  // Sugestoes: loading -> ok | failed (a busca segue valendo em qualquer caso).
+  String suggestionsState = 'loading';
+  String? suggestionsIssue;
+
+  @override
+  void initState() {
+    super.initState();
+    loadSuggestions();
+  }
+
+  /// Sugestões já na tela, antes de qualquer busca.
+  Future<void> loadSuggestions() async {
+    setState(() {
+      suggestionsState = 'loading';
+      suggestionsIssue = null;
+    });
+    try {
+      final page = await widget.gateway.request(
+        '/profiles/suggestions',
+        query: {'limit': '12'},
+      );
+      if (!mounted) return;
+      setState(() {
+        suggestions = (page['items'] as List).cast<Map<String, dynamic>>();
+        suggestionsState = 'ok';
+      });
+    } on IdentityIssue catch (issue) {
+      if (mounted) {
+        setState(() {
+          suggestionsState = 'failed';
+          suggestionsIssue = issue.code;
+        });
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          suggestionsState = 'failed';
+          suggestionsIssue = error.runtimeType.toString();
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -161,7 +204,60 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
           const Text(
             'Ninguém encontrado. Confira a escrita ou tente só o primeiro nome.',
           ),
-        for (final profile in results ?? const <Map<String, dynamic>>[])
+        if (results == null && !loading) ...[
+          if (suggestionsState == 'loading')
+            const Padding(
+              key: Key('friend-suggestions-loading'),
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 12),
+                  Text('Buscando sugestões…'),
+                ],
+              ),
+            )
+          else if (suggestionsState == 'failed')
+            Column(
+              key: const Key('friend-suggestions-failed'),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Não foi possível carregar as sugestões agora'
+                  '${suggestionsIssue == null ? '' : ' ($suggestionsIssue)'}.',
+                ),
+                TextButton(
+                  key: const Key('friend-suggestions-retry'),
+                  onPressed: loadSuggestions,
+                  child: const Text('Tentar de novo'),
+                ),
+              ],
+            )
+          else if (suggestions.isEmpty)
+            const Padding(
+              key: Key('friend-suggestions-empty'),
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'Sem sugestões por enquanto. Use a busca acima pelo nome ou usuário.',
+              ),
+            )
+          else
+            Padding(
+              key: const Key('friend-suggestions-title'),
+              padding: const EdgeInsets.only(top: 4, bottom: 4),
+              child: Text(
+                'Sugestões para você',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+        ],
+        for (final profile
+            in results ??
+                (loading ? const <Map<String, dynamic>>[] : suggestions))
           Card(
             child: ListTile(
               key: Key('friend-${profile['id']}'),

@@ -13,6 +13,9 @@ account erasure removes them too.
 
 import base64
 import json
+import string
+import time
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 from .profile_index import MIN_TOKEN, fold, profile_tokens, tokens
@@ -154,6 +157,80 @@ class SocialService:
                 found.append(profile)
         found.sort(key=lambda p: (fold(p["displayName"]), p["username"]))
         return {"items": [self._card(p, actor.subject) for p in found[:limit]]}
+
+    # O indice de busca e por prefixo de duas letras (`PIDX#xx`): para "listar" gente sem
+    # consulta, descobrimos quais particoes existem (uma varredura paralela, guardada por
+    # alguns minutos) e so entao lemos as que tem perfis. Adequado ao beta pequeno.
+    PARTITION_TTL = 600
+
+    def _index_partitions(self):
+        cached = getattr(self, "_pidx_cache", None)
+        now = time.monotonic()
+        if cached and cached[0] > now:
+            return cached[1]
+        first = string.ascii_lowercase + string.digits
+        candidates = [a + b for a in first for b in first + "_"]
+
+        def has_rows(prefix):
+            rows, _ = self.store.query("identity", "PIDX#" + prefix, limit=1)
+            return prefix if rows else None
+
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            found = [p for p in pool.map(has_rows, candidates) if p]
+        self._pidx_cache = (now + self.PARTITION_TTL, found)
+        return found
+
+    def suggestions(self, actor, limit=12):
+        """Sugestoes de gente para seguir, sem consulta: amigos de amigos e quem o usuario
+        segue seguem (2o grau), depois quem segue o usuario e, por fim, perfis do indice
+        de busca. Nunca inclui o proprio usuario nem quem ja e seguido ou amigo."""
+        self.identity.authorize(actor, admitted=True)
+        me = actor.subject
+        known = {me}
+        known.update(self._relation_subjects(me, "FOLLOWING#", "active"))
+        known.update(self._relation_subjects(me, "FOLLOWING#", "pending"))
+        known.update(self._friend_ids(me))
+        order = []
+        seen = set()
+
+        def consider(subject):
+            if subject not in known and subject not in seen:
+                seen.add(subject)
+                order.append(subject)
+
+        direct = sorted(
+            set(self._relation_subjects(me, "FOLLOWING#", "active")) | set(self._friend_ids(me))
+        )
+        for via in direct[:20]:
+            for subject in self._relation_subjects(via, "FOLLOWING#", "active")[:20]:
+                consider(subject)
+            for subject in self._friend_ids(via)[:20]:
+                consider(subject)
+        for subject in self._relation_subjects(me, "FOLLOWER#", "active"):
+            consider(subject)
+        items = []
+        for subject in order:
+            profile = self._active_profile(self.store.get, subject)
+            if profile:
+                items.append(profile)
+            if len(items) >= limit:
+                break
+        if len(items) < limit:
+            have = {p["id"] for p in items}
+            for prefix in self._index_partitions():
+                for sk, _ in self._list("identity", "PIDX#" + prefix, None, 20):
+                    subject = sk.split("#", 1)[1]
+                    if subject in known or subject in seen or subject in have:
+                        continue
+                    profile = self._active_profile(self.store.get, subject)
+                    if profile:
+                        have.add(subject)
+                        items.append(profile)
+                    if len(items) >= limit:
+                        break
+                if len(items) >= limit:
+                    break
+        return {"items": [self._card(p, me) for p in items[:limit]]}
 
     def profile_view(self, actor, subject):
         self.identity.authorize(actor, admitted=True)

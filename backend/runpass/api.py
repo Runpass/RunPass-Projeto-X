@@ -434,6 +434,10 @@ def create_app(
     ):
         return friends().search(actor, q, limit)
 
+    @app.get("/profiles/suggestions", operation_id="listProfileSuggestions")
+    def profile_suggestions(actor: Actor, limit: int = Query(12, ge=1, le=30)):
+        return friends().suggestions(actor, limit)
+
     @app.get("/profiles/{id}", operation_id="getPublicProfile")
     def public_profile(id: str, actor: Actor):
         return friends().profile_view(actor, id)
