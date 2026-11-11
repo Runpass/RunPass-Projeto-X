@@ -320,6 +320,7 @@ def create_admin_app(
         name: str | None = Field(default=None, max_length=40)
         kind: str | None = Field(default=None, max_length=20)
         days: list[str] | None = Field(default=None, max_length=7)
+        date: str | None = Field(default=None, max_length=10)
         time: str | None = Field(default=None, max_length=5)
         enabled: bool | None = None
         rodada: int | None = Field(default=None, ge=1, le=3)
@@ -472,7 +473,12 @@ def create_admin_app(
         actor = need(op, "catalog_admin").subject
         if schedules is None:
             raise Unavailable()
-        if not payload.name or not payload.kind or payload.days is None or payload.time is None:
+        if (
+            not payload.name
+            or not payload.kind
+            or payload.time is None
+            or (payload.days is None) == (payload.date is None)
+        ):
             raise Problem(422, "INVALID_INPUT")
         return schedules.create(
             actor,
@@ -484,6 +490,7 @@ def create_admin_app(
             payload.rodada or 1,
             payload.max or 25,
             payload.meses or 3,
+            payload.date,
         )
 
     @app.put("/admin/catalog/schedules/{name}")
@@ -500,6 +507,7 @@ def create_admin_app(
             payload.rodada,
             payload.max,
             payload.meses,
+            payload.date,
         )
 
     @app.delete("/admin/catalog/schedules/{name}")

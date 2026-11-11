@@ -170,6 +170,13 @@ test('agendamento: validação do formulário e texto de quando roda', async () 
   assert.match(validarAgendamento({ ...edit, dias: ['MON'] }), /juntos/);
   assert.equal(quandoTexto(['THU', 'MON'], '06:00'), 'Seg, Qui às 06:00');
   assert.equal(quandoTexto(null, '06:00'), '');
+  assert.equal(quandoTexto(null, '06:15', '2026-11-20'), '20/11/2026 às 06:15 (uma vez)');
+  // execução única: precisa de data e horário; os dias não importam
+  const uma = { novo: true, nome: 'uma-vez', tipo: 'imagens', modo: 'uma-vez', data: '2026-11-20', horario: '06:00', dias: [] };
+  assert.equal(validarAgendamento(uma), '');
+  assert.match(validarAgendamento({ ...uma, data: '' }), /data/);
+  assert.match(validarAgendamento({ ...uma, data: '20/11/2026' }), /data/);
+  assert.match(validarAgendamento({ ...uma, horario: '' }), /horário/);
   assert.equal(quandoTexto([], '06:00'), '');
 });
 

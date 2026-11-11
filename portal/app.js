@@ -697,6 +697,7 @@ let acompanhar = null;
 /** Formulário de agendamento: `item` null = novo; com `item` = editar (tipo e nome não mudam). */
 function formularioAgendamento(item, aoFechar) {
   const novo = !item;
+  const hoje = dataHojeIso();
   const nome = el('input', { type: 'text', maxlength: '40', placeholder: 'ex.: enriquecimento-quinta', autocomplete: 'off' });
   const tipo = el('select', {}, ...Object.entries(TIPOS_AGENDAMENTO).map(([v, t]) => el('option', { value: v }, t)));
   const caixas = DIAS_SEMANA.map(([codigo, rotulo]) => {
@@ -705,6 +706,11 @@ function formularioAgendamento(item, aoFechar) {
     return [c, el('label', { class: 'dia' }, c, ' ', rotulo)];
   });
   const horario = el('input', { type: 'time', value: (item && item.time) || '06:00' });
+  const data = el('input', { type: 'date', min: hoje, value: (item && item.date) || '' });
+  const modoSemana = el('input', { type: 'radio', name: 'quando', value: 'semanal' });
+  const modoUmaVez = el('input', { type: 'radio', name: 'quando', value: 'uma-vez' });
+  (item && item.date ? modoUmaVez : modoSemana).checked = true;
+  const modo = () => (modoUmaVez.checked ? 'uma-vez' : 'semanal');
   const rodada = el('input', { type: 'number', min: '1', max: '3', value: String((item && item.params && item.params.rodada) || 1) });
   const maximo = el('input', { type: 'number', min: '1', max: String(MAX_PROVAS_POR_EXECUCAO), value: String((item && item.params && item.params.max) || MAX_PROVAS_POR_EXECUCAO) });
   const meses = el('input', { type: 'number', min: '1', max: '6', value: String((item && item.params && item.params.meses) || 3) });
@@ -714,11 +720,17 @@ function formularioAgendamento(item, aoFechar) {
   const grupoMax = el('label', {}, `Máximo de provas por execução (1 a ${MAX_PROVAS_POR_EXECUCAO})`, maximo);
   const grupoMeses = el('label', {}, 'Meses do calendário (1 a 6)', meses);
   const tipoAtual = () => (novo ? tipo.value : item.kind);
+  const grupoDias = el('fieldset', { class: 'dias' }, el('legend', {}, 'Dias da semana (horário de São Paulo, no máximo 1 vez por dia)'), ...caixas.map(([, rotulo]) => rotulo));
+  const grupoData = el('label', {}, 'Data da execução (horário de São Paulo; roda uma vez e o agendamento some sozinho)', data);
   const mostrar = () => {
+    grupoDias.hidden = modo() !== 'semanal';
+    grupoData.hidden = modo() !== 'uma-vez';
     grupoRodada.hidden = grupoMax.hidden = tipoAtual() !== 'enriquecer';
     grupoMeses.hidden = tipoAtual() !== 'calendario';
   };
   tipo.addEventListener('change', mostrar);
+  modoSemana.addEventListener('change', mostrar);
+  modoUmaVez.addEventListener('change', mostrar);
   mostrar();
   const erro = el('p', { class: 'aviso erro', hidden: true });
   const salvar = el('button', { type: 'button' }, novo ? 'Criar agendamento' : 'Salvar alterações');
@@ -726,13 +738,15 @@ function formularioAgendamento(item, aoFechar) {
 
   salvar.addEventListener('click', async () => {
     const dias = caixas.filter(([c]) => c.checked).map(([c]) => c.value);
-    const dados = { novo, nome: nome.value.trim(), tipo: tipoAtual(), dias, horario: dias.length ? horario.value : '', rodada: Number(rodada.value), max: Number(maximo.value), meses: Number(meses.value) };
-    const problema = validarAgendamento(novo ? dados : { ...dados, horario: dias.length || horario.value !== ((item && item.time) || '06:00') ? horario.value : '' });
+    const umaVez = modo() === 'uma-vez';
+    const dados = { novo, nome: nome.value.trim(), tipo: tipoAtual(), modo: modo(), data: data.value, dias: umaVez ? [] : dias, horario: umaVez || dias.length ? horario.value : '', rodada: Number(rodada.value), max: Number(maximo.value), meses: Number(meses.value) };
+    const problema = validarAgendamento(novo || umaVez ? dados : { ...dados, horario: dias.length || horario.value !== ((item && item.time) || '06:00') ? horario.value : '' });
     erro.hidden = !problema;
     erro.textContent = problema;
     if (problema) return;
     const corpo = { enabled: ativo.checked };
-    if (dias.length) Object.assign(corpo, { days: dias, time: horario.value });
+    if (umaVez) Object.assign(corpo, { date: data.value, time: horario.value });
+    else if (dias.length) Object.assign(corpo, { days: dias, time: horario.value });
     if (dados.tipo === 'enriquecer') Object.assign(corpo, { rodada: dados.rodada, max: dados.max });
     if (dados.tipo === 'calendario') corpo.meses = dados.meses;
     if (novo) Object.assign(corpo, { name: dados.nome, kind: dados.tipo });
@@ -760,7 +774,9 @@ function formularioAgendamento(item, aoFechar) {
     novo ? el('label', {}, 'O que faz', tipo) : el('p', { class: 'meta' }, `Tipo: ${TIPOS_AGENDAMENTO[item.kind] || 'não editável pelo portal (só pausar, ativar ou apagar)'}`),
     ...(novo || item.kind
       ? [
-          el('fieldset', { class: 'dias' }, el('legend', {}, 'Dias da semana (horário de São Paulo, no máximo 1 vez por dia)'), ...caixas.map(([, rotulo]) => rotulo)),
+          el('div', { class: 'dias' }, el('label', { class: 'dia' }, modoSemana, ' Repetir toda semana'), el('label', { class: 'dia' }, modoUmaVez, ' Uma vez, em uma data')),
+          grupoDias,
+          grupoData,
           dicaExpressao,
           el('label', {}, 'Horário', horario),
           grupoRodada,
@@ -818,7 +834,7 @@ async function carregarAgendamentos() {
                 {},
                 el('td', {}, d.quando),
                 el('td', {}, d.oque, a.createdByPortal ? el('div', { class: 'meta' }, 'Criado pelo portal') : ''),
-                el('td', {}, quandoTexto(a.days, a.time) || a.expression),
+                el('td', {}, quandoTexto(a.days, a.time, a.date) || a.expression),
                 el('td', {}, d.situacao),
                 el(
                   'td',

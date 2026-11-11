@@ -305,8 +305,9 @@ export const TIPOS_AGENDAMENTO = {
 
 export const MAX_PROVAS_POR_EXECUCAO = 25;
 
-/** "Seg, Qui às 06:00" a partir de dias (MON...) e horário; vazio quando a expressão não é dias + horário. */
-export function quandoTexto(dias, horario) {
+/** "Seg, Qui às 06:00" (dias MON...) ou "20/11/2026 às 06:00" (execução única, `data` AAAA-MM-DD); vazio se não for nenhum. */
+export function quandoTexto(dias, horario, data = null) {
+  if (data && horario) return `${data.slice(8, 10)}/${data.slice(5, 7)}/${data.slice(0, 4)} às ${horario} (uma vez)`;
   if (!Array.isArray(dias) || !dias.length || !horario) return '';
   const nomes = DIAS_SEMANA.filter(([c]) => dias.includes(c)).map(([, n]) => n);
   return `${nomes.join(', ')} às ${horario}`;
@@ -314,7 +315,7 @@ export function quandoTexto(dias, horario) {
 
 /** Confere o formulário de agendamento antes de enviar. Devolve o texto do erro, ou '' quando está tudo certo.
  *  `novo`: nome e tipo obrigatórios. Dias e horário andam juntos (editar pode deixar os dois vazios). */
-export function validarAgendamento({ novo, nome, tipo, dias, horario, rodada, max, meses }) {
+export function validarAgendamento({ novo, nome, tipo, dias, horario, rodada, max, meses, modo = 'semanal', data = '' }) {
   if (novo) {
     if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(nome || '') || nome.length < 3 || nome.length > 40) {
       return 'O nome deve ter de 3 a 40 caracteres: letras minúsculas, números e hífen (ex.: enriquecimento-quinta).';
@@ -323,8 +324,13 @@ export function validarAgendamento({ novo, nome, tipo, dias, horario, rodada, ma
   }
   const temDias = Array.isArray(dias) && dias.length > 0;
   const temHorario = !!horario;
-  if (novo && !(temDias && temHorario)) return 'Escolha ao menos um dia da semana e o horário.';
-  if (temDias !== temHorario) return 'Informe os dias da semana e o horário juntos.';
+  if (modo === 'uma-vez') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data || '')) return 'Escolha a data da execução.';
+    if (!temHorario) return 'Informe o horário da execução.';
+  } else {
+    if (novo && !(temDias && temHorario)) return 'Escolha ao menos um dia da semana e o horário.';
+    if (temDias !== temHorario) return 'Informe os dias da semana e o horário juntos.';
+  }
   if (temHorario && !/^([01]\d|2[0-3]):[0-5]\d$/.test(horario)) return 'Horário inválido (use HH:MM).';
   if (tipo === 'enriquecer') {
     if (!Number.isInteger(rodada) || rodada < 1 || rodada > 3) return 'A rodada deve ser 1, 2 ou 3.';

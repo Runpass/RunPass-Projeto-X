@@ -63,4 +63,5 @@ input[type="checkbox"] { display: inline-block; width: auto; margin: 0 8px 0 0; 
 
 .dias { border: 0; padding: 0; margin: 12px 0; display: flex; flex-wrap: wrap; gap: 8px 14px; }
 .dias legend { padding: 0; margin-bottom: 6px; color: var(--suave); }
-.dia { display: inline-flex; align-items: center; gap: 4px; }
+.dia { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
+.dia input { display: inline-block; width: auto; margin: 0; }

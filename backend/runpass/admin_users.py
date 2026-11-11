@@ -571,6 +571,30 @@ def schedule_cron(days, at):
     return f"cron({int(minute)} {int(hour)} ? * {ordered} *)"
 
 
+SCHEDULE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MAX_AHEAD_DAYS = 366
+
+
+def schedule_at(day, at, now):
+    """`at(...)` de uma execucao UNICA em data e horario de SP: futuro e a ate 1 ano. Custo limitado a 1 execucao."""
+    if not SCHEDULE_DATE.match(day or "") or not SCHEDULE_TIME.match(at or ""):
+        raise Problem(422, "INVALID_INPUT")
+    try:
+        when = datetime.fromisoformat(f"{day}T{at}:00")
+    except ValueError as error:
+        raise Problem(422, "INVALID_INPUT") from error
+    local_now = now.astimezone(ZoneInfo("America/Sao_Paulo")).replace(tzinfo=None)
+    if when <= local_now or when > local_now + timedelta(days=MAX_AHEAD_DAYS):
+        raise Problem(422, "INVALID_INPUT")
+    return f"at({day}T{at}:00)"
+
+
+def parse_at(expression):
+    """(data, 'HH:MM') de um `at(...)`; (None, None) para qualquer outra forma."""
+    m = re.fullmatch(r"at\((\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):\d{2}\)", expression or "")
+    return (m[1], f"{m[2]}:{m[3]}") if m else (None, None)
+
+
 def parse_cron(expression):
     """(dias, 'HH:MM') de um cron de dias da semana em lista; (None, None) para qualquer outra forma."""
     m = re.fullmatch(
@@ -605,8 +629,26 @@ class CatalogSchedules:
         if self.store is not None:
             audit(self.store, actor, action, detail, self.clock)
 
+    def _when(self, days, day, at):
+        """Expressao de dias da semana (repete) ou de uma data (uma vez); nunca as duas."""
+        if day is not None:
+            if days:
+                raise Problem(422, "INVALID_INPUT")
+            return schedule_at(day, at, _now(self.clock))
+        return schedule_cron(days, at)
+
     def create(
-        self, actor, name, kind, days, at, enabled, rodada=1, maximo=MAX_ENRICH_PER_RUN, meses=3
+        self,
+        actor,
+        name,
+        kind,
+        days,
+        at,
+        enabled,
+        rodada=1,
+        maximo=MAX_ENRICH_PER_RUN,
+        meses=3,
+        day=None,
     ):
         if self.client is None or not self.role_arn or not self.function_arn:
             raise Unavailable()
@@ -614,7 +656,7 @@ class CatalogSchedules:
         if kind not in SCHEDULE_KINDS:
             raise Problem(422, "INVALID_INPUT")
         entry = schedule_input(kind, rodada, maximo, meses)
-        expression = schedule_cron(days, at)
+        expression = self._when(days, day, at)
         try:
             owned = self.client.list_schedules(NamePrefix=self.prefix + "portal-", MaxResults=50)
             if len(owned.get("Schedules", [])) >= MAX_PORTAL_SCHEDULES:
@@ -626,6 +668,8 @@ class CatalogSchedules:
                 ScheduleExpression=expression,
                 ScheduleExpressionTimezone="America/Sao_Paulo",
                 FlexibleTimeWindow={"Mode": "OFF"},
+                # Execucao unica some sozinha depois de rodar (nao fica um agendamento morto na lista).
+                ActionAfterCompletion="DELETE" if expression.startswith("at(") else "NONE",
                 Target={
                     "Arn": self.function_arn,
                     "RoleArn": self.role_arn,
@@ -656,7 +700,16 @@ class CatalogSchedules:
             raise Unavailable() from error
 
     def update(
-        self, actor, name, days=None, at=None, enabled=None, rodada=None, maximo=None, meses=None
+        self,
+        actor,
+        name,
+        days=None,
+        at=None,
+        enabled=None,
+        rodada=None,
+        maximo=None,
+        meses=None,
+        day=None,
     ):
         if self.client is None:
             raise Unavailable()
@@ -685,10 +738,10 @@ class CatalogSchedules:
                 )
             target["Input"] = json.dumps(new)
         expression = current["ScheduleExpression"]
-        if (days is None) != (at is None):
+        if (days is None and day is None) != (at is None):
             raise Problem(422, "INVALID_INPUT")
-        if days is not None:
-            expression = schedule_cron(days, at)
+        if at is not None:
+            expression = self._when(days, day, at)
         state = current.get("State", "ENABLED")
         if enabled is not None:
             state = "ENABLED" if enabled else "DISABLED"
@@ -699,15 +752,10 @@ class CatalogSchedules:
             "FlexibleTimeWindow": current.get("FlexibleTimeWindow", {"Mode": "OFF"}),
             "Target": target,
         }
-        for key in (
-            "Description",
-            "ScheduleExpressionTimezone",
-            "StartDate",
-            "EndDate",
-            "ActionAfterCompletion",
-        ):
+        for key in ("Description", "ScheduleExpressionTimezone", "StartDate", "EndDate"):
             if current.get(key) is not None:
                 body[key] = current[key]
+        body["ActionAfterCompletion"] = "DELETE" if expression.startswith("at(") else "NONE"
         try:
             self.client.update_schedule(**body)
         except Exception as error:  # noqa: BLE001
@@ -767,6 +815,7 @@ class CatalogSchedules:
             elif kind == "calendario":
                 params = {"meses": payload.get("meses")}
             days, at = parse_cron(d.get("ScheduleExpression"))
+            day, at_once = parse_at(d.get("ScheduleExpression"))
             items.append(
                 {
                     "name": d["Name"].removeprefix(self.prefix),
@@ -777,7 +826,8 @@ class CatalogSchedules:
                     "kind": kind,
                     "params": params,
                     "days": days,
-                    "time": at,
+                    "time": at or at_once,
+                    "date": day,
                     "createdByPortal": d["Name"].removeprefix(self.prefix).startswith("portal-"),
                 }
             )

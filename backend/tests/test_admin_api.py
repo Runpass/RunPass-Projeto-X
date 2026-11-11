@@ -866,6 +866,94 @@ class AdminApiTests(unittest.TestCase):
             404,
         )
 
+    def test_execucao_unica_em_uma_data_valida_futuro_e_limite_de_um_ano(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/schedules"
+        base = {"name": "uma-vez", "kind": "imagens", "time": "06:00"}
+        # NOW = terca 10/11/2026 12:00 em SP
+        r = self.client.post(url, json={**base, "date": "2026-11-20"}, headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        feito = self.sched.created[-1]
+        self.assertEqual(feito["ScheduleExpression"], "at(2026-11-20T06:00:00)")
+        self.assertEqual(feito["ScheduleExpressionTimezone"], "America/Sao_Paulo")
+        self.assertEqual(feito["ActionAfterCompletion"], "DELETE")  # some sozinho depois de rodar
+        # recorrente continua sem apagar
+        r = self.client.post(url, json={**base, "name": "toda-seg", "days": ["MON"]}, headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(self.sched.created[-1]["ActionAfterCompletion"], "NONE")
+        ruins = [
+            {"date": "2026-11-10", "time": "11:59"},  # hoje, mas ja passou
+            {"date": "2026-11-10", "time": "12:00"},  # agora nao e futuro
+            {"date": "2026-11-09"},  # ontem
+            {"date": "2027-11-12"},  # a mais de 1 ano
+            {"date": "2026-02-30"},  # data que nao existe
+            {"date": "20/11/2026"},
+            {"date": "2026-11-20", "days": ["MON"]},  # as duas formas juntas
+            {"date": "2026-11-20", "time": "24:00"},
+        ]
+        for i, mudanca in enumerate(ruins):
+            antes = len(self.sched.created)
+            corpo = {**base, "name": f"ruim-{i}", **mudanca}
+            r = self.client.post(url, json=corpo, headers=h)
+            self.assertIn(r.status_code, (400, 422), mudanca)
+            self.assertEqual(len(self.sched.created), antes, mudanca)
+        # nem data nem dias
+        self.assertEqual(
+            self.client.post(url, json={**base, "name": "sem-quando"}, headers=h).status_code, 422
+        )
+        # hoje mais tarde e o limite de um ano (366 dias) valem
+        self.assertEqual(
+            self.client.post(
+                url,
+                json={**base, "name": "hoje-tarde", "date": "2026-11-10", "time": "18:30"},
+                headers=h,
+            ).status_code,
+            201,
+        )
+        self.assertEqual(
+            self.client.post(
+                url,
+                json={**base, "name": "um-ano", "date": "2027-11-10", "time": "11:00"},
+                headers=h,
+            ).status_code,
+            201,
+        )
+
+    def test_alterar_a_data_de_um_agendamento_e_trocar_entre_repetir_e_uma_vez(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/schedules/calendario"
+        r = self.client.put(url, json={"date": "2026-11-25", "time": "07:15"}, headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        feito = self.sched.updated[-1]
+        self.assertEqual(feito["ScheduleExpression"], "at(2026-11-25T07:15:00)")
+        self.assertEqual(feito["ActionAfterCompletion"], "DELETE")
+        # a lista devolve data e horario para a tela editar
+        itens = {
+            i["name"]: i
+            for i in self.client.get("/admin/catalog/schedules", headers=h).json()["items"]
+        }
+        self.assertEqual(
+            (itens["calendario"]["date"], itens["calendario"]["time"], itens["calendario"]["days"]),
+            ("2026-11-25", "07:15", None),
+        )
+        self.assertEqual(itens["calendario"]["nextRun"], "2026-11-25T10:15:00Z")
+        # volta a repetir toda semana
+        r = self.client.put(url, json={"days": ["MON", "THU"], "time": "07:00"}, headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.sched.updated[-1]["ScheduleExpression"], "cron(0 7 ? * MON,THU *)")
+        self.assertEqual(self.sched.updated[-1]["ActionAfterCompletion"], "NONE")
+        # data sem horario, data no passado e as duas formas juntas: recusados e nada muda
+        n = len(self.sched.updated)
+        for corpo in (
+            {"date": "2026-11-25"},
+            {"date": "2026-11-01", "time": "07:00"},
+            {"date": "2026-11-25", "days": ["MON"], "time": "07:00"},
+        ):
+            self.assertIn(
+                self.client.put(url, json=corpo, headers=h).status_code, (400, 422), corpo
+            )
+        self.assertEqual(len(self.sched.updated), n)
+
     def test_apagar_agendamento_so_do_catalogo_e_so_com_catalog_admin(self):
         h = self.auth(token("op"))
         self.assertEqual(
