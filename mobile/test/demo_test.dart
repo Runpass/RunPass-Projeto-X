@@ -97,14 +97,14 @@ void main() {
       await tester.tap(find.byKey(const Key('catalog-search-toggle')));
       await tester.pumpAndSettle();
       expect(find.text('Encontre sua próxima conquista'), findsOneWidget);
-      // A lista traz o filtro de ano e a estrela das melhores avaliações (sem ordenação por data).
+      // Ordem padrão: mais recentes primeiro; ícones de data e de avaliação e o filtro de ano na lista.
       await tester.scrollUntilVisible(
-        find.byKey(const Key('catalog-sort-rating')),
+        find.byKey(const Key('catalog-sort')),
         300,
         scrollable: find.byType(Scrollable).first,
       );
+      expect(find.byKey(const Key('catalog-sort')), findsOneWidget);
       expect(find.byKey(const Key('catalog-sort-rating')), findsOneWidget);
-      expect(find.byKey(const Key('catalog-sort')), findsNothing);
       await tester.tap(find.text('Início'));
       await tester.pumpAndSettle();
       // The demo feed carries fictional posts by other runners.

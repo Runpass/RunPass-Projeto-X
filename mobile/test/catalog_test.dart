@@ -1666,7 +1666,7 @@ void main() {
   });
 
   testWidgets(
-    'não há ordenação por data: a lista vem da mais recente e a data se escolhe pelo ano',
+    'o ícone de data alterna entre decrescente e crescente, começando em decrescente',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -1689,13 +1689,19 @@ void main() {
       await tester.pumpAndSettle();
       double top(String text) =>
           tester.getTopLeft(find.textContaining(text)).dy;
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
       expect(top('Corrida C') < top('Corrida B'), isTrue);
       expect(top('Corrida B') < top('Corrida A'), isTrue);
-      // Sem setas de ordem nem seletor "Ordenar por": só o ano e a estrela.
-      expect(find.byIcon(Icons.arrow_downward_rounded), findsNothing);
-      expect(find.byIcon(Icons.arrow_upward_rounded), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(top('Corrida A') < top('Corrida B'), isTrue);
+      expect(top('Corrida B') < top('Corrida C'), isTrue);
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      expect(top('Corrida C') < top('Corrida A'), isTrue);
+      // Só ícones: sem seletor nem rótulo de ordenação; o ano é um filtro à parte.
       expect(find.text('Ordenar por'), findsNothing);
-      expect(find.byKey(const Key('catalog-sort')), findsNothing);
       expect(find.byKey(const Key('filter-year-0')), findsOneWidget);
       expect(find.byKey(const Key('catalog-sort-rating')), findsOneWidget);
     },
@@ -1886,10 +1892,12 @@ void priorityOrderTests() {
       List<String> order() =>
           (['A', 'B', 'C', 'D', 'E', 'F']
             ..sort((a, b) => top(a).compareTo(top(b))));
-      // Minhas primeiro (D corri, C inscrito, F e B desejo) e depois as demais. Dentro de cada grupo, as
-      // mais recentes primeiro: não existe controle para inverter a data (a data se escolhe pelo filtro de ano).
+      // Decrescente (padrão): D (corri), C (inscrito), F e B (desejo, F é mais recente), A e E (demais, A é mais recente).
       expect(order(), ['D', 'C', 'F', 'B', 'A', 'E']);
-      expect(find.byKey(const Key('catalog-sort')), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      // Crescente: os grupos continuam na mesma ordem; só a data dentro de cada um inverte.
+      expect(order(), ['D', 'C', 'B', 'F', 'E', 'A']);
     },
   );
 }
@@ -1922,7 +1930,7 @@ void defaultOrderTests() {
       double top(String text) =>
           tester.getTopLeft(find.textContaining(text)).dy;
       expect(top('Corrida B') < top('Corrida A'), isTrue);
-      expect(find.byIcon(Icons.arrow_downward_rounded), findsNothing);
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
     },
   );
 }
@@ -1982,24 +1990,31 @@ void ratingTests() {
     return [for (final e in shown) e.key];
   }
 
-  testWidgets('a estrela liga e desliga as melhores avaliações primeiro; '
-      'desempate por nº de avaliações e sem nota por último', (tester) async {
-    await openList(tester);
-    expect(order(tester), [
-      'C',
-      'A',
-      'D',
-      'B',
-    ]); // padrão: mais recentes primeiro
-    await tester.tap(find.byKey(const Key('catalog-sort-rating')));
-    await tester.pumpAndSettle();
-    expect(order(tester), ['D', 'B', 'A', 'C']);
-    expect(find.byIcon(Icons.star_rounded), findsOneWidget);
-    await tester.tap(find.byKey(const Key('catalog-sort-rating')));
-    await tester.pumpAndSettle();
-    expect(order(tester), ['C', 'A', 'D', 'B']); // desligou: volta ao padrão
-    expect(find.byIcon(Icons.star_border_rounded), findsOneWidget);
-  });
+  testWidgets(
+    'a estrela ordena por avaliação, inverte ao tocar de novo e a data '
+    'volta ao padrão',
+    (tester) async {
+      await openList(tester);
+      expect(order(tester), ['C', 'A', 'D', 'B']); // padrão: data, mais recente
+      await tester.tap(find.byKey(const Key('catalog-sort-rating')));
+      await tester.pumpAndSettle();
+      // melhor primeiro; empate (D e B, 4,8) por nº de avaliações; sem nota por último
+      expect(order(tester), ['D', 'B', 'A', 'C']);
+      expect(find.byIcon(Icons.star_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
+      await tester.tap(find.byKey(const Key('catalog-sort-rating')));
+      await tester.pumpAndSettle();
+      // pior primeiro; quem não tem nota continua por último
+      expect(order(tester), ['A', 'D', 'B', 'C']);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      // o ícone de data devolve a ordem por data, mais recente primeiro
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      expect(order(tester), ['C', 'A', 'D', 'B']);
+      expect(find.byIcon(Icons.star_border_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
+    },
+  );
 
   testWidgets('o filtro de ano envia só o ano e "Qualquer ano" o remove', (
     tester,
