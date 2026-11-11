@@ -108,7 +108,7 @@ export const PERMISSOES = {
   moderation: 'Moderação',
   lake_read: 'Leitura de dados analíticos',
   user_admin: 'Usuários (cadastros e operadores)',
-  cost_read: 'Custos (AWS, OpenAI e Claude Code)',
+  cost_read: 'Custos (AWS e OpenAI)',
 };
 
 export const MODOS_CATALOGO = {
@@ -244,6 +244,13 @@ export function dataHojeIso(agora = new Date()) {
 /** Motivo (código curto vindo da API) -> frase para a pessoa. Nunca mostra detalhes da chave. */
 export function motivoOpenAi(codigo) {
   const c = codigo || '';
+  const [base, detalhe] = c.split(':');
+  if (base === 'http_429' && detalhe === 'insufficient_quota') {
+    return 'A OpenAI recusou por cota: a conta está sem crédito ou estourou o limite de gasto. Confira Billing e Limits no console.';
+  }
+  if (base === 'http_429' && detalhe) {
+    return `A OpenAI limitou as consultas (${detalhe}). Tente de novo em instantes.`;
+  }
   if (c.startsWith('key_read_failed')) {
     const tipo = c.split(':')[1] || '';
     return `Não consegui ler a chave no SSM (${tipo || 'erro'}): confira o nome do parâmetro, se ele é SecureString e se a região é sa-east-1.`;
@@ -260,30 +267,4 @@ export function motivoOpenAi(codigo) {
   };
   if (mapa[c]) return mapa[c];
   return c.startsWith('http_') ? `A OpenAI respondeu com erro (${c.slice(5)}).` : 'Motivo não identificado.';
-}
-
-/** Motivo (código curto vindo da API) da leitura do Claude Code -> frase. Nunca mostra detalhes da chave. */
-export function motivoClaude(codigo) {
-  const c = codigo || '';
-  if (c.startsWith('key_read_failed')) {
-    const tipo = c.split(':')[1] || '';
-    return `Não consegui ler a chave no SSM (${tipo || 'erro'}): confira o nome do parâmetro, se ele é SecureString e se a região é sa-east-1.`;
-  }
-  const mapa = {
-    empty_key: 'O parâmetro do SSM está vazio.',
-    http_401: 'A Anthropic recusou a chave: ela é inválida, expirou ou não é uma chave de administrador (sk-ant-admin01-...).',
-    http_403: 'A Anthropic recusou a chave: ela não tem permissão para ler o uso do Claude Code (é preciso ser uma organização, não uma conta individual).',
-    http_404: 'A Anthropic não encontrou o relatório do Claude Code para esta organização.',
-    http_429: 'A Anthropic limitou as consultas agora. Tente de novo em instantes.',
-    network: 'Sem resposta da Anthropic agora.',
-    'network:invalid_header': 'A chave guardada no SSM tem espaço ou quebra de linha no fim ou no início. Grave-a de novo, sem espaços.',
-    'network:timeout': 'A Anthropic demorou demais para responder. Tente de novo em instantes.',
-    'network:tls': 'Falha de certificado (TLS) ao falar com a Anthropic.',
-    'network:dns_or_connect': 'Não foi possível conectar à Anthropic (DNS ou conexão).',
-    'network:connect': 'Não foi possível conectar à Anthropic.',
-    'network:invalid_json': 'A Anthropic respondeu algo que não é JSON (pode ser um bloqueio de rede).',
-    not_configured: 'A chave de administrador da Anthropic não está configurada neste deploy.',
-  };
-  if (mapa[c]) return mapa[c];
-  return c.startsWith('http_') ? `A Anthropic respondeu com erro (${c.slice(5)}).` : 'Motivo não identificado.';
 }

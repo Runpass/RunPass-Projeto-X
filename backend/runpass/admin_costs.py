@@ -224,9 +224,20 @@ def openai_transport(path, params, key, timeout=15):
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             return response.status, json.loads(response.read(5_000_000))
     except urllib.error.HTTPError as error:
-        return error.code, {}
+        return error.code, {"error": _error_code(error)}
     except (urllib.error.URLError, OSError, ValueError):
         return 0, {}
+
+
+def _error_code(error):
+    """So o codigo curto do erro da OpenAI (ex.: rate_limit_exceeded, insufficient_quota); nunca a mensagem."""
+    try:
+        body = json.loads(error.read(20_000))
+        detail = body.get("error") if isinstance(body, dict) else None
+        code = (detail or {}).get("code") or (detail or {}).get("type") or ""
+    except (ValueError, OSError, AttributeError, TypeError):
+        return ""
+    return code if isinstance(code, str) and re.fullmatch(r"[a-z0-9_]{1,40}", code) else ""
 
 
 class OrgUnavailable(Unavailable):
@@ -260,7 +271,10 @@ class OpenAiOrg:
             query = dict(params, **({"page": page} if page else {}))
             status, body = self.transport(path, query, key)
             if status != 200:
-                raise OrgUnavailable("network" if status == 0 else f"http_{status}")
+                code = (body or {}).get("error", "")
+                raise OrgUnavailable(
+                    "network" if status == 0 else f"http_{status}" + (f":{code}" if code else "")
+                )
             buckets += body.get("data", [])
             page = body.get("next_page") if body.get("has_more") else None
             if not page:
@@ -370,158 +384,3 @@ class OpenAiOrg:
         if status != 200:
             return {}
         return {k["id"]: k.get("name") or k["id"][:12] for k in body.get("data", []) if "id" in k}
-
-
-ANTHROPIC_HOST = "https://api.anthropic.com"
-ANTHROPIC_VERSION = "2023-06-01"
-
-
-def anthropic_transport(path, params, key, timeout=15):
-    """GET so em api.anthropic.com (host fixo). Devolve (status, json); nunca o corpo de um erro."""
-    url = f"{ANTHROPIC_HOST}{path}?{urllib.parse.urlencode(params, doseq=True)}"
-    request = urllib.request.Request(  # noqa: S310 - host fixo https
-        url, headers={"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION}
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-            return response.status, json.loads(response.read(5_000_000))
-    except urllib.error.HTTPError as error:
-        return error.code, {}
-    except (
-        ValueError
-    ) as error:  # cabecalho invalido (chave com espaco/quebra de linha) ou JSON invalido
-        return 0, {"error": "invalid_header" if "header" in str(error).lower() else "invalid_json"}
-    except TimeoutError:
-        return 0, {"error": "timeout"}
-    except urllib.error.URLError as error:
-        reason = str(getattr(error, "reason", "")).lower()
-        kind = "tls" if "ssl" in reason or "certificate" in reason else "dns_or_connect"
-        return 0, {"error": kind}
-    except OSError:
-        return 0, {"error": "connect"}
-
-
-class ClaudeCodeUsage:
-    """Uso e custo estimado do Claude Code da equipe (Admin API da Anthropic, relatorio do Claude Code).
-
-    Exige a chave de ADMINISTRADOR (`sk-ant-admin01-...`) no SSM, lida so aqui; ela nunca sai da funcao nem e
-    registrada. O relatorio devolve UM dia por consulta, entao o mes e montado dia a dia (cache de 15 minutos).
-    O custo e uma ESTIMATIVA da Anthropic (centavos de dolar por modelo): para assinatura Team/Enterprise nao ha
-    fatura por token. So aparece quem usa o Claude Code autenticado na organizacao."""
-
-    PATH = "/v1/organizations/usage_report/claude_code"
-    MAX_PAGES_PER_DAY = 5
-
-    def __init__(self, key_loader, clock, monthly_limit_usd=None, transport=anthropic_transport):
-        self.key_loader, self.clock = key_loader, clock
-        self.limit, self.transport = monthly_limit_usd, transport
-        self._cache = None
-
-    @property
-    def configured(self):
-        return self.key_loader is not None
-
-    def _day(self, day, key):
-        rows, page = [], None
-        for _ in range(self.MAX_PAGES_PER_DAY):
-            query = {"starting_at": day.isoformat(), "limit": 1000}
-            if page:
-                query["page"] = page
-            status, body = self.transport(self.PATH, query, key)
-            if status != 200:
-                kind = (body or {}).get("error", "")
-                raise OrgUnavailable(
-                    (f"network:{kind}" if kind else "network") if status == 0 else f"http_{status}"
-                )
-            rows += body.get("data", [])
-            page = body.get("next_page") if body.get("has_more") else None
-            if not page:
-                break
-        return rows
-
-    @staticmethod
-    def _actor(row):
-        actor = row.get("actor") or {}
-        return actor.get("email_address") or actor.get("api_key_name") or "—"
-
-    def report(self):
-        if not self.configured:
-            raise OrgUnavailable("not_configured")
-        now = self.clock()
-        if getattr(self, "_error", None) and now - self._error[0] < ERROR_TTL:
-            raise OrgUnavailable(self._error[1])
-        try:
-            return self._report()
-        except OrgUnavailable as error:
-            reason = getattr(error, "reason", "")
-            self._error = (now, reason) if _transient(reason) else None
-            raise
-
-    def _report(self):
-        now = self.clock()
-        if self._cache and now - self._cache[0] < CACHE_TTL:
-            return self._cache[1]
-        try:
-            key = self.key_loader()
-        except Exception as error:  # noqa: BLE001 - sem permissao ou parametro: sem detalhe da chave
-            raise OrgUnavailable("key_read_failed:" + type(error).__name__[:40]) from error
-        key = (key or "").strip()  # espaco ou quebra de linha colados junto com a chave
-        if not key:
-            raise OrgUnavailable("empty_key")
-        today = datetime.fromtimestamp(now, timezone.utc).date()
-        start = _month_start(today)
-        days, actors, models = [], {}, {}
-        day = start
-        while day <= today:
-            usd = tokens = sessions = 0
-            for row in self._day(day, key):
-                who = actors.setdefault(
-                    self._actor(row),
-                    {"usd": 0.0, "tokens": 0, "sessions": 0, "type": row.get("customer_type")},
-                )
-                sessions += int((row.get("core_metrics") or {}).get("num_sessions") or 0)
-                who["sessions"] += int((row.get("core_metrics") or {}).get("num_sessions") or 0)
-                for m in row.get("model_breakdown") or []:
-                    cost = float((m.get("estimated_cost") or {}).get("amount") or 0) / 100
-                    t = m.get("tokens") or {}
-                    count = sum(
-                        int(t.get(k) or 0)
-                        for k in ("input", "output", "cache_creation", "cache_read")
-                    )
-                    usd += cost
-                    tokens += count
-                    who["usd"] += cost
-                    who["tokens"] += count
-                    entry = models.setdefault(m.get("model") or "—", {"usd": 0.0, "tokens": 0})
-                    entry["usd"] += cost
-                    entry["tokens"] += count
-            days.append(
-                {
-                    "date": day.isoformat(),
-                    "usd": round(usd, 4),
-                    "tokens": tokens,
-                    "sessions": sessions,
-                }
-            )
-            day += timedelta(days=1)
-        result = {
-            "month": start.isoformat()[:7],
-            "totalUsd": round(sum(d["usd"] for d in days), 2),
-            "limitUsd": self.limit,
-            "totalTokens": sum(d["tokens"] for d in days),
-            "totalSessions": sum(d["sessions"] for d in days),
-            "daily": days,
-            "byActor": sorted(
-                ({"name": k, **v, "usd": round(v["usd"], 4)} for k, v in actors.items()),
-                key=lambda x: -x["usd"],
-            ),
-            "byModel": sorted(
-                (
-                    {"name": k, "usd": round(v["usd"], 4), "tokens": v["tokens"]}
-                    for k, v in models.items()
-                ),
-                key=lambda x: -x["usd"],
-            ),
-        }
-        self._cache = (now, result)
-        return result

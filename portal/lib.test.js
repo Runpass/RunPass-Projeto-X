@@ -134,19 +134,10 @@ test('motivo da falha da OpenAI vira frase útil sem vazar detalhes', async () =
   assert.match(motivoOpenAi('http_400'), /projeto/);
   assert.match(motivoOpenAi('http_500'), /\(500\)/);
   assert.match(motivoOpenAi('network'), /Sem resposta/);
+  assert.match(motivoOpenAi('http_429:insufficient_quota'), /sem crédito/);
+  assert.match(motivoOpenAi('http_429:rate_limit_exceeded'), /rate_limit_exceeded/);
+  assert.match(motivoOpenAi('key_read_failed:ParameterNotFound'), /ParameterNotFound/);
   assert.equal(motivoOpenAi(undefined), 'Motivo não identificado.');
-});
-
-test('motivo da falha do Claude Code vira frase útil sem vazar detalhes', async () => {
-  const { motivoClaude } = await import('./lib.js');
-  assert.match(motivoClaude('key_read_failed:ParameterNotFound'), /ParameterNotFound.*SecureString/);
-  assert.match(motivoClaude('http_401'), /sk-ant-admin01/);
-  assert.match(motivoClaude('http_403'), /organização/);
-  assert.match(motivoClaude('http_500'), /\(500\)/);
-  assert.match(motivoClaude('not_configured'), /não está configurada/);
-  assert.match(motivoClaude('network:invalid_header'), /espaço ou quebra de linha/);
-  assert.match(motivoClaude('network:timeout'), /demorou/);
-  assert.equal(motivoClaude(undefined), 'Motivo não identificado.');
 });
 
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
