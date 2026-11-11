@@ -214,8 +214,6 @@ class AdminApiTests(unittest.TestCase):
         self.pages = {}
         self.openai_org = FakeCosts({})
         self.openai_org.configured = False
-        self.claude_code = FakeCosts({})
-        self.claude_code.configured = False
         self.aws_costs, self.openai_costs = (
             FakeCosts({"totalUsd": 5}),
             FakeCosts({"month": "2026-11"}),
@@ -266,7 +264,6 @@ class AdminApiTests(unittest.TestCase):
                 aws_costs=self.aws_costs,
                 openai_usage=self.openai_costs,
                 openai_org=self.openai_org,
-                claude_code=self.claude_code,
                 site={
                     "directory": self.portal_dir,
                     "region": "sa-east-1",
@@ -642,9 +639,6 @@ class AdminApiTests(unittest.TestCase):
                 "openai": {"month": "2026-11"},
                 "openaiOrg": None,
                 "openaiOrgStatus": "not_configured",
-                "claude": None,
-                "claudeStatus": "not_configured",
-                "claudeReason": None,
                 "errors": [],
             },
         )
@@ -665,17 +659,6 @@ class AdminApiTests(unittest.TestCase):
         r = self.client.get("/admin/costs", headers=h).json()
         self.assertEqual((r["openaiOrg"], r["openaiOrgStatus"]), (None, "error"))
         self.assertEqual(r["openai"], {"month": "2026-11"})
-
-    def test_custos_do_claude_code_ficam_separados_e_falha_nao_esconde_o_resto(self):
-        h = self.auth(token("fin"))
-        self.claude_code.configured, self.claude_code.value = True, {"totalUsd": 7.5}
-        r = self.client.get("/admin/costs", headers=h).json()
-        self.assertEqual((r["claude"], r["claudeStatus"]), ({"totalUsd": 7.5}, "ok"))
-        self.assertEqual(r["errors"], [])
-        self.claude_code.value = None  # chave invalida ou Anthropic fora do ar
-        r = self.client.get("/admin/costs", headers=h).json()
-        self.assertEqual((r["claude"], r["claudeStatus"]), (None, "error"))
-        self.assertEqual(r["aws"], {"totalUsd": 5})
 
     def operadores(self):
         """adm (administrador de usuarios) e dois operadores no pool falso, cada um com ACCESS."""

@@ -4,13 +4,7 @@ import json
 import unittest
 from datetime import datetime, timezone
 
-from runpass.admin_costs import (
-    AwsCosts,
-    ClaudeCodeUsage,
-    OpenAiOrg,
-    OpenAiUsage,
-    anthropic_transport,
-)
+from runpass.admin_costs import AwsCosts, OpenAiOrg, OpenAiUsage
 from runpass.store import Unavailable
 
 NOW = datetime(2026, 11, 10, 15, tzinfo=timezone.utc)
@@ -333,139 +327,7 @@ class OpenAiOrgTests(unittest.TestCase):
         self.assertNotIn("sk-admin", json.dumps(r))
 
 
-class FakeClaudeCode:
-    """Relatorio do Claude Code falso (dados ficticios): um dia por consulta, com paginacao no dia 10."""
-
-    def __init__(self):
-        self.calls, self.status = [], 200
-
-    def __call__(self, path, params, key):
-        self.calls.append((path, dict(params), key))
-        if self.status != 200:
-            return self.status, {}
-        day = params["starting_at"]
-        if day == "2026-11-02":
-            row = {
-                "actor": {"type": "user_actor", "email_address": "dev1@exemplo.test"},
-                "core_metrics": {"num_sessions": 3},
-                "customer_type": "subscription",
-                "model_breakdown": [
-                    {
-                        "model": "claude-sonnet-5-5",
-                        "estimated_cost": {"amount": 250, "currency": "USD"},
-                        "tokens": {
-                            "input": 1000,
-                            "output": 200,
-                            "cache_creation": 50,
-                            "cache_read": 750,
-                        },
-                    }
-                ],
-            }
-            return 200, {"data": [row], "has_more": False, "next_page": None}
-        if day == "2026-11-10":
-            if "page" not in params:
-                row = {
-                    "actor": {"type": "api_actor", "api_key_name": "ci-key"},
-                    "core_metrics": {"num_sessions": 1},
-                    "customer_type": "api",
-                    "model_breakdown": [
-                        {
-                            "model": "claude-opus-5-5",
-                            "estimated_cost": {"amount": 1234, "currency": "USD"},
-                            "tokens": {
-                                "input": 10,
-                                "output": 20,
-                                "cache_creation": 0,
-                                "cache_read": 0,
-                            },
-                        }
-                    ],
-                }
-                return 200, {"data": [row], "has_more": True, "next_page": "p2"}
-            row = {
-                "actor": {"type": "user_actor", "email_address": "dev1@exemplo.test"},
-                "core_metrics": {"num_sessions": 2},
-                "customer_type": "subscription",
-                "model_breakdown": [
-                    {
-                        "model": "claude-sonnet-5-5",
-                        "estimated_cost": {"amount": 50, "currency": "USD"},
-                        "tokens": {
-                            "input": 100,
-                            "output": 100,
-                            "cache_creation": 0,
-                            "cache_read": 0,
-                        },
-                    }
-                ],
-            }
-            return 200, {"data": [row], "has_more": False, "next_page": None}
-        return 200, {"data": [], "has_more": False, "next_page": None}
-
-
-class ClaudeCodeUsageTests(unittest.TestCase):
-    def setUp(self):
-        self.now = NOW.timestamp()
-        self.api = FakeClaudeCode()
-        self.usage = ClaudeCodeUsage(
-            lambda: "sk-ant-admin01-teste", lambda: self.now, 100, self.api
-        )
-
-    def test_soma_o_mes_dia_a_dia_com_custo_em_dolar_e_paginacao(self):
-        r = self.usage.report()
-        self.assertEqual(r["month"], "2026-11")
-        self.assertEqual(len(r["daily"]), 10)  # 1 a 10 de novembro
-        self.assertEqual(r["totalUsd"], 15.34)  # 2,50 + 12,34 + 0,50
-        self.assertEqual(r["totalSessions"], 6)
-        self.assertEqual(r["totalTokens"], 2000 + 30 + 200)
-        self.assertEqual(r["limitUsd"], 100)
-        by_actor = {a["name"]: a for a in r["byActor"]}
-        self.assertEqual(by_actor["dev1@exemplo.test"]["usd"], 3.0)
-        self.assertEqual(by_actor["ci-key"]["type"], "api")
-        self.assertEqual([m["name"] for m in r["byModel"]][0], "claude-opus-5-5")
-        self.assertEqual(r["daily"][9]["usd"], 12.84)
-
-    def test_a_consulta_leva_so_a_chave_no_cabecalho_do_transporte_e_pagina(self):
-        self.usage.report()
-        ten = [c for c in self.api.calls if c[1]["starting_at"] == "2026-11-10"]
-        self.assertEqual(len(ten), 2)
-        self.assertEqual(ten[1][1]["page"], "p2")
-        self.assertTrue(
-            all(c[0] == "/v1/organizations/usage_report/claude_code" for c in self.api.calls)
-        )
-
-    def test_motivos_seguros_cache_e_chave_fora_do_resultado(self):
-        def motivo(usage):
-            with self.assertRaises(Unavailable) as erro:
-                usage.report()
-            return erro.exception.reason
-
-        self.api.status = 401
-        self.assertEqual(motivo(self.usage), "http_401")
-        self.api.status = 0
-        self.assertEqual(
-            motivo(ClaudeCodeUsage(lambda: "k", lambda: self.now, None, self.api)), "network"
-        )
-        self.assertEqual(motivo(ClaudeCodeUsage(None, lambda: self.now)), "not_configured")
-        self.assertEqual(motivo(ClaudeCodeUsage(lambda: "", lambda: self.now)), "empty_key")
-
-        def sem_acesso():
-            raise RuntimeError("ParameterNotFound")
-
-        self.assertEqual(
-            motivo(ClaudeCodeUsage(sem_acesso, lambda: self.now)), "key_read_failed:RuntimeError"
-        )
-        self.api.status = 200
-        ok = ClaudeCodeUsage(lambda: "sk-ant-admin01-segredo", lambda: self.now, None, self.api)
-        first = ok.report()
-        calls = len(self.api.calls)
-        self.assertIs(ok.report(), first)  # cache de 15 minutos
-        self.assertEqual(len(self.api.calls), calls)
-        self.assertNotIn("segredo", json.dumps(first))
-
-
-class ResilienciaTests(unittest.TestCase):
+class OpenAiResilienciaTests(unittest.TestCase):
     def setUp(self):
         self.now = NOW.timestamp()
 
@@ -476,10 +338,9 @@ class ResilienciaTests(unittest.TestCase):
             usadas.append(key)
             return 200, {"data": [], "has_more": False}
 
-        ClaudeCodeUsage(lambda: "  sk-ant-admin01-teste\n", lambda: self.now, None, api).report()
         OpenAiOrg(lambda: "sk-admin-teste \n", lambda: self.now, "", None, api).report()
         self.assertTrue(usadas)
-        self.assertTrue(all(k == k.strip() and k for k in usadas))
+        self.assertTrue(all(k == "sk-admin-teste" for k in usadas))
 
     def test_limite_429_fica_60_segundos_em_cache_e_depois_tenta_de_novo(self):
         chamadas, relogio = [], [self.now]
@@ -488,53 +349,50 @@ class ResilienciaTests(unittest.TestCase):
             chamadas.append(path)
             return 429, {}
 
-        for usage in (
-            OpenAiOrg(lambda: "k", lambda: relogio[0], "", None, api),
-            ClaudeCodeUsage(lambda: "k", lambda: relogio[0], None, api),
-        ):
-            chamadas.clear()
-            relogio[0] = self.now
-            for _ in range(3):  # cliques repetidos em "Atualizar"
-                with self.assertRaises(Unavailable) as erro:
-                    usage.report()
-                self.assertEqual(erro.exception.reason, "http_429")
-            self.assertEqual(len(chamadas), 1)
-            relogio[0] += 61
-            with self.assertRaises(Unavailable):
+        usage = OpenAiOrg(lambda: "k", lambda: relogio[0], "", None, api)
+        for _ in range(3):  # cliques repetidos em "Atualizar"
+            with self.assertRaises(Unavailable) as erro:
                 usage.report()
-            self.assertEqual(len(chamadas), 2)
-
-    def test_erro_de_chave_nao_fica_em_cache(self):
-        def api(path, params, key):
-            return 401, {}
-
-        usage = ClaudeCodeUsage(lambda: "k", lambda: self.now, None, api)
+            self.assertEqual(erro.exception.reason, "http_429")
+        self.assertEqual(len(chamadas), 1)
+        relogio[0] += 61
         with self.assertRaises(Unavailable):
             usage.report()
-        api2 = lambda path, params, key: (200, {"data": [], "has_more": False})  # noqa: E731
-        usage.transport = api2  # a pessoa corrigiu a chave: a proxima consulta ja vale
+        self.assertEqual(len(chamadas), 2)
+
+    def test_erro_de_chave_nao_fica_em_cache(self):
+        usage = OpenAiOrg(lambda: "k", lambda: self.now, "", None, lambda p, q, k: (401, {}))
+        with self.assertRaises(Unavailable):
+            usage.report()
+        usage.transport = lambda p, q, k: (200, {"data": [], "has_more": False})
         self.assertEqual(usage.report()["totalUsd"], 0)
 
-    def test_falha_de_rede_diz_o_tipo(self):
-        def api(path, params, key):
-            return 0, {"error": "invalid_header"}
 
-        with self.assertRaises(Unavailable) as erro:
-            ClaudeCodeUsage(lambda: "k", lambda: self.now, None, api).report()
-        self.assertEqual(erro.exception.reason, "network:invalid_header")
-
-    def test_transporte_classifica_o_erro_sem_rede_real(self):
+class CodigoDoErroDaOpenAiTests(unittest.TestCase):
+    def test_o_codigo_curto_do_erro_aparece_no_motivo_e_a_mensagem_nao(self):
+        import io
         import urllib.error
         from unittest import mock
 
-        casos = [
-            (ValueError("Invalid header value b'x\\n'"), "invalid_header"),
-            (ValueError("Expecting value"), "invalid_json"),
-            (TimeoutError(), "timeout"),
-            (urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED]"), "tls"),
-            (urllib.error.URLError("Name or service not known"), "dns_or_connect"),
-            (ConnectionResetError(), "connect"),
-        ]
-        for falha, esperado in casos:
-            with mock.patch("urllib.request.urlopen", side_effect=falha):
-                self.assertEqual(anthropic_transport("/x", {}, "k"), (0, {"error": esperado}))
+        from runpass.admin_costs import openai_transport
+
+        corpo = b'{"error": {"message": "segredo sk-admin-xyz", "code": "insufficient_quota"}}'
+        falha = urllib.error.HTTPError("u", 429, "x", {}, io.BytesIO(corpo))
+        with mock.patch("urllib.request.urlopen", side_effect=falha):
+            status, body = openai_transport("/v1/x", {}, "k")
+        self.assertEqual((status, body), (429, {"error": "insufficient_quota"}))
+        ruim = urllib.error.HTTPError(
+            "u", 429, "x", {}, io.BytesIO(b'{"error": {"code": "A mensagem longa!"}}')
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=ruim):
+            self.assertEqual(openai_transport("/v1/x", {}, "k"), (429, {"error": ""}))
+        org = OpenAiOrg(
+            lambda: "k",
+            lambda: NOW.timestamp(),
+            "",
+            None,
+            lambda p, q, k: (429, {"error": "insufficient_quota"}),
+        )
+        with self.assertRaises(Unavailable) as erro:
+            org.report()
+        self.assertEqual(erro.exception.reason, "http_429:insufficient_quota")

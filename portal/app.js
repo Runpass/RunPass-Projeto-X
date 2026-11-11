@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoClaude, motivoOpenAi, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -290,7 +290,6 @@ async function carregarCustos() {
       }
       partes.push(...secaoOpenAiEstimativa(r.openai, r.openaiOrgStatus === 'not_configured'));
     }
-    partes.push(...secaoClaude(r));
     alvo.replaceChildren(...partes);
   } catch (erro) {
     if (token) {
@@ -298,36 +297,6 @@ async function carregarCustos() {
       aviso(mensagem(erro.codigo), 'erro');
     }
   }
-}
-
-/** Uso do Claude Code da equipe (Admin API da Anthropic). O custo é uma estimativa da Anthropic. */
-function secaoClaude(r) {
-  const n = (v) => Number(v).toLocaleString('pt-BR');
-  const partes = [el('h2', {}, 'Claude Code')];
-  if (r.claudeStatus === 'not_configured') {
-    partes.push(el('p', { class: 'meta' }, `${motivoClaude('not_configured')} Para ver o uso e o custo estimado do Claude Code, crie a organização e a chave de administrador na Anthropic e informe o parâmetro do SSM na implantação do portal.`));
-    return partes;
-  }
-  if (r.claudeStatus === 'error' || !r.claude) {
-    partes.push(el('p', { class: 'aviso erro' }, `Não foi possível ler o uso do Claude Code. ${motivoClaude(r.claudeReason)}`));
-    return partes;
-  }
-  const c = r.claude;
-  const rotulos = c.daily.map((d) => `${d.date.slice(8)}/${d.date.slice(5, 7)}`);
-  partes.push(
-    el(
-      'div',
-      { class: 'grade' },
-      cartaoNumero(`Custo estimado em ${mesBr(c.month)}`, usd(c.totalUsd), c.limitUsd ? `Teto de referência ${usd(c.limitUsd)}` : '', percentual(c.totalUsd, c.limitUsd)),
-      cartaoNumero('Total de tokens', n(c.totalTokens)),
-      cartaoNumero('Sessões', n(c.totalSessions)),
-    ),
-    c.totalUsd || c.totalTokens ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Custo estimado por dia'), grafico(c.daily.map((d) => d.usd), rotulos, 'Custo diário estimado do Claude Code')) : el('p', { class: 'vazio' }, 'Nenhum uso do Claude Code neste mês ainda.'),
-    c.byActor.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por pessoa ou chave'), tabela(['Quem', 'Tipo', 'Sessões', 'Tokens', 'Custo estimado'], c.byActor.map((k) => [k.name, k.type === 'subscription' ? 'assinatura' : k.type === 'api' ? 'API' : '—', n(k.sessions), n(k.tokens), usd(k.usd)]), [2, 3, 4])) : '',
-    c.byModel.length ? el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Por modelo'), tabela(['Modelo', 'Tokens', 'Custo estimado'], c.byModel.map((k) => [k.name, n(k.tokens), usd(k.usd)]), [1, 2])) : '',
-    el('p', { class: 'meta' }, 'Dados do relatório do Claude Code da Anthropic, em dólar, dias em UTC. O custo é uma estimativa da Anthropic: em assinatura Team ou Enterprise não há fatura por token. Só aparece quem usa o Claude Code autenticado na organização. Atualiza a cada 15 minutos.'),
-  );
-  return partes;
 }
 
 /** Réplica da página Usage do console da OpenAI (dados reais pela API de administração). */
