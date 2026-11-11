@@ -11,6 +11,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from runpass.admin_api import MfaPolicy, admit_operator, create_admin_app
 from runpass.admin_banners import BannerAdmin
+from runpass.admin_divergences import DivergenceReview
 from runpass.admin_users import AdminUsers, CatalogRunner, CatalogSchedules, next_run
 from runpass.catalog import CatalogService, seed_synthetic
 from runpass.edition_requests import EditionRequestService
@@ -317,6 +318,7 @@ class AdminApiTests(unittest.TestCase):
                     "arn:aws:lambda:sa-east-1:111122223333:function:runpass-dev-catalogo-semanal",
                     self.store,
                 ),
+                divergences=DivergenceReview(self.store, self.s3, "relatorios", lambda: self.now),
                 banners=BannerAdmin(
                     self.store,
                     self.catalog,
@@ -1297,6 +1299,206 @@ class AdminApiTests(unittest.TestCase):
         )
         volta = self.client.get("/admin/banners/candidates", headers=h).json()
         self.assertEqual([i["name"] for i in volta["items"]], ["Corrida Sintética São Paulo"])
+
+    ENRIQ = (
+        "nome;data_evento;horario_largada;cidade;uf;local_largada;distancias_km;caminhada_km;"
+        "distancias_sugeridas_serie;fonte_sugestao;modalidade;preco_min_brl;preco_max_brl;url_inscricao;"
+        "organizador;tem_medalha;descricao_kit;url_imagem_divulgacao;credito_imagem;url_imagem_medalha;"
+        "status;confianca_ia;fonte_lista;fonte_enriquecimento;observacao;resultado_enriquecimento\n"
+    )
+
+    def linha(
+        self, nome, data, status, resultado, obs="", sugeridas="", fonte="", local="", url=""
+    ):
+        return (
+            f"{nome};{data};;São Paulo;SP;{local};;;{sugeridas};;rua;;;{url};Org Sintética;;;;;;"
+            f"{status};;https://lista.exemplo/p;{fonte};{obs};{resultado}\n"
+        )
+
+    def prepara_divergencias(self):
+        self.s3.objects["semanal/2026-11-09/enriquecimento/catalogo-completo.csv"] = self.ENRIQ
+        self.s3.objects["semanal/2026-11-10/enriquecimento/catalogo-completo.csv"] = (
+            "\ufeff"
+            + self.ENRIQ
+            + self.linha(
+                "PARCIAL RUN",
+                "2026-12-13",
+                "em_revisao",
+                "pista parcial, não confirmada",
+                "prova confirmada pela fonte, sem distancia",
+                local="Parque Sintético",
+                url="https://ingressos.exemplo/e/1",
+            )
+            + self.linha(
+                "AMBIGUA RUN",
+                "2026-12-06",
+                "em_revisao",
+                "enriquecida - conflito, vai para revisão",
+                "2 provas parecidas na mesma data: decidir",
+            )
+            + self.linha(
+                "SUGESTAO RUN",
+                "2026-12-20",
+                "em_revisao",
+                "sugestão da edição anterior",
+                "dados da edicao de 2025-12-21",
+                sugeridas="5|10",
+            )
+            + self.linha("NADA RUN", "2026-11-01", "em_revisao", "nada encontrado")
+            + self.linha(
+                "PRONTA RUN",
+                "2026-11-15",
+                "pronta_para_importar",
+                "enriquecida e pronta para importar",
+            )
+        )
+        return self.auth(token("op"))
+
+    def test_divergencias_listam_so_o_que_exige_decisao_da_coleta_mais_recente(self):
+        h = self.prepara_divergencias()
+        self.assertEqual(
+            self.client.get("/admin/divergences", headers=self.auth(token("adm"))).status_code, 403
+        )
+        r = self.client.get("/admin/divergences", headers=h).json()
+        self.assertEqual(r["run"], "2026-11-10")  # a coleta mais recente
+        self.assertEqual(
+            sorted(i["name"] for i in r["items"]), ["AMBIGUA RUN", "PARCIAL RUN", "SUGESTAO RUN"]
+        )
+        self.assertEqual(r["summary"], {"total": 3, "pending": 3, "accepted": 0, "rejected": 0})
+        por = {i["name"]: i for i in r["items"]}
+        self.assertEqual(
+            (por["PARCIAL RUN"]["kind"], por["AMBIGUA RUN"]["kind"], por["SUGESTAO RUN"]["kind"]),
+            ("parcial", "ambigua", "sugestao"),
+        )
+        self.assertEqual(por["SUGESTAO RUN"]["suggestedKm"], ["5", "10"])
+        self.assertTrue(all("_row" not in i and i["decision"] is None for i in r["items"]))
+        self.assertTrue(all(len(i["id"]) == 16 for i in r["items"]))
+
+    def decidir(self, h, ident, **corpo):
+        return self.client.post(f"/admin/divergences/{ident}/decision", json=corpo, headers=h)
+
+    def test_aceitar_exige_distancia_fonte_https_e_trecho_curto_e_nao_publica_nada(self):
+        h = self.prepara_divergencias()
+        itens = {
+            i["name"]: i["id"]
+            for i in self.client.get("/admin/divergences", headers=h).json()["items"]
+        }
+        ident = itens["PARCIAL RUN"]
+        ok = {
+            "decision": "accepted",
+            "distances": ["5", "10 km"],
+            "sourceUrl": "https://corrida.exemplo/regulamento",
+            "snippet": "Percursos de 5 km e 10 km",
+        }
+
+        def catalogo():
+            return self.store.query("catalog", "CAT#GLOBAL#ANY#DATE", after=None, limit=100)[0]
+
+        antes = list(catalogo())
+        self.assertEqual(self.decidir(self.auth(token("adm")), ident, **ok).status_code, 403)
+        ruins = [
+            {"distances": []},
+            {"distances": None},
+            {"distances": ["abc"]},
+            {"distances": ["0"]},
+            {"distances": ["1001"]},
+            {"distances": ["5"] * 9},
+            {"sourceUrl": "http://corrida.exemplo/x"},
+            {"sourceUrl": "javascript:alert(1)"},
+            {"sourceUrl": "https://user:senha@corrida.exemplo/x"},
+            {"sourceUrl": None},
+            {"snippet": ""},
+            {"snippet": None},
+            {"snippet": "x" * 161},
+            {"decision": "talvez"},
+            {"extra": "campo livre"},
+        ]
+        for mudanca in ruins:
+            r = self.decidir(h, ident, **{**ok, **mudanca})
+            self.assertIn(r.status_code, (400, 422), mudanca)
+        self.assertEqual(
+            self.client.get("/admin/divergences", headers=h).json()["summary"]["pending"], 3
+        )
+        r = self.decidir(h, ident, **ok)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(list(catalogo()), antes)  # aceitar nao publica nada no catalogo
+        lista = self.client.get("/admin/divergences", headers=h).json()
+        self.assertEqual(lista["summary"], {"total": 3, "pending": 2, "accepted": 1, "rejected": 0})
+        feita = next(i for i in lista["items"] if i["id"] == ident)["decision"]
+        self.assertEqual(
+            (feita["result"], feita["distances"]), ("accepted", ["5", "10"])
+        )  # "10 km" vira "10"
+        # a decisao e imutavel
+        self.assertEqual(self.decidir(h, ident, decision="rejected").status_code, 409)
+        # id que nao existe e id mal formado
+        self.assertEqual(self.decidir(h, "0" * 16, decision="rejected").status_code, 404)
+        self.assertEqual(self.decidir(h, "../x", decision="rejected").status_code, 404)
+        self.assertEqual(self.decidir(h, "ABC", decision="rejected").status_code, 422)
+        # reprovar nao pede distancia, so aceita motivo curto
+        outro = itens["AMBIGUA RUN"]
+        self.assertEqual(
+            self.decidir(h, outro, decision="rejected", reason="x" * 201).status_code, 422
+        )
+        self.assertEqual(
+            self.decidir(
+                h, outro, decision="rejected", reason="Sao duas provas diferentes"
+            ).status_code,
+            201,
+        )
+        resumo = self.client.get("/admin/divergences", headers=h).json()["summary"]
+        self.assertEqual(resumo, {"total": 3, "pending": 1, "accepted": 1, "rejected": 1})
+        trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
+        acoes = sorted(
+            row["action"] for _, row in trilha if row["action"].startswith("catalog.divergence.")
+        )
+        self.assertEqual(acoes, ["catalog.divergence.accept", "catalog.divergence.reject"])
+
+    def test_csv_das_aceitas_passa_pela_validacao_do_importador(self):
+        from runpass.catalog_import import parse_csv
+
+        h = self.prepara_divergencias()
+        itens = {
+            i["name"]: i["id"]
+            for i in self.client.get("/admin/divergences", headers=h).json()["items"]
+        }
+        vazio = self.client.get("/admin/divergences/accepted.csv", headers=h)
+        self.assertEqual(vazio.status_code, 200)
+        self.assertEqual(len(vazio.text.strip().splitlines()), 1)  # so o cabecalho
+        self.assertIn("text/csv", vazio.headers["content-type"])
+        self.decidir(
+            h,
+            itens["PARCIAL RUN"],
+            decision="accepted",
+            distances=["5", "10"],
+            sourceUrl="https://corrida.exemplo/regulamento",
+            snippet="Percursos de 5 km e 10 km",
+        )
+        self.decidir(h, itens["AMBIGUA RUN"], decision="rejected", reason="duas provas")
+        r = self.client.get("/admin/divergences/accepted.csv", headers=h)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("divergencias-aceitas-2026-11-10.csv", r.headers["content-disposition"])
+        self.assertEqual(
+            self.client.get(
+                "/admin/divergences/accepted.csv", headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        linhas = r.text.strip().splitlines()
+        self.assertEqual(len(linhas), 2)  # cabecalho + so a aceita
+        self.assertIn("PARCIAL RUN", linhas[1])
+        self.assertNotIn("AMBIGUA RUN", r.text)
+        self.assertIn("5|10", linhas[1])
+        self.assertIn("https://corrida.exemplo/regulamento", linhas[1])
+        resultados = parse_csv(r.text, "catalogo-divergencias")
+        self.assertEqual([x["errors"] for x in resultados], [[]])
+        self.assertEqual(
+            [d["kilometers"] for d in resultados[0]["payload"]["distances"]], ["5", "10"]
+        )
+
+    def test_divergencias_sem_coleta_ou_sem_leitura_do_bucket(self):
+        h = self.auth(token("op"))
+        r = self.client.get("/admin/divergences", headers=h).json()
+        self.assertEqual((r["run"], r["items"], r["summary"]["total"]), (None, [], 0))
 
     def test_banner_preview_aprovar_e_retirar(self):
         h = self.auth(token("op"))

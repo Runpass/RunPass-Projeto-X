@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -67,6 +67,7 @@ function sair(motivo) {
   $('segredo').textContent = '';
   $('cadastros').replaceChildren();
   $('custos').replaceChildren();
+  $('divergencias').replaceChildren();
   $('operadores').replaceChildren();
   $('banners-candidatas').replaceChildren();
   $('banner-manual').replaceChildren();
@@ -204,6 +205,108 @@ function painelRecusa(area, pedido) {
   const confirmar = el('button', { type: 'button', class: 'perigo' }, 'Confirmar recusa');
   confirmar.addEventListener('click', () => decidir(pedido, { decisao: 'reject', motivo: motivo.value }, confirmar));
   area.replaceChildren(el('label', {}, 'Motivo da recusa', motivo), confirmar);
+}
+
+// ---- divergências ---------------------------------------------------------------------------------
+
+async function baixarAceitas() {
+  try {
+    const resposta = await fetch(cfg.apiUrl + '/admin/divergences/accepted.csv', { headers: { Authorization: `Bearer ${token}` } });
+    if (resposta.status === 401) return sair('INVALID_TOKEN');
+    if (!resposta.ok) throw new Error('erro');
+    const nome = /filename="([^"]+)"/.exec(resposta.headers.get('content-disposition') || '');
+    const url = URL.createObjectURL(await resposta.blob());
+    const link = el('a', { href: url, download: nome ? nome[1] : 'divergencias-aceitas.csv' });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (erro) {
+    if (token) aviso('Não foi possível baixar o CSV agora.', 'erro');
+  }
+}
+
+function cartaoDivergencia(d) {
+  const distancias = el('input', { type: 'text', placeholder: 'ex.: 5, 10', maxlength: '60', autocomplete: 'off', value: d.suggestedKm.join(', ') });
+  const fonte = el('input', { type: 'url', placeholder: 'https://... (página que comprova)', maxlength: '500', autocomplete: 'off' });
+  const trecho = el('input', { type: 'text', placeholder: 'Trecho da fonte (até 160 caracteres)', maxlength: '160', autocomplete: 'off' });
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const aceitar = el('button', { type: 'button', class: 'ok' }, 'Aceitar');
+  const reprovar = el('button', { type: 'button', class: 'perigo' }, 'Reprovar');
+  const decidir = async (decisao, extra) => {
+    const dados = { decisao, distancias: listaKm(distancias.value), fonte: fonte.value.trim(), trecho: trecho.value.trim(), ...extra };
+    const problema = validarDecisao(dados);
+    erro.hidden = !problema;
+    erro.textContent = problema;
+    if (problema) return;
+    aceitar.disabled = reprovar.disabled = true;
+    const corpo = decisao === 'accepted' ? { decision: 'accepted', distances: dados.distancias, sourceUrl: dados.fonte, snippet: dados.trecho } : { decision: 'rejected', reason: extra.motivo || '' };
+    try {
+      await api(`/admin/divergences/${d.id}/decision`, { method: 'POST', body: JSON.stringify(corpo) });
+      aviso(decisao === 'accepted' ? 'Aceita. Ela entra no CSV das aceitas.' : 'Reprovada.', 'ok');
+      await carregarDivergencias();
+    } catch (falha) {
+      aceitar.disabled = reprovar.disabled = false;
+      if (!token) return;
+      erro.hidden = false;
+      erro.textContent = falha.codigo === 'INVALID_INPUT' ? 'O servidor recusou os dados. Confira a distância, o link https e o trecho.' : mensagem(falha.codigo);
+    }
+  };
+  aceitar.addEventListener('click', () => decidir('accepted', {}));
+  reprovar.addEventListener('click', () => {
+    const motivo = window.prompt(`Reprovar "${d.name}". Motivo (opcional, até 200 caracteres):`, '');
+    if (motivo === null) return;
+    decidir('rejected', { motivo: motivo.trim() });
+  });
+  return el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, d.name),
+    el('div', { class: 'linha' }, `${dataBr(d.date)}${d.venue ? ' · ' + d.venue : ''}`),
+    el('div', { class: 'aviso' }, TIPO_DIVERGENCIA[d.kind] || d.kind, d.note ? ` — ${d.note}` : ''),
+    linkSeguro(d.source) ? el('div', { class: 'meta' }, 'Fonte da rotina: ', el('a', { href: linkSeguro(d.source), target: '_blank', rel: 'noopener noreferrer' }, d.source)) : '',
+    linkSeguro(d.listSource) ? el('div', { class: 'meta' }, 'Lista oficial: ', el('a', { href: linkSeguro(d.listSource), target: '_blank', rel: 'noopener noreferrer' }, d.listSource)) : '',
+    d.suggestedKm.length ? el('div', { class: 'meta' }, `Distâncias sugeridas (de outra edição, não confirmadas): ${d.suggestedKm.join(', ')} km`) : '',
+    el('label', {}, 'Distâncias em km (para aceitar)', distancias),
+    el('label', {}, 'Link da fonte que comprova', fonte),
+    el('label', {}, 'Trecho da fonte', trecho),
+    erro,
+    el('div', { class: 'acoes' }, aceitar, reprovar),
+  );
+}
+
+async function carregarDivergencias() {
+  const alvo = $('divergencias');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/divergences');
+    const pendentes = r.items.filter((i) => !i.decision);
+    const decididas = r.items.filter((i) => i.decision);
+    alvo.replaceChildren(
+      el('p', { class: 'meta' }, r.run ? `Coleta de ${dataBr(r.run)}.` : 'Nenhuma coleta de enriquecimento encontrada.'),
+      el(
+        'div',
+        { class: 'grade' },
+        cartaoNumero('Pendentes', String(r.summary.pending)),
+        cartaoNumero('Aceitas', String(r.summary.accepted)),
+        cartaoNumero('Reprovadas', String(r.summary.rejected)),
+      ),
+      ...(pendentes.length ? pendentes.map(cartaoDivergencia) : [el('p', { class: 'vazio' }, r.summary.total ? 'Nenhuma divergência pendente.' : 'Nenhuma divergência nesta coleta.')]),
+      decididas.length
+        ? el(
+            'div',
+            { class: 'cartao' },
+            el('div', { class: 'rot' }, 'Já decididas'),
+            tabela(['Prova', 'Data', 'Decisão', 'Detalhe'], decididas.map((i) => [i.name, dataBr(i.date), i.decision.result === 'accepted' ? 'Aceita' : 'Reprovada', i.decision.result === 'accepted' ? `${i.decision.distances.join(', ')} km` : i.decision.reason || '—'])),
+          )
+        : '',
+    );
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
 }
 
 // ---- qualidade da busca ---------------------------------------------------------------------------
@@ -662,6 +765,7 @@ function mostrarAba(nome) {
   if (nome === 'pedidos') carregarPedidos();
   if (nome === 'catalogo') carregarUltimoDisparo();
   if (nome === 'cadastros') carregarCadastros();
+  if (nome === 'divergencias') carregarDivergencias();
   if (nome === 'qualidade') carregarQualidade();
   if (nome === 'custos') carregarCustos();
   if (nome === 'banners') carregarBanners();
@@ -929,7 +1033,7 @@ $('form-operador').addEventListener('submit', async (evento) => {
 });
 
 function prepararAbas() {
-  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', banners: 'catalog_admin', qualidade: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin', custos: 'cost_read' };
+  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', banners: 'catalog_admin', divergencias: 'catalog_admin', qualidade: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin', custos: 'cost_read' };
   for (const [nome, perm] of Object.entries(abas)) $(`aba-${nome}`).hidden = !permissoes.includes(perm);
   $('modo-catalogo').replaceChildren(...Object.entries(MODOS_CATALOGO).map(([v, t]) => el('option', { value: v }, t)));
   $('op-permissoes').replaceChildren(
@@ -1049,4 +1153,6 @@ $('atualizar-banners').addEventListener('click', carregarBanners);
 $('atualizar-operadores').addEventListener('click', carregarOperadores);
 $('atualizar-custos').addEventListener('click', carregarCustos);
 $('atualizar-qualidade').addEventListener('click', carregarQualidade);
+$('atualizar-divergencias').addEventListener('click', carregarDivergencias);
+$('baixar-aceitas').addEventListener('click', baixarAceitas);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);

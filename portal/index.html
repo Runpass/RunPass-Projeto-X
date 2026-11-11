@@ -53,6 +53,7 @@
         <button role="tab" id="aba-catalogo" data-aba="catalogo" aria-selected="false">Atualizar catálogo</button>
         <button role="tab" id="aba-cadastros" data-aba="cadastros" aria-selected="false">Cadastros no app</button>
         <button role="tab" id="aba-banners" data-aba="banners" aria-selected="false">Banners</button>
+        <button role="tab" id="aba-divergencias" data-aba="divergencias" aria-selected="false">Divergências</button>
         <button role="tab" id="aba-qualidade" data-aba="qualidade" aria-selected="false">Qualidade da busca</button>
         <button role="tab" id="aba-custos" data-aba="custos" aria-selected="false">Custos</button>
         <button role="tab" id="aba-operadores" data-aba="operadores" aria-selected="false">Operadores</button>
@@ -106,6 +107,17 @@
         </article>
         <div class="barra"><h2>Banners publicados</h2></div>
         <div id="banners-publicados"></div>
+      </section>
+      <section id="sec-divergencias" data-sec="divergencias" hidden>
+        <div class="barra">
+          <h1>Divergências da rotina</h1>
+          <div class="acoes">
+            <button id="baixar-aceitas" type="button" class="sec">Baixar CSV das aceitas</button>
+            <button id="atualizar-divergencias" type="button" class="sec">Atualizar</button>
+          </div>
+        </div>
+        <p class="ajuda">Provas em que a rotina não decidiu sozinha. Aceitar exige a distância e a fonte com um trecho curto; reprovar descarta a prova. Aceitar não publica nada no catálogo: baixe o CSV das aceitas, confira e importe com o <code>import-csv</code>.</p>
+        <div id="divergencias"></div>
       </section>
       <section id="sec-qualidade" data-sec="qualidade" hidden>
         <div class="barra">

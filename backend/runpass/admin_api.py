@@ -173,6 +173,7 @@ def create_admin_app(
     openai_usage=None,
     openai_org=None,
     banners=None,
+    divergences=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
@@ -315,6 +316,14 @@ def create_admin_app(
         model_config = ConfigDict(extra="forbid")
         mode: str = Field(max_length=20)
 
+    class DivergenceDecision(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        decision: str = Field(max_length=10)
+        distances: list[str] | None = Field(default=None, max_length=8)
+        sourceUrl: str | None = Field(default=None, max_length=500)
+        snippet: str | None = Field(default=None, max_length=160)
+        reason: str | None = Field(default=None, max_length=200)
+
     class ScheduleBody(BaseModel):
         model_config = ConfigDict(extra="forbid")
         name: str | None = Field(default=None, max_length=40)
@@ -434,6 +443,46 @@ def create_admin_app(
         if schedules is None:
             raise Unavailable()
         return schedules.upcoming()
+
+    def need_divergences(op):
+        actor = need(op, "catalog_admin")
+        if divergences is None:
+            raise Unavailable()
+        return actor
+
+    @app.get("/admin/divergences")
+    def divergences_list(op: Operator):
+        need_divergences(op)
+        return divergences.list()
+
+    @app.post("/admin/divergences/{ident}/decision", status_code=201)
+    def divergences_decide(
+        ident: Annotated[str, PathParam(pattern=r"^[a-f0-9]{16}$")],
+        payload: DivergenceDecision,
+        op: Operator,
+    ):
+        actor = need_divergences(op)
+        return divergences.decide(
+            actor,
+            ident,
+            payload.decision,
+            payload.distances,
+            payload.sourceUrl,
+            payload.snippet,
+            payload.reason,
+        )
+
+    @app.get("/admin/divergences/accepted.csv")
+    def divergences_csv(op: Operator):
+        need_divergences(op)
+        run, text = divergences.accepted_csv()
+        return Response(
+            text,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="divergencias-aceitas-{run}.csv"'
+            },
+        )
 
     @app.get("/admin/quality")
     def quality(op: Operator):
