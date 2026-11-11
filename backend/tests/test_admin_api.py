@@ -18,7 +18,7 @@ from runpass.edition_requests import EditionRequestService
 from runpass.identity import AuthFailure, Principal
 from runpass.models import EditionRequestFields
 from runpass.operator_admin import grant_access
-from runpass.service import IdentityService
+from runpass.service import IdentityService, Problem
 from runpass.store import MemoryStore, Unavailable
 from runpass.upload import MemoryBlobStore
 
@@ -426,16 +426,41 @@ class AdminApiTests(unittest.TestCase):
             self.client.get("/admin/edition-requests", headers=self.auth()).json()["items"], []
         )
 
-    def pedido(self, sub, name, day, state, km=10):
+    def pedido(self, sub, name, day, state, km=10, image=False):
         person = Principal(sub, True)
         self.identity.create_profile(
             person, "p" + sub, {"displayName": sub.title(), "username": f"{sub}_x"}
         )
         self.identity.admit(person, "a" + sub, {"birthDate": "1990-01-01", "declaresAdult": True})
+        reference = self.imagem_do_usuario(sub) if image else None
         fields = EditionRequestFields(
-            name=name, date=day, city="São Paulo", state=state, distanceKm=km
+            name=name,
+            date=day,
+            city="São Paulo",
+            state=state,
+            distanceKm=km,
+            imageReference=reference,
         )
         return person, self.requests.create(person, "k" + sub, fields)
+
+    def imagem_do_usuario(self, sub, owner=None):
+        """Imagem ja enviada e tratada por uma pessoa (o que o fluxo de upload deixa pronto)."""
+        reference = "img_" + (sub.encode().hex() * 64)[:64]
+        self.blobs.write_derived(reference, self.png(), "image/png", owner or sub)
+        key = ("operations", "USER#" + (owner or sub), "IMAGE#" + reference)
+        self.store.commit(
+            {key: None},
+            {
+                key: {
+                    "owner": owner or sub,
+                    "origin": "runner",
+                    "state": "valid",
+                    "refs": 0,
+                    "contentType": "image/png",
+                }
+            },
+        )
+        return reference
 
     def aprovar(self, request, **corpo):
         return self.client.post(
@@ -526,6 +551,158 @@ class AdminApiTests(unittest.TestCase):
         )
         ok = self.aprovar(espera, state="SP")
         self.assertEqual((ok.status_code, ok.json()["outcome"]), (200, "created"))
+
+    def corpo_banner_pedido(self, **mudanca):
+        return {
+            "credit": "Divulgação: Organização Sintética",
+            "rightsNote": "Enviado pela organizacao ao corredor, com autorizacao por escrito",
+            "confirmRights": True,
+            **mudanca,
+        }
+
+    def test_banner_no_pedido_exige_imagem_propria_e_valida(self):
+        person, request = self.pedido(
+            "ivo", "Corrida Banner Sintética", "2027-09-01", "SP", image=True
+        )
+        ref = request["details"]["imageReference"]
+        self.assertTrue(ref.startswith("img_"))
+        imagem = self.store.get(("operations", "USER#ivo", "IMAGE#" + ref))
+        self.assertEqual(imagem["refs"], 1)  # a imagem fica reservada pelo pedido
+        # imagem de outra pessoa, inexistente ou ainda nao validada: recusada, nada e criado
+        outra = Principal("jose", True)
+        self.identity.create_profile(outra, "pj", {"displayName": "Jose", "username": "jose_x"})
+        self.identity.admit(outra, "aj", {"birthDate": "1990-01-01", "declaresAdult": True})
+        alheia = EditionRequestFields(
+            name="Roubada", date="2027-09-02", city="São Paulo", distanceKm=5, imageReference=ref
+        )
+        with self.assertRaises(Problem) as erro:
+            self.requests.create(outra, "kj", alheia)
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_VALID")
+        inexistente = EditionRequestFields(
+            name="Sem imagem",
+            date="2027-09-02",
+            city="São Paulo",
+            distanceKm=5,
+            imageReference="img_" + "b" * 64,
+        )
+        with self.assertRaises(Problem) as erro:
+            self.requests.create(outra, "kj2", inexistente)
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_VALID")
+        with self.assertRaises(ValueError):
+            EditionRequestFields(
+                name="x", date="2027-09-02", city="x", distanceKm=5, imageReference="../etc/passwd"
+            )
+        self.assertEqual(person.subject, "ivo")
+
+    def test_a_equipe_ve_a_imagem_do_pedido_so_com_catalog_admin(self):
+        _, com = self.pedido("lia", "Corrida Com Imagem", "2027-10-01", "SP", image=True)
+        _, sem = self.pedido("mel", "Corrida Sem Imagem", "2027-10-02", "SP")
+        r = self.client.get(f"/admin/edition-requests/{com['id']}/image", headers=self.auth())
+        self.assertEqual((r.status_code, r.headers["content-type"]), (200, "image/png"))
+        self.assertEqual(r.content[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(r.headers["cache-control"], "no-store")
+        self.assertEqual(
+            self.client.get(
+                f"/admin/edition-requests/{com['id']}/image", headers=self.auth(token("mod"))
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/admin/edition-requests/{sem['id']}/image", headers=self.auth()
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get(
+                "/admin/edition-requests/nao-existe/image", headers=self.auth()
+            ).status_code,
+            404,
+        )
+
+    def banner(self, request, **mudanca):
+        return self.client.post(
+            f"/admin/edition-requests/{request['id']}/banner",
+            json=self.corpo_banner_pedido(**mudanca),
+            headers=self.auth(),
+        )
+
+    def test_banner_sugerido_so_publica_depois_do_vinculo_e_com_credito_e_autorizacao(self):
+        person, request = self.pedido(
+            "nina", "Corrida Nina Sintética", "2027-11-01", "SP", image=True
+        )
+        # ainda pendente: nao pode publicar
+        self.assertEqual(self.banner(request).status_code, 409)
+        self.assertEqual(
+            self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"], []
+        )
+        feito = self.aprovar(request).json()
+        edition_id = feito["request"]["linkedEditionId"]
+        fila = self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"]
+        self.assertEqual([i["id"] for i in fila], [request["id"]])
+        self.assertEqual(
+            (fila[0]["edition"]["id"], fila[0]["editionHasBanner"]), (edition_id, False)
+        )
+        self.assertFalse(
+            self.catalog._edition(edition_id).get("imageReference")
+        )  # nada publicado ainda
+        # sem confirmar, sem credito ou com base curta: recusado e nada muda
+        for ruim, esperado in (
+            ({"confirmRights": False}, 422),
+            ({"credit": "  "}, 422),
+            ({"rightsNote": "curta"}, 422),
+        ):
+            self.assertEqual(self.banner(request, **ruim).status_code, esperado, ruim)
+        self.assertFalse(self.catalog._edition(edition_id).get("imageReference"))
+        negado = self.client.post(
+            f"/admin/edition-requests/{request['id']}/banner",
+            json=self.corpo_banner_pedido(),
+            headers=self.auth(token("mod")),
+        )
+        self.assertEqual(negado.status_code, 403)
+        ok = self.banner(request)
+        self.assertEqual(ok.status_code, 201, ok.text)
+        self.assertEqual(ok.json()["bannerState"], "published")
+        corrida = self.catalog._edition(edition_id)
+        self.assertTrue(corrida["imageReference"].startswith("banner_"))
+        self.assertEqual(corrida["imageCredit"], "Divulgação: Organização Sintética")
+        # a pessoa ve o resultado e a fila esvazia; decidir de novo e recusado
+        self.assertEqual(self.requests.get(person, request["id"])["bannerState"], "published")
+        self.assertEqual(
+            self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"], []
+        )
+        self.assertEqual(self.banner(request).status_code, 409)
+        registro = self.store.get(("operations", "EREQ#" + request["id"], "BANNER"))
+        self.assertEqual((registro["state"], registro["by"]), ("published", "op"))
+
+    def test_descartar_o_banner_sugerido_nao_publica_nada(self):
+        person, request = self.pedido(
+            "omar", "Corrida Omar Sintética", "2027-12-01", "SP", image=True
+        )
+        edition_id = self.aprovar(request).json()["request"]["linkedEditionId"]
+        r = self.client.post(
+            f"/admin/edition-requests/{request['id']}/banner/dismiss",
+            json={"reason": "imagem sem autorizacao"},
+            headers=self.auth(),
+        )
+        self.assertEqual((r.status_code, r.json()["bannerState"]), (200, "dismissed"))
+        self.assertFalse(self.catalog._edition(edition_id).get("imageReference"))
+        self.assertEqual(self.requests.get(person, request["id"])["bannerState"], "dismissed")
+        self.assertEqual(
+            self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"], []
+        )
+        again = self.client.post(
+            f"/admin/edition-requests/{request['id']}/banner/dismiss", json={}, headers=self.auth()
+        )
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(
+            self.client.post(
+                f"/admin/edition-requests/{request['id']}/banner/dismiss",
+                json={},
+                headers=self.auth(token("mod")),
+            ).status_code,
+            403,
+        )
 
     def test_aprovar_valida_versao_estado_distancia_e_permissao(self):
         _, request = self.pedido("gabi", "Corrida Teta Sintética", "2027-08-01", "SP")

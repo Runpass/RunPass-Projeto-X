@@ -216,6 +216,14 @@ Resources:
                 Resource: !Sub
                   - 'arn:${AWS::Partition}:s3:::${Name}/derived/catalog/*'
                   - Name: {Fn::ImportValue: !Sub '${DataStack}-MedalBucket'}
+              # Banner sugerido pelo usuario no pedido: so a copia TRATADA (derived/), lida pela rota de
+              # conferencia da equipe (/admin/edition-requests/{id}/image), nunca o original (temporary/).
+              - Sid: LerImagensEnviadasNosPedidos
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:s3:::${Name}/derived/*'
+                  - Name: {Fn::ImportValue: !Sub '${DataStack}-MedalBucket'}
               - !If
                 - HasReportBucket
                 - Sid: LerImagensCandidatas

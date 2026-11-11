@@ -247,6 +247,17 @@ test('aprovação do pedido: corpo validado e frase do resultado', async () => {
   assert.equal(textoAprovacao('outro'), 'Pedido aprovado.');
 });
 
+test('banner sugerido: crédito, base de autorização e confirmação são obrigatórios', async () => {
+  const { montarPublicacaoBanner } = await import('./lib.js');
+  const ok = { credito: ' Divulgação: Org ', nota: 'Enviado pela organização, por escrito', confirmou: true };
+  assert.deepEqual(montarPublicacaoBanner(ok), { credit: 'Divulgação: Org', rightsNote: 'Enviado pela organização, por escrito', confirmRights: true });
+  assert.throws(() => montarPublicacaoBanner({ ...ok, credito: '  ' }), /crédito/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, credito: 'x'.repeat(201) }), /200/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, nota: 'curta' }), /10 caracteres/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, nota: 'x'.repeat(1001) }), /1000/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, confirmou: false }), /Confirme/);
+});
+
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
   const { situacaoOperador } = await import('./lib.js');
   assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);

@@ -1,10 +1,27 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
 import 'identity_gateway.dart';
+import 'profile_photo.dart';
 
 /// Pedido de prova ausente: o corredor informa nome, data, cidade e distância; a equipe confere a
 /// fonte e adiciona ao catálogo. O pedido é privado e nunca vira corrida pública sozinho.
+
+/// Situação do banner que a pessoa sugeriu junto com o pedido; nulo quando não há o que dizer.
+String? bannerStatusLabel(String? bannerState, String? status) {
+  if (bannerState == 'published') return 'Seu banner foi publicado na corrida';
+  if (bannerState == 'dismissed') {
+    return 'Seu banner não foi aprovado pela equipe (a imagem não é publicada)';
+  }
+  return switch (status) {
+    'approved' || 'linked' => 'Banner enviado: aguardando a decisão da equipe',
+    'pending' || 'awaiting_load' =>
+      'Banner enviado: será analisado depois que a corrida for aprovada',
+    _ => null,
+  };
+}
 
 String requestStatusLabel(String? status) => switch (status) {
   'pending' => 'Em análise pela equipe',
@@ -40,11 +57,15 @@ class EditionRequestFormScreen extends StatefulWidget {
 
   /// Sugestões de preenchimento (nome, data, cidade, estado, distância, endereço).
   final Map<String, String> prefill;
+
+  /// Escolhe e recorta a imagem do banner; nulo se a pessoa desistir. Troque nos testes.
+  final Future<List<int>?> Function(BuildContext context)? bannerSelector;
   const EditionRequestFormScreen({
     super.key,
     required this.gateway,
     this.existing,
     this.prefill = const {},
+    this.bannerSelector,
   });
   @override
   State<EditionRequestFormScreen> createState() =>
@@ -56,6 +77,10 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
   late final Map<String, TextEditingController> fields;
   bool saving = false;
   String? error;
+
+  /// Banner sugerido (opcional): bytes já recortados e, depois do envio, a referência aceita pelo servidor.
+  List<int>? banner;
+  String? bannerRef;
 
   bool get correcting => widget.existing != null;
 
@@ -89,6 +114,33 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
 
   String text(String key) => fields[key]!.text.trim();
 
+  Future<void> chooseBanner() async {
+    List<int>? bytes;
+    try {
+      if (widget.bannerSelector != null) {
+        bytes = await widget.bannerSelector!(context);
+      } else {
+        final choice = await askPhotoChoice(context);
+        if (choice == null || choice == PhotoChoice.remove || !mounted) return;
+        bytes = await pickBannerPhoto(context, choice);
+      }
+    } on Exception catch (problem) {
+      if (mounted) setState(() => error = photoError(problem));
+      return;
+    }
+    if (bytes == null || !mounted) return;
+    setState(() {
+      banner = bytes;
+      bannerRef = null; // outra imagem: precisa enviar de novo
+      error = null;
+    });
+  }
+
+  void removeBanner() => setState(() {
+    banner = null;
+    bannerRef = null;
+  });
+
   Future<void> submit() async {
     if (saving || !(form.currentState?.validate() ?? false)) return;
     final body = <String, dynamic>{
@@ -104,6 +156,11 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       error = null;
     });
     try {
+      if (!correcting && banner != null) {
+        // Envia a imagem primeiro (a referência é só desta pessoa); o pedido leva só a referência.
+        bannerRef ??= await uploadProfilePhoto(widget.gateway, banner!);
+        body['imageReference'] = bannerRef;
+      }
       Map<String, dynamic> result;
       if (correcting) {
         final id = Uri.encodeComponent(widget.existing!['id'] as String);
@@ -126,7 +183,20 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       }
       if (mounted) Navigator.of(context).pop(result);
     } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = catalogError(issue));
+      const photoCodes = {
+        'IMAGE_TYPE_INVALID',
+        'IMAGE_NOT_VALID',
+        'IMAGE_SIZE_INVALID',
+        'UPLOAD_UNAVAILABLE',
+        'INVALID_UPLOAD_URL',
+      };
+      if (mounted) {
+        setState(
+          () => error = photoCodes.contains(issue.code)
+              ? photoError(issue)
+              : catalogError(issue),
+        );
+      }
     } on Exception {
       if (mounted) {
         setState(
@@ -137,6 +207,59 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       if (mounted) setState(() => saving = false);
     }
   }
+
+  Widget bannerPicker() => Card(
+    key: const Key('request-banner'),
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Banner da corrida (opcional)',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Se você tem a imagem de divulgação da corrida, envie. Ela só é publicada se a equipe aprovar, com o crédito e a autorização do organizador.',
+          ),
+          const SizedBox(height: 8),
+          if (banner != null) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.memory(
+                Uint8List.fromList(banner!),
+                key: const Key('request-banner-preview'),
+                height: 120,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            ),
+            Row(
+              children: [
+                TextButton(
+                  key: const Key('request-banner-change'),
+                  onPressed: saving ? null : chooseBanner,
+                  child: const Text('Trocar imagem'),
+                ),
+                TextButton(
+                  key: const Key('request-banner-remove'),
+                  onPressed: saving ? null : removeBanner,
+                  child: const Text('Remover'),
+                ),
+              ],
+            ),
+          ] else
+            OutlinedButton.icon(
+              key: const Key('request-banner-pick'),
+              onPressed: saving ? null : chooseBanner,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: const Text('Escolher imagem do banner'),
+            ),
+        ],
+      ),
+    ),
+  );
 
   Widget field(
     String key,
@@ -237,6 +360,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
               ],
             ),
           ),
+          if (!correcting) bannerPicker(),
           if (error != null) ...[
             const SizedBox(height: 8),
             Text(error!, key: const Key('request-error')),
@@ -369,6 +493,13 @@ class _MyEditionRequestsScreenState extends State<MyEditionRequestsScreen> {
               requestStatusLabel(status),
               key: Key('status-${request['id']}'),
             ),
+            if (details['imageReference'] != null &&
+                bannerStatusLabel(request['bannerState'] as String?, status) !=
+                    null)
+              Text(
+                bannerStatusLabel(request['bannerState'] as String?, status)!,
+                key: Key('banner-${request['id']}'),
+              ),
             if (status == 'rejected' && request['reason'] != null)
               Text('Motivo: ${request['reason']}'),
             if (status == 'rejected')

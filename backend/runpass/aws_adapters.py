@@ -109,6 +109,18 @@ class S3BlobStore:
         except (BotoCoreError, ClientError) as error:
             raise Unavailable() from error
 
+    def read_derived(self, owner, reference):
+        """Bytes e tipo da copia tratada (nunca o original) para a equipe aprovar um banner enviado por uma pessoa."""
+        try:
+            row = self.client.get_object(Bucket=self.bucket, Key=self._derived(owner, reference))
+            return row["Body"].read(), row.get("ContentType", "application/octet-stream")
+        except ClientError as error:
+            if _code(error) in ("404", "NoSuchKey", "NotFound"):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE") from error
+            raise Unavailable() from error
+        except BotoCoreError as error:
+            raise Unavailable() from error
+
     def view_url(self, owner, reference):
         """Short-lived signed GET for the sanitized copy only; originals stay unreachable."""
         key = self._derived(owner, reference)

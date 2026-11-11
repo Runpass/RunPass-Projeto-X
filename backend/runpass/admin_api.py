@@ -221,7 +221,9 @@ def create_admin_app(
             )
 
     review = EditionRequestReview(
-        catalog, clock=lambda: datetime.fromtimestamp(clock(), timezone.utc)
+        catalog,
+        clock=lambda: datetime.fromtimestamp(clock(), timezone.utc),
+        blobs=getattr(banners, "blobs", None),
     )
 
     def body(status, code, headers=None):
@@ -276,7 +278,40 @@ def create_admin_app(
         except (Problem, Unavailable):
             linked = 0
         items, _ = review.pending(actor, limit)
-        return {"items": items, "awaiting": review.waiting(actor), "linkedNow": linked}
+        return {
+            "items": items,
+            "awaiting": review.waiting(actor),
+            "images": review.images(actor),
+            "linkedNow": linked,
+        }
+
+    class RequestBanner(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        credit: str = Field(max_length=200)
+        rightsNote: str = Field(max_length=1000)
+        confirmRights: bool
+
+    class RequestBannerDismissal(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        reason: str = Field(default="", max_length=200)
+
+    @app.get("/admin/edition-requests/{request_id}/image")
+    def request_image(request_id: str, op: Operator):
+        actor = need(op, "catalog_admin")
+        data, kind = review.image(actor, request_id)
+        return Response(data, media_type=kind, headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/edition-requests/{request_id}/banner", status_code=201)
+    def request_banner_publish(request_id: str, payload: RequestBanner, op: Operator):
+        actor = need(op, "catalog_admin")
+        return review.publish_banner(
+            actor, request_id, payload.credit, payload.rightsNote, payload.confirmRights
+        )
+
+    @app.post("/admin/edition-requests/{request_id}/banner/dismiss")
+    def request_banner_dismiss(request_id: str, payload: RequestBannerDismissal, op: Operator):
+        actor = need(op, "catalog_admin")
+        return review.dismiss_banner(actor, request_id, payload.reason)
 
     class RequestApproval(BaseModel):
         model_config = ConfigDict(extra="forbid")
