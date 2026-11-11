@@ -176,7 +176,9 @@ class BannerAdmin:
             raise Unavailable() from error
 
     def candidates(self):
-        """Candidatas da coleta mais recente com a corrida do catalogo que parece ser a mesma (a pessoa confirma)."""
+        """Candidatas da coleta mais recente com a corrida do catalogo que parece ser a mesma (a pessoa confirma).
+
+        Candidata cuja corrida do catalogo ja tem banner nao aparece: depois de aprovada ela sai da lista."""
         key, text = self._latest_csv()
         if key is None:
             return {"source": None, "items": []}
@@ -202,6 +204,8 @@ class BannerAdmin:
                 ),
                 None,
             )
+            if match is not None and match.get("imageReference"):
+                continue  # corrida que ja tem banner: sai da lista (trocar e pelo formulario manual)
             items.append(
                 {
                     "name": row.get("nome", ""),

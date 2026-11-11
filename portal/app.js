@@ -447,6 +447,8 @@ function seletorEdicao(textoInicial, aoEscolher, idInicial = null) {
 }
 
 /** Formulário de aprovação: imagem (com prévia), crédito, base de autorização e confirmação. */
+const candidatasPublicadas = new Set();
+
 function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
   let escolhida = null;
   let urlPrevia = null;
@@ -503,6 +505,7 @@ function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
         method: 'POST',
         body: JSON.stringify({ editionId: escolhida, imageUrl: endereco(), credit: campoCredito.value.trim(), rightsNote: campoNota.value.trim(), confirmRights: confirmar.checked }),
       });
+      if (endereco()) candidatasPublicadas.add(endereco());
       aviso('Banner publicado.', 'ok');
       await carregarBanners();
     } catch (erro) {
@@ -532,19 +535,18 @@ async function carregarBanners() {
     const [cand, pub] = await Promise.all([api('/admin/banners/candidates'), api('/admin/banners/published')]);
     $('banners-candidatas').replaceChildren(
       el('h2', {}, cand.source ? `Candidatas da coleta de ${dataBr(cand.source)}` : 'Candidatas'),
-      ...(cand.items.length
-        ? cand.items.map((c) =>
+      ...(cand.items.filter((c) => !candidatasPublicadas.has(c.imageUrl)).length
+        ? cand.items.filter((c) => !candidatasPublicadas.has(c.imageUrl)).map((c) =>
             el(
               'article',
               { class: 'cartao' },
               el('h2', {}, c.name),
               el('div', { class: 'linha' }, `${dataBr(c.date)} · direitos: ${c.rights || 'não verificado'}`),
               linkSeguro(c.officialPage) ? el('div', { class: 'meta' }, 'Página oficial: ', el('a', { href: linkSeguro(c.officialPage), target: '_blank', rel: 'noopener noreferrer' }, c.officialPage)) : '',
-              c.edition && c.edition.hasBanner ? el('div', { class: 'aviso' }, 'Esta corrida já tem banner; aprovar substitui.') : '',
               formularioBanner({ imagem: c.imageUrl, credito: c.credit, pagina: c.officialPage, edicao: c.edition, nomeBusca: c.name }),
             ),
           )
-        : [el('p', { class: 'vazio' }, 'Nenhuma imagem candidata na última coleta.')]),
+        : [el('p', { class: 'vazio' }, 'Nenhuma imagem candidata pendente. Para trocar o banner de uma corrida, retire o atual ou use o formulário manual.')]),
     );
     $('banner-manual').replaceChildren(formularioBanner({ imagem: '', credito: '', pagina: '', edicao: null, nomeBusca: '' }));
     $('banners-publicados').replaceChildren(
