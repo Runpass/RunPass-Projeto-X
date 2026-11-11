@@ -36,6 +36,11 @@ Parameters:
     Type: String
     Default: ''
     Description: Lambda da rotina do catalogo (RunPass-Catalogo). Vazio = o portal nao dispara a atualizacao
+  CatalogSchedulerRoleArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^(arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+)?$'
+    Description: Papel que o EventBridge Scheduler assume para chamar a Lambda do catalogo (stack do catalogo). Vazio = o portal so le os agendamentos, nao cria, altera nem apaga
   CatalogReportBucket:
     Type: String
     Default: ''
@@ -83,6 +88,9 @@ Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   HasCatalogFunction: !Not [!Equals [!Ref CatalogFunctionName, '']]
   HasOpenAiAdminKey: !Not [!Equals [!Ref OpenAiAdminKeyParameter, '']]
+  HasSchedulerRole: !And
+    - !Condition HasCatalogFunction
+    - !Not [!Equals [!Ref CatalogSchedulerRoleArn, '']]
   HasReportBucket: !Not [!Equals [!Ref CatalogReportBucket, '']]
 
 Resources:
@@ -179,6 +187,23 @@ Resources:
                   Resource: !Sub 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/runpass-${Environment}-catalogo-*'
                 - !Ref AWS::NoValue
               - !If
+                - HasSchedulerRole
+                - Sid: GerenciarAgendamentosDoCatalogo
+                  Effect: Allow
+                  Action: [scheduler:CreateSchedule, scheduler:UpdateSchedule, scheduler:DeleteSchedule]
+                  Resource: !Sub 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/runpass-${Environment}-catalogo-*'
+                - !Ref AWS::NoValue
+              - !If
+                - HasSchedulerRole
+                - Sid: PassarSoOPapelDoAgendador
+                  Effect: Allow
+                  Action: iam:PassRole
+                  Resource: !Ref CatalogSchedulerRoleArn
+                  Condition:
+                    StringEquals:
+                      iam:PassedToService: scheduler.amazonaws.com
+                - !Ref AWS::NoValue
+              - !If
                 - HasCatalogFunction
                 - Sid: ListarAgendamentos
                   Effect: Allow
@@ -257,6 +282,11 @@ Resources:
           RUNPASS_OPERATOR_CLIENT_ID: !Ref OperatorClientId
           RUNPASS_OPERATOR_POOL_ID: !Ref OperatorUserPoolId
           RUNPASS_CATALOG_FUNCTION: !Ref CatalogFunctionName
+          RUNPASS_CATALOG_FUNCTION_ARN: !If
+            - HasCatalogFunction
+            - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${CatalogFunctionName}'
+            - ''
+          RUNPASS_CATALOG_SCHEDULER_ROLE_ARN: !Ref CatalogSchedulerRoleArn
           RUNPASS_MEDAL_BUCKET: {Fn::ImportValue: !Sub '${DataStack}-MedalBucket'}
           RUNPASS_CATALOG_REPORT_BUCKET: !Ref CatalogReportBucket
           RUNPASS_AWS_BUDGET_USD: !Ref AwsMonthlyBudgetUsd

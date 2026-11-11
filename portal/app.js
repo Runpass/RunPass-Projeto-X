@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -694,18 +694,144 @@ async function carregarCadastros() {
 
 let acompanhar = null;
 
+/** Formulário de agendamento: `item` null = novo; com `item` = editar (tipo e nome não mudam). */
+function formularioAgendamento(item, aoFechar) {
+  const novo = !item;
+  const nome = el('input', { type: 'text', maxlength: '40', placeholder: 'ex.: enriquecimento-quinta', autocomplete: 'off' });
+  const tipo = el('select', {}, ...Object.entries(TIPOS_AGENDAMENTO).map(([v, t]) => el('option', { value: v }, t)));
+  const caixas = DIAS_SEMANA.map(([codigo, rotulo]) => {
+    const c = el('input', { type: 'checkbox', value: codigo });
+    c.checked = !!(item && item.days && item.days.includes(codigo));
+    return [c, el('label', { class: 'dia' }, c, ' ', rotulo)];
+  });
+  const horario = el('input', { type: 'time', value: (item && item.time) || '06:00' });
+  const rodada = el('input', { type: 'number', min: '1', max: '3', value: String((item && item.params && item.params.rodada) || 1) });
+  const maximo = el('input', { type: 'number', min: '1', max: String(MAX_PROVAS_POR_EXECUCAO), value: String((item && item.params && item.params.max) || MAX_PROVAS_POR_EXECUCAO) });
+  const meses = el('input', { type: 'number', min: '1', max: '6', value: String((item && item.params && item.params.meses) || 3) });
+  const ativo = el('input', { type: 'checkbox' });
+  ativo.checked = item ? item.enabled : true;
+  const grupoRodada = el('label', {}, 'Rodada (1 a 3)', rodada);
+  const grupoMax = el('label', {}, `Máximo de provas por execução (1 a ${MAX_PROVAS_POR_EXECUCAO})`, maximo);
+  const grupoMeses = el('label', {}, 'Meses do calendário (1 a 6)', meses);
+  const tipoAtual = () => (novo ? tipo.value : item.kind);
+  const mostrar = () => {
+    grupoRodada.hidden = grupoMax.hidden = tipoAtual() !== 'enriquecer';
+    grupoMeses.hidden = tipoAtual() !== 'calendario';
+  };
+  tipo.addEventListener('change', mostrar);
+  mostrar();
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const salvar = el('button', { type: 'button' }, novo ? 'Criar agendamento' : 'Salvar alterações');
+  const cancelar = el('button', { type: 'button', class: 'sec', onclick: aoFechar }, 'Cancelar');
+
+  salvar.addEventListener('click', async () => {
+    const dias = caixas.filter(([c]) => c.checked).map(([c]) => c.value);
+    const dados = { novo, nome: nome.value.trim(), tipo: tipoAtual(), dias, horario: dias.length ? horario.value : '', rodada: Number(rodada.value), max: Number(maximo.value), meses: Number(meses.value) };
+    const problema = validarAgendamento(novo ? dados : { ...dados, horario: dias.length || horario.value !== ((item && item.time) || '06:00') ? horario.value : '' });
+    erro.hidden = !problema;
+    erro.textContent = problema;
+    if (problema) return;
+    const corpo = { enabled: ativo.checked };
+    if (dias.length) Object.assign(corpo, { days: dias, time: horario.value });
+    if (dados.tipo === 'enriquecer') Object.assign(corpo, { rodada: dados.rodada, max: dados.max });
+    if (dados.tipo === 'calendario') corpo.meses = dados.meses;
+    if (novo) Object.assign(corpo, { name: dados.nome, kind: dados.tipo });
+    salvar.disabled = true;
+    try {
+      if (novo) await api('/admin/catalog/schedules', { method: 'POST', body: JSON.stringify(corpo) });
+      else await api(`/admin/catalog/schedules/${encodeURIComponent(item.name)}`, { method: 'PUT', body: JSON.stringify(corpo) });
+      aviso(novo ? 'Agendamento criado.' : 'Agendamento atualizado.', 'ok');
+      aoFechar();
+      await carregarAgendamentos();
+    } catch (falha) {
+      salvar.disabled = false;
+      if (!token) return;
+      erro.hidden = false;
+      erro.textContent = falha.codigo === 'INVALID_INPUT' ? 'A AWS ou o servidor recusou os dados. Confira o nome, o tipo, os dias, o horário e os limites.' : mensagem(falha.codigo);
+    }
+  });
+
+  const dicaExpressao = !novo && !item.days ? el('p', { class: 'meta' }, `Horário atual fora do padrão (${item.expression}). Escolha dias e horário para substituí-lo, ou deixe em branco para manter.`) : '';
+  return el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, novo ? 'Novo agendamento' : `Editar: ${item.description || item.name}`),
+    novo ? el('label', {}, 'Nome (ficará como "portal-nome")', nome) : '',
+    novo ? el('label', {}, 'O que faz', tipo) : el('p', { class: 'meta' }, `Tipo: ${TIPOS_AGENDAMENTO[item.kind] || 'não editável pelo portal (só pausar, ativar ou apagar)'}`),
+    ...(novo || item.kind
+      ? [
+          el('fieldset', { class: 'dias' }, el('legend', {}, 'Dias da semana (horário de São Paulo, no máximo 1 vez por dia)'), ...caixas.map(([, rotulo]) => rotulo)),
+          dicaExpressao,
+          el('label', {}, 'Horário', horario),
+          grupoRodada,
+          grupoMax,
+          grupoMeses,
+        ]
+      : []),
+    el('label', { class: 'confirma' }, ativo, ' Ativo (roda sozinho e gasta a cota da OpenAI)'),
+    erro,
+    el('div', { class: 'acoes' }, salvar, cancelar),
+  );
+}
+
+async function alternarAgendamento(a) {
+  try {
+    await api(`/admin/catalog/schedules/${encodeURIComponent(a.name)}`, { method: 'PUT', body: JSON.stringify({ enabled: !a.enabled }) });
+    aviso(a.enabled ? 'Agendamento pausado.' : 'Agendamento ativado.', 'ok');
+    await carregarAgendamentos();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
+async function apagarAgendamento(a) {
+  const doStack = !a.createdByPortal;
+  const texto = `Apagar o agendamento "${a.description || a.name}"?` + (doStack ? '\n\nEle foi criado pela stack do catálogo (CloudFormation). Apagar aqui o deixa diferente do template: um deploy futuro pode recriá-lo ou falhar.' : '') + '\n\nNão dá para desfazer.';
+  if (!window.confirm(texto)) return;
+  try {
+    await api(`/admin/catalog/schedules/${encodeURIComponent(a.name)}`, { method: 'DELETE' });
+    aviso('Agendamento apagado.', 'ok');
+    await carregarAgendamentos();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
 async function carregarAgendamentos() {
   try {
     const { items } = await api('/admin/catalog/schedules');
+    const editor = el('div', {});
+    const fechar = () => editor.replaceChildren();
+    const abrir = (item) => editor.replaceChildren(formularioAgendamento(item, fechar));
     $('agendamentos').replaceChildren(
+      el('div', { class: 'acoes' }, el('button', { type: 'button', onclick: () => abrir(null) }, 'Novo agendamento')),
+      editor,
       items.length
         ? el(
             'table',
             { class: 'tabela' },
-            el('thead', {}, el('tr', {}, ['Próxima execução', 'O que faz', 'Situação'].map((t) => el('th', {}, t)))),
+            el('thead', {}, el('tr', {}, ['Próxima execução', 'O que faz', 'Quando', 'Situação', 'Ações'].map((t) => el('th', {}, t)))),
             el('tbody', {}, items.map((a) => {
               const d = descreverAgendamento(a);
-              return el('tr', {}, el('td', {}, d.quando), el('td', {}, d.oque), el('td', {}, d.situacao));
+              return el(
+                'tr',
+                {},
+                el('td', {}, d.quando),
+                el('td', {}, d.oque, a.createdByPortal ? el('div', { class: 'meta' }, 'Criado pelo portal') : ''),
+                el('td', {}, quandoTexto(a.days, a.time) || a.expression),
+                el('td', {}, d.situacao),
+                el(
+                  'td',
+                  {},
+                  el(
+                    'div',
+                    { class: 'acoes' },
+                    el('button', { type: 'button', class: 'sec', onclick: () => abrir(a) }, 'Editar'),
+                    el('button', { type: 'button', class: 'sec', onclick: () => alternarAgendamento(a) }, a.enabled ? 'Pausar' : 'Ativar'),
+                    el('button', { type: 'button', class: 'perigo', onclick: () => apagarAgendamento(a) }, 'Apagar'),
+                  ),
+                ),
+              );
             })),
           )
         : el('p', { class: 'vazio' }, 'Nenhum agendamento encontrado.'),

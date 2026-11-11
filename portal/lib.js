@@ -39,6 +39,9 @@ export const MENSAGENS = {
   EDITION_REQUEST_NOT_FOUND: 'Pedido não encontrado.',
   INVALID_INPUT: 'Confira os campos: rejeitar exige um motivo; vincular exige escolher uma corrida.',
   DEPENDENCY_UNAVAILABLE: 'Serviço indisponível agora. Tente de novo em instantes.',
+  SCHEDULE_EXISTS: 'Já existe um agendamento com esse nome. Escolha outro.',
+  SCHEDULE_LIMIT: 'Limite de 20 agendamentos criados pelo portal. Apague algum antes de criar outro.',
+  SCHEDULE_NOT_FOUND: 'Agendamento não encontrado. Atualize a lista.',
 };
 
 export function mensagem(codigo) {
@@ -282,3 +285,51 @@ export const RESULTADO_CONFERENCIA = {
   nao_verificado: 'Não verificado',
   errada: 'Errada',
 };
+
+export const DIAS_SEMANA = [
+  ['MON', 'Seg'],
+  ['TUE', 'Ter'],
+  ['WED', 'Qua'],
+  ['THU', 'Qui'],
+  ['FRI', 'Sex'],
+  ['SAT', 'Sáb'],
+  ['SUN', 'Dom'],
+];
+
+export const TIPOS_AGENDAMENTO = {
+  semanal: 'Pesquisa semanal (pedidos e séries)',
+  calendario: 'Calendário da Prefeitura',
+  enriquecer: 'Enriquecimento das provas do calendário',
+  imagens: 'Coleta de imagens candidatas (revisão)',
+};
+
+export const MAX_PROVAS_POR_EXECUCAO = 25;
+
+/** "Seg, Qui às 06:00" a partir de dias (MON...) e horário; vazio quando a expressão não é dias + horário. */
+export function quandoTexto(dias, horario) {
+  if (!Array.isArray(dias) || !dias.length || !horario) return '';
+  const nomes = DIAS_SEMANA.filter(([c]) => dias.includes(c)).map(([, n]) => n);
+  return `${nomes.join(', ')} às ${horario}`;
+}
+
+/** Confere o formulário de agendamento antes de enviar. Devolve o texto do erro, ou '' quando está tudo certo.
+ *  `novo`: nome e tipo obrigatórios. Dias e horário andam juntos (editar pode deixar os dois vazios). */
+export function validarAgendamento({ novo, nome, tipo, dias, horario, rodada, max, meses }) {
+  if (novo) {
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(nome || '') || nome.length < 3 || nome.length > 40) {
+      return 'O nome deve ter de 3 a 40 caracteres: letras minúsculas, números e hífen (ex.: enriquecimento-quinta).';
+    }
+    if (!Object.keys(TIPOS_AGENDAMENTO).includes(tipo)) return 'Escolha o que o agendamento faz.';
+  }
+  const temDias = Array.isArray(dias) && dias.length > 0;
+  const temHorario = !!horario;
+  if (novo && !(temDias && temHorario)) return 'Escolha ao menos um dia da semana e o horário.';
+  if (temDias !== temHorario) return 'Informe os dias da semana e o horário juntos.';
+  if (temHorario && !/^([01]\d|2[0-3]):[0-5]\d$/.test(horario)) return 'Horário inválido (use HH:MM).';
+  if (tipo === 'enriquecer') {
+    if (!Number.isInteger(rodada) || rodada < 1 || rodada > 3) return 'A rodada deve ser 1, 2 ou 3.';
+    if (!Number.isInteger(max) || max < 1 || max > MAX_PROVAS_POR_EXECUCAO) return `O máximo de provas por execução vai de 1 a ${MAX_PROVAS_POR_EXECUCAO}.`;
+  }
+  if (tipo === 'calendario' && (!Number.isInteger(meses) || meses < 1 || meses > 6)) return 'Os meses do calendário vão de 1 a 6.';
+  return '';
+}

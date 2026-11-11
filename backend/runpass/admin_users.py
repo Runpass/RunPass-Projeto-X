@@ -503,12 +503,233 @@ def next_run(expression, timezone_name, now, horizon_days=400):
     return None
 
 
-class CatalogSchedules:
-    """Agendamentos da rotina do catalogo (EventBridge Scheduler), so leitura."""
+SCHEDULE_KINDS = ("semanal", "calendario", "enriquecer", "imagens")
+SCHEDULE_DAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+SCHEDULE_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+SCHEDULE_TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+CALENDAR_URL = "https://prefeitura.sp.gov.br/web/esportes/w/corridas_de_rua/8722"
+MAX_PORTAL_SCHEDULES = (
+    20  # teto de agendamentos criados pelo portal (cada execucao gasta a cota da OpenAI)
+)
+MAX_ENRICH_PER_RUN = 25  # a Lambda tem 15 min e cada busca leva ~20 s
+SCHEDULE_LABELS = {
+    "semanal": "Pesquisa semanal dos pedidos e das series",
+    "calendario": "Calendario da Prefeitura de SP",
+    "enriquecer": "Enriquecimento das provas do calendario",
+    "imagens": "Coleta de imagens candidatas (para revisao)",
+}
 
-    def __init__(self, scheduler_client, function_name, clock):
+
+def schedule_input(kind, rodada=1, maximo=MAX_ENRICH_PER_RUN, meses=3):
+    """Entrada da Lambda do catalogo para cada tipo da lista fechada (nunca texto livre vindo da tela)."""
+    if kind == "semanal":
+        return {}
+    if kind == "calendario":
+        if not 1 <= meses <= 6:
+            raise Problem(422, "INVALID_INPUT")
+        return {"calendario": CALENDAR_URL, "meses": meses}
+    if kind == "enriquecer":
+        if rodada not in (1, 2, 3) or not 1 <= maximo <= MAX_ENRICH_PER_RUN:
+            raise Problem(422, "INVALID_INPUT")
+        return {
+            "enriquecer": {
+                "relatorio": "latest",
+                "rodada": rodada,
+                "max": maximo,
+                "csv_semanal": "latest",
+            }
+        }
+    if kind == "imagens":
+        return {"imagens": {"csv": "latest"}}
+    raise Problem(422, "INVALID_INPUT")
+
+
+def schedule_kind(payload):
+    """Tipo de um agendamento pela entrada que ele ja tem; None se nao for um dos tipos conhecidos."""
+    if payload == {}:
+        return "semanal"
+    if not isinstance(payload, dict):
+        return None
+    if set(payload) == {"calendario", "meses"}:
+        return "calendario"
+    if len(payload) != 1:
+        return None
+    return next((k for k in ("enriquecer", "imagens") if k in payload), None)
+
+
+def schedule_cron(days, at):
+    """`cron(...)` de dias da semana + horario (SP). So frequencia de no maximo 1 vez por dia, por construcao."""
+    if (
+        not days
+        or len(set(days)) != len(days)
+        or any(d not in SCHEDULE_DAYS for d in days)
+        or not SCHEDULE_TIME.match(at or "")
+    ):
+        raise Problem(422, "INVALID_INPUT")
+    hour, minute = at.split(":")
+    ordered = ",".join(d for d in SCHEDULE_DAYS if d in days)
+    return f"cron({int(minute)} {int(hour)} ? * {ordered} *)"
+
+
+def parse_cron(expression):
+    """(dias, 'HH:MM') de um cron de dias da semana em lista; (None, None) para qualquer outra forma."""
+    m = re.fullmatch(
+        r"cron\((\d{1,2}) (\d{1,2}) \? \* ([A-Z]{3}(?:,[A-Z]{3})*) \*\)", expression or ""
+    )
+    if not m or any(d not in SCHEDULE_DAYS for d in m[3].split(",")):
+        return None, None
+    return m[3].split(","), f"{int(m[2]):02d}:{int(m[1]):02d}"
+
+
+class CatalogSchedules:
+    """Agendamentos da rotina do catalogo (EventBridge Scheduler): lista, cria, altera e apaga.
+
+    Lista fechada de tipos, so dias da semana + horario (no maximo 1 execucao por dia) e teto de agendamentos
+    criados pelo portal. So mexe em nomes com o prefixo do catalogo; toda acao fica na auditoria."""
+
+    def __init__(
+        self, scheduler_client, function_name, clock, role_arn="", function_arn="", store=None
+    ):
         self.client, self.clock = scheduler_client, clock
         self.prefix = function_name.rsplit("-", 1)[0] + "-" if function_name else ""
+        self.role_arn, self.function_arn, self.store = role_arn, function_arn, store
+
+    def _full(self, name):
+        if not isinstance(name, str) or len(name) > 60 or not SCHEDULE_NAME.match(name):
+            raise Problem(422, "INVALID_INPUT")
+        if not self.prefix:
+            raise Unavailable()
+        return self.prefix + name
+
+    def _audit(self, actor, action, detail):
+        if self.store is not None:
+            audit(self.store, actor, action, detail, self.clock)
+
+    def create(
+        self, actor, name, kind, days, at, enabled, rodada=1, maximo=MAX_ENRICH_PER_RUN, meses=3
+    ):
+        if self.client is None or not self.role_arn or not self.function_arn:
+            raise Unavailable()
+        full = self._full("portal-" + name)
+        if kind not in SCHEDULE_KINDS:
+            raise Problem(422, "INVALID_INPUT")
+        entry = schedule_input(kind, rodada, maximo, meses)
+        expression = schedule_cron(days, at)
+        try:
+            owned = self.client.list_schedules(NamePrefix=self.prefix + "portal-", MaxResults=50)
+            if len(owned.get("Schedules", [])) >= MAX_PORTAL_SCHEDULES:
+                raise Problem(409, "SCHEDULE_LIMIT")
+            self.client.create_schedule(
+                Name=full,
+                Description=("Criado pelo portal: " + SCHEDULE_LABELS[kind])[:512],
+                State="ENABLED" if enabled else "DISABLED",
+                ScheduleExpression=expression,
+                ScheduleExpressionTimezone="America/Sao_Paulo",
+                FlexibleTimeWindow={"Mode": "OFF"},
+                Target={
+                    "Arn": self.function_arn,
+                    "RoleArn": self.role_arn,
+                    "Input": json.dumps(entry),
+                    # Sem nova tentativa automatica: repetir a rotina repetiria o gasto.
+                    "RetryPolicy": {"MaximumRetryAttempts": 0},
+                },
+            )
+        except Problem:
+            raise
+        except Exception as error:  # noqa: BLE001
+            if type(error).__name__ == "ConflictException":
+                raise Problem(409, "SCHEDULE_EXISTS") from error
+            raise Unavailable() from error
+        self._audit(
+            actor,
+            "catalog.schedule.create",
+            {"schedule": full, "kind": kind, "expression": expression},
+        )
+        return {"name": "portal-" + name, "expression": expression, "enabled": enabled}
+
+    def _existing(self, full):
+        try:
+            return self.client.get_schedule(Name=full)
+        except Exception as error:  # noqa: BLE001
+            if type(error).__name__ == "ResourceNotFoundException":
+                raise Problem(404, "SCHEDULE_NOT_FOUND") from error
+            raise Unavailable() from error
+
+    def update(
+        self, actor, name, days=None, at=None, enabled=None, rodada=None, maximo=None, meses=None
+    ):
+        if self.client is None:
+            raise Unavailable()
+        full = self._full(name)
+        current = self._existing(full)
+        target = dict(current["Target"])
+        try:
+            payload = json.loads(target.get("Input") or "{}")
+        except ValueError:
+            payload = None
+        kind = schedule_kind(payload)
+        changed_input = any(v is not None for v in (rodada, maximo, meses))
+        if changed_input:
+            if kind not in ("enriquecer", "calendario"):
+                raise Problem(422, "INVALID_INPUT")
+            if kind == "enriquecer":
+                old = payload["enriquecer"]
+                new = schedule_input(
+                    kind,
+                    rodada if rodada is not None else int(old.get("rodada", 1)),
+                    maximo if maximo is not None else int(old.get("max", MAX_ENRICH_PER_RUN)),
+                )
+            else:
+                new = schedule_input(
+                    kind, meses=meses if meses is not None else int(payload.get("meses", 3))
+                )
+            target["Input"] = json.dumps(new)
+        expression = current["ScheduleExpression"]
+        if (days is None) != (at is None):
+            raise Problem(422, "INVALID_INPUT")
+        if days is not None:
+            expression = schedule_cron(days, at)
+        state = current.get("State", "ENABLED")
+        if enabled is not None:
+            state = "ENABLED" if enabled else "DISABLED"
+        body = {
+            "Name": full,
+            "State": state,
+            "ScheduleExpression": expression,
+            "FlexibleTimeWindow": current.get("FlexibleTimeWindow", {"Mode": "OFF"}),
+            "Target": target,
+        }
+        for key in (
+            "Description",
+            "ScheduleExpressionTimezone",
+            "StartDate",
+            "EndDate",
+            "ActionAfterCompletion",
+        ):
+            if current.get(key) is not None:
+                body[key] = current[key]
+        try:
+            self.client.update_schedule(**body)
+        except Exception as error:  # noqa: BLE001
+            raise Unavailable() from error
+        self._audit(
+            actor,
+            "catalog.schedule.update",
+            {"schedule": full, "kind": kind or "outro", "expression": expression, "state": state},
+        )
+        return {"name": name, "expression": expression, "enabled": state == "ENABLED"}
+
+    def delete(self, actor, name):
+        if self.client is None:
+            raise Unavailable()
+        full = self._full(name)
+        self._existing(full)
+        try:
+            self.client.delete_schedule(Name=full)
+        except Exception as error:  # noqa: BLE001
+            raise Unavailable() from error
+        self._audit(actor, "catalog.schedule.delete", {"schedule": full})
+        return {"deleted": name}
 
     def upcoming(self):
         if self.client is None or not self.prefix:
@@ -532,6 +753,20 @@ class CatalogSchedules:
         for d in details:
             when = next_run(d.get("ScheduleExpression"), d.get("ScheduleExpressionTimezone"), now)
             enabled = d.get("State") == "ENABLED"
+            try:
+                payload = json.loads((d.get("Target") or {}).get("Input") or "{}")
+            except ValueError:
+                payload = None
+            kind = schedule_kind(payload)
+            params = {}
+            if kind == "enriquecer":
+                params = {
+                    "rodada": payload["enriquecer"].get("rodada"),
+                    "max": payload["enriquecer"].get("max"),
+                }
+            elif kind == "calendario":
+                params = {"meses": payload.get("meses")}
+            days, at = parse_cron(d.get("ScheduleExpression"))
             items.append(
                 {
                     "name": d["Name"].removeprefix(self.prefix),
@@ -539,6 +774,11 @@ class CatalogSchedules:
                     "expression": d.get("ScheduleExpression", ""),
                     "enabled": enabled,
                     "nextRun": _iso(when) if enabled and when else None,
+                    "kind": kind,
+                    "params": params,
+                    "days": days,
+                    "time": at,
+                    "createdByPortal": d["Name"].removeprefix(self.prefix).startswith("portal-"),
                 }
             )
         items.sort(key=lambda i: (i["nextRun"] is None, i["nextRun"] or "", i["name"]))

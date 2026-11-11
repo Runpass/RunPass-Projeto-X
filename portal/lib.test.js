@@ -149,6 +149,30 @@ test('taxa: parte de total com porcentagem e valores inválidos', async () => {
   assert.equal(RESULTADO_CONFERENCIA.nao_verificado, 'Não verificado');
 });
 
+test('agendamento: validação do formulário e texto de quando roda', async () => {
+  const { validarAgendamento, quandoTexto } = await import('./lib.js');
+  const ok = { novo: true, nome: 'enriq-quinta', tipo: 'enriquecer', dias: ['THU'], horario: '06:05', rodada: 2, max: 20, meses: 3 };
+  assert.equal(validarAgendamento(ok), '');
+  assert.match(validarAgendamento({ ...ok, nome: 'Nome Ruim' }), /nome/i);
+  assert.match(validarAgendamento({ ...ok, nome: 'ab' }), /nome/i);
+  assert.match(validarAgendamento({ ...ok, nome: '../x' }), /nome/i);
+  assert.match(validarAgendamento({ ...ok, tipo: 'historico' }), /Escolha o que/);
+  assert.match(validarAgendamento({ ...ok, dias: [] }), /dia da semana/);
+  assert.match(validarAgendamento({ ...ok, horario: '' }), /dia da semana/);
+  assert.match(validarAgendamento({ ...ok, horario: '25:00' }), /inválido/);
+  assert.match(validarAgendamento({ ...ok, max: 26 }), /1 a 25/);
+  assert.match(validarAgendamento({ ...ok, max: 0 }), /1 a 25/);
+  assert.match(validarAgendamento({ ...ok, rodada: 4 }), /rodada/);
+  assert.match(validarAgendamento({ ...ok, tipo: 'calendario', meses: 7 }), /meses/);
+  // editar: dias e horário opcionais, mas sempre juntos
+  const edit = { novo: false, tipo: 'enriquecer', dias: [], horario: '', rodada: 1, max: 25 };
+  assert.equal(validarAgendamento(edit), '');
+  assert.match(validarAgendamento({ ...edit, dias: ['MON'] }), /juntos/);
+  assert.equal(quandoTexto(['THU', 'MON'], '06:00'), 'Seg, Qui às 06:00');
+  assert.equal(quandoTexto(null, '06:00'), '');
+  assert.equal(quandoTexto([], '06:00'), '');
+});
+
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
   const { situacaoOperador } = await import('./lib.js');
   assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);

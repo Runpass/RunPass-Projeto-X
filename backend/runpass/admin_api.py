@@ -315,6 +315,17 @@ def create_admin_app(
         model_config = ConfigDict(extra="forbid")
         mode: str = Field(max_length=20)
 
+    class ScheduleBody(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        name: str | None = Field(default=None, max_length=40)
+        kind: str | None = Field(default=None, max_length=20)
+        days: list[str] | None = Field(default=None, max_length=7)
+        time: str | None = Field(default=None, max_length=5)
+        enabled: bool | None = None
+        rodada: int | None = Field(default=None, ge=1, le=3)
+        max: int | None = Field(default=None, ge=1, le=25)
+        meses: int | None = Field(default=None, ge=1, le=6)
+
     @app.get("/admin/users/runners")
     def runners(op: Operator, limit: int = Query(200, ge=1, le=500)):
         actor = need(op, "user_admin").subject
@@ -455,6 +466,48 @@ def create_admin_app(
             if out[k] is None and not (k == "openai" and out["openaiOrg"])
         ]
         return out
+
+    @app.post("/admin/catalog/schedules", status_code=201)
+    def schedule_create(payload: ScheduleBody, op: Operator):
+        actor = need(op, "catalog_admin").subject
+        if schedules is None:
+            raise Unavailable()
+        if not payload.name or not payload.kind or payload.days is None or payload.time is None:
+            raise Problem(422, "INVALID_INPUT")
+        return schedules.create(
+            actor,
+            payload.name,
+            payload.kind,
+            payload.days,
+            payload.time,
+            True if payload.enabled is None else payload.enabled,
+            payload.rodada or 1,
+            payload.max or 25,
+            payload.meses or 3,
+        )
+
+    @app.put("/admin/catalog/schedules/{name}")
+    def schedule_update(name: str, payload: ScheduleBody, op: Operator):
+        actor = need(op, "catalog_admin").subject
+        if schedules is None:
+            raise Unavailable()
+        return schedules.update(
+            actor,
+            name,
+            payload.days,
+            payload.time,
+            payload.enabled,
+            payload.rodada,
+            payload.max,
+            payload.meses,
+        )
+
+    @app.delete("/admin/catalog/schedules/{name}")
+    def schedule_delete(name: str, op: Operator):
+        actor = need(op, "catalog_admin").subject
+        if schedules is None:
+            raise Unavailable()
+        return schedules.delete(actor, name)
 
     @app.post("/admin/catalog/run", status_code=202)
     def start_run(payload: CatalogRun, op: Operator):

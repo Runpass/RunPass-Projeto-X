@@ -31,6 +31,9 @@ def _openai_key_loader():
 def _costs_config():
     return {
         "openai_key_loader": _openai_key_loader(),
+        # Agendamentos do catalogo: funcao e papel do agendador (vazio = o portal so le os agendamentos).
+        "catalog_function_arn": os.environ.get("RUNPASS_CATALOG_FUNCTION_ARN", "").strip(),
+        "scheduler_role_arn": os.environ.get("RUNPASS_CATALOG_SCHEDULER_ROLE_ARN", "").strip(),
         "openai_project": os.environ.get("RUNPASS_OPENAI_PROJECT_ID", "").strip(),
         # O Cost Explorer so existe em us-east-1, qualquer que seja a regiao da conta.
         "ce": _boto_client("ce", region_name="us-east-1"),
