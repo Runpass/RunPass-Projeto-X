@@ -521,6 +521,8 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(
             self.client.get("/admin/users/runners", headers=self.auth(token("op"))).status_code, 403
         )
+        perfil = ("identity", "USER#u1111111-x", "PROFILE")
+        self.store.commit({perfil: None}, {perfil: {"id": "u1111111-x", "username": "ana_runs"}})
         r = self.client.get("/admin/users/runners", headers=self.auth(token("adm")))
         self.assertEqual(r.status_code, 200)
         dados = r.json()
@@ -532,6 +534,11 @@ class AdminApiTests(unittest.TestCase):
         )  # mais recente primeiro
         self.assertNotIn("ana@exemplo.invalid", r.text)
         self.assertNotIn("u1111111-x", r.text)  # so o prefixo do id
+        # O ID de usuario (@) vem do perfil; quem ainda nao criou perfil fica sem.
+        self.assertEqual(
+            sorted((i["id"], i["username"]) for i in dados["items"] if i["username"]),
+            [("u1111111", "ana_runs")],
+        )
         trilha = self.store.query("operations", "OPERATOR#adm", prefix="AUDIT#")
         self.assertEqual(len(trilha[0] if isinstance(trilha, tuple) else trilha), 1)
 
