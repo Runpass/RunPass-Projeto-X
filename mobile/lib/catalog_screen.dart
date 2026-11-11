@@ -390,8 +390,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
   bool loading = false;
   bool showFilters = false;
 
-  /// Ícone de estrela: coloca as corridas mais bem avaliadas primeiro (sem nota por último).
-  bool bestRatedFirst = false;
+  /// Ordem da lista: 'date' (padrão) ou 'rating'. Cada ícone liga a sua ordem; tocar de novo inverte.
+  String sortBy = 'date';
+
+  /// Direção: em data, mais recentes primeiro; em avaliação, melhores primeiro.
+  bool descending = true;
 
   @override
   void initState() {
@@ -667,30 +670,66 @@ class _CatalogScreenState extends State<CatalogScreen> {
     };
   }
 
-  /// Itens na ordem da tela: primeiro as minhas (por prioridade), depois as demais. Dentro de cada grupo,
-  /// as mais recentes primeiro (a data se escolhe pelo filtro de ano, não por ordenação) ou, com a estrela
-  /// ligada, as mais bem avaliadas primeiro. Em empate, mais avaliações e depois o nome.
+  /// Itens na ordem escolhida pelos ícones: primeiro as minhas (por prioridade), depois as demais. Dentro de
+  /// cada grupo, por data ou por avaliação (cada ícone inverte a direção) e, em empate, por nº de avaliações
+  /// e pelo nome. Corrida sem avaliação fica sempre por último na ordem por avaliação.
   List<Map<String, dynamic>> get view {
     final list = [...items];
     if (widget.serverPaging) return list;
     list.sort((a, b) {
       final byPriority = priority(a).compareTo(priority(b));
       if (byPriority != 0) return byPriority;
-      if (bestRatedFirst) {
+      if (sortBy == 'rating') {
         final sa = scoreOf(a);
         final sb = scoreOf(b);
-        // Sem avaliação sempre por último.
         if ((sa == null) != (sb == null)) return sa == null ? 1 : -1;
-        if (sa != null && sb != null && sa != sb) return sb.compareTo(sa);
+        if (sa != null && sb != null && sa != sb) {
+          return descending ? sb.compareTo(sa) : sa.compareTo(sb);
+        }
         final byReviews = reviewsOf(b).compareTo(reviewsOf(a));
         if (byReviews != 0) return byReviews;
       }
       final byDate = (a['date'] as String).compareTo(b['date'] as String);
       final byName = '${a['name']}'.compareTo('${b['name']}');
-      return byDate == 0 ? byName : -byDate;
+      if (byDate == 0) return byName;
+      return sortBy == 'date' && !descending ? byDate : -byDate;
     });
     return list;
   }
+
+  void sortByDate() => setState(() {
+    if (sortBy == 'date') {
+      descending = !descending;
+    } else {
+      sortBy = 'date';
+      descending = true;
+    }
+  });
+
+  void sortByRating() => setState(() {
+    if (sortBy == 'rating') {
+      descending = !descending;
+    } else {
+      sortBy = 'rating';
+      descending = true;
+    }
+  });
+
+  /// Ícone de ordenação: o símbolo da ordem e, só na ordem ativa, a seta da direção.
+  Widget sortGlyph(IconData base, {required bool active}) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(base, size: 20),
+      if (active)
+        Icon(
+          descending
+              ? Icons.arrow_downward_rounded
+              : Icons.arrow_upward_rounded,
+          size: 16,
+          semanticLabel: descending ? 'Ordem decrescente' : 'Ordem crescente',
+        ),
+    ],
+  );
 
   /// Ordenar por data precisa do conjunto todo: carrega as próximas páginas (até 500 corridas).
   Future<void> loadRest() async {
@@ -1265,15 +1304,34 @@ class _CatalogScreenState extends State<CatalogScreen> {
               ),
               const SizedBox(width: 8),
               IconButton(
+                key: const Key('catalog-sort'),
+                tooltip: sortBy != 'date'
+                    ? 'Ordenar por data'
+                    : (descending
+                          ? 'Mais recentes primeiro (toque para inverter)'
+                          : 'Mais antigas primeiro (toque para inverter)'),
+                isSelected: sortBy == 'date',
+                icon: sortGlyph(
+                  Icons.calendar_today_rounded,
+                  active: sortBy == 'date',
+                ),
+                onPressed: loading ? null : sortByDate,
+              ),
+              IconButton(
                 key: const Key('catalog-sort-rating'),
-                tooltip: bestRatedFirst
-                    ? 'Melhores avaliações primeiro (toque para desligar)'
-                    : 'Ordenar pelas melhores avaliações',
-                isSelected: bestRatedFirst,
-                icon: const Icon(Icons.star_border_rounded),
-                selectedIcon: const Icon(Icons.star_rounded),
-                onPressed: () =>
-                    setState(() => bestRatedFirst = !bestRatedFirst),
+                tooltip: sortBy != 'rating'
+                    ? 'Ordenar por avaliação'
+                    : (descending
+                          ? 'Melhores avaliações primeiro (toque para inverter)'
+                          : 'Piores avaliações primeiro (toque para inverter)'),
+                isSelected: sortBy == 'rating',
+                icon: sortGlyph(
+                  sortBy == 'rating'
+                      ? Icons.star_rounded
+                      : Icons.star_border_rounded,
+                  active: sortBy == 'rating',
+                ),
+                onPressed: loading ? null : sortByRating,
               ),
             ],
           ),

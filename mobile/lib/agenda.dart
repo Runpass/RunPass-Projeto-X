@@ -13,8 +13,41 @@ class AgendaScreen extends StatefulWidget {
   State<AgendaScreen> createState() => _AgendaScreenState();
 }
 
+const _monthNames = [
+  'janeiro',
+  'fevereiro',
+  'março',
+  'abril',
+  'maio',
+  'junho',
+  'julho',
+  'agosto',
+  'setembro',
+  'outubro',
+  'novembro',
+  'dezembro',
+];
+const _weekdayLetters = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
+
+String _iso(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+/// Dias do mês de `month` na grade de um calendário que começa no domingo: `null` nas células em branco.
+List<DateTime?> monthCells(DateTime month) {
+  final first = DateTime(month.year, month.month, 1);
+  final days = DateTime(month.year, month.month + 1, 0).day;
+  return [
+    for (var i = 0; i < first.weekday % 7; i++) null,
+    for (var d = 1; d <= days; d++) DateTime(month.year, month.month, d),
+  ];
+}
+
 class _AgendaScreenState extends State<AgendaScreen> {
   List<Map<String, dynamic>> plans = [];
+
+  /// Mês mostrado em cada aba (primeiro dia) e dia escolhido (AAAA-MM-DD). Sem escolha, o mês é o da próxima corrida.
+  final Map<String, DateTime> months = {};
+  final Map<String, String?> selectedDay = {};
   bool loading = true;
   String? error;
 
@@ -86,6 +119,166 @@ class _AgendaScreenState extends State<AgendaScreen> {
     return [...upcoming, ...past];
   }
 
+  String dateOf(Map<String, dynamic> p) =>
+      (p['edition'] as Map)['date'] as String;
+
+  /// Mês inicial: o da próxima corrida; sem nenhuma por vir, o da mais recente; sem corrida, o de hoje.
+  DateTime monthFor(String status) {
+    final shown = months[status];
+    if (shown != null) return shown;
+    final items = forStatus(status);
+    final today = DateTime.now();
+    final date = items.isEmpty ? _iso(today) : dateOf(items.first);
+    return DateTime(
+      int.parse(date.substring(0, 4)),
+      int.parse(date.substring(5, 7)),
+    );
+  }
+
+  void moveMonth(String status, int delta) {
+    final m = monthFor(status);
+    setState(() {
+      months[status] = DateTime(m.year, m.month + delta);
+      selectedDay[status] = null;
+    });
+  }
+
+  void pickDay(String status, String iso) => setState(() {
+    selectedDay[status] = selectedDay[status] == iso ? null : iso;
+  });
+
+  Widget calendar(String status, List<Map<String, dynamic>> items) {
+    final month = monthFor(status);
+    final today = _iso(DateTime.now());
+    final perDay = <String, int>{};
+    for (final p in items) {
+      perDay[dateOf(p)] = (perDay[dateOf(p)] ?? 0) + 1;
+    }
+    final cells = monthCells(month);
+    while (cells.length % 7 != 0) {
+      cells.add(null);
+    }
+    final chosen = selectedDay[status];
+    Widget cell(DateTime? day) {
+      if (day == null) return const SizedBox(height: 44);
+      final iso = _iso(day);
+      final count = perDay[iso] ?? 0;
+      final isToday = iso == today;
+      final isChosen = iso == chosen;
+      return Semantics(
+        label: count == 0
+            ? '${day.day} de ${_monthNames[day.month - 1]}'
+            : '${day.day} de ${_monthNames[day.month - 1]}, $count corrida${count > 1 ? 's' : ''}',
+        button: count > 0,
+        child: InkWell(
+          key: Key('agenda-day-$status-$iso'),
+          borderRadius: BorderRadius.circular(10),
+          onTap: count == 0 ? null : () => pickDay(status, iso),
+          child: Container(
+            height: 44,
+            decoration: BoxDecoration(
+              color: isChosen ? runPassOrange : null,
+              borderRadius: BorderRadius.circular(10),
+              border: isToday && !isChosen
+                  ? Border.all(color: runPassOrange, width: 1.5)
+                  : null,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '${day.day}',
+                  style: TextStyle(
+                    fontWeight: count > 0 ? FontWeight.w900 : FontWeight.w500,
+                    color: isChosen ? Colors.white : null,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                if (count > 0)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (var i = 0; i < (count > 3 ? 3 : count); i++)
+                        Container(
+                          width: 5,
+                          height: 5,
+                          margin: const EdgeInsets.symmetric(horizontal: 1),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isChosen ? Colors.white : runPassOrange,
+                          ),
+                        ),
+                    ],
+                  )
+                else
+                  const SizedBox(height: 5),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      key: Key('agenda-calendar-$status'),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  key: Key('agenda-prev-$status'),
+                  tooltip: 'Mês anterior',
+                  icon: const Icon(Icons.chevron_left_rounded),
+                  onPressed: () => moveMonth(status, -1),
+                ),
+                Expanded(
+                  child: Text(
+                    '${_monthNames[month.month - 1]} de ${month.year}',
+                    key: Key('agenda-month-$status'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  key: Key('agenda-next-$status'),
+                  tooltip: 'Próximo mês',
+                  icon: const Icon(Icons.chevron_right_rounded),
+                  onPressed: () => moveMonth(status, 1),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                for (final letter in _weekdayLetters)
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        letter,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            for (var row = 0; row < cells.length ~/ 7; row++)
+              Row(
+                children: [
+                  for (final day in cells.sublist(row * 7, row * 7 + 7))
+                    Expanded(child: cell(day)),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget tile(Map<String, dynamic> plan, String status) {
     final edition = Map<String, dynamic>.from(plan['edition'] as Map);
     final today = DateTime.now().toIso8601String().substring(0, 10);
@@ -145,7 +338,14 @@ class _AgendaScreenState extends State<AgendaScreen> {
   }
 
   Widget tab(String status, String empty) {
-    final items = forStatus(status);
+    final all = forStatus(status);
+    final chosen = selectedDay[status];
+    final items = chosen == null
+        ? all
+        : [
+            for (final p in all)
+              if (dateOf(p) == chosen) p,
+          ];
     return RefreshIndicator(
       onRefresh: load,
       child: ListView(
@@ -156,7 +356,28 @@ class _AgendaScreenState extends State<AgendaScreen> {
             TextButton(onPressed: load, child: const Text('Tentar novamente')),
           ],
           if (loading) const Center(child: CircularProgressIndicator()),
-          if (!loading && error == null && items.isEmpty)
+          if (!loading) calendar(status, all),
+          if (!loading && chosen != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Corridas em ${displayDate(chosen)}',
+                      key: Key('agenda-day-title-$status'),
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  TextButton(
+                    key: Key('agenda-clear-day-$status'),
+                    onPressed: () => setState(() => selectedDay[status] = null),
+                    child: const Text('Ver todas'),
+                  ),
+                ],
+              ),
+            ),
+          if (!loading && error == null && all.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 32),
               child: Text(
