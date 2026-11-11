@@ -598,6 +598,92 @@ class _PostCardState extends State<PostCard> {
 
 /// Uma publicacao aberta por um aviso: o cartao completo, curtir, comentar, compartilhar e
 /// tocar no autor para ver o perfil.
+/// Miniatura de uma publicacao (medalha e nome da prova) para grades de 3 por linha, como no
+/// perfil. Tocar abre a publicacao inteira (curtir, comentar, editar, excluir).
+class PostThumb extends StatelessWidget {
+  final IdentityGateway gateway;
+  final FeedEntry entry;
+
+  /// Chamado ao voltar da publicacao, para a tela de origem recarregar.
+  final VoidCallback? onChanged;
+  const PostThumb({
+    super.key,
+    required this.gateway,
+    required this.entry,
+    this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Semantics(
+      button: true,
+      label: 'Abrir publicação ${entry.title}',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: entry.postId == null
+            ? null
+            : () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        PostScreen(gateway: gateway, postId: entry.postId!),
+                  ),
+                );
+                onChanged?.call();
+              },
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: dark
+                  ? const [Color(0xff3a2a22), Color(0xff2a211c)]
+                  : const [Color(0xffffd9cc), Color(0xfffff2ec)],
+            ),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                MedalPhoto(
+                  gateway: gateway,
+                  participationId: entry.race.participation['id'] as String?,
+                  size: 40,
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 4,
+                    ),
+                    color: Colors.black54,
+                    child: Text(
+                      entry.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class PostScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final String postId;

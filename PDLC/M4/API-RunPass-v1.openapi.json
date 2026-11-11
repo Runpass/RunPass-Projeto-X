@@ -7021,6 +7021,11 @@
             "type": "string",
             "nullable": true,
             "description": "Imagem do banner do perfil (mesmo envio de imagens); nulo remove."
+          },
+          "birthDate": {
+            "type": "string",
+            "format": "date",
+            "description": "Owner-only birth date. Must keep the admission minimum age (13). Never returned by public profile routes."
           }
         },
         "description": "Somente campos enviados mudam; null limpa opcionais. Username ASCII normalizado em minúsculas e reservado atomicamente. Nome não pode ser apenas whitespace. Versão obrigatória; não altera idade, admissão ou papéis."

@@ -38,9 +38,21 @@ class PatchProfile(Input):
         default=None, ge=-180, le=180, max_digits=12, decimal_places=7
     )
     bio: Annotated[str, Field(max_length=500)] | None = None
+    # Data de nascimento (so o proprio titular a ve): continua valendo a regra de idade minima
+    # da admissao (13 anos), conferida no servico.
+    birthDate: date | None = None
     photoReference: str | None = None
     bannerReference: str | None = None
     isPrivate: bool | None = None
+
+    @field_validator("birthDate", mode="before")
+    @classmethod
+    def birth_date(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("Date must be YYYY-MM-DD")
+        return date.fromisoformat(value)
 
     @field_validator("latitude", "longitude", mode="before")
     @classmethod

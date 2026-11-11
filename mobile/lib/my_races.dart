@@ -1,17 +1,19 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' show max;
+import 'dart:math' show cos, max, pi, sin;
 import 'dart:typed_data' show Uint8List;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'agenda.dart';
 import 'catalog_screen.dart';
+import 'edit_profile.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
 import 'notifications.dart';
-import 'post_card.dart' show FeedEntry, PostCard, entryFromPost;
+import 'post_card.dart' show FeedEntry, PostThumb, entryFromPost;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 import 'settings.dart';
@@ -1415,6 +1417,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
 
   Widget grid(List<RaceRecord> list, {bool showAddTile = false}) =>
       GridView.count(
+        padding: EdgeInsets.zero,
         crossAxisCount: 3,
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -1984,13 +1987,15 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
 class ProfileData {
   final Map<String, dynamic> profile;
   final List<RaceRecord> races;
-  final List<Map<String, dynamic>> wishlist;
+
+  /// Agenda da pessoa (`/me/race-plans`): corridas desejadas e inscritas.
+  final List<Map<String, dynamic>> plans;
   final List<FeedEntry> myPosts;
   final int followers, following, friends;
   const ProfileData(
     this.profile,
     this.races,
-    this.wishlist, [
+    this.plans, [
     this.followers = 0,
     this.following = 0,
     this.myPosts = const [],
@@ -2117,29 +2122,17 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     );
   }
 
-  Future<void> editLocation(Map<String, dynamic> profile) async {
-    final picked = await pickBrLocation(
-      context,
-      initialUf: profile['state'] as String?,
-      initialCity: profile['city'] as String?,
+  Future<void> editProfile(Map<String, dynamic> profile) async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) =>
+            EditProfileScreen(gateway: widget.gateway, profile: profile),
+      ),
     );
-    if (picked == null || !mounted) return;
-    try {
-      await widget.gateway.request(
-        '/me',
-        method: 'PATCH',
-        body: {
-          'expectedVersion': profile['version'],
-          ...brLocationPatch(picked.$1, picked.$2, picked.$3, picked.$4),
-        },
-      );
-      if (mounted) {
-        setState(() {
-          data = load();
-        });
-      }
-    } on Exception {
-      soon('Não foi possível salvar. Tente de novo.');
+    if (saved == true && mounted) {
+      setState(() {
+        data = load();
+      });
     }
   }
 
@@ -2181,21 +2174,17 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
   Future<ProfileData> load() async {
     final profile = await widget.gateway.request('/me');
     var races = const <RaceRecord>[];
-    var wishlist = const <Map<String, dynamic>>[];
+    var plans = const <Map<String, dynamic>>[];
     try {
       races = await loadMyRaces(widget.gateway);
     } on Exception {
       // The profile still opens, only without the race summary.
     }
     try {
-      final page = await widget.gateway.request(
-        '/me/wishlist',
-        query: {'limit': '20'},
-      );
-      wishlist = (page['items'] as List? ?? const [])
-          .cast<Map<String, dynamic>>();
+      final page = await widget.gateway.request('/me/race-plans');
+      plans = (page['items'] as List? ?? const []).cast<Map<String, dynamic>>();
     } on Exception {
-      // The wishlist is optional; its section shows an empty message.
+      // A agenda e opcional; a secao mostra a mensagem de vazio.
     }
     var followers = 0, following = 0, friends = 0;
     final myId = profile['id'] as String?;
@@ -2220,7 +2209,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     return ProfileData(
       profile,
       races,
-      wishlist,
+      plans,
       followers,
       following,
       myPosts,
@@ -2365,6 +2354,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                   profile: profile,
                 ),
               ),
+              ..._sealsOnPhoto(achievementsOf(RaceStats.of(result.races))),
               Positioned(
                 right: -2,
                 bottom: 2,
@@ -2389,74 +2379,207 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     ),
   );
 
-  Widget sectionTitle(String title, {String? action, VoidCallback? onAction}) =>
-      Padding(
-        padding: const EdgeInsets.only(top: 22, bottom: 10),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 19,
+  /// Conquistas (Explorador, Especialista 5K/10K, meia, maratona) como selos pequenos
+  /// em arco sobre a foto do perfil. Tocar mostra o nome e o detalhe de cada uma.
+  List<Widget> _sealsOnPhoto(List<Achievement> items) {
+    const photoRadius = 46.0, seal = 11.0;
+    // Do lado esquerdo para o alto; o canto inferior direito fica livre para a camera.
+    const angles = [170.0, 205.0, 240.0, 275.0, 310.0];
+    return [
+      for (var i = 0; i < items.length && i < angles.length; i++)
+        Positioned(
+          left: photoRadius + photoRadius * cos(angles[i] * pi / 180) - seal,
+          top: photoRadius + photoRadius * sin(angles[i] * pi / 180) - seal,
+          child: Tooltip(
+            message: '${items[i].title} ${items[i].caption}',
+            child: InkWell(
+              key: Key('seal-$i'),
+              customBorder: const CircleBorder(),
+              onTap: () => _showAchievements(items),
+              child: Container(
+                width: seal * 2,
+                height: seal * 2,
+                decoration: BoxDecoration(
+                  color: items[i].color,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.surface,
+                    width: 2,
+                  ),
                 ),
+                child: Icon(items[i].icon, size: 13, color: Colors.white),
               ),
             ),
-            if (action != null)
-              TextButton(onPressed: onAction, child: Text(action)),
-          ],
+          ),
         ),
-      );
+    ];
+  }
 
-  Widget wishTile(Map<String, dynamic> entry) {
-    final edition = entry['edition'] as Map<String, dynamic>? ?? const {};
-    final date = edition['date'] as String?;
-    return Card(
+  void _showAchievements(List<Achievement> items) => showModalBottomSheet<void>(
+    context: context,
+    builder: (_) => SafeArea(
       child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Row(
+        key: const Key('achievements-sheet'),
+        padding: const EdgeInsets.all(20),
+        child: Wrap(
+          spacing: 12,
+          runSpacing: 16,
+          children: [for (final item in items) achievementBadge(item)],
+        ),
+      ),
+    ),
+  );
+
+  Widget sectionTitle(
+    String title, {
+    String? action,
+    VoidCallback? onAction,
+  }) => Padding(
+    padding: const EdgeInsets.only(top: 8, bottom: 2),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 19),
+          ),
+        ),
+        if (action != null)
+          TextButton(
+            onPressed: onAction,
+            style: TextButton.styleFrom(
+              minimumSize: Size.zero,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(action),
+          ),
+      ],
+    ),
+  );
+
+  /// Corrida da agenda em miniatura (3 por linha): data, nome e cidade. Tocar abre a prova.
+  Widget planTile(Map<String, dynamic> plan) {
+    final edition = plan['edition'] as Map<String, dynamic>? ?? const {};
+    final date = edition['date'] as String?;
+    final place = [
+      if (edition['city'] != null) edition['city'] as String,
+      if (edition['state'] != null) edition['state'] as String,
+    ].join('/');
+    return InkWell(
+      key: Key('plan-${plan['editionId']}'),
+      borderRadius: BorderRadius.circular(12),
+      onTap: plan['editionId'] == null
+          ? null
+          : () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => EditionScreen(
+                    gateway: widget.gateway,
+                    editionId: plan['editionId'] as String,
+                  ),
+                ),
+              );
+              if (mounted) {
+                setState(() {
+                  data = load();
+                });
+              }
+            },
+      // Mesmo visual dos cards de corrida do catalogo: degrade estavel por prova e silhueta.
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Container(
-              width: 64,
-              height: 52,
+            RaceArt(edition: {...edition}..remove('distances')),
+            const DecoratedBox(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                gradient: const LinearGradient(
-                  colors: [Color(0xff2b3a55), Color(0xff6a4a3a)],
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0x00000000), Color(0xB3000000)],
                 ),
               ),
-              child: const Icon(
-                Icons.landscape_outlined,
-                color: Colors.white70,
-              ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
+            Padding(
+              padding: const EdgeInsets.all(8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    edition['name'] as String? ?? 'Corrida',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
                   if (date != null)
                     Text(
                       displayDate(date),
-                      style: TextStyle(fontSize: 12, color: context.muted),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
                     ),
-                  if (edition['city'] != null)
+                  const Spacer(),
+                  Text(
+                    edition['name'] as String? ?? 'Corrida',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                      color: Colors.white,
+                    ),
+                  ),
+                  if (place.isNotEmpty)
                     Text(
-                      '${edition['city']}${edition['state'] == null ? '' : ' - ${edition['state']}'}',
-                      style: TextStyle(fontSize: 12, color: context.muted),
+                      place,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.white70,
+                      ),
                     ),
                 ],
               ),
             ),
-            const Icon(Icons.favorite, color: runPassOrange),
           ],
         ),
       ),
+    );
+  }
+
+  /// Desejadas ou inscritas, da mais proxima para a mais distante, 3 por linha.
+  Widget planGrid(String status, List<Map<String, dynamic>> plans) {
+    final items =
+        [
+          for (final p in plans)
+            if (p['status'] == status) p,
+        ]..sort(
+          (a, b) => ((a['edition'] as Map?)?['date'] as String? ?? '')
+              .compareTo((b['edition'] as Map?)?['date'] as String? ?? ''),
+        );
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Column(
+      key: Key('plans-$status'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Text(
+            status == 'wanted' ? 'Desejadas' : 'Inscritas',
+            style: TextStyle(fontWeight: FontWeight.w700, color: context.muted),
+          ),
+        ),
+        GridView.count(
+          padding: EdgeInsets.zero,
+          crossAxisCount: 3,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 6,
+          crossAxisSpacing: 6,
+          childAspectRatio: 0.95,
+          children: [for (final plan in items.take(9)) planTile(plan)],
+        ),
+        const SizedBox(height: 8),
+      ],
     );
   }
 
@@ -2477,7 +2600,6 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
         final city = profile['city'] as String?;
         final bio = profile['bio'] as String?;
         final birthLabel = birthDateLabel(profile['birthDate'] as String?);
-        final badges = achievementsOf(stats);
         final cities = {
           for (final race in result.races)
             if (race.edition?['city'] != null) race.edition!['city'] as String,
@@ -2492,24 +2614,37 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    profile['displayName'] as String? ?? 'Corredor',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 24,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          profile['displayName'] as String? ?? 'Corredor',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 24,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: const Key('edit-profile'),
+                        tooltip: 'Editar perfil',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                        onPressed: () => editProfile(profile),
+                      ),
+                    ],
                   ),
                   Text(
                     [
                       '@${profile['username'] ?? ''}',
-                      if (city != null && city.isNotEmpty) city,
+                      ?brLocationLabel(profile),
+                      if (brLocationLabel(profile) == null &&
+                          city != null &&
+                          city.isNotEmpty)
+                        city,
                     ].join('  •  '),
                     style: TextStyle(color: context.muted),
                   ),
-                  if (bio != null && bio.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Text(bio),
-                  ],
                   if (birthLabel != null) ...[
                     const SizedBox(height: 8),
                     Row(
@@ -2527,20 +2662,10 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       ],
                     ),
                   ],
-                  const SizedBox(height: 16),
-                  Card(
-                    child: ListTile(
-                      key: const Key('edit-profile'),
-                      leading: const Icon(Icons.edit_outlined),
-                      title: const Text('Editar perfil'),
-                      subtitle: Text(
-                        brLocationLabel(profile) ??
-                            'Toque para informar seu estado e cidade',
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => editLocation(profile),
-                    ),
-                  ),
+                  if (bio != null && bio.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(bio, key: const Key('profile-phrase')),
+                  ],
                   const SizedBox(height: 16),
                   Card(
                     child: Padding(
@@ -2554,32 +2679,33 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       ),
                     ),
                   ),
-                  if (badges.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          for (final item in badges) ...[
-                            achievementBadge(item),
-                            const SizedBox(width: 10),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
                   sectionTitle(
                     'Quero correr',
-                    action: 'Ver todas',
-                    onAction: () => soon('Lista completa em breve.'),
+                    action: 'Ver agenda',
+                    onAction: () => Navigator.of(context)
+                        .push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                AgendaScreen(gateway: widget.gateway),
+                          ),
+                        )
+                        .then((_) {
+                          if (mounted) {
+                            setState(() {
+                              data = load();
+                            });
+                          }
+                        }),
                   ),
-                  if (result.wishlist.isEmpty)
-                    const Text('Sua lista Quero correr aparecerá aqui.')
-                  else
-                    for (final entry in result.wishlist.take(3)) ...[
-                      wishTile(entry),
-                      const SizedBox(height: 8),
-                    ],
+                  if (result.plans.isEmpty)
+                    const Text(
+                      'Suas corridas desejadas e inscritas aparecerão aqui.',
+                      key: Key('no-plans'),
+                    )
+                  else ...[
+                    planGrid('wanted', result.plans),
+                    planGrid('registered', result.plans),
+                  ],
                   sectionTitle('Minhas publicações'),
                   if (myPosts.isEmpty)
                     const Text(
@@ -2587,18 +2713,31 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       key: Key('no-my-posts'),
                     )
                   else
-                    // Mesmo cartão do Feed, uma publicação abaixo da outra — não em grade.
-                    for (final entry in myPosts) ...[
-                      PostCard(
-                        key: Key('my-post-${entry.postId}'),
-                        gateway: widget.gateway,
-                        entry: entry,
-                        onChanged: () {
-                          if (mounted) setState(() => data = load());
-                        },
-                      ),
-                      const SizedBox(height: 14),
-                    ],
+                    // Miniaturas, 3 por linha; tocar abre a publicação inteira.
+                    GridView.count(
+                      padding: EdgeInsets.zero,
+                      key: const Key('my-posts-grid'),
+                      crossAxisCount: 3,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 6,
+                      crossAxisSpacing: 6,
+                      children: [
+                        for (final entry in myPosts)
+                          PostThumb(
+                            key: Key('my-post-${entry.postId}'),
+                            gateway: widget.gateway,
+                            entry: entry,
+                            onChanged: () {
+                              if (mounted) {
+                                setState(() {
+                                  data = load();
+                                });
+                              }
+                            },
+                          ),
+                      ],
+                    ),
                   const SizedBox(height: 8),
                   Card(
                     child: ListTile(
