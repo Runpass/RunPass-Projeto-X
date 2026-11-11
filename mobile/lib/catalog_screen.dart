@@ -390,11 +390,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
   bool loading = false;
   bool showFilters = false;
 
-  /// Ordem da lista: 'date' (padrão) ou 'rating' (avaliação). O ícone da seta inverte a direção.
-  String sortBy = 'date';
-
-  /// Avaliação mínima (0 = todas). As corridas sem avaliação ficam de fora quando há mínimo.
-  double minRating = 0;
+  /// Ícone de estrela: coloca as corridas mais bem avaliadas primeiro (sem nota por último).
+  bool bestRatedFirst = false;
 
   @override
   void initState() {
@@ -646,9 +643,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
     super.dispose();
   }
 
-  /// Ordem por data: decrescente (mais recentes primeiro) por padrão; o ícone alterna.
-  bool descending = true;
-
   /// Itens por página da busca atual. O cursor do servidor é amarrado aos filtros (inclui o limite),
   /// então o limite não pode mudar no meio de uma busca.
   late String pageLimit = widget.serverPaging ? '20' : '100';
@@ -673,36 +667,27 @@ class _CatalogScreenState extends State<CatalogScreen> {
     };
   }
 
-  /// Itens na ordem escolhida: primeiro as minhas (por prioridade), depois as demais; dentro de cada
-  /// grupo, por data ou por avaliação (o ícone alterna a direção) e, em empate, pelo nome.
-  /// A avaliação mínima só esconde corridas: nunca muda o que a busca pediu ao servidor.
+  /// Itens na ordem da tela: primeiro as minhas (por prioridade), depois as demais. Dentro de cada grupo,
+  /// as mais recentes primeiro (a data se escolhe pelo filtro de ano, não por ordenação) ou, com a estrela
+  /// ligada, as mais bem avaliadas primeiro. Em empate, mais avaliações e depois o nome.
   List<Map<String, dynamic>> get view {
-    var list = [...items];
-    if (minRating > 0) {
-      list = [
-        for (final e in list)
-          if ((scoreOf(e) ?? 0) >= minRating) e,
-      ];
-    }
+    final list = [...items];
     if (widget.serverPaging) return list;
     list.sort((a, b) {
       final byPriority = priority(a).compareTo(priority(b));
       if (byPriority != 0) return byPriority;
-      if (sortBy == 'rating') {
+      if (bestRatedFirst) {
         final sa = scoreOf(a);
         final sb = scoreOf(b);
-        // Sem avaliação sempre por último, em qualquer direção.
+        // Sem avaliação sempre por último.
         if ((sa == null) != (sb == null)) return sa == null ? 1 : -1;
-        if (sa != null && sb != null && sa != sb) {
-          return descending ? sb.compareTo(sa) : sa.compareTo(sb);
-        }
+        if (sa != null && sb != null && sa != sb) return sb.compareTo(sa);
         final byReviews = reviewsOf(b).compareTo(reviewsOf(a));
         if (byReviews != 0) return byReviews;
       }
       final byDate = (a['date'] as String).compareTo(b['date'] as String);
       final byName = '${a['name']}'.compareTo('${b['name']}');
-      if (byDate == 0) return byName;
-      return descending ? -byDate : byDate;
+      return byDate == 0 ? byName : -byDate;
     });
     return list;
   }
@@ -718,8 +703,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
       if (error != null) return;
     }
   }
-
-  void toggleSort() => setState(() => descending = !descending);
 
   void onPhraseChanged(String text) {
     setState(() {});
@@ -892,7 +875,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
     }
     setState(() {
       registration = null;
-      minRating = 0;
       registrationEpoch++;
     });
     load();
@@ -1178,28 +1160,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: DropdownButtonFormField<String?>(
-                          key: ValueKey('filter-year-$registrationEpoch'),
-                          initialValue: fields['year']!.text.isEmpty
-                              ? null
-                              : fields['year']!.text,
-                          decoration: const InputDecoration(
-                            labelText: 'Ano da prova',
-                          ),
-                          items: [
-                            const DropdownMenuItem(
-                              value: null,
-                              child: Text('Qualquer ano'),
-                            ),
-                            for (final y in filterYears())
-                              DropdownMenuItem(value: '$y', child: Text('$y')),
-                          ],
-                          onChanged: (value) =>
-                              fields['year']!.text = value ?? '',
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: DropdownButtonFormField<String?>(
                           key: ValueKey(
                             'filter-registration-$registrationEpoch',
                           ),
@@ -1272,67 +1232,51 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
-          if (items.length > 1 || minRating > 0)
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    key: const Key('catalog-sort-by'),
-                    initialValue: sortBy,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Ordenar por'),
-                    items: const [
-                      DropdownMenuItem(value: 'date', child: Text('Data')),
-                      DropdownMenuItem(
-                        value: 'rating',
-                        child: Text('Avaliação'),
-                      ),
-                    ],
-                    onChanged: (value) =>
-                        setState(() => sortBy = value ?? 'date'),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String?>(
+                  key: ValueKey('filter-year-$registrationEpoch'),
+                  initialValue: fields['year']!.text.isEmpty
+                      ? null
+                      : fields['year']!.text,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Ano',
+                    isDense: true,
+                    prefixIcon: Icon(Icons.calendar_today_rounded, size: 18),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<double>(
-                    key: const Key('catalog-min-rating'),
-                    initialValue: minRating,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Avaliação mínima',
+                  items: [
+                    const DropdownMenuItem(
+                      value: null,
+                      child: Text('Qualquer ano'),
                     ),
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text('Todas')),
-                      DropdownMenuItem(value: 3, child: Text('3 ou mais')),
-                      DropdownMenuItem(value: 4, child: Text('4 ou mais')),
-                      DropdownMenuItem(value: 4.5, child: Text('4,5 ou mais')),
-                    ],
-                    onChanged: (value) =>
-                        setState(() => minRating = value ?? 0),
-                  ),
+                    for (final y in filterYears())
+                      DropdownMenuItem(value: '$y', child: Text('$y')),
+                  ],
+                  // O ano filtra na hora: é a única forma de escolher a data.
+                  onChanged: loading
+                      ? null
+                      : (value) {
+                          fields['year']!.text = value ?? '';
+                          load();
+                        },
                 ),
-                IconButton(
-                  key: const Key('catalog-sort'),
-                  tooltip: sortBy == 'rating'
-                      ? (descending
-                            ? 'Melhor avaliação primeiro (toque para inverter)'
-                            : 'Pior avaliação primeiro (toque para inverter)')
-                      : (descending
-                            ? 'Mais recentes primeiro (toque para inverter)'
-                            : 'Mais antigas primeiro (toque para inverter)'),
-                  icon: Icon(
-                    descending
-                        ? Icons.arrow_downward_rounded
-                        : Icons.arrow_upward_rounded,
-                    semanticLabel: descending
-                        ? 'Ordem decrescente'
-                        : 'Ordem crescente',
-                  ),
-                  onPressed: loading ? null : toggleSort,
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                key: const Key('catalog-sort-rating'),
+                tooltip: bestRatedFirst
+                    ? 'Melhores avaliações primeiro (toque para desligar)'
+                    : 'Ordenar pelas melhores avaliações',
+                isSelected: bestRatedFirst,
+                icon: const Icon(Icons.star_border_rounded),
+                selectedIcon: const Icon(Icons.star_rounded),
+                onPressed: () =>
+                    setState(() => bestRatedFirst = !bestRatedFirst),
+              ),
+            ],
+          ),
           if (loading) const Center(child: CircularProgressIndicator()),
           if (!loading && error == null && items.isEmpty)
             Text(
@@ -1347,13 +1291,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 key: const Key('catalog-request-empty'),
                 onPressed: requestRace,
                 child: const Text('Não encontrou? Pedir cadastro da corrida'),
-              ),
-            ),
-          if (!loading && error == null && items.isNotEmpty && view.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                'Nenhuma corrida com essa avaliação. Escolha uma avaliação mínima menor.',
               ),
             ),
           for (final edition in view) editionCard(edition),

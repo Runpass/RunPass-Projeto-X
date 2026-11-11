@@ -1666,7 +1666,7 @@ void main() {
   });
 
   testWidgets(
-    'o ícone de ordem alterna entre decrescente e crescente, começando em decrescente',
+    'não há ordenação por data: a lista vem da mais recente e a data se escolhe pelo ano',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -1689,19 +1689,15 @@ void main() {
       await tester.pumpAndSettle();
       double top(String text) =>
           tester.getTopLeft(find.textContaining(text)).dy;
-      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
       expect(top('Corrida C') < top('Corrida B'), isTrue);
       expect(top('Corrida B') < top('Corrida A'), isTrue);
-      await tester.tap(find.byKey(const Key('catalog-sort')));
-      await tester.pumpAndSettle();
-      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
-      expect(top('Corrida A') < top('Corrida B'), isTrue);
-      expect(top('Corrida B') < top('Corrida C'), isTrue);
-      await tester.tap(find.byKey(const Key('catalog-sort')));
-      await tester.pumpAndSettle();
-      expect(top('Corrida C') < top('Corrida A'), isTrue);
-      // O seletor de ordem (Data ou Avaliação) acompanha o ícone de direção.
-      expect(find.text('Ordenar por'), findsOneWidget);
+      // Sem setas de ordem nem seletor "Ordenar por": só o ano e a estrela.
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsNothing);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsNothing);
+      expect(find.text('Ordenar por'), findsNothing);
+      expect(find.byKey(const Key('catalog-sort')), findsNothing);
+      expect(find.byKey(const Key('filter-year-0')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-sort-rating')), findsOneWidget);
     },
   );
 
@@ -1890,12 +1886,10 @@ void priorityOrderTests() {
       List<String> order() =>
           (['A', 'B', 'C', 'D', 'E', 'F']
             ..sort((a, b) => top(a).compareTo(top(b))));
-      // Decrescente (padrão): D (corri), C (inscrito), F e B (desejo, F é mais recente), A e E (demais, A é mais recente).
+      // Minhas primeiro (D corri, C inscrito, F e B desejo) e depois as demais. Dentro de cada grupo, as
+      // mais recentes primeiro: não existe controle para inverter a data (a data se escolhe pelo filtro de ano).
       expect(order(), ['D', 'C', 'F', 'B', 'A', 'E']);
-      await tester.tap(find.byKey(const Key('catalog-sort')));
-      await tester.pumpAndSettle();
-      // Crescente: os grupos continuam na mesma ordem; só a data dentro de cada um inverte.
-      expect(order(), ['D', 'C', 'B', 'F', 'E', 'A']);
+      expect(find.byKey(const Key('catalog-sort')), findsNothing);
     },
   );
 }
@@ -1928,7 +1922,7 @@ void defaultOrderTests() {
       double top(String text) =>
           tester.getTopLeft(find.textContaining(text)).dy;
       expect(top('Corrida B') < top('Corrida A'), isTrue);
-      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsNothing);
     },
   );
 }
@@ -1988,59 +1982,47 @@ void ratingTests() {
     return [for (final e in shown) e.key];
   }
 
-  testWidgets('ordenar por avaliação: melhor primeiro, desempate por nº de '
-      'avaliações e sem nota por último', (tester) async {
+  testWidgets('a estrela liga e desliga as melhores avaliações primeiro; '
+      'desempate por nº de avaliações e sem nota por último', (tester) async {
     await openList(tester);
-    expect(order(tester), ['C', 'A', 'D', 'B']); // padrão: data, mais recente
-    await choose(tester, 'catalog-sort-by', 'Avaliação');
-    expect(order(tester), ['D', 'B', 'A', 'C']);
-    // a seta inverte a direção; quem não tem nota continua por último
-    await tester.tap(find.byKey(const Key('catalog-sort')));
+    expect(order(tester), [
+      'C',
+      'A',
+      'D',
+      'B',
+    ]); // padrão: mais recentes primeiro
+    await tester.tap(find.byKey(const Key('catalog-sort-rating')));
     await tester.pumpAndSettle();
-    expect(order(tester), ['A', 'D', 'B', 'C']);
+    expect(order(tester), ['D', 'B', 'A', 'C']);
+    expect(find.byIcon(Icons.star_rounded), findsOneWidget);
+    await tester.tap(find.byKey(const Key('catalog-sort-rating')));
+    await tester.pumpAndSettle();
+    expect(order(tester), ['C', 'A', 'D', 'B']); // desligou: volta ao padrão
+    expect(find.byIcon(Icons.star_border_rounded), findsOneWidget);
   });
 
-  testWidgets('avaliação mínima esconde as abaixo e as sem nota, e volta com '
-      '"Todas"', (tester) async {
-    await openList(tester);
-    await choose(tester, 'catalog-min-rating', '4 ou mais');
-    expect(order(tester), ['D', 'B']);
-    await choose(tester, 'catalog-min-rating', '4,5 ou mais');
-    expect(order(tester), ['D', 'B']);
-    await choose(tester, 'catalog-min-rating', '3 ou mais');
-    expect(order(tester), ['A', 'D', 'B']);
-    await choose(tester, 'catalog-min-rating', 'Todas');
-    expect(order(tester), ['C', 'A', 'D', 'B']);
-  });
-
-  testWidgets('se a avaliação mínima esconde tudo, a tela avisa e o filtro '
-      'continua à mão', (tester) async {
+  testWidgets('o filtro de ano envia só o ano e "Qualquer ano" o remove', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(800, 3000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
+    final calls = <Map<String, String>>[];
     final gateway = await signed((uri, method, headers, body) async {
-      if (uri.path == '/editions') {
-        return JsonReply(200, {
-          'items': [
-            rated('A', '2026-05-01', score: 3.5, reviews: 4),
-            rated('B', '2026-06-01', score: 3.8, reviews: 6),
-          ],
-        });
-      }
-      return const JsonReply(200, {'items': []});
+      if (uri.path == '/editions') calls.add(uri.queryParameters);
+      return JsonReply(200, {
+        'items': [rated('A', '2026-05-01', score: 4, reviews: 3)],
+      });
     });
     await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
-    await choose(tester, 'catalog-min-rating', '4 ou mais');
-    expect(find.textContaining('Corrida A'), findsNothing);
-    expect(find.textContaining('Corrida B'), findsNothing);
-    expect(
-      find.text(
-        'Nenhuma corrida com essa avaliação. Escolha uma avaliação mínima menor.',
-      ),
-      findsOneWidget,
-    );
-    await choose(tester, 'catalog-min-rating', 'Todas');
-    expect(find.textContaining('Corrida A'), findsWidgets);
+    expect(calls.last.containsKey('dateFrom'), isFalse);
+    await choose(tester, 'filter-year-0', '2026');
+    expect(calls.last['dateFrom'], '2026-01-01');
+    expect(calls.last['dateTo'], '2026-12-31');
+    expect(calls.last.containsKey('namePrefix'), isFalse);
+    await choose(tester, 'filter-year-0', 'Qualquer ano');
+    expect(calls.last.containsKey('dateFrom'), isFalse);
+    expect(calls.last.containsKey('dateTo'), isFalse);
   });
 }
