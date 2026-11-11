@@ -565,6 +565,50 @@
         "x-requires-beta-admission": true
       }
     },
+    "/participations/{id}/display-image": {
+      "get": {
+        "operationId": "getParticipationDisplayImage",
+        "summary": "Link temporario e assinado para a foto da prateleira: o recorte reposicionado pela pessoa quando existir, senao a mesma foto sanitizada de getParticipationImage. Nunca altera a foto oficial.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
     "/participations": {
       "post": {
         "operationId": "createParticipationDraft",
@@ -5858,6 +5902,42 @@
           },
           "medalImageReference": {
             "type": "string"
+          },
+          "medalFrameId": {
+            "type": "string",
+            "enum": [
+              "circular_prata_azul",
+              "circular_rose_rosa",
+              "circular_grafite_preto",
+              "hexagonal_bronze_verde",
+              "hexagonal_rose_lilas",
+              "quadrada_rose_malva",
+              "escudo_grafite_azul",
+              "assimetrica_prata_lima",
+              "triangular_grafite_preto",
+              "triangular_rose_rosa"
+            ]
+          },
+          "medalDescription": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "medalCity": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "medalState": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$"
+          },
+          "medalYear": {
+            "type": "integer",
+            "minimum": 1900,
+            "maximum": 2100
+          },
+          "medalDisplayImageReference": {
+            "type": "string",
+            "description": "Recorte opcional so para a prateleira (reposicionamento); a foto oficial (medalImageReference) nao muda."
           }
         }
       },
@@ -6108,6 +6188,57 @@
             "minimum": 0,
             "exclusiveMinimum": true,
             "description": "Only for a missing-edition request draft before it has a catalog distanceId. Final completion resolves a valid catalog distance."
+          },
+          "medalFrameId": {
+            "type": "string",
+            "enum": [
+              "circular_prata_azul",
+              "circular_rose_rosa",
+              "circular_grafite_preto",
+              "hexagonal_bronze_verde",
+              "hexagonal_rose_lilas",
+              "quadrada_rose_malva",
+              "escudo_grafite_azul",
+              "assimetrica_prata_lima",
+              "triangular_grafite_preto",
+              "triangular_rose_rosa"
+            ],
+            "nullable": true,
+            "description": "Modelo de medalha do catálogo (imagem com furo central); null volta ao padrão (circular_prata_azul)."
+          },
+          "medalDescription": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "nullable": true,
+            "description": "Legenda da medalha; null volta a usar o nome da edição do catálogo."
+          },
+          "medalCity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "nullable": true,
+            "description": "Cidade exibida na legenda da medalha; null volta a usar a cidade da edição do catálogo."
+          },
+          "medalState": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "nullable": true,
+            "description": "UF exibida na legenda da medalha; null volta a usar a UF da edição do catálogo."
+          },
+          "medalYear": {
+            "type": "integer",
+            "minimum": 1900,
+            "maximum": 2100,
+            "nullable": true,
+            "description": "Ano exibido na legenda da medalha; null volta a usar o ano da data da edição do catálogo."
+          },
+          "medalDisplayImageReference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "nullable": true,
+            "description": "Identificador opaco de uma foto recortada pela pessoa so para a prateleira; null volta ao recorte automatico da foto oficial da medalha (medalImageReference), que nunca é alterada."
           }
         }
       },

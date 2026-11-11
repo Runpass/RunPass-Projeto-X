@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -61,6 +63,24 @@ Future<(IdentityGateway, List<String>, List<Map<String, dynamic>?>)> setup({
   );
   await gateway.signIn('synthetic@example.test', 'synthetic');
   return (gateway, calls, patches);
+}
+
+/// PNG retangular (largura != altura) para testar que a rotacao troca as
+/// dimensoes; cada metade tem uma cor para checar o sentido do giro.
+Future<Uint8List> rectanglePng(int width, int height) async {
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawRect(
+    Rect.fromLTWH(0, 0, width / 2, height.toDouble()),
+    Paint()..color = const Color(0xffff0000),
+  );
+  canvas.drawRect(
+    Rect.fromLTWH(width / 2, 0, width / 2, height.toDouble()),
+    Paint()..color = const Color(0xff0000ff),
+  );
+  final image = await recorder.endRecording().toImage(width, height);
+  final data = await image.toByteData(format: ui.ImageByteFormat.png);
+  return data!.buffer.asUint8List();
 }
 
 void main() {

@@ -115,6 +115,30 @@ class PatchParticipation(Input):
     showTime: bool | None = None
     showPlacement: bool | None = None
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    # Modelo de medalha (catalogo fixo de imagens); None volta ao padrao
+    # (circular_prata_azul). Customizacao visual da legenda abaixo tambem opcional.
+    medalFrameId: (
+        Literal[
+            "circular_prata_azul",
+            "circular_rose_rosa",
+            "circular_grafite_preto",
+            "hexagonal_bronze_verde",
+            "hexagonal_rose_lilas",
+            "quadrada_rose_malva",
+            "escudo_grafite_azul",
+            "assimetrica_prata_lima",
+            "triangular_grafite_preto",
+            "triangular_rose_rosa",
+        ]
+        | None
+    ) = None
+    medalDescription: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    medalCity: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    medalState: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] | None = None
+    medalYear: Annotated[int, Field(ge=1900, le=2100)] | None = None
+    # Recorte da foto so para a prateleira (reposicionamento); None volta ao
+    # recorte automatico da foto oficial (medalImageReference), que nunca muda.
+    medalDisplayImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
 
     @model_validator(mode="after")
     def changes(self):

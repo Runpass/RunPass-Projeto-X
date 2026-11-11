@@ -157,6 +157,34 @@ class UploadService:
             "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
         }
 
+    def medal_display_image(self, actor, participation_id):
+        """Foto da prateleira: o recorte reposicionado pela pessoa quando existir, senao a
+        mesma foto sanitizada de medal_image. A foto oficial nunca e alterada por isso."""
+
+        def work(read, write, account, now, replay):
+            owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
+            if not owner:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            subject = owner["owner"]
+            part = read(("history", "USER#" + subject, "P#" + participation_id + "#PART"))
+            if not part or not self.may_view(read, actor, subject, part):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            medal = read(("history", "USER#" + subject, "P#" + participation_id + "#MEDAL"))
+            if part.get("state") != "completed" or not medal:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            if medal.get("imageOrigin") != "runner":
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            reference = part.get("medalDisplayImageReference") or medal["imageReference"]
+            return {"owner": subject, "reference": reference, "now": now}, {}
+
+        found = self.identity.transact(actor, "getMedalDisplayImage", None, {}, work, admitted=True)
+        link = self.blobs.view_url(found["owner"], found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
+
     def edition_banner(self, actor, edition):
         """Link temporario do banner aprovado da edicao (copia sanitizada guardada pelo operador)."""
         self.identity.authorize(actor, admitted=True)

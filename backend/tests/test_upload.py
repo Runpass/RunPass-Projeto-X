@@ -86,6 +86,19 @@ class UploadTests(unittest.TestCase):
             self.service.medal_image(other, "does-not-exist")
         self.assertEqual(missing.exception.code, "IMAGE_NOT_AVAILABLE")
 
+    def test_display_image_falls_back_to_official_then_prefers_override(self):
+        pid = self.seed_medal()
+        link = self.service.medal_display_image(self.actor, pid)
+        self.assertTrue(link["url"].startswith("memory://private/derived/ref1"))
+        part_key = ("history", "USER#owner", "P#p1#PART")
+        part = self.store.get(part_key)
+        self.blobs.write_derived("ref2", b"bytes2", "image/jpeg", "owner")
+        self.store.commit(
+            {part_key: part}, {part_key: {**part, "medalDisplayImageReference": "ref2"}}
+        )
+        overridden = self.service.medal_display_image(self.actor, pid)
+        self.assertTrue(overridden["url"].startswith("memory://private/derived/ref2"))
+
     def test_visibility_rule_can_be_injected_and_drafts_or_official_art_have_no_photo(self):
         pid = self.seed_medal()
         other = self.admit("other")

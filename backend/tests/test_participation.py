@@ -129,6 +129,94 @@ class ParticipationTests(unittest.TestCase):
             )
         self.assertEqual(error.exception.code, "VERSION_CONFLICT")
 
+    def test_patch_sets_and_clears_medal_shelf_customization(self):
+        draft = self.service.create(self.actor, "create", self.payload(timeSeconds=3600))
+        done = self.service.complete(self.actor, draft["id"], "done", self.completion(draft))
+        customized = self.service.patch(
+            self.actor,
+            draft["id"],
+            "customize",
+            {
+                "expectedVersion": done["version"],
+                "medalFrameId": "hexagonal_bronze_verde",
+                "medalDescription": "Minha prova especial",
+                "medalCity": "Santos",
+                "medalState": "SP",
+                "medalYear": 2023,
+            },
+        )
+        self.assertEqual(customized["medalFrameId"], "hexagonal_bronze_verde")
+        self.assertEqual(customized["medalDescription"], "Minha prova especial")
+        self.assertEqual(customized["medalCity"], "Santos")
+        self.assertEqual(customized["medalState"], "SP")
+        self.assertEqual(customized["medalYear"], 2023)
+        reset = self.service.patch(
+            self.actor,
+            draft["id"],
+            "reset",
+            {
+                "expectedVersion": customized["version"],
+                "medalFrameId": None,
+                "medalDescription": None,
+                "medalCity": None,
+                "medalState": None,
+                "medalYear": None,
+            },
+        )
+        for field in (
+            "medalFrameId",
+            "medalDescription",
+            "medalCity",
+            "medalState",
+            "medalYear",
+        ):
+            self.assertNotIn(field, reset)
+
+    def test_medal_customization_rejects_invalid_state_and_frame(self):
+        from pydantic import ValidationError
+
+        from runpass.models import PatchParticipation
+
+        with self.assertRaises(ValidationError):
+            PatchParticipation(expectedVersion=1, medalState="sp")
+        with self.assertRaises(ValidationError):
+            PatchParticipation(expectedVersion=1, medalFrameId="ouro_brilhante")
+
+    def test_medal_display_image_is_separate_from_the_official_photo(self):
+        draft = self.service.create(self.actor, "c", self.payload(timeSeconds=3600))
+        done = self.service.complete(self.actor, draft["id"], "done", self.completion(draft))
+        cropped = ("operations", "USER#owner", "IMAGE#img-cropped")
+        self.store.commit(
+            {cropped: None},
+            {cropped: {"owner": "owner", "origin": "runner", "state": "valid", "refs": 0}},
+        )
+        with self.assertRaises(Problem) as missing:
+            self.service.patch(
+                self.actor,
+                draft["id"],
+                "bad",
+                {"expectedVersion": done["version"], "medalDisplayImageReference": "unknown"},
+            )
+        self.assertEqual(missing.exception.code, "IMAGE_NOT_VALID")
+        repositioned = self.service.patch(
+            self.actor,
+            draft["id"],
+            "reposition",
+            {"expectedVersion": done["version"], "medalDisplayImageReference": "img-cropped"},
+        )
+        self.assertEqual(repositioned["medalDisplayImageReference"], "img-cropped")
+        # A foto oficial da medalha (usada no feed/historico) nao muda.
+        self.assertEqual(repositioned["medalImageReference"], "img-valid")
+        self.assertEqual(self.store.get(cropped)["refs"], 1)
+        reset = self.service.patch(
+            self.actor,
+            draft["id"],
+            "reset",
+            {"expectedVersion": repositioned["version"], "medalDisplayImageReference": None},
+        )
+        self.assertNotIn("medalDisplayImageReference", reset)
+        self.assertEqual(self.store.get(cropped)["refs"], 0)
+
     def test_completed_race_can_swap_its_medal_photo_and_refs_follow(self):
         draft = self.service.create(self.actor, "c", self.payload(timeSeconds=3600))
         with self.assertRaises(Problem) as early:

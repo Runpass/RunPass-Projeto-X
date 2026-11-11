@@ -64,6 +64,12 @@ class ParticipationService:
                 "completedAt",
                 "medalImageReference",
                 "publishToFeed",
+                "medalFrameId",
+                "medalDescription",
+                "medalCity",
+                "medalState",
+                "medalYear",
+                "medalDisplayImageReference",
             )
             if key in item
         }
@@ -690,6 +696,11 @@ class ParticipationService:
                 "bibNumber",
                 "showTime",
                 "showPlacement",
+                "medalFrameId",
+                "medalDescription",
+                "medalCity",
+                "medalState",
+                "medalYear",
             ):
                 if field not in payload:
                     continue
@@ -703,6 +714,12 @@ class ParticipationService:
                 self._replace_medal_image(
                     read, write, pk, participation_id, item, payload["medalImageReference"]
                 )
+            if "medalDisplayImageReference" in payload:
+                reference = payload["medalDisplayImageReference"]
+                if reference is None:
+                    self._clear_medal_display_image(read, write, pk, item)
+                else:
+                    self._set_medal_display_image(read, write, pk, item, reference)
             item["version"] += 1
             item["updatedAt"] = stamp(now)
             write(part_key, item)
@@ -805,6 +822,37 @@ class ParticipationService:
         write(new_key, {**new, "refs": new.get("refs", 0) + 1})
         write(medal_key, {**medal, "imageReference": reference, "imageOrigin": "runner"})
         item["medalImageReference"] = reference
+
+    @staticmethod
+    def _set_medal_display_image(read, write, pk, item, reference):
+        """Recorte opcional so para a prateleira; nunca troca a foto oficial da medalha."""
+        if item["state"] != "completed":
+            raise Problem(409, "PARTICIPATION_NOT_COMPLETED")
+        previous = item.get("medalDisplayImageReference")
+        if reference == previous:
+            return
+        new_key = ("operations", pk, "IMAGE#" + reference)
+        new = read(new_key)
+        if not new or new.get("state") != "valid":
+            raise Problem(422, "IMAGE_NOT_VALID")
+        write(new_key, {**new, "refs": new.get("refs", 0) + 1})
+        if previous:
+            old_key = ("operations", pk, "IMAGE#" + previous)
+            old = read(old_key)
+            if old:
+                write(old_key, {**old, "refs": max(0, old.get("refs", 0) - 1)})
+        item["medalDisplayImageReference"] = reference
+
+    @staticmethod
+    def _clear_medal_display_image(read, write, pk, item):
+        previous = item.get("medalDisplayImageReference")
+        if not previous:
+            return
+        old_key = ("operations", pk, "IMAGE#" + previous)
+        old = read(old_key)
+        if old:
+            write(old_key, {**old, "refs": max(0, old.get("refs", 0) - 1)})
+        item.pop("medalDisplayImageReference", None)
 
     def _binding(self, actor, state, limit):
         return hashlib.sha256(
