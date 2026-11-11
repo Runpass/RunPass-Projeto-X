@@ -144,6 +144,8 @@ test('motivo da falha do Claude Code vira frase útil sem vazar detalhes', async
   assert.match(motivoClaude('http_403'), /organização/);
   assert.match(motivoClaude('http_500'), /\(500\)/);
   assert.match(motivoClaude('not_configured'), /não está configurada/);
+  assert.match(motivoClaude('network:invalid_header'), /espaço ou quebra de linha/);
+  assert.match(motivoClaude('network:timeout'), /demorou/);
   assert.equal(motivoClaude(undefined), 'Motivo não identificado.');
 });
 

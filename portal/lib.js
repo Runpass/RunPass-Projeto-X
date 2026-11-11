@@ -276,6 +276,12 @@ export function motivoClaude(codigo) {
     http_404: 'A Anthropic não encontrou o relatório do Claude Code para esta organização.',
     http_429: 'A Anthropic limitou as consultas agora. Tente de novo em instantes.',
     network: 'Sem resposta da Anthropic agora.',
+    'network:invalid_header': 'A chave guardada no SSM tem espaço ou quebra de linha no fim ou no início. Grave-a de novo, sem espaços.',
+    'network:timeout': 'A Anthropic demorou demais para responder. Tente de novo em instantes.',
+    'network:tls': 'Falha de certificado (TLS) ao falar com a Anthropic.',
+    'network:dns_or_connect': 'Não foi possível conectar à Anthropic (DNS ou conexão).',
+    'network:connect': 'Não foi possível conectar à Anthropic.',
+    'network:invalid_json': 'A Anthropic respondeu algo que não é JSON (pode ser um bloqueio de rede).',
     not_configured: 'A chave de administrador da Anthropic não está configurada neste deploy.',
   };
   if (mapa[c]) return mapa[c];

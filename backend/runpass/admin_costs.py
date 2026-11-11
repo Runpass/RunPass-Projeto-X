@@ -18,6 +18,15 @@ from zoneinfo import ZoneInfo
 from .store import Unavailable
 
 CACHE_TTL = 900
+ERROR_TTL = (
+    60  # falha de limite (429), servidor (5xx) ou rede: nao repetir a consulta a cada clique
+)
+
+
+def _transient(reason):
+    return reason.startswith(("http_429", "http_5", "network"))
+
+
 FUSO = ZoneInfo("America/Sao_Paulo")
 
 
@@ -262,12 +271,24 @@ class OpenAiOrg:
         if not self.configured:
             raise OrgUnavailable("not_configured")
         now = self.clock()
+        if getattr(self, "_error", None) and now - self._error[0] < ERROR_TTL:
+            raise OrgUnavailable(self._error[1])
+        try:
+            return self._report()
+        except OrgUnavailable as error:
+            reason = getattr(error, "reason", "")
+            self._error = (now, reason) if _transient(reason) else None
+            raise
+
+    def _report(self):
+        now = self.clock()
         if self._cache and now - self._cache[0] < CACHE_TTL:
             return self._cache[1]
         try:
             key = self.key_loader()
         except Exception as error:  # noqa: BLE001 - sem permissao ou parametro: cai para a estimativa
             raise OrgUnavailable("key_read_failed:" + type(error).__name__[:40]) from error
+        key = (key or "").strip()  # espaco ou quebra de linha colados junto com a chave
         if not key:
             raise OrgUnavailable("empty_key")
         today = datetime.fromtimestamp(now, timezone.utc).date()
@@ -366,8 +387,18 @@ def anthropic_transport(path, params, key, timeout=15):
             return response.status, json.loads(response.read(5_000_000))
     except urllib.error.HTTPError as error:
         return error.code, {}
-    except (urllib.error.URLError, OSError, ValueError):
-        return 0, {}
+    except (
+        ValueError
+    ) as error:  # cabecalho invalido (chave com espaco/quebra de linha) ou JSON invalido
+        return 0, {"error": "invalid_header" if "header" in str(error).lower() else "invalid_json"}
+    except TimeoutError:
+        return 0, {"error": "timeout"}
+    except urllib.error.URLError as error:
+        reason = str(getattr(error, "reason", "")).lower()
+        kind = "tls" if "ssl" in reason or "certificate" in reason else "dns_or_connect"
+        return 0, {"error": kind}
+    except OSError:
+        return 0, {"error": "connect"}
 
 
 class ClaudeCodeUsage:
@@ -398,7 +429,10 @@ class ClaudeCodeUsage:
                 query["page"] = page
             status, body = self.transport(self.PATH, query, key)
             if status != 200:
-                raise OrgUnavailable("network" if status == 0 else f"http_{status}")
+                kind = (body or {}).get("error", "")
+                raise OrgUnavailable(
+                    (f"network:{kind}" if kind else "network") if status == 0 else f"http_{status}"
+                )
             rows += body.get("data", [])
             page = body.get("next_page") if body.get("has_more") else None
             if not page:
@@ -414,12 +448,24 @@ class ClaudeCodeUsage:
         if not self.configured:
             raise OrgUnavailable("not_configured")
         now = self.clock()
+        if getattr(self, "_error", None) and now - self._error[0] < ERROR_TTL:
+            raise OrgUnavailable(self._error[1])
+        try:
+            return self._report()
+        except OrgUnavailable as error:
+            reason = getattr(error, "reason", "")
+            self._error = (now, reason) if _transient(reason) else None
+            raise
+
+    def _report(self):
+        now = self.clock()
         if self._cache and now - self._cache[0] < CACHE_TTL:
             return self._cache[1]
         try:
             key = self.key_loader()
         except Exception as error:  # noqa: BLE001 - sem permissao ou parametro: sem detalhe da chave
             raise OrgUnavailable("key_read_failed:" + type(error).__name__[:40]) from error
+        key = (key or "").strip()  # espaco ou quebra de linha colados junto com a chave
         if not key:
             raise OrgUnavailable("empty_key")
         today = datetime.fromtimestamp(now, timezone.utc).date()

@@ -4,7 +4,13 @@ import json
 import unittest
 from datetime import datetime, timezone
 
-from runpass.admin_costs import AwsCosts, ClaudeCodeUsage, OpenAiOrg, OpenAiUsage
+from runpass.admin_costs import (
+    AwsCosts,
+    ClaudeCodeUsage,
+    OpenAiOrg,
+    OpenAiUsage,
+    anthropic_transport,
+)
 from runpass.store import Unavailable
 
 NOW = datetime(2026, 11, 10, 15, tzinfo=timezone.utc)
@@ -457,3 +463,78 @@ class ClaudeCodeUsageTests(unittest.TestCase):
         self.assertIs(ok.report(), first)  # cache de 15 minutos
         self.assertEqual(len(self.api.calls), calls)
         self.assertNotIn("segredo", json.dumps(first))
+
+
+class ResilienciaTests(unittest.TestCase):
+    def setUp(self):
+        self.now = NOW.timestamp()
+
+    def test_chave_com_espaco_ou_quebra_de_linha_e_limpa_antes_de_usar(self):
+        usadas = []
+
+        def api(path, params, key):
+            usadas.append(key)
+            return 200, {"data": [], "has_more": False}
+
+        ClaudeCodeUsage(lambda: "  sk-ant-admin01-teste\n", lambda: self.now, None, api).report()
+        OpenAiOrg(lambda: "sk-admin-teste \n", lambda: self.now, "", None, api).report()
+        self.assertTrue(usadas)
+        self.assertTrue(all(k == k.strip() and k for k in usadas))
+
+    def test_limite_429_fica_60_segundos_em_cache_e_depois_tenta_de_novo(self):
+        chamadas, relogio = [], [self.now]
+
+        def api(path, params, key):
+            chamadas.append(path)
+            return 429, {}
+
+        for usage in (
+            OpenAiOrg(lambda: "k", lambda: relogio[0], "", None, api),
+            ClaudeCodeUsage(lambda: "k", lambda: relogio[0], None, api),
+        ):
+            chamadas.clear()
+            relogio[0] = self.now
+            for _ in range(3):  # cliques repetidos em "Atualizar"
+                with self.assertRaises(Unavailable) as erro:
+                    usage.report()
+                self.assertEqual(erro.exception.reason, "http_429")
+            self.assertEqual(len(chamadas), 1)
+            relogio[0] += 61
+            with self.assertRaises(Unavailable):
+                usage.report()
+            self.assertEqual(len(chamadas), 2)
+
+    def test_erro_de_chave_nao_fica_em_cache(self):
+        def api(path, params, key):
+            return 401, {}
+
+        usage = ClaudeCodeUsage(lambda: "k", lambda: self.now, None, api)
+        with self.assertRaises(Unavailable):
+            usage.report()
+        api2 = lambda path, params, key: (200, {"data": [], "has_more": False})  # noqa: E731
+        usage.transport = api2  # a pessoa corrigiu a chave: a proxima consulta ja vale
+        self.assertEqual(usage.report()["totalUsd"], 0)
+
+    def test_falha_de_rede_diz_o_tipo(self):
+        def api(path, params, key):
+            return 0, {"error": "invalid_header"}
+
+        with self.assertRaises(Unavailable) as erro:
+            ClaudeCodeUsage(lambda: "k", lambda: self.now, None, api).report()
+        self.assertEqual(erro.exception.reason, "network:invalid_header")
+
+    def test_transporte_classifica_o_erro_sem_rede_real(self):
+        import urllib.error
+        from unittest import mock
+
+        casos = [
+            (ValueError("Invalid header value b'x\\n'"), "invalid_header"),
+            (ValueError("Expecting value"), "invalid_json"),
+            (TimeoutError(), "timeout"),
+            (urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED]"), "tls"),
+            (urllib.error.URLError("Name or service not known"), "dns_or_connect"),
+            (ConnectionResetError(), "connect"),
+        ]
+        for falha, esperado in casos:
+            with mock.patch("urllib.request.urlopen", side_effect=falha):
+                self.assertEqual(anthropic_transport("/x", {}, "k"), (0, {"error": esperado}))
