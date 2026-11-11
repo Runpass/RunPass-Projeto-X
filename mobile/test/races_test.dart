@@ -1,7 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/identity_gateway.dart';
+
+final onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
 
 Map<String, dynamic> edition(
   String id,
@@ -218,6 +224,100 @@ void main() {
     expect(calls.where((c) => c == 'PATCH /participations/p1').length, 1);
     expect(find.text('Personalizar medalha'), findsNothing);
   });
+
+  testWidgets(
+    'reposicionar foto da medalha: recorta, envia e inclui no PATCH',
+    (tester) async {
+      final calls = <String>[];
+      var patchBody = <String, dynamic>{};
+      final editions = {
+        'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+      };
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        byteTransport: (uri, method, headers, bytes) async => 200,
+        transport: (uri, method, headers, body) async {
+          calls.add('$method ${uri.path}');
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          if (uri.path == '/me') {
+            return const JsonReply(200, {
+              'displayName': 'Corredor Teste',
+              'username': 'teste',
+              'version': 1,
+            });
+          }
+          if (uri.path == '/me/participations') {
+            return JsonReply(200, {
+              'items': [done('p1', 'a', seconds: 1500)],
+            });
+          }
+          if (uri.path == '/participations/p1/display-image') {
+            return const JsonReply(200, {
+              'url': 'https://signed.example/current.jpg',
+              'contentType': 'image/png',
+              'expiresAt': '2026-01-01T00:00:00Z',
+            });
+          }
+          if (uri.path == '/uploads') {
+            return const JsonReply(201, {
+              'uploadId': 'up1',
+              'uploadUrl': 'https://signed.example/up1',
+              'uploadMethod': 'PUT',
+              'uploadHeaders': {'Content-Type': 'image/png'},
+            });
+          }
+          if (uri.path == '/uploads/up1/finalize') {
+            return const JsonReply(200, {
+              'uploadId': 'up1',
+              'state': 'valid',
+              'imageReference': 'img-cropped',
+            });
+          }
+          if (uri.path == '/participations/p1' && method == 'PATCH') {
+            patchBody = Map<String, dynamic>.from(body as Map);
+            return const JsonReply(200, {'id': 'p1'});
+          }
+          final match = editions[uri.pathSegments.last];
+          return match == null
+              ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
+              : JsonReply(200, match);
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            fetchDisplayPhoto: (url) async => onePixelPng,
+            openCropScreen: (context, image) async => image,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('medal-edit-p1')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('medal-reposition-photo')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('medal-reset-photo')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('medal-edit-save')));
+      await tester.pumpAndSettle();
+
+      expect(patchBody['medalDisplayImageReference'], 'img-cropped');
+      expect(calls, contains('GET /participations/p1/display-image'));
+      expect(calls, contains('POST /uploads/up1/finalize'));
+    },
+  );
 
   testWidgets(
     'medal collection without completed races keeps the empty state',

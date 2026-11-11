@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' show cos, pi, sin;
+import 'dart:typed_data' show Uint8List;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -64,6 +66,8 @@ class RaceRecord {
   // como padrao e so usa o valor salvo quando a pessoa o personalizou.
   String get medalShape => participation['medalShape'] as String? ?? 'round';
   String? get medalCordColor => participation['medalCordColor'] as String?;
+  String? get medalDisplayImageReference =>
+      participation['medalDisplayImageReference'] as String?;
   String get medalDescription =>
       participation['medalDescription'] as String? ?? name;
   String get medalCity =>
@@ -185,6 +189,41 @@ class _MedalShapeClipper extends CustomClipper<Path> {
 
 /// Contorno colorido acompanhando exatamente a forma da medalha (redonda,
 /// escudo, estrela ou hexagono), para dar o acabamento de "medalha" a foto.
+/// Fita/cordao em formato de bandeirola (como no template): duas tiras que se
+/// abrem a partir do centro e terminam com um recorte em V.
+class _RibbonPainter extends CustomPainter {
+  final Color color;
+  const _RibbonPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final centerX = size.width / 2;
+    final halfGap = size.width * 0.05;
+    final width = size.width * 0.12;
+    final notch = size.height * 0.3;
+    for (final side in [-1, 1]) {
+      final topInner = centerX + side * halfGap;
+      final topOuter = centerX + side * (halfGap + width);
+      final bottomInner = centerX + side * (halfGap - size.width * 0.03);
+      final bottomOuter =
+          centerX + side * (halfGap + width - size.width * 0.03);
+      final path = Path()
+        ..moveTo(topInner, 0)
+        ..lineTo(topOuter, 0)
+        ..lineTo(bottomOuter, size.height)
+        ..lineTo((bottomOuter + bottomInner) / 2, size.height - notch)
+        ..lineTo(bottomInner, size.height)
+        ..close();
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RibbonPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
 class _MedalRingPainter extends CustomPainter {
   final String shape;
   final Color color;
@@ -213,9 +252,10 @@ class _MedalRingPainter extends CustomPainter {
 
 final Map<String, Color> _medalCordColorCache = {};
 
-/// Cor dominante extraida da foto da medalha, para servir de cor padrao do
-/// cordao quando a pessoa nao escolheu uma cor manualmente. Calculada uma vez
-/// por participacao e reaproveitada (a foto nao muda sem nova customizacao).
+/// Cor dominante extraida da foto da medalha exibida na prateleira (o recorte
+/// reposicionado, quando existir), para servir de cor padrao do cordao quando
+/// a pessoa nao escolheu uma cor manualmente. Calculada uma vez por
+/// participacao e reaproveitada ate a proxima customizacao.
 Future<Color> dominantCordColor(
   IdentityGateway gateway,
   String participationId,
@@ -224,7 +264,7 @@ Future<Color> dominantCordColor(
   if (cached != null) return cached;
   try {
     final reply = await gateway.request(
-      '/participations/${Uri.encodeComponent(participationId)}/image',
+      '/participations/${Uri.encodeComponent(participationId)}/display-image',
     );
     final link = reply['url'] as String?;
     if (link == null) return runPassOrange;
@@ -233,6 +273,33 @@ Future<Color> dominantCordColor(
     return color;
   } on Exception {
     return runPassOrange;
+  }
+}
+
+/// Esquece a cor dominante guardada, depois de reposicionar a foto (a cor
+/// automatica pode ter mudado com o novo recorte).
+void forgetDominantCordColor(String participationId) =>
+    _medalCordColorCache.remove(participationId);
+
+/// Baixa os bytes de um link assinado (S3), para reabrir num editor de
+/// recorte local. Lanca [IdentityIssue] se a resposta nao for 200.
+Future<List<int>> fetchImageBytes(String url) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final request = await client
+        .getUrl(Uri.parse(url))
+        .timeout(const Duration(seconds: 10));
+    final response = await request.close().timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      throw const IdentityIssue('IMAGE_NOT_VALID');
+    }
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+    }
+    return bytes;
+  } finally {
+    client.close(force: true);
   }
 }
 
@@ -368,6 +435,11 @@ void forgetMedalPhoto(String participationId) => _photoLinks.remove(
   '/participations/${Uri.encodeComponent(participationId)}/image',
 );
 
+/// Esquece o link da foto da prateleira, depois de reposicionar/resetar.
+void forgetMedalDisplayImage(String participationId) => _photoLinks.remove(
+  '/participations/${Uri.encodeComponent(participationId)}/display-image',
+);
+
 void forgetBanner(String profileId) =>
     _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/banner');
 
@@ -423,17 +495,21 @@ class _SignedPhotoState extends State<SignedPhoto> {
 }
 
 /// Foto da medalha enviada pela pessoa (`GET /participations/{id}/image`); sem foto, o trofeu.
+/// Com [useDisplayImage], usa `/display-image`: o recorte reposicionado pela
+/// pessoa so para a prateleira, quando existir (senao a mesma foto de sempre).
 class MedalPhoto extends StatelessWidget {
   final IdentityGateway gateway;
   final String? participationId;
   final double size;
   final BoxFit fit;
+  final bool useDisplayImage;
   const MedalPhoto({
     super.key,
     required this.gateway,
     required this.participationId,
     this.size = 46,
     this.fit = BoxFit.cover,
+    this.useDisplayImage = false,
   });
 
   @override
@@ -441,7 +517,8 @@ class MedalPhoto extends StatelessWidget {
     gateway: gateway,
     endpoint: participationId == null
         ? null
-        : '/participations/${Uri.encodeComponent(participationId!)}/image',
+        : '/participations/${Uri.encodeComponent(participationId!)}/'
+              '${useDisplayImage ? 'display-image' : 'image'}',
     fallback: MedalArt(size: size),
     fit: fit,
   );
@@ -695,9 +772,43 @@ void openMedal(
 
 enum MedalGrouping { all, year, distance, achievements }
 
+/// Baixa os bytes de uma foto, dada a URL assinada; injetavel para testes.
+typedef ImageBytesFetcher = Future<List<int>> Function(String url);
+
+/// Abre o editor de recorte circular (reaproveita o da foto de perfil) e
+/// devolve os bytes recortados, ou nulo se a pessoa desistir. Injetavel para
+/// testes, que podem pular a interacao real de recorte.
+typedef MedalCropOpener = Future<List<int>?> Function(
+  BuildContext context,
+  Uint8List image,
+);
+
+Future<List<int>?> openMedalCropScreen(
+  BuildContext context,
+  Uint8List image,
+) => Navigator.of(context).push<List<int>>(
+  MaterialPageRoute(
+    fullscreenDialog: true,
+    builder: (_) => ProfilePhotoCropScreen(
+      image: image,
+      title: 'Reposicionar foto',
+      instructions:
+          'Arraste e use dois dedos para ampliar. Essa área é o que aparece '
+          'na prateleira de medalhas.',
+    ),
+  ),
+);
+
 class MedalCollectionScreen extends StatefulWidget {
   final IdentityGateway gateway;
-  const MedalCollectionScreen({super.key, required this.gateway});
+  final ImageBytesFetcher fetchDisplayPhoto;
+  final MedalCropOpener openCropScreen;
+  const MedalCollectionScreen({
+    super.key,
+    required this.gateway,
+    this.fetchDisplayPhoto = fetchImageBytes,
+    this.openCropScreen = openMedalCropScreen,
+  });
 
   @override
   State<MedalCollectionScreen> createState() => _MedalCollectionScreenState();
@@ -714,15 +825,25 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (sheet) => _MedalEditSheet(gateway: widget.gateway, race: race),
+      builder: (sheet) => _MedalEditSheet(
+        gateway: widget.gateway,
+        race: race,
+        fetchDisplayPhoto: widget.fetchDisplayPhoto,
+        openCropScreen: widget.openCropScreen,
+      ),
     );
     if (result == null || !mounted) return;
+    final id = race.participation['id'] as String;
     try {
       await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(race.participation['id'] as String)}',
+        '/participations/${Uri.encodeComponent(id)}',
         method: 'PATCH',
         body: {'expectedVersion': race.participation['version'], ...result},
       );
+      if (result.containsKey('medalDisplayImageReference')) {
+        forgetMedalDisplayImage(id);
+        forgetDominantCordColor(id);
+      }
       setState(() {
         races = loadMyRaces(widget.gateway);
       });
@@ -748,34 +869,13 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   }
 
   Widget _ribbon(Color color) => SizedBox(
-    height: 22,
-    child: Stack(
-      alignment: Alignment.topCenter,
-      clipBehavior: Clip.none,
-      children: [
-        Positioned(
-          top: 0,
-          left: 14,
-          child: Transform.rotate(
-            angle: -0.45,
-            child: Container(width: 11, height: 26, color: color),
-          ),
-        ),
-        Positioned(
-          top: 0,
-          right: 14,
-          child: Transform.rotate(
-            angle: 0.45,
-            child: Container(width: 11, height: 26, color: color),
-          ),
-        ),
-      ],
-    ),
+    width: double.infinity,
+    height: 26,
+    child: CustomPaint(painter: _RibbonPainter(color)),
   );
 
   Widget _woodShelf() => Container(
     height: 10,
-    margin: const EdgeInsets.symmetric(horizontal: 6),
     decoration: BoxDecoration(
       borderRadius: BorderRadius.circular(3),
       gradient: const LinearGradient(
@@ -798,24 +898,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       InkWell(
         onTap: () => openMedal(context, widget.gateway, race),
         borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            color: Theme.of(context).colorScheme.surface,
-            border: Border.all(
-              color: context.isDark
-                  ? const Color(0xff3a3330)
-                  : const Color(0xffeadfd8),
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x14000000),
-                blurRadius: 8,
-                offset: Offset(0, 2),
-              ),
-            ],
-          ),
+        child: Padding(
+          // Sem card/borda/sombra: a medalha fica direto no fundo da tela,
+          // como no template.
+          padding: const EdgeInsets.symmetric(horizontal: 2),
           child: FutureBuilder<Color>(
             future: _cordColorFor(race),
             builder: (context, snapshot) {
@@ -825,36 +911,35 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   _ribbon(color),
                   Expanded(
                     flex: 5,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      // AspectRatio garante um recorte sempre quadrado: sem
-                      // isso, o Expanded entrega uma area retangular e a
-                      // medalha "redonda" sai achatada em oval.
-                      child: Center(
-                        child: AspectRatio(
-                          aspectRatio: 1,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              ClipPath(
-                                clipper: _MedalShapeClipper(race.medalShape),
-                                child: MedalPhoto(
-                                  gateway: widget.gateway,
-                                  participationId:
-                                      race.participation['id'] as String?,
+                    child:
+                        // AspectRatio garante um recorte sempre quadrado: sem
+                        // isso, o Expanded entrega uma area retangular e a
+                        // medalha "redonda" sai achatada em oval.
+                        Center(
+                          child: AspectRatio(
+                            aspectRatio: 1,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                ClipPath(
+                                  clipper: _MedalShapeClipper(race.medalShape),
+                                  child: MedalPhoto(
+                                    gateway: widget.gateway,
+                                    participationId:
+                                        race.participation['id'] as String?,
+                                    useDisplayImage: true,
+                                  ),
                                 ),
-                              ),
-                              CustomPaint(
-                                painter: _MedalRingPainter(
-                                  race.medalShape,
-                                  color,
+                                CustomPaint(
+                                  painter: _MedalRingPainter(
+                                    race.medalShape,
+                                    color,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ),
                   ),
                   const SizedBox(height: 4),
                   _woodShelf(),
@@ -913,7 +998,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     crossAxisSpacing: 10,
     // Baixo o suficiente para a foto da medalha caber com a largura inteira do
     // card (quadrada), sem sobrar espaco vazio acima/abaixo dela.
-    childAspectRatio: 0.58,
+    childAspectRatio: 0.56,
     children: [for (final race in list) tile(race)],
   );
 
@@ -1148,7 +1233,14 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
 class _MedalEditSheet extends StatefulWidget {
   final IdentityGateway gateway;
   final RaceRecord race;
-  const _MedalEditSheet({required this.gateway, required this.race});
+  final ImageBytesFetcher fetchDisplayPhoto;
+  final MedalCropOpener openCropScreen;
+  const _MedalEditSheet({
+    required this.gateway,
+    required this.race,
+    this.fetchDisplayPhoto = fetchImageBytes,
+    this.openCropScreen = openMedalCropScreen,
+  });
 
   @override
   State<_MedalEditSheet> createState() => _MedalEditSheetState();
@@ -1165,6 +1257,11 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
   late final year = TextEditingController(
     text: widget.race.medalYear?.toString() ?? '',
   );
+  // Recorte da foto so para a prateleira; so entra no PATCH se a pessoa
+  // realmente tocar em "Reposicionar foto" (senao nao mexe no que ja existe).
+  late String? displayImageReference = widget.race.medalDisplayImageReference;
+  bool displayImageTouched = false;
+  bool repositioning = false;
 
   @override
   void dispose() {
@@ -1180,6 +1277,45 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
     return trimmed.isEmpty ? null : trimmed;
   }
 
+  Future<void> repositionPhoto() async {
+    final id = widget.race.participation['id'] as String?;
+    if (id == null || repositioning) return;
+    setState(() => repositioning = true);
+    try {
+      final reply = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}/display-image',
+      );
+      final url = reply['url'] as String?;
+      if (url == null) throw const IdentityIssue('IMAGE_NOT_AVAILABLE');
+      final bytes = await widget.fetchDisplayPhoto(url);
+      if (!mounted) return;
+      final cropped = await widget.openCropScreen(
+        context,
+        Uint8List.fromList(bytes),
+      );
+      if (cropped == null || !mounted) return;
+      final reference = await uploadProfilePhoto(widget.gateway, cropped);
+      setState(() {
+        displayImageReference = reference;
+        displayImageTouched = true;
+      });
+    } on Exception {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível reposicionar a foto. Tente de novo.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => repositioning = false);
+    }
+  }
+
+  void resetPhoto() => setState(() {
+    displayImageReference = null;
+    displayImageTouched = true;
+  });
+
   void save() {
     final parsedYear = int.tryParse(year.text.trim());
     final uf = state.text.trim().toUpperCase();
@@ -1190,6 +1326,8 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
       'medalCity': _blankToNull(city.text),
       'medalState': uf.length == 2 ? uf : null,
       'medalYear': parsedYear,
+      if (displayImageTouched)
+        'medalDisplayImageReference': displayImageReference,
     });
   }
 
@@ -1210,6 +1348,35 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
             const Text(
               'Personalizar medalha',
               style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('medal-reposition-photo'),
+                    onPressed: repositioning ? null : repositionPhoto,
+                    icon: repositioning
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.crop, size: 18),
+                    label: Text(
+                      repositioning ? 'Carregando…' : 'Reposicionar foto',
+                    ),
+                  ),
+                ),
+                if (displayImageReference != null) ...[
+                  const SizedBox(width: 8),
+                  TextButton(
+                    key: const Key('medal-reset-photo'),
+                    onPressed: repositioning ? null : resetPhoto,
+                    child: const Text('Remover'),
+                  ),
+                ],
+              ],
             ),
             const SizedBox(height: 16),
             const Text('Forma', style: TextStyle(fontWeight: FontWeight.w700)),

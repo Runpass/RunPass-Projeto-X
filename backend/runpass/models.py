@@ -123,6 +123,9 @@ class PatchParticipation(Input):
     medalCity: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     medalState: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] | None = None
     medalYear: Annotated[int, Field(ge=1900, le=2100)] | None = None
+    # Recorte da foto so para a prateleira (reposicionamento); None volta ao
+    # recorte automatico da foto oficial (medalImageReference), que nunca muda.
+    medalDisplayImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
 
     @model_validator(mode="after")
     def changes(self):
