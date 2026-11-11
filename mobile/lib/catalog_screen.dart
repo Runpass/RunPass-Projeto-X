@@ -390,6 +390,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
   bool loading = false;
   bool showFilters = false;
 
+  /// Ordem da lista: 'date' (padrão) ou 'rating' (avaliação). O ícone da seta inverte a direção.
+  String sortBy = 'date';
+
+  /// Avaliação mínima (0 = todas). As corridas sem avaliação ficam de fora quando há mínimo.
+  double minRating = 0;
+
   @override
   void initState() {
     super.initState();
@@ -668,13 +674,31 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 
   /// Itens na ordem escolhida: primeiro as minhas (por prioridade), depois as demais; dentro de cada
-  /// grupo, por data (o ícone alterna crescente/decrescente) e, em empate, pelo nome.
+  /// grupo, por data ou por avaliação (o ícone alterna a direção) e, em empate, pelo nome.
+  /// A avaliação mínima só esconde corridas: nunca muda o que a busca pediu ao servidor.
   List<Map<String, dynamic>> get view {
-    final list = [...items];
+    var list = [...items];
+    if (minRating > 0) {
+      list = [
+        for (final e in list)
+          if ((scoreOf(e) ?? 0) >= minRating) e,
+      ];
+    }
     if (widget.serverPaging) return list;
     list.sort((a, b) {
       final byPriority = priority(a).compareTo(priority(b));
       if (byPriority != 0) return byPriority;
+      if (sortBy == 'rating') {
+        final sa = scoreOf(a);
+        final sb = scoreOf(b);
+        // Sem avaliação sempre por último, em qualquer direção.
+        if ((sa == null) != (sb == null)) return sa == null ? 1 : -1;
+        if (sa != null && sb != null && sa != sb) {
+          return descending ? sb.compareTo(sa) : sa.compareTo(sb);
+        }
+        final byReviews = reviewsOf(b).compareTo(reviewsOf(a));
+        if (byReviews != 0) return byReviews;
+      }
       final byDate = (a['date'] as String).compareTo(b['date'] as String);
       final byName = '${a['name']}'.compareTo('${b['name']}');
       if (byDate == 0) return byName;
@@ -868,10 +892,19 @@ class _CatalogScreenState extends State<CatalogScreen> {
     }
     setState(() {
       registration = null;
+      minRating = 0;
       registrationEpoch++;
     });
     load();
   }
+
+  /// Há algum filtro além do nome? Se houver, o nome deixa de ser obrigatório.
+  bool get hasOtherFilter =>
+      fields['distanceKm']!.text.trim().isNotEmpty ||
+      fields['year']!.text.trim().isNotEmpty ||
+      fields['state']!.text.trim().isNotEmpty ||
+      fields['city']!.text.trim().isNotEmpty ||
+      registration != null;
 
   Widget filter(
     String key,
@@ -890,7 +923,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
           ? const TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
       validator: (value) => value == null || value.trim().isEmpty
-          ? (required ? 'Informe o nome da corrida.' : null)
+          ? (required && !hasOtherFilter
+                ? 'Informe o nome da corrida ou escolha outro filtro.'
+                : null)
           : validate?.call(value.trim()),
     ),
   );
@@ -1060,8 +1095,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       const SizedBox(height: 12),
                       filter(
                         'namePrefix',
-                        'Nome da corrida (obrigatório)',
+                        'Nome da corrida',
                         maxLength: 160,
+                        hint: 'Obrigatório se você não escolher estado, ano, distância ou inscrições',
                         required: true,
                       ),
                       // Mesmo seletor do editar perfil: lista fechada de estado e cidade, sem digitar.
@@ -1107,6 +1143,25 @@ class _CatalogScreenState extends State<CatalogScreen> {
                                   : '${fields['state']!.text} - ${fields['city']!.text}',
                             ),
                           ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Wrap(
+                          spacing: 8,
+                          children: [
+                            for (final km in const ['5', '10', '21', '42'])
+                              ChoiceChip(
+                                key: Key('km-chip-$km'),
+                                label: Text('$km km'),
+                                selected: fields['distanceKm']!.text == km,
+                                onSelected: (picked) => setState(
+                                  () => fields['distanceKm']!.text = picked
+                                      ? km
+                                      : '',
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                       filter(
@@ -1217,24 +1272,66 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
-          if (items.length > 1)
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                key: const Key('catalog-sort'),
-                tooltip: descending
-                    ? 'Mais recentes primeiro (toque para inverter)'
-                    : 'Mais antigas primeiro (toque para inverter)',
-                icon: Icon(
-                  descending
-                      ? Icons.arrow_downward_rounded
-                      : Icons.arrow_upward_rounded,
-                  semanticLabel: descending
-                      ? 'Ordem decrescente'
-                      : 'Ordem crescente',
+          if (items.length > 1 || minRating > 0)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: const Key('catalog-sort-by'),
+                    initialValue: sortBy,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Ordenar por'),
+                    items: const [
+                      DropdownMenuItem(value: 'date', child: Text('Data')),
+                      DropdownMenuItem(
+                        value: 'rating',
+                        child: Text('Avaliação'),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => sortBy = value ?? 'date'),
+                  ),
                 ),
-                onPressed: loading ? null : toggleSort,
-              ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<double>(
+                    key: const Key('catalog-min-rating'),
+                    initialValue: minRating,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Avaliação mínima',
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text('Todas')),
+                      DropdownMenuItem(value: 3, child: Text('3 ou mais')),
+                      DropdownMenuItem(value: 4, child: Text('4 ou mais')),
+                      DropdownMenuItem(value: 4.5, child: Text('4,5 ou mais')),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => minRating = value ?? 0),
+                  ),
+                ),
+                IconButton(
+                  key: const Key('catalog-sort'),
+                  tooltip: sortBy == 'rating'
+                      ? (descending
+                            ? 'Melhor avaliação primeiro (toque para inverter)'
+                            : 'Pior avaliação primeiro (toque para inverter)')
+                      : (descending
+                            ? 'Mais recentes primeiro (toque para inverter)'
+                            : 'Mais antigas primeiro (toque para inverter)'),
+                  icon: Icon(
+                    descending
+                        ? Icons.arrow_downward_rounded
+                        : Icons.arrow_upward_rounded,
+                    semanticLabel: descending
+                        ? 'Ordem decrescente'
+                        : 'Ordem crescente',
+                  ),
+                  onPressed: loading ? null : toggleSort,
+                ),
+              ],
             ),
           if (loading) const Center(child: CircularProgressIndicator()),
           if (!loading && error == null && items.isEmpty)
@@ -1250,6 +1347,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 key: const Key('catalog-request-empty'),
                 onPressed: requestRace,
                 child: const Text('Não encontrou? Pedir cadastro da corrida'),
+              ),
+            ),
+          if (!loading && error == null && items.isNotEmpty && view.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'Nenhuma corrida com essa avaliação. Escolha uma avaliação mínima menor.',
               ),
             ),
           for (final edition in view) editionCard(edition),

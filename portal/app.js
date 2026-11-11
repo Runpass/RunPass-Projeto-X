@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -584,20 +584,25 @@ function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
   verPrevia.addEventListener('click', async () => {
     if (!endereco()) return aviso('Informe o endereço da imagem.', 'erro');
     verPrevia.disabled = true;
+    // O resultado e os erros aparecem AQUI, junto do botão (o aviso global fica no topo da página, fora da vista).
+    previa.replaceChildren(el('p', { class: 'meta' }, 'Gerando a prévia... pode levar até 30 segundos.'));
     try {
       const r = await fetch(cfg.apiUrl + '/admin/banners/preview', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageUrl: endereco() }),
       });
+      if (r.status === 401) return sair('INVALID_TOKEN');
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        if (r.status === 401) return sair('INVALID_TOKEN');
-        return aviso(mensagem(j.code), 'erro');
+        const texto = j.code ? mensagem(j.code) : 'O servidor demorou demais ou falhou ao tratar a imagem. Tente de novo; se repetir, a imagem pode ser grande demais.';
+        return previa.replaceChildren(el('p', { class: 'aviso erro' }, texto));
       }
       if (urlPrevia) URL.revokeObjectURL(urlPrevia);
       urlPrevia = URL.createObjectURL(await r.blob());
       previa.replaceChildren(el('img', { class: 'previa', src: urlPrevia, alt: 'Prévia do banner' }));
+    } catch (falha) {
+      previa.replaceChildren(el('p', { class: 'aviso erro' }, 'Sem resposta do servidor. Confira a conexão e tente de novo.'));
     } finally {
       verPrevia.disabled = false;
     }
@@ -1048,15 +1053,49 @@ $('form-operador').addEventListener('submit', async (evento) => {
   }
 });
 
+// ---- preferências (só neste navegador) ------------------------------------------------------------
+
+const PREFS_CHAVE = 'runpass-admin-prefs';
+
+function lerPrefsSalvas() {
+  try { return lerPrefs(window.localStorage.getItem(PREFS_CHAVE)); } catch { return lerPrefs(''); }
+}
+
+function salvarPrefs(prefs) {
+  try { window.localStorage.setItem(PREFS_CHAVE, JSON.stringify(prefs)); return true; } catch { return false; }
+}
+
+function aplicarTema(tema) {
+  if (tema === 'claro' || tema === 'escuro') document.documentElement.dataset.tema = tema;
+  else delete document.documentElement.dataset.tema;
+}
+
+function montarPreferencias() {
+  const prefs = lerPrefsSalvas();
+  $('pref-tema').replaceChildren(...Object.entries(TEMAS).map(([v, t]) => el('option', { value: v }, t)));
+  const visiveis = Object.entries(ABAS).filter(([, [, perm]]) => permissoes.includes(perm));
+  $('pref-aba').replaceChildren(el('option', { value: '' }, 'Padrão (a primeira disponível)'), ...visiveis.map(([v, [t]]) => el('option', { value: v }, t)));
+  $('pref-tema').value = prefs.tema;
+  $('pref-aba').value = visiveis.some(([v]) => v === prefs.abaInicial) ? prefs.abaInicial : '';
+}
+
+function guardarPreferencias() {
+  const prefs = { tema: $('pref-tema').value, abaInicial: $('pref-aba').value };
+  aplicarTema(prefs.tema);
+  $('pref-aviso').textContent = salvarPrefs(prefs) ? 'Preferências salvas neste navegador.' : 'Este navegador não permite salvar preferências (modo privado?). Valem só até fechar a página.';
+}
+
+aplicarTema(lerPrefsSalvas().tema);
+
 function prepararAbas() {
-  const abas = { pedidos: 'catalog_admin', catalogo: 'catalog_admin', banners: 'catalog_admin', divergencias: 'catalog_admin', qualidade: 'catalog_admin', cadastros: 'user_admin', operadores: 'user_admin', custos: 'cost_read' };
-  for (const [nome, perm] of Object.entries(abas)) $(`aba-${nome}`).hidden = !permissoes.includes(perm);
+  for (const [nome, [, perm]] of Object.entries(ABAS)) $(`aba-${nome}`).hidden = !permissoes.includes(perm);
+  montarPreferencias();
   $('modo-catalogo').replaceChildren(...Object.entries(MODOS_CATALOGO).map(([v, t]) => el('option', { value: v }, t)));
   $('op-permissoes').replaceChildren(
     el('legend', {}, 'Permissões'),
     ...Object.entries(PERMISSOES).map(([v, t]) => el('label', {}, el('input', { type: 'checkbox', value: v }), t)),
   );
-  mostrarAba(permissoes.includes('catalog_admin') ? 'pedidos' : permissoes.includes('user_admin') ? 'cadastros' : permissoes.includes('cost_read') ? 'custos' : '');
+  mostrarAba(abaInicial(lerPrefsSalvas().abaInicial, permissoes));
 }
 
 for (const b of document.querySelectorAll('[data-aba]')) b.addEventListener('click', () => mostrarAba(b.dataset.aba));
@@ -1163,6 +1202,13 @@ $('form-mfa').addEventListener('submit', async (evento) => {
 
 $('voltar').addEventListener('click', () => sair());
 $('sair').addEventListener('click', () => sair());
+$('pref-tema').addEventListener('change', guardarPreferencias);
+$('pref-aba').addEventListener('change', guardarPreferencias);
+$('pref-padrao').addEventListener('click', () => {
+  $('pref-tema').value = 'auto';
+  $('pref-aba').value = '';
+  guardarPreferencias();
+});
 $('atualizar').addEventListener('click', carregarPedidos);
 $('atualizar-cadastros').addEventListener('click', carregarCadastros);
 $('atualizar-banners').addEventListener('click', carregarBanners);

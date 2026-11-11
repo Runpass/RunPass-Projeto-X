@@ -215,6 +215,21 @@ test('revocação: das nada encontrado conferidas, quantas tinham informação',
   assert.equal(textoRevocacao(undefined).valor, '—');
 });
 
+test('preferências: leitura segura e aba inicial só entre as permitidas', async () => {
+  const { lerPrefs, abaInicial } = await import('./lib.js');
+  assert.deepEqual(lerPrefs('{"tema":"escuro","abaInicial":"custos"}'), { tema: 'escuro', abaInicial: 'custos' });
+  assert.deepEqual(lerPrefs(undefined), { tema: 'auto', abaInicial: '' });
+  assert.deepEqual(lerPrefs('não é json'), { tema: 'auto', abaInicial: '' });
+  assert.deepEqual(lerPrefs('{"tema":"roxo","abaInicial":"<script>"}'), { tema: 'auto', abaInicial: '' });
+  assert.deepEqual(lerPrefs('null'), { tema: 'auto', abaInicial: '' });
+  assert.equal(abaInicial('custos', ['cost_read']), 'custos');
+  assert.equal(abaInicial('custos', ['catalog_admin']), 'pedidos'); // sem permissão: cai no padrão
+  assert.equal(abaInicial('', ['user_admin']), 'cadastros');
+  assert.equal(abaInicial('banners', ['catalog_admin', 'cost_read']), 'banners');
+  assert.equal(abaInicial('operadores', ['cost_read']), 'custos');
+  assert.equal(abaInicial('', []), '');
+});
+
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
   const { situacaoOperador } = await import('./lib.js');
   assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);

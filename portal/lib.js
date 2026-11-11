@@ -382,3 +382,37 @@ export function textoRevocacao(n) {
   const pct = Math.round((n.hadInfo / n.checked) * 100);
   return { valor: `${n.hadInfo} de ${n.checked} (${pct}%)`, detalhe: `a rotina deixou de achar · ${n.total - n.checked} ainda por conferir` };
 }
+
+/** Abas do painel: [rótulo, permissão exigida]. A ordem é a do menu. */
+export const ABAS = {
+  pedidos: ['Pedidos de corrida', 'catalog_admin'],
+  catalogo: ['Atualizar catálogo', 'catalog_admin'],
+  cadastros: ['Cadastros no app', 'user_admin'],
+  banners: ['Banners', 'catalog_admin'],
+  divergencias: ['Divergências', 'catalog_admin'],
+  qualidade: ['Qualidade da busca', 'catalog_admin'],
+  custos: ['Custos', 'cost_read'],
+  operadores: ['Operadores', 'user_admin'],
+};
+
+export const TEMAS = { auto: 'Automático (segue o sistema)', claro: 'Claro', escuro: 'Escuro' };
+
+/** Preferências salvas (texto JSON do navegador) -> valores válidos; qualquer coisa estranha vira o padrão. */
+export function lerPrefs(texto) {
+  let bruto = {};
+  try { bruto = JSON.parse(texto || '{}') || {}; } catch { bruto = {}; }
+  return {
+    tema: Object.keys(TEMAS).includes(bruto.tema) ? bruto.tema : 'auto',
+    abaInicial: typeof bruto.abaInicial === 'string' && Object.keys(ABAS).includes(bruto.abaInicial) ? bruto.abaInicial : '',
+  };
+}
+
+/** Aba que abre ao entrar: a preferida se a pessoa tem permissão; senão a primeira que ela pode ver. */
+export function abaInicial(preferida, permissoes) {
+  const pode = (nome) => ABAS[nome] && permissoes.includes(ABAS[nome][1]);
+  if (preferida && pode(preferida)) return preferida;
+  if (pode('pedidos')) return 'pedidos';
+  if (pode('cadastros')) return 'cadastros';
+  if (pode('custos')) return 'custos';
+  return Object.keys(ABAS).find(pode) || '';
+}

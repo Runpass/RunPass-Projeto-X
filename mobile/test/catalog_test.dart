@@ -108,10 +108,7 @@ Future<void> pickFilterLocation(WidgetTester tester) async {
 
 /// O nome é o único campo obrigatório do formulário de filtros.
 Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
-  final field = find.widgetWithText(
-    TextFormField,
-    'Nome da corrida (obrigatório)',
-  );
+  final field = find.widgetWithText(TextFormField, 'Nome da corrida');
   await reveal(tester, field, backwards: true);
   await tester.enterText(field, name);
 }
@@ -119,6 +116,7 @@ Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
 void main() {
   priorityOrderTests();
   defaultOrderTests();
+  ratingTests();
   test('query parameters preserve stage and encode filters without leaking into path', () async {
     final gateway = await signed((uri, method, headers, body) async {
       expect(uri.path, '/dev/editions');
@@ -1702,10 +1700,8 @@ void main() {
       await tester.tap(find.byKey(const Key('catalog-sort')));
       await tester.pumpAndSettle();
       expect(top('Corrida C') < top('Corrida A'), isTrue);
-      expect(
-        find.text('Ordenar por'),
-        findsNothing,
-      ); // só o ícone, sem seletor nem rótulo
+      // O seletor de ordem (Data ou Avaliação) acompanha o ícone de direção.
+      expect(find.text('Ordenar por'), findsOneWidget);
     },
   );
 
@@ -1935,4 +1931,116 @@ void defaultOrderTests() {
       expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
     },
   );
+}
+
+void ratingTests() {
+  Map<String, dynamic> rated(
+    String id,
+    String date, {
+    num? score,
+    int reviews = 0,
+  }) => {
+    ...entry(id),
+    'id': 'E$id',
+    'date': date,
+    if (score != null) 'runScore': {'value': score, 'reviewCount': reviews},
+  };
+
+  Future<void> openList(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions') {
+        return JsonReply(200, {
+          'items': [
+            rated('A', '2026-05-01', score: 3.5, reviews: 4),
+            rated('B', '2024-05-01', score: 4.8, reviews: 9),
+            rated('C', '2026-09-01'),
+            rated('D', '2025-05-01', score: 4.8, reviews: 20),
+          ],
+        });
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> choose(WidgetTester tester, String key, String option) async {
+    final box = find.byKey(Key(key));
+    await tester.ensureVisible(box);
+    await tester.tap(box);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(option).last);
+    await tester.pumpAndSettle();
+  }
+
+  List<String> order(WidgetTester tester) {
+    final tops = {
+      for (final id in ['A', 'B', 'C', 'D'])
+        id: find.textContaining('Corrida $id').evaluate().isEmpty
+            ? null
+            : tester.getTopLeft(find.textContaining('Corrida $id').first).dy,
+    };
+    final shown = tops.entries.where((e) => e.value != null).toList()
+      ..sort((a, b) => a.value!.compareTo(b.value!));
+    return [for (final e in shown) e.key];
+  }
+
+  testWidgets('ordenar por avaliação: melhor primeiro, desempate por nº de '
+      'avaliações e sem nota por último', (tester) async {
+    await openList(tester);
+    expect(order(tester), ['C', 'A', 'D', 'B']); // padrão: data, mais recente
+    await choose(tester, 'catalog-sort-by', 'Avaliação');
+    expect(order(tester), ['D', 'B', 'A', 'C']);
+    // a seta inverte a direção; quem não tem nota continua por último
+    await tester.tap(find.byKey(const Key('catalog-sort')));
+    await tester.pumpAndSettle();
+    expect(order(tester), ['A', 'D', 'B', 'C']);
+  });
+
+  testWidgets('avaliação mínima esconde as abaixo e as sem nota, e volta com '
+      '"Todas"', (tester) async {
+    await openList(tester);
+    await choose(tester, 'catalog-min-rating', '4 ou mais');
+    expect(order(tester), ['D', 'B']);
+    await choose(tester, 'catalog-min-rating', '4,5 ou mais');
+    expect(order(tester), ['D', 'B']);
+    await choose(tester, 'catalog-min-rating', '3 ou mais');
+    expect(order(tester), ['A', 'D', 'B']);
+    await choose(tester, 'catalog-min-rating', 'Todas');
+    expect(order(tester), ['C', 'A', 'D', 'B']);
+  });
+
+  testWidgets('se a avaliação mínima esconde tudo, a tela avisa e o filtro '
+      'continua à mão', (tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions') {
+        return JsonReply(200, {
+          'items': [
+            rated('A', '2026-05-01', score: 3.5, reviews: 4),
+            rated('B', '2026-06-01', score: 3.8, reviews: 6),
+          ],
+        });
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    await choose(tester, 'catalog-min-rating', '4 ou mais');
+    expect(find.textContaining('Corrida A'), findsNothing);
+    expect(find.textContaining('Corrida B'), findsNothing);
+    expect(
+      find.text(
+        'Nenhuma corrida com essa avaliação. Escolha uma avaliação mínima menor.',
+      ),
+      findsOneWidget,
+    );
+    await choose(tester, 'catalog-min-rating', 'Todas');
+    expect(find.textContaining('Corrida A'), findsWidgets);
+  });
 }
