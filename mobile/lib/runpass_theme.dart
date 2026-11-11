@@ -164,9 +164,9 @@ class RunPassWordmark extends StatelessWidget {
             color: context.isDark ? Colors.white : runPassNavy,
           ),
           children: const [
-            TextSpan(text: 'Run'),
+            TextSpan(text: 'Meu'),
             TextSpan(
-              text: 'Pass',
+              text: 'Pódio',
               style: TextStyle(color: runPassOrange),
             ),
           ],

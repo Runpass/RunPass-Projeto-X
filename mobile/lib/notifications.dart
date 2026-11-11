@@ -181,14 +181,14 @@ class LocalAlerts {
       if (after == Duration.zero) {
         await _plugin.show(
           id: 7001,
-          title: 'RunPass',
+          title: 'MeuPódio',
           body: 'Teste: os avisos estão funcionando neste celular.',
           notificationDetails: _details,
         );
       } else {
         await _plugin.zonedSchedule(
           id: 7002,
-          title: 'RunPass',
+          title: 'MeuPódio',
           body: 'Teste agendado: o aviso chegou com o app fechado.',
           scheduledDate: tz.TZDateTime.now(tz.UTC).add(after),
           notificationDetails: _details,
@@ -242,7 +242,7 @@ class LocalAlerts {
     try {
       await _plugin.show(
         id: id,
-        title: 'RunPass',
+        title: 'MeuPódio',
         body: body,
         payload: payload,
         notificationDetails: request ? _requestDetails : _details,
@@ -522,7 +522,7 @@ class _OsAlertsSwitchState extends State<OsAlertsSwitch> {
 
   String get statusText => switch (granted) {
     true => 'Permissão do sistema: liberada.',
-    false => 'Permissão do sistema: NEGADA. Abra Ajustes > RunPass > Notificações e libere.',
+    false => 'Permissão do sistema: NEGADA. Abra Ajustes > MeuPódio > Notificações e libere.',
     null => 'Permissão do sistema: não foi possível conferir.',
   };
 

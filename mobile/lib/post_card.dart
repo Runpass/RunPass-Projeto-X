@@ -149,7 +149,7 @@ Future<Uint8List> buildShareCard({
     maxLines: 1,
   );
   text(
-    'RunPass',
+    'MeuPódio',
     950,
     56,
     weight: FontWeight.w900,
@@ -272,7 +272,7 @@ class _PostCardState extends State<PostCard> {
     return [
       '$who ${entry.title}${km == null ? '' : ' (${formatKilometers(km)})'} 🏅',
       if (entry.comment != null && entry.comment!.isNotEmpty) entry.comment!,
-      'Veja no RunPass.',
+      'Veja no MeuPódio.',
     ].join('\n');
   }
 

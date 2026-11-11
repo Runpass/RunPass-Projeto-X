@@ -1434,7 +1434,7 @@ class _EditionScreenState extends State<EditionScreen> {
     }
   }
 
-  /// Banner aprovado pela equipe (cópia guardada pelo RunPass, com crédito). Sem banner ou com
+  /// Banner aprovado pela equipe (cópia guardada pelo MeuPódio, com crédito). Sem banner ou com
   /// falha, o degradê de sempre continua: a imagem nunca bloqueia a tela.
   Future<void> loadBanner() async {
     if (edition?['imageReference'] == null) return;
@@ -2254,7 +2254,7 @@ class _EditionScreenState extends State<EditionScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        review['authorName'] as String? ?? 'Corredor RunPass',
+                        review['authorName'] as String? ?? 'Corredor MeuPódio',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                       Row(
@@ -2364,7 +2364,7 @@ class _EditionScreenState extends State<EditionScreen> {
     if (participantTotal == 0) {
       return emptyTab(
         Icons.groups_outlined,
-        'Ninguém concluiu esta prova no RunPass ainda.\nSeja a primeira pessoa a registrar.',
+        'Ninguém concluiu esta prova no MeuPódio ainda.\nSeja a primeira pessoa a registrar.',
       );
     }
     final kmById = {
@@ -2404,7 +2404,7 @@ class _EditionScreenState extends State<EditionScreen> {
     Map<String, double> kmById,
   ) {
     final author = Map<String, dynamic>.from(item['author'] as Map);
-    final name = (author['displayName'] as String?) ?? 'Corredor RunPass';
+    final name = (author['displayName'] as String?) ?? 'Corredor MeuPódio';
     final km = kmById[item['distanceId']];
     final time = item['timeSeconds'] as num?;
     final place = item['placement'] as num?;

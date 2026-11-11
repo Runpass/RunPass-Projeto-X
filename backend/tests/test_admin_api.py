@@ -458,7 +458,7 @@ class AdminApiTests(unittest.TestCase):
         home = self.client.get("/")
         self.assertEqual(home.status_code, 200)
         self.assertIn("text/html", home.headers["content-type"])
-        self.assertIn("RunPass", home.text)
+        self.assertIn("MeuPódio", home.text)
         csp = home.headers["content-security-policy"]
         self.assertIn("script-src 'self'", csp)
         self.assertIn("frame-ancestors 'none'", csp)
