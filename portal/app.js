@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -100,11 +100,19 @@ async function carregarPedidos() {
   const lista = $('pedidos');
   lista.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
   try {
-    const { items } = await api('/admin/edition-requests');
+    const { items, awaiting, linkedNow } = await api('/admin/edition-requests');
+    const espera = awaiting || [];
+    if (linkedNow) aviso(`${linkedNow} pedido(s) que aguardavam foram vinculados automaticamente.`, 'ok');
     lista.replaceChildren(
-      ...(items.length
-        ? items.map(cartaoPedido)
-        : [el('p', { class: 'vazio' }, 'Nenhum pedido pendente.')]),
+      el('h2', {}, 'Pendentes de decisão'),
+      ...(items.length ? items.map((p) => cartaoPedido(p)) : [el('p', { class: 'vazio' }, 'Nenhum pedido pendente.')]),
+      ...(espera.length
+        ? [
+            el('h2', {}, 'Aprovados, aguardando a carga da corrida'),
+            el('p', { class: 'ajuda' }, 'Faltava o estado para criar a corrida. Quando ela entrar no catálogo, o vínculo é feito sozinho; ou complete aqui e crie agora.'),
+            ...espera.map((p) => cartaoPedido(p, true)),
+          ]
+        : []),
     );
   } catch (erro) {
     if (token) {
@@ -114,7 +122,17 @@ async function carregarPedidos() {
   }
 }
 
-function cartaoPedido(pedido) {
+async function verificarVinculos() {
+  try {
+    const r = await api('/admin/edition-requests/sweep', { method: 'POST' });
+    aviso(r.linked ? `${r.linked} pedido(s) vinculado(s). Ainda aguardando: ${r.waiting}.` : `Nenhum vínculo novo. Aguardando a carga: ${r.waiting}.`, 'ok');
+    await carregarPedidos();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
+function cartaoPedido(pedido, aguardando = false) {
   const resumo = resumoPedido(pedido);
   const link = linkSeguro(resumo.fonte);
   const area = el('div');
@@ -130,8 +148,8 @@ function cartaoPedido(pedido) {
     el(
       'div',
       { class: 'acoes' },
-      el('button', { type: 'button', onclick: () => painelVinculo(area, pedido, 'link') }, 'Vincular a corrida existente'),
-      el('button', { type: 'button', class: 'ok', onclick: () => painelVinculo(area, pedido, 'approve') }, 'Aprovar (corrida já importada)'),
+      el('button', { type: 'button', class: 'ok', onclick: () => painelAprovacao(area, pedido, aguardando) }, aguardando ? 'Completar e criar a corrida' : 'Aprovar e criar a corrida'),
+      el('button', { type: 'button', class: 'sec', onclick: () => painelVinculo(area, pedido, 'link') }, 'Vincular a corrida existente'),
       el('button', { type: 'button', class: 'perigo', onclick: () => painelRecusa(area, pedido) }, 'Recusar'),
     ),
     area,
@@ -153,6 +171,45 @@ async function decidir(pedido, corpo, botao) {
     botao.disabled = false;
     if (token) aviso(erro.codigo ? mensagem(erro.codigo) : erro.message, 'erro');
   }
+}
+
+/** Aprova: cria a corrida com os dados do pedido (a equipe confere estado e distâncias) e vincula o usuário. */
+function painelAprovacao(area, pedido, aguardando) {
+  const d = pedido.details || {};
+  const estado = el('input', { type: 'text', maxlength: '2', placeholder: 'UF, ex.: SP', autocomplete: 'off', value: d.state || '' });
+  const distancias = el('input', { type: 'text', maxlength: '80', placeholder: 'ex.: 5, 10', autocomplete: 'off', value: d.distanceKm ? String(d.distanceKm) : '' });
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const confirmar = el('button', { type: 'button', class: 'ok' }, aguardando ? 'Criar a corrida e vincular' : 'Aprovar');
+  confirmar.addEventListener('click', async () => {
+    let corpo;
+    try {
+      corpo = montarAprovacao({ versao: pedido.version, estado: estado.value, distancias: distancias.value });
+      erro.hidden = true;
+    } catch (falha) {
+      erro.hidden = false;
+      erro.textContent = falha.message;
+      return;
+    }
+    confirmar.disabled = true;
+    try {
+      const r = await api(`/admin/edition-requests/${encodeURIComponent(pedido.id)}/approve`, { method: 'POST', body: JSON.stringify(corpo) });
+      aviso(textoAprovacao(r.outcome), 'ok');
+      await carregarPedidos();
+    } catch (falha) {
+      confirmar.disabled = false;
+      if (!token) return;
+      erro.hidden = false;
+      erro.textContent = falha.codigo ? mensagem(falha.codigo) : falha.message;
+    }
+  });
+  area.replaceChildren(
+    el('p', { class: 'meta' }, `A corrida será criada como "${d.name || ''}", ${dataBr(d.date)}, ${d.city || ''}. A distância veio do usuário, sem fonte: confira antes de aprovar.`),
+    el('label', {}, 'Estado (UF)', estado),
+    el('label', {}, 'Distâncias em km (separe por vírgula)', distancias),
+    el('p', { class: 'meta' }, 'Se a mesma corrida já estiver no catálogo (mesma data e nome parecido), o usuário é só vinculado a ela. Sem o estado, o pedido fica aguardando a carga.'),
+    erro,
+    confirmar,
+  );
 }
 
 function painelVinculo(area, pedido, decisao) {
@@ -1215,6 +1272,7 @@ $('atualizar-banners').addEventListener('click', carregarBanners);
 $('atualizar-operadores').addEventListener('click', carregarOperadores);
 $('atualizar-custos').addEventListener('click', carregarCustos);
 $('atualizar-qualidade').addEventListener('click', carregarQualidade);
+$('verificar-vinculos').addEventListener('click', verificarVinculos);
 $('atualizar-divergencias').addEventListener('click', carregarDivergencias);
 $('baixar-aceitas').addEventListener('click', baixarAceitas);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);

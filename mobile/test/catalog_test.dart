@@ -114,6 +114,14 @@ Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
 }
 
 void main() {
+  test('rótulos dos status do pedido, inclusive aguardando a carga', () {
+    expect(requestStatusLabel('pending'), 'Em análise pela equipe');
+    expect(
+      requestStatusLabel('awaiting_load'),
+      contains('assim que a corrida entrar no catálogo'),
+    );
+    expect(requestStatusLabel('outro'), 'Situação desconhecida');
+  });
   priorityOrderTests();
   defaultOrderTests();
   ratingTests();

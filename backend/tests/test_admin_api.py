@@ -426,6 +426,145 @@ class AdminApiTests(unittest.TestCase):
             self.client.get("/admin/edition-requests", headers=self.auth()).json()["items"], []
         )
 
+    def pedido(self, sub, name, day, state, km=10):
+        person = Principal(sub, True)
+        self.identity.create_profile(
+            person, "p" + sub, {"displayName": sub.title(), "username": f"{sub}_x"}
+        )
+        self.identity.admit(person, "a" + sub, {"birthDate": "1990-01-01", "declaresAdult": True})
+        fields = EditionRequestFields(
+            name=name, date=day, city="São Paulo", state=state, distanceKm=km
+        )
+        return person, self.requests.create(person, "k" + sub, fields)
+
+    def aprovar(self, request, **corpo):
+        return self.client.post(
+            f"/admin/edition-requests/{request['id']}/approve",
+            json={"expectedVersion": request["version"], **corpo},
+            headers=self.auth(),
+        )
+
+    def test_aprovar_cria_a_corrida_e_vincula_na_hora(self):
+        person, request = self.pedido("ana", "Night Run Sintética", "2027-03-14", "SP", km=10)
+        resposta = self.aprovar(request)
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        feito = resposta.json()
+        self.assertEqual(feito["outcome"], "created")
+        self.assertEqual(feito["request"]["status"], "approved")
+        edition_id = feito["request"]["linkedEditionId"]
+        self.assertTrue(edition_id.startswith("pedido-night-run-sintetica-2027-03-14-"))
+        corrida = self.catalog._edition(edition_id)
+        self.assertEqual(
+            (corrida["name"], corrida["date"], corrida["city"], corrida["state"]),
+            ("Night Run Sintética", "2027-03-14", "São Paulo", "SP"),
+        )
+        self.assertEqual([str(d["kilometers"]) for d in corrida["distances"]], ["10"])
+        self.assertEqual(corrida["sourceCode"], "pedido-usuario")
+        # saiu da fila e a pessoa ve o pedido aprovado e vinculado
+        lista = self.client.get("/admin/edition-requests", headers=self.auth()).json()
+        self.assertEqual((lista["items"], lista["awaiting"]), ([], []))
+        mine = self.requests.get(person, request["id"])
+        self.assertEqual((mine["status"], mine["linkedEditionId"]), ("approved", edition_id))
+        # aprovar de novo e recusado
+        self.assertEqual(self.aprovar(request).status_code, 409)
+
+    def test_aprovar_pedido_de_corrida_que_ja_existe_so_vincula(self):
+        person, request = self.pedido("bia", "Corrida Sintética São Paulo", "2026-11-08", "SP")
+        antes = len(self.catalog_ids())
+        r = self.aprovar(request)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["outcome"], "linked")
+        self.assertEqual(r.json()["request"]["linkedEditionId"], "synthetic-sp-2026")
+        self.assertEqual(len(self.catalog_ids()), antes)  # nenhuma corrida nova
+
+    def catalog_ids(self):
+        rows, _ = self.store.query("catalog", "CAT#GLOBAL#ANY#DATE", limit=100)
+        return {row["editionId"] for _, row in rows}
+
+    def test_sem_estado_o_pedido_aguarda_a_carga_e_e_vinculado_sozinho_depois(self):
+        person, aguardando = self.pedido("caio", "Corrida Zeta Sintética", "2027-05-01", None)
+        r = self.aprovar(aguardando)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(
+            (r.json()["outcome"], r.json()["request"]["status"]), ("awaiting", "awaiting_load")
+        )
+        self.assertEqual(self.requests.get(person, aguardando["id"])["status"], "awaiting_load")
+        lista = self.client.get("/admin/edition-requests", headers=self.auth()).json()
+        self.assertEqual([i["id"] for i in lista["awaiting"]], [aguardando["id"]])
+        self.assertEqual((lista["items"], lista["linkedNow"]), ([], 0))
+        registro = self.store.get(("operations", "EREQ#" + aguardando["id"], "REV#2"))
+        self.assertEqual((registro["decision"], registro["operator"]), ("await", "op"))
+        # outra pessoa pede a MESMA corrida, com estado: a equipe aprova e a corrida e criada
+        _, outra = self.pedido("dani", "Corrida Zeta Sintética", "2027-05-01", "SP")
+        self.assertEqual(self.aprovar(outra).json()["outcome"], "created")
+        # ao abrir a lista, o sistema vincula sozinho quem estava aguardando
+        lista = self.client.get("/admin/edition-requests", headers=self.auth()).json()
+        self.assertEqual((lista["awaiting"], lista["linkedNow"]), ([], 1))
+        feito = self.requests.get(person, aguardando["id"])
+        self.assertEqual(feito["status"], "linked")
+        self.assertTrue(
+            feito["linkedEditionId"].startswith("pedido-corrida-zeta-sintetica-2027-05-01-")
+        )
+
+    def test_estado_informado_na_aprovacao_completa_o_pedido_e_um_aguardando_pode_ser_completado(
+        self,
+    ):
+        person, request = self.pedido("edu", "Corrida Ômega Sintética", "2027-06-01", None)
+        r = self.aprovar(request, state="rj", distances=["5", "10 km"])
+        self.assertEqual((r.status_code, r.json()["outcome"]), (200, "created"))
+        corrida = self.catalog._edition(r.json()["request"]["linkedEditionId"])
+        self.assertEqual(corrida["state"], "RJ")
+        self.assertEqual([str(d["kilometers"]) for d in corrida["distances"]], ["5", "10"])
+        # aguardando, depois completado pela equipe com o estado
+        _, outro = self.pedido("fabi", "Corrida Sigma Sintética", "2027-07-01", None)
+        espera = self.aprovar(outro).json()["request"]
+        self.assertEqual(espera["status"], "awaiting_load")
+        again = self.aprovar(espera)  # continua sem estado: nada muda
+        self.assertEqual(
+            (again.json()["outcome"], again.json()["request"]["version"]),
+            ("awaiting", espera["version"]),
+        )
+        ok = self.aprovar(espera, state="SP")
+        self.assertEqual((ok.status_code, ok.json()["outcome"]), (200, "created"))
+
+    def test_aprovar_valida_versao_estado_distancia_e_permissao(self):
+        _, request = self.pedido("gabi", "Corrida Teta Sintética", "2027-08-01", "SP")
+        self.assertEqual(self.aprovar({**request, "version": 7}).status_code, 409)
+        for ruim in (
+            {"state": "SPX"},
+            {"state": "1"},
+            {"distances": []},
+            {"distances": ["abc"]},
+            {"distances": ["0"]},
+            {"distances": ["5"] * 9},
+            {"extra": 1},
+        ):
+            self.assertIn(self.aprovar(request, **ruim).status_code, (400, 422), ruim)
+        negado = self.client.post(
+            f"/admin/edition-requests/{request['id']}/approve",
+            json={"expectedVersion": request["version"]},
+            headers=self.auth(token("mod")),
+        )
+        self.assertEqual(negado.status_code, 403)
+        self.assertEqual(
+            self.client.post(
+                "/admin/edition-requests/nao-existe/approve",
+                json={"expectedVersion": 1},
+                headers=self.auth(),
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/admin/edition-requests/sweep", headers=self.auth(token("mod"))
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post("/admin/edition-requests/sweep", headers=self.auth()).json(),
+            {"linked": 0, "waiting": 0},
+        )
+
     def test_decisao_invalida_e_recusada_sem_ecoar_dados(self):
         request = self.make_request()
         bad = self.client.post(

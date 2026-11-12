@@ -230,6 +230,23 @@ test('preferências: leitura segura e aba inicial só entre as permitidas', asyn
   assert.equal(abaInicial('', []), '');
 });
 
+test('aprovação do pedido: corpo validado e frase do resultado', async () => {
+  const { montarAprovacao, textoAprovacao } = await import('./lib.js');
+  assert.deepEqual(montarAprovacao({ versao: 3, estado: ' sp ', distancias: '5, 10 km' }), { expectedVersion: 3, state: 'SP', distances: ['5', '10'] });
+  assert.deepEqual(montarAprovacao({ versao: 1, estado: '', distancias: '' }), { expectedVersion: 1 });
+  assert.deepEqual(montarAprovacao({ versao: '2', distancias: ['21,0975'] }), { expectedVersion: 2, distances: ['21,0975'] });
+  assert.throws(() => montarAprovacao({ versao: 0 }), /Versão/);
+  assert.throws(() => montarAprovacao({ versao: 1, estado: 'SPX' }), /2 letras/);
+  assert.throws(() => montarAprovacao({ versao: 1, estado: '1' }), /2 letras/);
+  assert.throws(() => montarAprovacao({ versao: 1, distancias: ['0'] }), /inválida/);
+  assert.throws(() => montarAprovacao({ versao: 1, distancias: ['1001'] }), /inválida/);
+  assert.throws(() => montarAprovacao({ versao: 1, distancias: Array(9).fill('5') }), /8/);
+  assert.match(textoAprovacao('created'), /criada/);
+  assert.match(textoAprovacao('linked'), /já existia/i);
+  assert.match(textoAprovacao('awaiting'), /aguardando/);
+  assert.equal(textoAprovacao('outro'), 'Pedido aprovado.');
+});
+
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
   const { situacaoOperador } = await import('./lib.js');
   assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);
