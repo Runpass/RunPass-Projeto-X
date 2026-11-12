@@ -64,6 +64,13 @@ class MemoryBlobStore:
             raise Problem(503, "DERIVED_COLLISION")
         self.derived[reference] = value
 
+    def read_derived(self, owner, reference):
+        """Bytes e tipo da copia tratada de uma pessoa (uso da equipe ao aprovar um banner enviado por ela)."""
+        item = self.derived.get(reference)
+        if not item or item["owner"] != owner:
+            raise Problem(404, "IMAGE_NOT_AVAILABLE")
+        return item["data"], item["contentType"]
+
     def view_url(self, owner, reference):
         item = self.derived.get(reference)
         if not item or item["owner"] != owner:

@@ -7009,7 +7009,8 @@
             "format": "uri"
           },
           "imageReference": {
-            "type": "string"
+            "type": "string",
+            "description": "Banner suggested by the runner: an image already uploaded and validated by the same runner. Never published automatically; the team approves it with credit and rights."
           }
         }
       },
@@ -7048,6 +7049,14 @@
           },
           "linkedEditionId": {
             "type": "string"
+          },
+          "bannerState": {
+            "type": "string",
+            "enum": [
+              "published",
+              "dismissed"
+            ],
+            "description": "Decision of the team on the banner suggested with the request; absent while undecided."
           }
         },
         "description": "Owner-only view, not a public catalog record. Reviewed request preserves associated draft until owner completes it."

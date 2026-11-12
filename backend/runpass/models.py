@@ -192,7 +192,8 @@ class CreateComment(Input):
 
 
 class EditionRequestFields(Input):
-    """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` nao e aceito ainda."""
+    """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
+    (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""
 
     name: Annotated[str, Field(min_length=1, max_length=160)]
     date: date
@@ -200,6 +201,7 @@ class EditionRequestFields(Input):
     state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
     distanceKm: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
     officialUrl: Annotated[str, Field(max_length=500, pattern=r"^https://[^\s]+$")] | None = None
+    imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
 
     @field_validator("name", "city")
     @classmethod

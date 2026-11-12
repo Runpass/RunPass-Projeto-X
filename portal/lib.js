@@ -44,6 +44,9 @@ export const MENSAGENS = {
   SCHEDULE_NOT_FOUND: 'Agendamento não encontrado. Atualize a lista.',
   ALREADY_DECIDED: 'Esta divergência já foi decidida. Atualize a lista.',
   DIVERGENCE_NOT_FOUND: 'Divergência não encontrada na coleta mais recente. Atualize a lista.',
+  BANNER_ALREADY_DECIDED: 'Este banner já foi decidido. Atualize a lista.',
+  REQUEST_NOT_LINKED: 'O pedido ainda não está vinculado a uma corrida do catálogo.',
+  IMAGE_NOT_AVAILABLE: 'A imagem enviada não está mais disponível.',
   INVALID_CATALOG_ENTRY: 'Os dados do pedido não formam uma corrida válida (confira nome, data, cidade, estado e distâncias).',
 };
 
@@ -445,4 +448,16 @@ export function textoAprovacao(resultado) {
       awaiting: 'Aprovado. Falta o estado (UF) para criar a corrida: o pedido ficou aguardando e será vinculado sozinho quando a corrida entrar no catálogo.',
     }[resultado] || 'Pedido aprovado.'
   );
+}
+
+/** Corpo da publicação do banner sugerido por um usuário: crédito, base de autorização e confirmação. */
+export function montarPublicacaoBanner({ credito, nota, confirmou }) {
+  const c = (credito || '').trim();
+  const n = (nota || '').trim();
+  if (!c) throw new Error('Informe o crédito que aparece no app (ex.: Divulgação: Organizador).');
+  if (c.length > 200) throw new Error('O crédito pode ter até 200 caracteres.');
+  if (n.length < 10) throw new Error('Descreva a base de autorização (como o direito de uso foi obtido), com pelo menos 10 caracteres.');
+  if (n.length > 1000) throw new Error('A base de autorização pode ter até 1000 caracteres.');
+  if (!confirmou) throw new Error('Confirme que a base de autorização é verdadeira.');
+  return { credit: c, rightsNote: n, confirmRights: true };
 }

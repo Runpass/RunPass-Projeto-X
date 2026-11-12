@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro,
 } from './lib.js';
 
@@ -100,12 +100,20 @@ async function carregarPedidos() {
   const lista = $('pedidos');
   lista.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
   try {
-    const { items, awaiting, linkedNow } = await api('/admin/edition-requests');
+    const { items, awaiting, images, linkedNow } = await api('/admin/edition-requests');
     const espera = awaiting || [];
+    const banners = images || [];
     if (linkedNow) aviso(`${linkedNow} pedido(s) que aguardavam foram vinculados automaticamente.`, 'ok');
     lista.replaceChildren(
       el('h2', {}, 'Pendentes de decisão'),
       ...(items.length ? items.map((p) => cartaoPedido(p)) : [el('p', { class: 'vazio' }, 'Nenhum pedido pendente.')]),
+      ...(banners.length
+        ? [
+            el('h2', {}, 'Banners sugeridos por usuários'),
+            el('p', { class: 'ajuda' }, 'Nada é publicado sem a sua decisão: confira a imagem, informe o crédito e a base de autorização, e só então publique. Publicar substitui o banner atual da corrida, se houver.'),
+            ...banners.map(cartaoBanner),
+          ]
+        : []),
       ...(espera.length
         ? [
             el('h2', {}, 'Aprovados, aguardando a carga da corrida'),
@@ -132,6 +140,81 @@ async function verificarVinculos() {
   }
 }
 
+/** Carrega a imagem enviada no pedido (rota protegida) e a mostra em `alvo`. */
+async function carregarImagemPedido(id, alvo) {
+  try {
+    const r = await fetch(`${cfg.apiUrl}/admin/edition-requests/${encodeURIComponent(id)}/image`, { headers: { Authorization: `Bearer ${token}` } });
+    if (r.status === 401) return sair('INVALID_TOKEN');
+    if (!r.ok) throw new Error('erro');
+    alvo.replaceChildren(el('img', { class: 'previa', src: URL.createObjectURL(await r.blob()), alt: 'Banner enviado pelo usuário' }));
+  } catch (falha) {
+    if (token) alvo.replaceChildren(el('p', { class: 'aviso erro' }, 'Não foi possível carregar a imagem enviada.'));
+  }
+}
+
+function cartaoBanner(pedido) {
+  const d = pedido.details || {};
+  const e = pedido.edition || {};
+  const previa = el('div', {}, el('p', { class: 'meta' }, 'Carregando a imagem...'));
+  carregarImagemPedido(pedido.id, previa);
+  const credito = el('input', { type: 'text', maxlength: '200', placeholder: 'ex.: Divulgação: Organizador', autocomplete: 'off' });
+  const nota = el('textarea', { rows: '3', maxlength: '1000', placeholder: 'Como o direito de uso foi obtido (fica só no registro interno)' });
+  const confirmar = el('input', { type: 'checkbox' });
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const publicar = el('button', { type: 'button', class: 'ok' }, 'Publicar banner');
+  const descartar = el('button', { type: 'button', class: 'perigo' }, 'Descartar');
+  publicar.addEventListener('click', async () => {
+    let corpo;
+    try {
+      corpo = montarPublicacaoBanner({ credito: credito.value, nota: nota.value, confirmou: confirmar.checked });
+      erro.hidden = true;
+    } catch (falha) {
+      erro.hidden = false;
+      erro.textContent = falha.message;
+      return;
+    }
+    if (!window.confirm('Publicar PUBLICA esta imagem como banner da corrida, com o crédito informado. Confirmar?')) return;
+    publicar.disabled = descartar.disabled = true;
+    try {
+      await api(`/admin/edition-requests/${encodeURIComponent(pedido.id)}/banner`, { method: 'POST', body: JSON.stringify(corpo) });
+      aviso('Banner publicado.', 'ok');
+      await carregarPedidos();
+    } catch (falha) {
+      publicar.disabled = descartar.disabled = false;
+      if (token) {
+        erro.hidden = false;
+        erro.textContent = falha.codigo ? mensagem(falha.codigo) : falha.message;
+      }
+    }
+  });
+  descartar.addEventListener('click', async () => {
+    const motivo = window.prompt('Descartar este banner (nada é publicado). Motivo, opcional:', '');
+    if (motivo === null) return;
+    publicar.disabled = descartar.disabled = true;
+    try {
+      await api(`/admin/edition-requests/${encodeURIComponent(pedido.id)}/banner/dismiss`, { method: 'POST', body: JSON.stringify({ reason: motivo.trim() }) });
+      aviso('Banner descartado.', 'ok');
+      await carregarPedidos();
+    } catch (falha) {
+      publicar.disabled = descartar.disabled = false;
+      if (token) aviso(falha.codigo ? mensagem(falha.codigo) : falha.message, 'erro');
+    }
+  });
+  return el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, e.name || d.name || '(corrida)'),
+    el('div', { class: 'linha' }, [e.date ? dataBr(e.date) : '', [e.city, e.state].filter(Boolean).join('/')].filter(Boolean).join(' · ')),
+    pedido.editionHasBanner ? el('div', { class: 'aviso' }, 'Esta corrida já tem banner: publicar substitui.') : '',
+    previa,
+    el('label', {}, 'Crédito (aparece no app)', credito),
+    el('label', {}, 'Base de autorização (como você obteve o direito de usar; fica só no registro interno)', nota),
+    el('label', { class: 'confirma' }, confirmar, ' Confirmo que a base de autorização acima é verdadeira.'),
+    erro,
+    el('div', { class: 'acoes' }, publicar, descartar),
+  );
+}
+
 function cartaoPedido(pedido, aguardando = false) {
   const resumo = resumoPedido(pedido);
   const link = linkSeguro(resumo.fonte);
@@ -145,6 +228,13 @@ function cartaoPedido(pedido, aguardando = false) {
       ? el('div', { class: 'meta' }, 'Fonte informada: ', el('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, link))
       : '',
     el('div', { class: 'meta' }, `Pedido ${pedido.id} · versão ${pedido.version}`),
+    ...(((pedido.details || {}).imageReference)
+      ? (() => {
+          const caixa = el('div', {}, el('p', { class: 'meta' }, 'Carregando o banner enviado...'));
+          carregarImagemPedido(pedido.id, caixa);
+          return [el('div', { class: 'meta' }, 'Banner enviado pelo usuário (só entra na fila de publicação depois que o pedido for aprovado e vinculado):'), caixa];
+        })()
+      : []),
     el(
       'div',
       { class: 'acoes' },

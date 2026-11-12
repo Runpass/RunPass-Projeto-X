@@ -136,3 +136,9 @@ fonte informou o link. Só abre `https` com domínio e sem usuário/senha embuti
 `http:`...) é ignorado. Com inscrição `closed` ou `sold_out` o botão vira "Página de inscrição", para não convidar a comprar.
 O app usa o pacote `url_launcher` e abre o link fora do app. **O link das fotos ainda não existe**: exige campo novo no
 modelo, no CSV de importação, no contrato da API e na tela, e ficou para um passo seguinte.
+
+## Banner no pedido de cadastro da corrida (11/11/2026)
+Ao pedir o cadastro de uma corrida, a pessoa pode anexar uma imagem de banner (opcional). A imagem passa pela mesma
+validação das fotos do app e fica só dela. **Não é publicada sozinha**: depois que a equipe aprova o pedido e a
+corrida é criada ou vinculada, o portal mostra a imagem, e quem aprova informa o crédito e a base de autorização
+(regra de mídia do projeto) antes de publicar, ou descarta. A pessoa acompanha a situação em "Minhas solicitações".
