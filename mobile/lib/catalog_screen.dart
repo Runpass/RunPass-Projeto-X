@@ -1083,9 +1083,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
           ),
           // Sempre visíveis (não ficam escondidos atrás da lupa): pedir cadastro e acompanhar os pedidos.
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: 12),
             child: Wrap(
               spacing: 8,
+              runSpacing: 12,
               children: [
                 OutlinedButton.icon(
                   key: const Key('catalog-request-new'),
@@ -1301,7 +1302,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
               ),
             ),
-          const SizedBox(height: 16),
+          // Mesmo espaço (12) entre "Minhas solicitações", o público e o ano.
+          if (showFilters) const SizedBox(height: 12),
           if (searchNotice != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
@@ -1317,36 +1319,69 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
-          // Público: todas, só adultas ou só kids (kids = nome com Kids/Infantil/Mirim).
-          SegmentedButton<String>(
-            key: ValueKey('filter-audience-$registrationEpoch'),
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(
-                value: '',
-                label: Text('Todas'),
-                icon: Icon(Icons.groups_rounded, size: 18),
+          // Público (todas, adultos ou kids) e, no espaço livre ao lado, a ordem da lista.
+          Row(
+            children: [
+              // Público: todas, só adultas ou só kids (kids = nome com Kids/Infantil/Mirim).
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: SegmentedButton<String>(
+                      key: ValueKey('filter-audience-$registrationEpoch'),
+                      showSelectedIcon: false,
+                      segments: const [
+                        ButtonSegment(value: '', label: Text('Todas')),
+                        ButtonSegment(value: 'adult', label: Text('Adultos')),
+                        ButtonSegment(value: 'kids', label: Text('Kids')),
+                      ],
+                      selected: {fields['audience']!.text},
+                      onSelectionChanged: loading
+                          ? null
+                          : (value) {
+                              setState(
+                                () => fields['audience']!.text = value.first,
+                              );
+                              load();
+                            },
+                    ),
+                  ),
+                ),
               ),
-              ButtonSegment(
-                value: 'adult',
-                label: Text('Adultos'),
-                icon: Icon(Icons.directions_run_rounded, size: 18),
+              IconButton(
+                key: const Key('catalog-sort'),
+                tooltip: sortBy != 'date'
+                    ? 'Ordenar por data'
+                    : (descending
+                          ? 'Mais recentes primeiro (toque para inverter)'
+                          : 'Mais antigas primeiro (toque para inverter)'),
+                isSelected: sortBy == 'date',
+                icon: sortGlyph(
+                  Icons.calendar_today_rounded,
+                  active: sortBy == 'date',
+                ),
+                onPressed: loading ? null : sortByDate,
               ),
-              ButtonSegment(
-                value: 'kids',
-                label: Text('Kids'),
-                icon: Icon(Icons.child_care_rounded, size: 18),
+              IconButton(
+                key: const Key('catalog-sort-rating'),
+                tooltip: sortBy != 'rating'
+                    ? 'Ordenar por avaliação'
+                    : (descending
+                          ? 'Melhores avaliações primeiro (toque para inverter)'
+                          : 'Piores avaliações primeiro (toque para inverter)'),
+                isSelected: sortBy == 'rating',
+                icon: sortGlyph(
+                  sortBy == 'rating'
+                      ? Icons.star_rounded
+                      : Icons.star_border_rounded,
+                  active: sortBy == 'rating',
+                ),
+                onPressed: loading ? null : sortByRating,
               ),
             ],
-            selected: {fields['audience']!.text},
-            onSelectionChanged: loading
-                ? null
-                : (value) {
-                    setState(() => fields['audience']!.text = value.first);
-                    load();
-                  },
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Row(
             children: [
               // Ano no mesmo padrão do seletor de público (Todas/Adultos/Kids), mas com a lista
@@ -1380,39 +1415,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              IconButton(
-                key: const Key('catalog-sort'),
-                tooltip: sortBy != 'date'
-                    ? 'Ordenar por data'
-                    : (descending
-                          ? 'Mais recentes primeiro (toque para inverter)'
-                          : 'Mais antigas primeiro (toque para inverter)'),
-                isSelected: sortBy == 'date',
-                icon: sortGlyph(
-                  Icons.calendar_today_rounded,
-                  active: sortBy == 'date',
-                ),
-                onPressed: loading ? null : sortByDate,
-              ),
-              IconButton(
-                key: const Key('catalog-sort-rating'),
-                tooltip: sortBy != 'rating'
-                    ? 'Ordenar por avaliação'
-                    : (descending
-                          ? 'Melhores avaliações primeiro (toque para inverter)'
-                          : 'Piores avaliações primeiro (toque para inverter)'),
-                isSelected: sortBy == 'rating',
-                icon: sortGlyph(
-                  sortBy == 'rating'
-                      ? Icons.star_rounded
-                      : Icons.star_border_rounded,
-                  active: sortBy == 'rating',
-                ),
-                onPressed: loading ? null : sortByRating,
-              ),
             ],
           ),
+          // Um pouco mais de ar entre a linha do ano e o primeiro cartão.
+          const SizedBox(height: 16),
           if (loading) const Center(child: CircularProgressIndicator()),
           if (!loading && error == null && items.isEmpty)
             Text(

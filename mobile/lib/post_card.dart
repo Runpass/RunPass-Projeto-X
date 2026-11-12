@@ -486,7 +486,7 @@ class _PostCardState extends State<PostCard> {
               ],
             ),
             const SizedBox(height: 12),
-            // Tocar no nome da corrida abre as informações dela (avaliações, fotos, participantes).
+            // Em negrito, sem sublinhado: tocar no nome da corrida abre as informações dela.
             InkWell(
               key: Key('post-race-${entry.postId}'),
               borderRadius: BorderRadius.circular(6),
@@ -506,9 +506,6 @@ class _PostCardState extends State<PostCard> {
                 style: const TextStyle(
                   fontWeight: FontWeight.w800,
                   fontSize: 17,
-                  decoration: TextDecoration.underline,
-                  decorationColor: runPassOrange,
-                  decorationThickness: 1.5,
                 ),
               ),
             ),

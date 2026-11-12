@@ -158,6 +158,15 @@ void main() {
         MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
+      // Em negrito e sem sublinhado: o link é só o nome da corrida.
+      final title = tester.widget<Text>(
+        find.descendant(
+          of: find.byKey(const Key('post-race-p1')),
+          matching: find.byType(Text),
+        ),
+      );
+      expect(title.style?.fontWeight, FontWeight.w800);
+      expect(title.style?.decoration, isNull);
       await tester.tap(find.byKey(const Key('post-race-p1')));
       await tester.pumpAndSettle();
       expect(paths, contains('/editions/E1'));

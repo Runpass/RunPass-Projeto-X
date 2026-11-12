@@ -2026,6 +2026,73 @@ void ratingTests() {
     },
   );
 
+  testWidgets(
+    'os ícones de ordem ficam na linha do público e os espaços são iguais',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        return JsonReply(200, {
+          'items': [rated('A', '2026-05-01', score: 4, reviews: 3)],
+        });
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      Finder audience() => find.byWidgetPredicate(
+        (w) =>
+            w is SegmentedButton<String> &&
+            w.key.toString().contains('filter-audience'),
+      );
+      Finder year() => find.byWidgetPredicate(
+        (w) =>
+            w is SegmentedButton<String> &&
+            w.key.toString().contains('filter-year'),
+      );
+      final mine = tester
+          .getBottomLeft(find.byKey(const Key('catalog-request-mine')))
+          .dy;
+      final sortDate = tester.getRect(find.byKey(const Key('catalog-sort')));
+      final sortStar = tester.getRect(
+        find.byKey(const Key('catalog-sort-rating')),
+      );
+      final aud = tester.getRect(audience());
+      final yr = tester.getRect(year());
+      // Ícones de ordem na mesma linha do seletor de público, à direita dele.
+      expect(sortDate.center.dy, closeTo(aud.center.dy, 1));
+      expect(sortStar.center.dy, closeTo(aud.center.dy, 1));
+      expect(sortDate.left, greaterThan(aud.right));
+      expect(sortStar.left, greaterThan(sortDate.left));
+      // O ano ocupa a largura toda, sem os ícones ao lado.
+      final yearArea = tester.getRect(
+        find
+            .ancestor(of: year(), matching: find.byType(SingleChildScrollView))
+            .first,
+      );
+      expect(yearArea.right, greaterThan(sortStar.right - 1));
+      // Espaços iguais: Minhas solicitações -> linha do público -> ano.
+      final rowTop = sortDate.top < aud.top ? sortDate.top : aud.top;
+      final rowBottom = sortDate.bottom > aud.bottom
+          ? sortDate.bottom
+          : aud.bottom;
+      final gap1 = rowTop - mine;
+      final gap2 = yr.top - rowBottom;
+      expect(gap1, closeTo(12, 1.5));
+      expect(gap2, closeTo(12, 1.5));
+      // Mais ar entre a linha do ano e o primeiro cartão da lista.
+      final firstCard = tester.getTopLeft(find.byType(Card).first).dy;
+      expect(firstCard - yr.bottom, greaterThan(15));
+      expect(firstCard - yr.bottom, lessThan(30));
+      // O pedido de cadastro fica acima, sem encostar nos demais blocos.
+      final request = tester.getRect(
+        find.byKey(const Key('catalog-request-new')),
+      );
+      expect(request.bottom, lessThanOrEqualTo(mine + 1));
+    },
+  );
+
   testWidgets('o filtro de público envia kids/adult e "Todas" o remove', (
     tester,
   ) async {
