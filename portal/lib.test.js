@@ -247,9 +247,55 @@ test('aprovação do pedido: corpo validado e frase do resultado', async () => {
   assert.equal(textoAprovacao('outro'), 'Pedido aprovado.');
 });
 
+test('banner sugerido: crédito, base de autorização e confirmação são obrigatórios', async () => {
+  const { montarPublicacaoBanner } = await import('./lib.js');
+  const ok = { credito: ' Divulgação: Org ', nota: 'Enviado pela organização, por escrito', confirmou: true };
+  assert.deepEqual(montarPublicacaoBanner(ok), { credit: 'Divulgação: Org', rightsNote: 'Enviado pela organização, por escrito', confirmRights: true });
+  assert.throws(() => montarPublicacaoBanner({ ...ok, credito: '  ' }), /crédito/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, credito: 'x'.repeat(201) }), /200/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, nota: 'curta' }), /10 caracteres/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, nota: 'x'.repeat(1001) }), /1000/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, confirmou: false }), /Confirme/);
+});
+
 test('acesso ao portal: mensagens de conta sem acesso', async () => {
   const { situacaoOperador } = await import('./lib.js');
   assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);
   assert.match(mensagem('ACCESS_ALREADY_EXISTS'), /reative/);
   assert.match(situacaoOperador({ enabled: true, access: null }), /Sem acesso ao portal/);
+});
+
+test('dimensoesEnvio reduz só o que passa do limite e mantém a proporção', async () => {
+  const { dimensoesEnvio } = await import('./lib.js');
+  assert.deepEqual(dimensoesEnvio(4000, 2000), { largura: 1920, altura: 960 });
+  assert.deepEqual(dimensoesEnvio(1000, 3000), { largura: 640, altura: 1920 });
+  assert.deepEqual(dimensoesEnvio(800, 600), { largura: 800, altura: 600 }); // nunca amplia
+  assert.throws(() => dimensoesEnvio(0, 10), /tamanho/);
+});
+
+test('montarBannerArquivo exige corrida, arquivo válido, crédito, base e confirmação', async () => {
+  const { montarBannerArquivo } = await import('./lib.js');
+  const ok = { editionId: 'e1', base64: 'QUJD', tipo: 'image/jpeg', credito: 'Divulgação: Org', nota: 'Enviado pela organização, por escrito', confirmou: true };
+  assert.deepEqual(montarBannerArquivo(ok), {
+    editionId: 'e1', imageBase64: 'QUJD', contentType: 'image/jpeg',
+    credit: 'Divulgação: Org', rightsNote: 'Enviado pela organização, por escrito', confirmRights: true,
+  });
+  assert.throws(() => montarBannerArquivo({ ...ok, editionId: '' }), /corrida/);
+  assert.throws(() => montarBannerArquivo({ ...ok, base64: '' }), /arquivo/);
+  assert.throws(() => montarBannerArquivo({ ...ok, tipo: 'image/gif' }), /JPEG, PNG ou WebP/);
+  assert.throws(() => montarBannerArquivo({ ...ok, base64: 'A'.repeat(5_800_001) }), /grande demais/);
+  assert.throws(() => montarBannerArquivo({ ...ok, credito: ' ' }), /crédito/);
+  assert.throws(() => montarBannerArquivo({ ...ok, nota: 'curta' }), /base de autorização/);
+  assert.throws(() => montarBannerArquivo({ ...ok, confirmou: false }), /Confirme/);
+});
+
+test('resumoImporte soma as rodadas e traduz os motivos', async () => {
+  const { resumoImporte } = await import('./lib.js');
+  assert.deepEqual(resumoImporte(undefined), { texto: '0 importada(s)', detalhes: [] });
+  const r = resumoImporte([
+    { counts: { created: 1, blocked: 2, review: 0, invalid: 1, later: 0 }, reasons: { fora_da_capital: 1, parecida_com: 1 } },
+    { counts: { created: 2, blocked: 1, review: 1, invalid: 0, later: 3 }, reasons: { fora_da_capital: 1 } },
+  ]);
+  assert.equal(r.texto, '3 importada(s) · 5 para revisão · 3 ficaram para a próxima rodada');
+  assert.deepEqual(r.detalhes, ['2 fora da capital', '1 parecida com uma corrida que já existe no mesmo dia']);
 });

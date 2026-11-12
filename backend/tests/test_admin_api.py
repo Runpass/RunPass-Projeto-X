@@ -13,12 +13,14 @@ from runpass.admin_api import MfaPolicy, admit_operator, create_admin_app
 from runpass.admin_banners import BannerAdmin
 from runpass.admin_divergences import DivergenceReview
 from runpass.admin_users import AdminUsers, CatalogRunner, CatalogSchedules, next_run
+from runpass.auto_import import AutoImport
 from runpass.catalog import CatalogService, seed_synthetic
 from runpass.edition_requests import EditionRequestService
 from runpass.identity import AuthFailure, Principal
 from runpass.models import EditionRequestFields
 from runpass.operator_admin import grant_access
-from runpass.service import IdentityService
+from runpass.quality_live import LiveQuality
+from runpass.service import IdentityService, Problem
 from runpass.store import MemoryStore, Unavailable
 from runpass.upload import MemoryBlobStore
 
@@ -266,7 +268,7 @@ class AdminApiTests(unittest.TestCase):
         self.store = self.identity.store
         self.catalog = CatalogService(self.identity, Fernet.generate_key())
         seed_synthetic(self.catalog, ROOT / "backend/fixtures/catalog.synthetic.json")
-        self.requests = EditionRequestService(self.identity, Fernet.generate_key())
+        self.requests = EditionRequestService(self.identity, Fernet.generate_key(), self.catalog)
         self.mfa_on = True
         self.now = NOW.timestamp()
         self.cognito, self.lam, self.logs = FakeUsers(), FakeLambda(), FakeLogs()
@@ -319,6 +321,18 @@ class AdminApiTests(unittest.TestCase):
                     self.store,
                 ),
                 divergences=DivergenceReview(self.store, self.s3, "relatorios", lambda: self.now),
+                auto_import=AutoImport(
+                    self.store,
+                    self.catalog,
+                    self.s3,
+                    "relatorios",
+                    lambda: datetime.fromtimestamp(self.now, timezone.utc),
+                ),
+                quality_live=LiveQuality(
+                    self.s3,
+                    "relatorios",
+                    DivergenceReview(self.store, self.s3, "relatorios", lambda: self.now),
+                ),
                 banners=BannerAdmin(
                     self.store,
                     self.catalog,
@@ -426,16 +440,41 @@ class AdminApiTests(unittest.TestCase):
             self.client.get("/admin/edition-requests", headers=self.auth()).json()["items"], []
         )
 
-    def pedido(self, sub, name, day, state, km=10):
+    def pedido(self, sub, name, day, state, km=10, image=False):
         person = Principal(sub, True)
         self.identity.create_profile(
             person, "p" + sub, {"displayName": sub.title(), "username": f"{sub}_x"}
         )
         self.identity.admit(person, "a" + sub, {"birthDate": "1990-01-01", "declaresAdult": True})
+        reference = self.imagem_do_usuario(sub) if image else None
         fields = EditionRequestFields(
-            name=name, date=day, city="São Paulo", state=state, distanceKm=km
+            name=name,
+            date=day,
+            city="São Paulo",
+            state=state,
+            distanceKm=km,
+            imageReference=reference,
         )
         return person, self.requests.create(person, "k" + sub, fields)
+
+    def imagem_do_usuario(self, sub, owner=None):
+        """Imagem ja enviada e tratada por uma pessoa (o que o fluxo de upload deixa pronto)."""
+        reference = "img_" + (sub.encode().hex() * 64)[:64]
+        self.blobs.write_derived(reference, self.png(), "image/png", owner or sub)
+        key = ("operations", "USER#" + (owner or sub), "IMAGE#" + reference)
+        self.store.commit(
+            {key: None},
+            {
+                key: {
+                    "owner": owner or sub,
+                    "origin": "runner",
+                    "state": "valid",
+                    "refs": 0,
+                    "contentType": "image/png",
+                }
+            },
+        )
+        return reference
 
     def aprovar(self, request, **corpo):
         return self.client.post(
@@ -527,6 +566,206 @@ class AdminApiTests(unittest.TestCase):
         ok = self.aprovar(espera, state="SP")
         self.assertEqual((ok.status_code, ok.json()["outcome"]), (200, "created"))
 
+    def corpo_banner_pedido(self, **mudanca):
+        return {
+            "credit": "Divulgação: Organização Sintética",
+            "rightsNote": "Enviado pela organizacao ao corredor, com autorizacao por escrito",
+            "confirmRights": True,
+            **mudanca,
+        }
+
+    def test_banner_no_pedido_exige_imagem_propria_e_valida(self):
+        person, request = self.pedido(
+            "ivo", "Corrida Banner Sintética", "2027-09-01", "SP", image=True
+        )
+        ref = request["details"]["imageReference"]
+        self.assertTrue(ref.startswith("img_"))
+        imagem = self.store.get(("operations", "USER#ivo", "IMAGE#" + ref))
+        self.assertEqual(imagem["refs"], 1)  # a imagem fica reservada pelo pedido
+        # imagem de outra pessoa, inexistente ou ainda nao validada: recusada, nada e criado
+        outra = Principal("jose", True)
+        self.identity.create_profile(outra, "pj", {"displayName": "Jose", "username": "jose_x"})
+        self.identity.admit(outra, "aj", {"birthDate": "1990-01-01", "declaresAdult": True})
+        alheia = EditionRequestFields(
+            name="Roubada", date="2027-09-02", city="São Paulo", distanceKm=5, imageReference=ref
+        )
+        with self.assertRaises(Problem) as erro:
+            self.requests.create(outra, "kj", alheia)
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_VALID")
+        inexistente = EditionRequestFields(
+            name="Sem imagem",
+            date="2027-09-02",
+            city="São Paulo",
+            distanceKm=5,
+            imageReference="img_" + "b" * 64,
+        )
+        with self.assertRaises(Problem) as erro:
+            self.requests.create(outra, "kj2", inexistente)
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_VALID")
+        with self.assertRaises(ValueError):
+            EditionRequestFields(
+                name="x", date="2027-09-02", city="x", distanceKm=5, imageReference="../etc/passwd"
+            )
+        self.assertEqual(person.subject, "ivo")
+
+    def test_a_equipe_ve_a_imagem_do_pedido_so_com_catalog_admin(self):
+        _, com = self.pedido("lia", "Corrida Com Imagem", "2027-10-01", "SP", image=True)
+        _, sem = self.pedido("mel", "Corrida Sem Imagem", "2027-10-02", "SP")
+        r = self.client.get(f"/admin/edition-requests/{com['id']}/image", headers=self.auth())
+        self.assertEqual((r.status_code, r.headers["content-type"]), (200, "image/png"))
+        self.assertEqual(r.content[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(r.headers["cache-control"], "no-store")
+        self.assertEqual(
+            self.client.get(
+                f"/admin/edition-requests/{com['id']}/image", headers=self.auth(token("mod"))
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/admin/edition-requests/{sem['id']}/image", headers=self.auth()
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get(
+                "/admin/edition-requests/nao-existe/image", headers=self.auth()
+            ).status_code,
+            404,
+        )
+
+    def banner(self, request, **mudanca):
+        return self.client.post(
+            f"/admin/edition-requests/{request['id']}/banner",
+            json=self.corpo_banner_pedido(**mudanca),
+            headers=self.auth(),
+        )
+
+    def test_banner_sugerido_so_publica_depois_do_vinculo_e_com_credito_e_autorizacao(self):
+        person, request = self.pedido(
+            "nina", "Corrida Nina Sintética", "2027-11-01", "SP", image=True
+        )
+        # ainda pendente: nao pode publicar
+        self.assertEqual(self.banner(request).status_code, 409)
+        self.assertEqual(
+            self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"], []
+        )
+        feito = self.aprovar(request).json()
+        edition_id = feito["request"]["linkedEditionId"]
+        fila = self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"]
+        self.assertEqual([i["id"] for i in fila], [request["id"]])
+        self.assertEqual(
+            (fila[0]["edition"]["id"], fila[0]["editionHasBanner"]), (edition_id, False)
+        )
+        self.assertFalse(
+            self.catalog._edition(edition_id).get("imageReference")
+        )  # nada publicado ainda
+        # sem confirmar, sem credito ou com base curta: recusado e nada muda
+        for ruim, esperado in (
+            ({"confirmRights": False}, 422),
+            ({"credit": "  "}, 422),
+            ({"rightsNote": "curta"}, 422),
+        ):
+            self.assertEqual(self.banner(request, **ruim).status_code, esperado, ruim)
+        self.assertFalse(self.catalog._edition(edition_id).get("imageReference"))
+        negado = self.client.post(
+            f"/admin/edition-requests/{request['id']}/banner",
+            json=self.corpo_banner_pedido(),
+            headers=self.auth(token("mod")),
+        )
+        self.assertEqual(negado.status_code, 403)
+        ok = self.banner(request)
+        self.assertEqual(ok.status_code, 201, ok.text)
+        self.assertEqual(ok.json()["bannerState"], "published")
+        corrida = self.catalog._edition(edition_id)
+        self.assertTrue(corrida["imageReference"].startswith("banner_"))
+        self.assertEqual(corrida["imageCredit"], "Divulgação: Organização Sintética")
+        # a pessoa ve o resultado e a fila esvazia; decidir de novo e recusado
+        self.assertEqual(self.requests.get(person, request["id"])["bannerState"], "published")
+        self.assertEqual(
+            self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"], []
+        )
+        self.assertEqual(self.banner(request).status_code, 409)
+        registro = self.store.get(("operations", "EREQ#" + request["id"], "BANNER"))
+        self.assertEqual((registro["state"], registro["by"]), ("published", "op"))
+
+    def test_sugerir_banner_de_corrida_ja_cadastrada_vai_para_a_fila_da_equipe(self):
+        person = Principal("rui", True)
+        self.identity.create_profile(person, "pr", {"displayName": "Rui", "username": "rui_x"})
+        self.identity.admit(person, "ar", {"birthDate": "1990-01-01", "declaresAdult": True})
+        ref = self.imagem_do_usuario("rui")
+        edition_id = "synthetic-sp-2026"
+        sugestao = self.requests.suggest_banner(person, "sb1", edition_id, ref)
+        self.assertEqual(
+            (sugestao["kind"], sugestao["status"], sugestao["linkedEditionId"]),
+            ("banner", "linked", edition_id),
+        )
+        self.assertEqual(
+            self.requests.suggest_banner(person, "sb1", edition_id, ref)["id"], sugestao["id"]
+        )  # mesma chave: mesmo resultado
+        imagem = self.store.get(("operations", "USER#rui", "IMAGE#" + ref))
+        self.assertEqual(imagem["refs"], 1)
+        # Nada publicado: a fila da equipe mostra a sugestao com a corrida e sem pedido pendente.
+        fila = self.client.get("/admin/edition-requests", headers=self.auth()).json()
+        self.assertEqual([i["id"] for i in fila["images"]], [sugestao["id"]])
+        self.assertEqual(fila["images"][0]["kind"], "banner")
+        self.assertEqual(fila["images"][0]["edition"]["id"], edition_id)
+        self.assertNotIn(sugestao["id"], [i["id"] for i in fila["items"]])
+        self.assertFalse(self.catalog._edition(edition_id).get("imageReference"))
+        # Uma sugestao em aberto por pessoa e corrida.
+        outra = self.imagem_do_usuario("rui2", owner="rui")
+        with self.assertRaises(Problem) as dup:
+            self.requests.suggest_banner(person, "sb2", edition_id, outra)
+        self.assertEqual(dup.exception.code, "BANNER_SUGGESTION_EXISTS")
+        # Imagem alheia, corrida inexistente e arquivada: recusados.
+        alheia = self.imagem_do_usuario("zed")
+        with self.assertRaises(Problem) as ruim:
+            self.requests.suggest_banner(person, "sb3", "synthetic-sp-2025", alheia)
+        self.assertEqual(ruim.exception.code, "IMAGE_NOT_VALID")
+        with self.assertRaises(Problem) as nada:
+            self.requests.suggest_banner(person, "sb4", "nao-existe", ref)
+        self.assertEqual(nada.exception.status, 404)
+        # A equipe publica com credito e autorizacao, igual ao banner de pedido.
+        ok = self.banner(sugestao)
+        self.assertEqual(ok.status_code, 201, ok.text)
+        self.assertTrue(self.catalog._edition(edition_id)["imageReference"].startswith("banner_"))
+        self.assertEqual(self.requests.get(person, sugestao["id"])["bannerState"], "published")
+        self.assertEqual(
+            self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"], []
+        )
+        # Depois de decidida, a pessoa pode sugerir outra para a mesma corrida.
+        nova = self.requests.suggest_banner(person, "sb5", edition_id, outra)
+        self.assertEqual(nova["status"], "linked")
+
+    def test_descartar_o_banner_sugerido_nao_publica_nada(self):
+        person, request = self.pedido(
+            "omar", "Corrida Omar Sintética", "2027-12-01", "SP", image=True
+        )
+        edition_id = self.aprovar(request).json()["request"]["linkedEditionId"]
+        r = self.client.post(
+            f"/admin/edition-requests/{request['id']}/banner/dismiss",
+            json={"reason": "imagem sem autorizacao"},
+            headers=self.auth(),
+        )
+        self.assertEqual((r.status_code, r.json()["bannerState"]), (200, "dismissed"))
+        self.assertFalse(self.catalog._edition(edition_id).get("imageReference"))
+        self.assertEqual(self.requests.get(person, request["id"])["bannerState"], "dismissed")
+        self.assertEqual(
+            self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"], []
+        )
+        again = self.client.post(
+            f"/admin/edition-requests/{request['id']}/banner/dismiss", json={}, headers=self.auth()
+        )
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(
+            self.client.post(
+                f"/admin/edition-requests/{request['id']}/banner/dismiss",
+                json={},
+                headers=self.auth(token("mod")),
+            ).status_code,
+            403,
+        )
+
     def test_aprovar_valida_versao_estado_distancia_e_permissao(self):
         _, request = self.pedido("gabi", "Corrida Teta Sintética", "2027-08-01", "SP")
         self.assertEqual(self.aprovar({**request, "version": 7}).status_code, 409)
@@ -597,7 +836,8 @@ class AdminApiTests(unittest.TestCase):
         home = self.client.get("/")
         self.assertEqual(home.status_code, 200)
         self.assertIn("text/html", home.headers["content-type"])
-        self.assertIn("RunPass", home.text)
+        self.assertIn("MeuPódio", home.text)
+        self.assertIn('class="logo"', home.text)  # logo do pódio no cabeçalho
         csp = home.headers["content-security-policy"]
         self.assertIn("script-src 'self'", csp)
         self.assertIn("frame-ancestors 'none'", csp)
@@ -660,6 +900,8 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(
             self.client.get("/admin/users/runners", headers=self.auth(token("op"))).status_code, 403
         )
+        perfil = ("identity", "USER#u1111111-x", "PROFILE")
+        self.store.commit({perfil: None}, {perfil: {"id": "u1111111-x", "username": "ana_runs"}})
         r = self.client.get("/admin/users/runners", headers=self.auth(token("adm")))
         self.assertEqual(r.status_code, 200)
         dados = r.json()
@@ -671,6 +913,11 @@ class AdminApiTests(unittest.TestCase):
         )  # mais recente primeiro
         self.assertNotIn("ana@exemplo.invalid", r.text)
         self.assertNotIn("u1111111-x", r.text)  # so o prefixo do id
+        # O ID de usuario (@) vem do perfil; quem ainda nao criou perfil fica sem.
+        self.assertEqual(
+            sorted((i["id"], i["username"]) for i in dados["items"] if i["username"]),
+            [("u1111111", "ana_runs")],
+        )
         trilha = self.store.query("operations", "OPERATOR#adm", prefix="AUDIT#")
         self.assertEqual(len(trilha[0] if isinstance(trilha, tuple) else trilha), 1)
 
@@ -1811,6 +2058,298 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(
             sum(1 for _, row in trilha if row["action"] == "banner.dismiss"), 1
         )  # so a primeira audita
+
+    def test_banner_por_arquivo_do_portal_exige_credito_autorizacao_e_imagem_valida(self):
+        import base64
+
+        h = self.auth(token("op"))
+        arquivo = base64.b64encode(self.png()).decode()
+        corpo = {
+            "editionId": "synthetic-sp-2026",
+            "imageBase64": arquivo,
+            "contentType": "image/png",
+            "credit": "Divulgação: Org Sintética",
+            "rightsNote": "Arquivo enviado pelo organizador com autorizacao por escrito",
+            "confirmRights": True,
+        }
+        # Nada publicado sem confirmar, sem credito, com nota curta, sem fonte ou com as duas fontes.
+        for mudanca in (
+            {"confirmRights": False},
+            {"credit": " "},
+            {"rightsNote": "ok"},
+            {"imageBase64": None},
+            {"imageUrl": "https://o.exemplo/b.png"},
+            {"contentType": None},
+            {"contentType": "image/gif"},
+            {"imageBase64": "isso-nao-e-base64!!"},
+            {"imageBase64": base64.b64encode(b"nao sou uma imagem").decode()},
+        ):
+            corpo_ruim = {k: v for k, v in {**corpo, **mudanca}.items() if v is not None}
+            r = self.client.post("/admin/banners/approve", json=corpo_ruim, headers=h)
+            self.assertEqual(r.status_code, 422, mudanca)
+        self.assertEqual(self.blobs.derived, {})
+        self.assertEqual(
+            self.client.post(
+                "/admin/banners/approve", json=corpo, headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        r = self.client.post("/admin/banners/approve", json=corpo, headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        row = self.store.get(
+            ("operations", "EDITION#synthetic-sp-2026", "IMAGE#" + r.json()["reference"])
+        )
+        self.assertEqual(
+            (row["credit"], row["approvedBy"], row["origin"]),
+            ("Divulgação: Org Sintética", "op", "admin"),
+        )
+        self.assertTrue(row["sourceUrl"].startswith("https://portal.runpass.invalid/arquivo/"))
+        self.assertIn("autorizacao por escrito", row["rightsNote"])
+        publicados = self.client.get("/admin/banners/published", headers=h).json()["items"]
+        self.assertEqual([p["id"] for p in publicados], ["synthetic-sp-2026"])
+        trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
+        self.assertTrue(any(row["action"] == "banner.approve_file" for _, row in trilha))
+        # corrida inexistente
+        r = self.client.post(
+            "/admin/banners/approve", json={**corpo, "editionId": "nao-existe"}, headers=h
+        )
+        self.assertEqual(r.status_code, 404)
+
+    def test_redes_do_organizador_sao_salvas_na_corrida_e_chegam_ao_app(self):
+        h = self.auth(token("op"))
+        url = "/admin/editions/synthetic-sp-2026/social"
+        corpo = {
+            "instagramUrl": "https://instagram.com/corrida_exemplo",
+            "facebookUrl": "https://www.facebook.com/corridaexemplo",
+            "organizerPostUrl": "https://www.instagram.com/p/AbC123xyz/?utm_source=ig",
+        }
+        self.assertEqual(
+            self.client.put(url, json=corpo, headers=self.auth(token("adm"))).status_code, 403
+        )
+        for ruim in (
+            {"instagramUrl": "https://exemplo.org/x"},
+            {"facebookUrl": "https://www.facebook.com/sharer/sharer.php"},
+            {"organizerPostUrl": "https://www.instagram.com/corrida_exemplo/"},
+            {},
+            {"outraCoisa": "x"},
+        ):
+            self.assertEqual(self.client.put(url, json=ruim, headers=h).status_code, 422, ruim)
+        antes = self.catalog._edition("synthetic-sp-2026")
+        self.assertNotIn("instagramUrl", antes)
+        r = self.client.put(url, json=corpo, headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["instagramUrl"], "https://www.instagram.com/corrida_exemplo/")
+        self.assertEqual(r.json()["organizerPostUrl"], "https://www.instagram.com/p/AbC123xyz/")
+        depois = self.catalog._edition("synthetic-sp-2026")
+        self.assertEqual(depois["facebookUrl"], "https://www.facebook.com/corridaexemplo")
+        self.assertEqual(depois["version"], antes["version"] + 1)
+        # A busca do portal traz os links para a pessoa editar; o app recebe no detalhe da corrida.
+        achadas = self.client.get("/admin/editions?q=sint", headers=h).json()["items"]
+        achada = next(e for e in achadas if e["id"] == "synthetic-sp-2026")
+        self.assertEqual(achada["instagramUrl"], "https://www.instagram.com/corrida_exemplo/")
+        # Mudar so um campo mantem os outros; vazio apaga.
+        r = self.client.put(url, json={"organizerPostUrl": ""}, headers=h)
+        self.assertEqual(r.status_code, 200)
+        final = self.catalog._edition("synthetic-sp-2026")
+        self.assertNotIn("organizerPostUrl", final)
+        self.assertEqual(final["instagramUrl"], "https://www.instagram.com/corrida_exemplo/")
+        # Um banner publicado depois nao apaga os links (a nova versao herda os campos).
+        arquivo = __import__("base64").b64encode(self.png()).decode()
+        ok = self.client.post(
+            "/admin/banners/approve",
+            json={
+                "editionId": "synthetic-sp-2026",
+                "imageBase64": arquivo,
+                "contentType": "image/png",
+                "credit": "Divulgação: Org",
+                "rightsNote": "Arquivo enviado pelo organizador com autorizacao",
+                "confirmRights": True,
+            },
+            headers=h,
+        )
+        self.assertEqual(ok.status_code, 201, ok.text)
+        self.assertEqual(
+            self.catalog._edition("synthetic-sp-2026")["facebookUrl"],
+            "https://www.facebook.com/corridaexemplo",
+        )
+        trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
+        self.assertTrue(any(row["action"] == "edition.social" for _, row in trilha))
+        self.assertEqual(
+            self.client.put("/admin/editions/nao-existe/social", json=corpo, headers=h).status_code,
+            404,
+        )
+
+    def test_qualidade_ao_vivo_le_os_relatorios_mais_recentes_sem_dry_run(self):
+        import json
+
+        h = self.auth(token("op"))
+        self.assertEqual(
+            self.client.get("/admin/quality/live", headers=self.auth(token("adm"))).status_code, 403
+        )
+        vazio = self.client.get("/admin/quality/live", headers=h).json()
+        self.assertEqual(vazio["runs"], [])
+        put = lambda k, v: self.s3.objects.__setitem__(k, json.dumps(v))  # noqa: E731
+        put(
+            "semanal/2026-11-09/enriquecimento/relatorio.json",
+            {"contagens": {"pronta": 99}, "provas": [{"fonte": "x"}]},
+        )  # antigo: perde para o mais recente
+        put(
+            "semanal/2026-11-10/enriquecimento/relatorio.json",
+            {
+                "contagens": {"nada": 1, "pronta": 2, "sem_distancia": 1, "linhas_importador": 2},
+                "provas": [{"fonte": "https://a"}, {"fonte": "https://b"}, {"fonte": None}, {}],
+            },
+        )
+        put(
+            "semanal/2026-11-11/dry-run/relatorio.json",
+            {"resumo": {"pedidos_na_fila": 77}},
+        )  # teste: nunca conta
+        put(
+            "semanal/2026-11-11/relatorio.json",
+            {
+                "pedidos": [{"situacao": "nao_encontrada"}, {"situacao": "encontrada"}],
+                "catalogo": [
+                    {"serie": "a", "situacao": "consultado", "novas_propostas": 2},
+                    {"serie": "b", "situacao": "adiado", "novas_propostas": 0},
+                ],
+                "resumo": {"pedidos_na_fila": 2, "pesquisados": 2, "linhas_no_csv": 3},
+                "interrompido": None,
+            },
+        )
+        put(
+            "semanal/2026-11-10/calendario-prefeitura-sp-gov-br/relatorio.json",
+            {
+                "meses": [
+                    {"situacao": "consultado", "retornadas": 25, "validas": 24, "rejeitadas": 1},
+                    {"situacao": "consultado", "retornadas": 17, "validas": 17, "rejeitadas": 0},
+                ],
+                "candidatos": [
+                    {"fonte_url": "https://f", "distancia_na_fonte": True},
+                    {"fonte_url": "https://f", "distancia_na_fonte": False},
+                    {"fonte_url": "", "distancia_na_fonte": False},
+                ],
+            },
+        )
+        self.s3.objects["semanal/2026-11-10/imagens/relatorio.json"] = "isto nao e json"
+        r = self.client.get("/admin/quality/live", headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        corpo = r.json()
+        por_tipo = {x["kind"]: x for x in corpo["runs"]}
+        self.assertEqual(
+            sorted(por_tipo), ["calendario", "enriquecimento", "semanal"]
+        )  # imagens quebrado fica de fora sem derrubar o painel
+        self.assertEqual(por_tipo["enriquecimento"]["date"], "2026-11-10")
+        metricas = lambda k: {m["label"]: m for m in por_tipo[k]["metrics"]}  # noqa: E731
+        enr = metricas("enriquecimento")
+        self.assertEqual(
+            (enr["Prontas para importar"]["value"], enr["Prontas para importar"]["of"]), (2, 4)
+        )
+        self.assertEqual(enr["Com fonte citada"]["value"], 2)
+        semanal = metricas("semanal")
+        self.assertEqual(semanal["Novas propostas"]["value"], 2)
+        self.assertEqual(
+            (
+                semanal["Series da lista consultadas"]["value"],
+                semanal["Series da lista consultadas"]["of"],
+            ),
+            (1, 2),
+        )
+        self.assertEqual(
+            semanal["Pedidos de prova ausente na fila"]["value"], 2
+        )  # nao os 77 do dry-run
+        cal = metricas("calendario")
+        self.assertEqual(cal["Corridas devolvidas pela busca"]["value"], 42)
+        self.assertEqual(
+            (
+                cal["Candidatas com fonte e trecho"]["value"],
+                cal["Candidatas com fonte e trecho"]["of"],
+            ),
+            (2, 3),
+        )
+        # Decisoes humanas vem da aba Divergencias (aqui nao ha enriquecimento em CSV: sem itens).
+        self.assertIn("decisions", corpo)
+
+    def test_importe_automatico_liga_importa_lista_e_desfaz_pelo_portal(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/auto-import"
+        cabecalho = (
+            "source_external_id,name,event_date,city,state,country,distances_km,registration_status,"
+            "official_url,registration_url,organizer_name,venue,event_status,last_verified_at\n"
+        )
+        self.s3.objects["semanal/2026-11-10/candidatos.csv"] = cabecalho + (
+            "auto-1,Corrida Automatica Sintetica,2027-03-14,São Paulo,SP,BR,10,unknown,"
+            "https://exemplo.invalid/p,,Org,Local,scheduled,2026-11-10\n"
+        )
+        # Permissao e estado inicial: desligado.
+        self.assertEqual(self.client.get(url, headers=self.auth(token("adm"))).status_code, 403)
+        self.assertEqual(
+            self.client.put(
+                url, json={"enabled": True}, headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        estado = self.client.get(url, headers=h).json()
+        self.assertEqual((estado["enabled"], estado["recent"]), (False, []))
+        self.assertTrue(estado["gates"])
+        # Desligado: "importar agora" nao faz nada.
+        r = self.client.post(url + "/run", headers=h)
+        self.assertEqual((r.status_code, r.json()), (200, {"skipped": "disabled"}))
+        self.assertIsNone(self.catalog._edition("catalogo-auto-auto-1"))
+        # Liga e importa; so o corpo `{"enabled": bool}` vale.
+        self.assertEqual(
+            self.client.put(url, json={"enabled": "talvez"}, headers=h).status_code, 422
+        )
+        self.assertEqual(
+            self.client.put(url, json={"enabled": True, "x": 1}, headers=h).status_code, 422
+        )
+        self.assertEqual(
+            self.client.put(url, json={"enabled": True}, headers=h).json(), {"enabled": True}
+        )
+        r = self.client.post(url + "/run", headers=h)
+        self.assertEqual((r.status_code, r.json()["created"]), (200, 1), r.text)
+        self.assertEqual(
+            self.catalog._edition("catalogo-auto-auto-1")["name"], "Corrida Automatica Sintetica"
+        )
+        estado = self.client.get(url, headers=h).json()
+        self.assertTrue(estado["enabled"])
+        self.assertEqual([e["id"] for e in estado["recent"]], ["catalogo-auto-auto-1"])
+        self.assertEqual(estado["lastRun"]["created"], 1)
+        # Desfazer arquiva a corrida; exige motivo e so vale para o que o importe automatico criou.
+        desfazer = url + "/undo"
+        corpo = {"editionId": "catalogo-auto-auto-1", "reason": "nao e uma corrida de rua"}
+        self.assertEqual(
+            self.client.post(desfazer, json={**corpo, "reason": " "}, headers=h).status_code, 422
+        )
+        self.assertEqual(
+            self.client.post(desfazer, json=corpo, headers=self.auth(token("adm"))).status_code, 403
+        )
+        self.assertEqual(
+            self.client.post(
+                desfazer, json={**corpo, "editionId": "synthetic-sp-2026"}, headers=h
+            ).status_code,
+            404,
+        )
+        r = self.client.post(desfazer, json=corpo, headers=h)
+        self.assertEqual(
+            (r.status_code, r.json()), (200, {"id": "catalogo-auto-auto-1", "undone": True}), r.text
+        )
+        self.assertEqual(self.catalog._edition("catalogo-auto-auto-1")["status"], "archived")
+        self.assertTrue(self.client.get(url, headers=h).json()["recent"][0]["undone"])
+        self.assertEqual(
+            self.client.post(desfazer, json=corpo, headers=h).status_code, 404
+        )  # nao desfaz duas vezes
+        trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
+        acoes = {row["action"] for _, row in trilha}
+        self.assertTrue({"autoimport.config", "autoimport.run", "autoimport.undo"} <= acoes)
+        # Desligar de novo para tudo.
+        self.assertEqual(
+            self.client.put(url, json={"enabled": False}, headers=h).json(), {"enabled": False}
+        )
+        self.s3.objects["semanal/2026-11-11/candidatos.csv"] = cabecalho + (
+            "auto-2,Outra Automatica Sintetica,2027-04-14,São Paulo,SP,BR,10,unknown,"
+            "https://exemplo.invalid/q,,Org,Local,scheduled,2026-11-11\n"
+        )
+        self.assertEqual(self.client.post(url + "/run", headers=h).json(), {"skipped": "disabled"})
 
     def test_banner_preview_aprovar_e_retirar(self):
         h = self.auth(token("op"))

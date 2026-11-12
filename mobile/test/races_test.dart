@@ -1,7 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/identity_gateway.dart';
+
+final onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
 
 Map<String, dynamic> edition(
   String id,
@@ -93,30 +99,34 @@ void main() {
         MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Meu Medalheiro'), findsOneWidget);
+      expect(find.text('Minhas Medalhas'), findsOneWidget);
       expect(find.text('Corrida A'), findsOneWidget);
       expect(find.text('Corrida B'), findsOneWidget);
       // Two completed races in two cities; the draft is not a medal.
-      expect(find.text('medalhas'), findsOneWidget);
-      expect(find.text("km's\ncorridos"), findsOneWidget);
+      expect(find.text('provas\nconcluídas'), findsOneWidget);
+      expect(find.text('medalhas\nna coleção'), findsOneWidget);
       expect(find.text('cidades\nvisitadas'), findsOneWidget);
-      expect(find.text('países\nvisitados'), findsOneWidget);
-      // Medalhas e cidades valem 2; edicoes sem pais contam como Brasil (1 pais).
-      expect(find.text('2'), findsNWidgets(2));
-      expect(find.text('1'), findsOneWidget);
+      // Provas, medalhas e cidades valem 2.
+      expect(find.text('2'), findsNWidgets(3));
       await tester.tap(find.text('Por ano'));
       await tester.pumpAndSettle();
       expect(find.text('2026'), findsOneWidget);
+      final medalsList = find
+          .descendant(
+            of: find.byKey(const Key('medals-list')),
+            matching: find.byType(Scrollable),
+          )
+          .first;
       await tester.scrollUntilVisible(
         find.text('2025'),
         200,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: medalsList,
       );
       expect(find.text('2025'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('Por distância'),
-        -200,
-        scrollable: find.byType(Scrollable).first,
+        -2000,
+        scrollable: medalsList,
       );
       await tester.tap(find.text('Por distância'));
       await tester.pumpAndSettle();
@@ -124,9 +134,213 @@ void main() {
       await tester.scrollUntilVisible(
         find.text('10K'),
         200,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: medalsList,
       );
       expect(find.text('10K'), findsOneWidget);
+    },
+  );
+
+  testWidgets('tocar na foto de perfil na tela de medalhas abre o Perfil', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(RunnerProfileScreen), findsNothing);
+    await tester.tap(find.byKey(const Key('medals-profile-avatar')));
+    await tester.pumpAndSettle();
+    expect(find.byType(RunnerProfileScreen), findsOneWidget);
+    expect(find.byType(MedalCollectionScreen), findsNothing);
+  });
+
+  testWidgets('tocar no "+" da prateleira abre o cadastro de corridas', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(CatalogScreen), findsNothing);
+    await tester.drag(
+      find.byKey(const Key('medals-list')),
+      const Offset(0, -400),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('medal-add-tile')));
+    await tester.pumpAndSettle();
+    expect(find.byType(CatalogScreen), findsOneWidget);
+    expect(find.byType(MedalCollectionScreen), findsNothing);
+  });
+
+  testWidgets('editar medalha: muda forma, cor e legenda e salva via PATCH', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    var patchBody = <String, dynamic>{};
+    final editions = {
+      'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+    };
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.example'),
+      api: Uri.parse('https://api.example'),
+      clientId: 'synthetic',
+      transport: (uri, method, headers, body) async {
+        calls.add('$method ${uri.path}');
+        if (uri.host == 'cognito.example') {
+          return const JsonReply(200, {
+            'AuthenticationResult': {'AccessToken': 'synthetic'},
+          });
+        }
+        if (uri.path == '/me') {
+          return const JsonReply(200, {
+            'displayName': 'Corredor Teste',
+            'username': 'teste',
+            'version': 1,
+          });
+        }
+        if (uri.path == '/me/participations') {
+          return JsonReply(200, {
+            'items': [done('p1', 'a', seconds: 1500)],
+          });
+        }
+        if (uri.path == '/participations/p1' && method == 'PATCH') {
+          patchBody = Map<String, dynamic>.from(body as Map);
+          return const JsonReply(200, {'id': 'p1'});
+        }
+        final match = editions[uri.pathSegments.last];
+        return match == null
+            ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
+            : JsonReply(200, match);
+      },
+    );
+    await gateway.signIn('synthetic@example.test', 'synthetic');
+
+    await tester.pumpWidget(
+      MaterialApp(home: MedalCollectionScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('medal-edit-p1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Personalizar medalha'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const Key('medal-frame-hexagonal_bronze_verde')),
+    );
+    await tester.enterText(find.widgetWithText(TextField, 'Descrição'), '');
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Descrição'),
+      'Minha prova especial',
+    );
+    await tester.enterText(find.widgetWithText(TextField, 'Cidade'), '');
+    await tester.enterText(find.widgetWithText(TextField, 'Cidade'), 'Santos');
+    await tester.enterText(find.widgetWithText(TextField, 'UF'), 'sp');
+    await tester.enterText(find.widgetWithText(TextField, 'Ano'), '2023');
+    await tester.tap(find.byKey(const Key('medal-edit-save')));
+    await tester.pumpAndSettle();
+
+    expect(patchBody['expectedVersion'], 2);
+    expect(patchBody['medalFrameId'], 'hexagonal_bronze_verde');
+    expect(patchBody['medalDescription'], 'Minha prova especial');
+    expect(patchBody['medalCity'], 'Santos');
+    expect(patchBody['medalState'], 'SP');
+    expect(patchBody['medalYear'], 2023);
+    expect(calls.where((c) => c == 'PATCH /participations/p1').length, 1);
+    expect(find.text('Personalizar medalha'), findsNothing);
+  });
+
+  testWidgets(
+    'reposicionar foto da medalha: recorta, envia e inclui no PATCH',
+    (tester) async {
+      final calls = <String>[];
+      var patchBody = <String, dynamic>{};
+      final editions = {
+        'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+      };
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        byteTransport: (uri, method, headers, bytes) async => 200,
+        transport: (uri, method, headers, body) async {
+          calls.add('$method ${uri.path}');
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          if (uri.path == '/me') {
+            return const JsonReply(200, {
+              'displayName': 'Corredor Teste',
+              'username': 'teste',
+              'version': 1,
+            });
+          }
+          if (uri.path == '/me/participations') {
+            return JsonReply(200, {
+              'items': [done('p1', 'a', seconds: 1500)],
+            });
+          }
+          if (uri.path == '/participations/p1/image') {
+            return const JsonReply(200, {
+              'url': 'https://signed.example/current.jpg',
+              'contentType': 'image/png',
+              'expiresAt': '2026-01-01T00:00:00Z',
+            });
+          }
+          if (uri.path == '/uploads') {
+            return const JsonReply(201, {
+              'uploadId': 'up1',
+              'uploadUrl': 'https://signed.example/up1',
+              'uploadMethod': 'PUT',
+              'uploadHeaders': {'Content-Type': 'image/png'},
+            });
+          }
+          if (uri.path == '/uploads/up1/finalize') {
+            return const JsonReply(200, {
+              'uploadId': 'up1',
+              'state': 'valid',
+              'imageReference': 'img-cropped',
+            });
+          }
+          if (uri.path == '/participations/p1' && method == 'PATCH') {
+            patchBody = Map<String, dynamic>.from(body as Map);
+            return const JsonReply(200, {'id': 'p1'});
+          }
+          final match = editions[uri.pathSegments.last];
+          return match == null
+              ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
+              : JsonReply(200, match);
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            fetchDisplayPhoto: (url) async => onePixelPng,
+            openCropScreen: (context, image, frame) async => image,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('medal-edit-p1')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('medal-reposition-photo')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('medal-reset-photo')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('medal-edit-save')));
+      await tester.pumpAndSettle();
+
+      expect(patchBody['medalDisplayImageReference'], 'img-cropped');
+      expect(calls, contains('GET /participations/p1/image'));
+      expect(calls, contains('POST /uploads/up1/finalize'));
     },
   );
 
@@ -272,17 +486,28 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('no-my-posts')), findsNothing);
-      // Mesmo cartao do Feed (PostCard), um abaixo do outro — nao em grade.
+      // Miniaturas em grade, 3 por linha.
       expect(find.byKey(const Key('my-post-p1')), findsOneWidget);
       expect(find.byKey(const Key('my-post-p2')), findsOneWidget);
       expect(find.byKey(const Key('my-post-p3')), findsNothing);
       expect(paths, containsAll(['/posts/p1', '/posts/p2']));
-      // Mais recente primeiro: p1 (set/2026) acima de p2 (mai/2025).
-      final p1Top = tester.getTopLeft(find.byKey(const Key('my-post-p1'))).dy;
-      final p2Top = tester.getTopLeft(find.byKey(const Key('my-post-p2'))).dy;
-      expect(p1Top, lessThan(p2Top));
+      // Mais recente primeiro: p1 (set/2026) antes de p2 (mai/2025), na mesma linha.
+      final p1 = tester.getTopLeft(find.byKey(const Key('my-post-p1')));
+      final p2 = tester.getTopLeft(find.byKey(const Key('my-post-p2')));
+      expect(p1.dy, p2.dy);
+      expect(p1.dx, lessThan(p2.dx));
+      final grid = tester.getSize(find.byKey(const Key('my-posts-grid')));
+      final tile = tester.getSize(find.byKey(const Key('my-post-p1')));
+      expect(tile.width, lessThan(grid.width / 3));
+      expect(tile.width, greaterThan(grid.width / 3 - 12));
+      expect(find.text('Corrida A'), findsOneWidget);
+      expect(find.text('Corrida B'), findsOneWidget);
+      // Tocar abre a publicacao inteira.
+      await tester.ensureVisible(find.byKey(const Key('my-post-p1')));
+      await tester.tap(find.byKey(const Key('my-post-p1')));
+      await tester.pumpAndSettle();
+      expect(find.text('Publicação'), findsOneWidget);
       expect(find.text('concluiu Corrida A'), findsOneWidget);
-      expect(find.text('concluiu Corrida B'), findsOneWidget);
     },
   );
 }

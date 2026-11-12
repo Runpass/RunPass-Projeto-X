@@ -129,6 +129,93 @@ class ParticipationTests(unittest.TestCase):
             )
         self.assertEqual(error.exception.code, "VERSION_CONFLICT")
 
+    def test_patch_sets_and_clears_medal_shelf_customization(self):
+        draft = self.service.create(self.actor, "create", self.payload(timeSeconds=3600))
+        done = self.service.complete(self.actor, draft["id"], "done", self.completion(draft))
+        customized = self.service.patch(
+            self.actor,
+            draft["id"],
+            "customize",
+            {
+                "expectedVersion": done["version"],
+                "medalFrameId": "hexagonal_bronze_verde",
+                "medalDescription": "Minha prova especial",
+                "medalCity": "Santos",
+                "medalState": "SP",
+                "medalYear": 2023,
+            },
+        )
+        self.assertEqual(customized["medalFrameId"], "hexagonal_bronze_verde")
+        self.assertEqual(customized["medalDescription"], "Minha prova especial")
+        self.assertEqual(customized["medalCity"], "Santos")
+        self.assertEqual(customized["medalState"], "SP")
+        self.assertEqual(customized["medalYear"], 2023)
+        reset = self.service.patch(
+            self.actor,
+            draft["id"],
+            "reset",
+            {
+                "expectedVersion": customized["version"],
+                "medalFrameId": None,
+                "medalDescription": None,
+                "medalCity": None,
+                "medalState": None,
+                "medalYear": None,
+            },
+        )
+        for field in (
+            "medalFrameId",
+            "medalDescription",
+            "medalCity",
+            "medalState",
+            "medalYear",
+        ):
+            self.assertNotIn(field, reset)
+
+    def test_medal_customization_rejects_invalid_state_and_frame(self):
+        from pydantic import ValidationError
+        from runpass.models import PatchParticipation
+
+        with self.assertRaises(ValidationError):
+            PatchParticipation(expectedVersion=1, medalState="sp")
+        with self.assertRaises(ValidationError):
+            PatchParticipation(expectedVersion=1, medalFrameId="ouro_brilhante")
+
+    def test_medal_display_image_is_separate_from_the_official_photo(self):
+        draft = self.service.create(self.actor, "c", self.payload(timeSeconds=3600))
+        done = self.service.complete(self.actor, draft["id"], "done", self.completion(draft))
+        cropped = ("operations", "USER#owner", "IMAGE#img-cropped")
+        self.store.commit(
+            {cropped: None},
+            {cropped: {"owner": "owner", "origin": "runner", "state": "valid", "refs": 0}},
+        )
+        with self.assertRaises(Problem) as missing:
+            self.service.patch(
+                self.actor,
+                draft["id"],
+                "bad",
+                {"expectedVersion": done["version"], "medalDisplayImageReference": "unknown"},
+            )
+        self.assertEqual(missing.exception.code, "IMAGE_NOT_VALID")
+        repositioned = self.service.patch(
+            self.actor,
+            draft["id"],
+            "reposition",
+            {"expectedVersion": done["version"], "medalDisplayImageReference": "img-cropped"},
+        )
+        self.assertEqual(repositioned["medalDisplayImageReference"], "img-cropped")
+        # A foto oficial da medalha (usada no feed/historico) nao muda.
+        self.assertEqual(repositioned["medalImageReference"], "img-valid")
+        self.assertEqual(self.store.get(cropped)["refs"], 1)
+        reset = self.service.patch(
+            self.actor,
+            draft["id"],
+            "reset",
+            {"expectedVersion": repositioned["version"], "medalDisplayImageReference": None},
+        )
+        self.assertNotIn("medalDisplayImageReference", reset)
+        self.assertEqual(self.store.get(cropped)["refs"], 0)
+
     def test_completed_race_can_swap_its_medal_photo_and_refs_follow(self):
         draft = self.service.create(self.actor, "c", self.payload(timeSeconds=3600))
         with self.assertRaises(Problem) as early:
@@ -272,6 +359,37 @@ class ParticipationTests(unittest.TestCase):
         self.assertEqual(social.edition_participants(reader, "synthetic-sp-2025")["items"], [])
         self.assertEqual(social.edition_participants(reader, "synthetic-sp-2024", "5k")["total"], 0)
 
+    def test_edition_photos_only_runner_photos_of_published_participations(self):
+        social = SocialService(self.identity)
+        reader = self.admit("reader")
+        self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 0)
+        _, with_photo = self.finish("owner", 5)
+        _, unpublished = self.finish("plain", 4)  # nao publicou: a foto nao e publica
+
+        def publish(subject, pid, value):
+            key = ("history", "USER#" + subject, "P#" + pid + "#PART")
+            part = self.store.get(key)
+            self.store.commit({key: part}, {key: {**part, "publishToFeed": value}})
+
+        publish("owner", with_photo, True)
+        page = social.edition_photos(reader, "synthetic-sp-2024")
+        self.assertEqual(page["total"], 1)
+        self.assertEqual([i["participationId"] for i in page["items"]], [with_photo])
+        self.assertEqual(page["items"][0]["author"]["username"], "owner")
+        self.assertEqual(page["items"][0]["distanceId"], "10k")
+        self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024", "5k")["total"], 0)
+        self.assertEqual(social.edition_photos(reader, "synthetic-sp-2025")["items"], [])
+        # Medalha padrao do catalogo (sem foto propria) nunca entra, mesmo publicada.
+        publish("plain", unpublished, True)
+        plain_key = ("history", "USER#plain", "P#" + unpublished + "#MEDAL")
+        plain = self.store.get(plain_key)
+        self.store.commit({plain_key: plain}, {plain_key: {**plain, "imageOrigin": "catalog"}})
+        self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 1)
+        # Despublicada: some para os outros, mas o dono continua vendo a propria.
+        publish("owner", with_photo, False)
+        self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 0)
+        self.assertEqual(social.edition_photos(self.actor, "synthetic-sp-2024")["total"], 1)
+
     def test_edition_carries_the_public_score_only_when_there_are_reviews(self):
         reader = self.admit("reader")
         key = ("projections", "EDITION#synthetic-sp-2024", "SCORE#current")
@@ -325,6 +443,59 @@ class ParticipationTests(unittest.TestCase):
         self.service.delete_plan(self.actor, "synthetic-sp-2026")  # repetir e seguro
         with self.assertRaises(Problem):
             self.service.get_plan(self.actor, "synthetic-sp-2026")
+
+    def test_edition_registrants_list_only_registered_plans_with_privacy(self):
+        social = SocialService(self.identity)
+        reader = self.admit("reader")
+        other = self.admit("other")
+        ed = "synthetic-sp-2026"
+        self.assertEqual(social.edition_registrants(reader, ed), {"items": [], "total": 0})
+        self.service.put_plan(self.actor, ed, "registered", "21k")
+        self.service.put_plan(other, ed, "wanted")  # so quer correr: nao e inscrito
+        page = social.edition_registrants(reader, ed)
+        self.assertEqual(page["total"], 1)
+        self.assertEqual([i["author"]["username"] for i in page["items"]], ["owner"])
+        self.assertEqual(page["items"][0]["distanceId"], "21k")
+        # Quem passa de "quero correr" para "inscrito" entra; quem volta, sai.
+        self.service.put_plan(other, ed, "registered")
+        self.assertEqual(social.edition_registrants(reader, ed)["total"], 2)
+        self.service.put_plan(other, ed, "wanted")
+        self.assertEqual(social.edition_registrants(reader, ed)["total"], 1)
+        # Perfil privado: conta no total, mas nao aparece para quem nao e amigo.
+        self.service.put_plan(other, ed, "registered")
+        key = ("identity", "USER#other", "PROFILE")
+        self.store.commit(
+            {key: self.store.get(key)}, {key: {**self.store.get(key), "isPrivate": True}}
+        )
+        hidden = social.edition_registrants(reader, ed)
+        self.assertEqual(hidden["total"], 2)
+        self.assertEqual([i["author"]["username"] for i in hidden["items"]], ["owner"])
+        self.store.commit(
+            {key: self.store.get(key)}, {key: {**self.store.get(key), "isPrivate": False}}
+        )
+        # Apagar o plano tira da lista; paginacao por cursor.
+        self.service.delete_plan(self.actor, ed)
+        self.assertEqual(social.edition_registrants(reader, ed)["total"], 1)
+        self.service.put_plan(self.actor, ed, "registered")
+        one = social.edition_registrants(self.actor, ed, limit=1)
+        self.assertEqual(len(one["items"]), 1)
+        rest = social.edition_registrants(self.actor, ed, limit=1, cursor=one["nextCursor"])
+        self.assertEqual(len(rest["items"]), 1)
+        self.assertNotIn("nextCursor", rest)
+
+    def test_old_registered_plans_get_their_pointer_when_the_owner_lists_the_agenda(self):
+        social = SocialService(self.identity)
+        reader = self.admit("reader")
+        ed = "synthetic-sp-2026"
+        # Plano antigo: gravado sem o ponteiro de inscritos.
+        key = ("history", "USER#owner", "PLAN#" + ed)
+        self.store.commit(
+            {key: None},
+            {key: {"editionId": ed, "status": "registered", "version": 1, "updatedAt": "x"}},
+        )
+        self.assertEqual(social.edition_registrants(reader, ed)["total"], 0)
+        self.service.list_plans(self.actor)  # repara
+        self.assertEqual(social.edition_registrants(reader, ed)["total"], 1)
 
     def test_race_plan_refuses_unknown_edition_bad_distance_and_archived(self):
         with self.assertRaises(Problem) as missing:

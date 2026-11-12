@@ -19,8 +19,9 @@ from .catalog import CatalogFilters, CatalogImporter, normalized
 from .catalog_import import distance_entry, parse_km, slug
 from .identity import require_operator
 from .models import EditionRequestFields, ReviewRequestDecision
+from .operator_admin import approve_banner
 from .service import Problem, stamp
-from .store import Conflict
+from .store import Conflict, Unavailable
 
 MAX_PENDING = 10  # pedidos aguardando revisao por pessoa: freia abuso sem atrapalhar uso real
 QUEUE = "EREQ_QUEUE#pending"
@@ -28,6 +29,8 @@ QUEUE = "EREQ_QUEUE#pending"
 # aparecer, o vinculo e feito sozinho (`sweep`).
 QUEUE_AWAITING = "EREQ_QUEUE#awaiting"
 AWAITING = "awaiting_load"
+# Banner sugerido junto com o pedido, ainda sem decisao da equipe (publicar com credito e autorizacao, ou descartar).
+QUEUE_IMAGE = "EREQ_QUEUE#image"
 REVIEWABLE = ("pending", AWAITING)
 FIRST_DATE = date(1990, 1, 1)
 LOCAL_ZONE = ZoneInfo("America/Sao_Paulo")
@@ -45,6 +48,10 @@ def queue_key(created_at, request_id):
     return ("history", QUEUE, f"{created_at}#{request_id}")
 
 
+def image_queue_key(created_at, request_id):
+    return ("history", QUEUE_IMAGE, f"{created_at}#{request_id}")
+
+
 def new_id(now):
     """Mais novo primeiro quando lido em ordem crescente de chave (a lista da pessoa e recente->antiga)."""
     return f"{9_999_999_999 - int(now.timestamp()):010d}-{uuid4().hex[:10]}"
@@ -53,7 +60,16 @@ def new_id(now):
 def projection(item):
     out = {
         key: item[key]
-        for key in ("id", "version", "status", "details", "reason", "linkedEditionId")
+        for key in (
+            "id",
+            "version",
+            "status",
+            "details",
+            "reason",
+            "linkedEditionId",
+            "bannerState",
+            "kind",
+        )
         if key in item
     }
     return out
@@ -75,13 +91,19 @@ def stored_details(model: EditionRequestFields):
         details["state"] = model.state
     if model.officialUrl:
         details["officialUrl"] = model.officialUrl
+    if model.imageReference:
+        details["imageReference"] = model.imageReference
     return details
 
 
+MAX_BANNER_SUGGESTIONS = 5  # sugestoes de banner ainda sem decisao, por pessoa
+
+
 class EditionRequestService:
-    def __init__(self, identity, cursor_key):
+    def __init__(self, identity, cursor_key, catalog=None):
         self.identity, self.store = identity, identity.store
         self.cipher = Fernet(cursor_key)
+        self.catalog = catalog
 
     def _pending_count(self, actor):
         rows, _ = self.store.query("history", "USER#" + actor.subject, prefix="EREQ#", limit=100)
@@ -100,6 +122,22 @@ class EditionRequestService:
             check_date(fields.date, now)
             if self._pending_count(actor) >= MAX_PENDING:
                 raise Problem(409, "TOO_MANY_PENDING_REQUESTS")
+            image_key, image = None, None
+            if fields.imageReference:
+                # So uma imagem JA enviada e tratada, desta pessoa (mesma regra da foto da participacao).
+                image_key = (
+                    "operations",
+                    "USER#" + actor.subject,
+                    "IMAGE#" + fields.imageReference,
+                )
+                image = read(image_key)
+                if (
+                    not image
+                    or image.get("state") != "valid"
+                    or image.get("owner") != actor.subject
+                    or image.get("origin") != "runner"
+                ):
+                    raise Problem(422, "IMAGE_NOT_VALID")
             request_id, created = new_id(now), stamp(now)
             queue, owner = queue_key(created, request_id), owner_key(request_id)
             item = {
@@ -112,6 +150,11 @@ class EditionRequestService:
                 "updatedAt": created,
                 "sharedKeys": [list(owner), list(queue)],
             }
+            if image_key is not None:
+                image_queue = image_queue_key(created, request_id)
+                item["sharedKeys"].append(list(image_queue))
+                write(image_queue, {"id": request_id, "createdAt": created})
+                write(image_key, {**image, "refs": image.get("refs", 0) + 1})
             write(item_key(actor.subject, request_id), item)
             write(owner, {"owner": actor.subject})
             write(queue, {"id": request_id, "createdAt": created, "details": details})
@@ -119,6 +162,79 @@ class EditionRequestService:
 
         return self.identity.transact(
             actor, "createEditionRequest", key, payload, work, admitted=True
+        )
+
+    def suggest_banner(self, actor, key, edition_id, image_reference):
+        """Sugere o banner de uma corrida JA cadastrada. Vira um item `kind=banner` ja vinculado a corrida
+        e entra so na fila de banners da equipe (a mesma dos pedidos): nada e publicado sem a decisao
+        dela, com credito e autorizacao. Uma sugestao em aberto por pessoa e corrida, no maximo 5 no total."""
+        if self.catalog is None:
+            raise Unavailable()
+        edition = self.catalog.detail(actor, edition_id)  # 404 se nao existe
+        if edition.get("status") == "archived":
+            raise Problem(409, "EDITION_ARCHIVED")
+        details = {
+            "name": edition["name"],
+            "date": edition["date"],
+            "city": edition["city"],
+            "distanceKm": max(d["kilometers"] for d in edition["distances"]),
+            "imageReference": image_reference,
+        }
+        if edition.get("state"):
+            details["state"] = edition["state"]
+
+        def work(read, write, account, now, replay):
+            if replay is not None:
+                item = read(item_key(actor.subject, replay["id"]))
+                if not item:
+                    raise Problem(404, "EDITION_REQUEST_NOT_FOUND")
+                return projection(item), replay
+            rows, _ = self.store.query(
+                "history", "USER#" + actor.subject, prefix="EREQ#", limit=100
+            )
+            open_ones = [
+                i for _, i in rows if i.get("kind") == "banner" and not i.get("bannerState")
+            ]
+            if any(i.get("linkedEditionId") == edition_id for i in open_ones):
+                raise Problem(409, "BANNER_SUGGESTION_EXISTS")
+            if len(open_ones) >= MAX_BANNER_SUGGESTIONS:
+                raise Problem(409, "TOO_MANY_PENDING_REQUESTS")
+            image_key = ("operations", "USER#" + actor.subject, "IMAGE#" + image_reference)
+            image = read(image_key)
+            if (
+                not image
+                or image.get("state") != "valid"
+                or image.get("owner") != actor.subject
+                or image.get("origin") != "runner"
+            ):
+                raise Problem(422, "IMAGE_NOT_VALID")
+            request_id, created = new_id(now), stamp(now)
+            owner, image_queue = owner_key(request_id), image_queue_key(created, request_id)
+            item = {
+                "id": request_id,
+                "owner": actor.subject,
+                "kind": "banner",
+                "status": "linked",
+                "version": 1,
+                "details": details,
+                "linkedEditionId": edition_id,
+                "createdAt": created,
+                "updatedAt": created,
+                "sharedKeys": [list(owner), list(image_queue)],
+            }
+            write(item_key(actor.subject, request_id), item)
+            write(owner, {"owner": actor.subject})
+            write(image_queue, {"id": request_id, "createdAt": created})
+            write(image_key, {**image, "refs": image.get("refs", 0) + 1})
+            return projection(item), {"id": request_id}
+
+        return self.identity.transact(
+            actor,
+            "suggestEditionBanner",
+            key,
+            {"editionId": edition_id, "imageReference": image_reference},
+            work,
+            admitted=True,
         )
 
     def get(self, actor, request_id):
@@ -227,8 +343,12 @@ class EditionRequestService:
 class EditionRequestReview:
     """Revisao pelo operador com MFA (`catalog_admin`), via ferramenta interna; nunca por HTTP."""
 
-    def __init__(self, catalog, clock=lambda: datetime.now(timezone.utc)):
-        self.catalog, self.store, self.clock = catalog, catalog.store, clock
+    def __init__(self, catalog, clock=lambda: datetime.now(timezone.utc), blobs=None):
+        self.catalog, self.store, self.clock, self.blobs = catalog, catalog.store, clock, blobs
+
+    @staticmethod
+    def _image_queue_keys(item):
+        return [list(k) for k in map(tuple, item["sharedKeys"]) if k[1] == QUEUE_IMAGE]
 
     def pending(self, actor, limit=20, after=None):
         require_operator(self.store, actor, "catalog_admin", self.clock())
@@ -274,7 +394,7 @@ class EditionRequestReview:
             ],
             "version": version,
             "updatedAt": stamp(now),
-            "sharedKeys": [list(owner_row)],
+            "sharedKeys": [list(owner_row), *self._image_queue_keys(item)],
         }
         if decision.decision == "reject":
             new_item["reason"] = decision.reason.strip()
@@ -385,7 +505,11 @@ class EditionRequestReview:
             "status": AWAITING,
             "version": version,
             "updatedAt": stamp(now),
-            "sharedKeys": [list(owner_key(request_id)), list(waiting_queue)],
+            "sharedKeys": [
+                list(owner_key(request_id)),
+                list(waiting_queue),
+                *self._image_queue_keys(item),
+            ],
         }
         audit = ("operations", "EREQ#" + request_id, f"REV#{version}")
         record = {"operator": actor.subject, "decision": "await", "at": stamp(now)}
@@ -439,3 +563,110 @@ class EditionRequestReview:
             except Problem:
                 continue  # mudou no meio do caminho: a proxima verificacao tenta de novo
         return linked, len(waiting) - linked
+
+    # ---- banner sugerido pela pessoa no pedido -------------------------------------------------
+
+    def _with_image(self, request_id):
+        ikey, item = self._load(request_id)
+        if not item["details"].get("imageReference"):
+            raise Problem(404, "IMAGE_NOT_AVAILABLE")
+        if self.blobs is None:
+            raise Unavailable()
+        return ikey, item
+
+    def image(self, actor, request_id):
+        """Bytes e tipo do banner enviado no pedido (copia tratada), so para a equipe conferir antes de decidir."""
+        require_operator(self.store, actor, "catalog_admin", self.clock())
+        _, item = self._with_image(request_id)
+        return self.blobs.read_derived(item["owner"], item["details"]["imageReference"])
+
+    def images(self, actor, limit=50):
+        """Banners sugeridos aguardando decisao, de pedidos ja vinculados a uma corrida do catalogo."""
+        require_operator(self.store, actor, "catalog_admin", self.clock())
+        rows, _ = self.store.query("history", QUEUE_IMAGE, limit=limit)
+        out = []
+        for _, entry in rows:
+            owner = self.store.get(owner_key(entry["id"]))
+            item = owner and self.store.get(item_key(owner["owner"], entry["id"]))
+            if not item or item.get("bannerState") or not item.get("linkedEditionId"):
+                continue
+            if item["status"] not in ("approved", "linked"):
+                continue
+            edition = self.catalog._edition(item["linkedEditionId"])
+            brief = None
+            if edition:
+                brief = {
+                    k: edition[k] for k in ("id", "name", "date", "city", "state") if k in edition
+                }
+            out.append(
+                {
+                    **projection(item),
+                    "createdAt": item["createdAt"],
+                    "edition": brief,
+                    "editionHasBanner": bool(edition and edition.get("imageReference")),
+                }
+            )
+        return out
+
+    def _close_banner(self, actor, ikey, item, state, reason=None):
+        guards = CatalogImporter(self.catalog)._authorization(actor, False)
+        now = self.clock()
+        image_queue = next(iter(self._image_queue_keys(item)), None)
+        record_key = ("operations", "EREQ#" + item["id"], "BANNER")
+        new_item = {
+            **item,
+            "version": item["version"] + 1,
+            "updatedAt": stamp(now),
+            "bannerState": state,
+            "sharedKeys": [k for k in item["sharedKeys"] if list(k) != image_queue],
+        }
+        record = {"state": state, "by": actor.subject, "at": stamp(now)}
+        if reason:
+            record["reason"] = reason
+        expected = {**guards, ikey: item, record_key: None}
+        writes = {ikey: new_item, record_key: record}
+        if image_queue is not None:
+            expected[tuple(image_queue)] = self.store.get(tuple(image_queue))
+            writes[tuple(image_queue)] = None
+        try:
+            self.store.commit(expected, writes)
+        except Conflict as error:
+            raise Problem(409, "CONCURRENT_RETRY_REQUIRED") from error
+        return projection(new_item)
+
+    def publish_banner(self, actor, request_id, credit, rights_note, confirmed):
+        """Publica o banner sugerido como banner da corrida vinculada: exige credito e a base de autorizacao."""
+        if not confirmed:
+            raise Problem(422, "RIGHTS_NOT_CONFIRMED")
+        if not (credit or "").strip() or len((rights_note or "").strip()) < 10:
+            raise Problem(422, "INVALID_INPUT")
+        ikey, item = self._with_image(request_id)
+        if item.get("bannerState"):
+            raise Problem(409, "BANNER_ALREADY_DECIDED")
+        if item["status"] not in ("approved", "linked") or not item.get("linkedEditionId"):
+            raise Problem(409, "REQUEST_NOT_LINKED")
+        data, kind = self.blobs.read_derived(item["owner"], item["details"]["imageReference"])
+        try:
+            approve_banner(
+                self.catalog,
+                self.blobs,
+                actor,
+                item["linkedEditionId"],
+                data,
+                kind,
+                credit,
+                rights_note,
+                f"https://portal.runpass.invalid/pedido/{request_id}/banner",
+            )
+        except ValueError as error:
+            raise Problem(422, "INVALID_INPUT") from error
+        _, fresh = self._load(request_id)
+        return self._close_banner(actor, ikey, fresh, "published")
+
+    def dismiss_banner(self, actor, request_id, reason=""):
+        """Descarta o banner sugerido (nada e publicado)."""
+        ikey, item = self._with_image(request_id)
+        if item.get("bannerState"):
+            raise Problem(409, "BANNER_ALREADY_DECIDED")
+        text = (reason or "").strip()[:200]
+        return self._close_banner(actor, ikey, item, "dismissed", text or None)

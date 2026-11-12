@@ -13,6 +13,10 @@ account erasure removes them too.
 
 import base64
 import json
+import re
+import string
+import time
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 from .profile_index import MIN_TOKEN, fold, profile_tokens, tokens
@@ -154,6 +158,80 @@ class SocialService:
                 found.append(profile)
         found.sort(key=lambda p: (fold(p["displayName"]), p["username"]))
         return {"items": [self._card(p, actor.subject) for p in found[:limit]]}
+
+    # O indice de busca e por prefixo de duas letras (`PIDX#xx`): para "listar" gente sem
+    # consulta, descobrimos quais particoes existem (uma varredura paralela, guardada por
+    # alguns minutos) e so entao lemos as que tem perfis. Adequado ao beta pequeno.
+    PARTITION_TTL = 600
+
+    def _index_partitions(self):
+        cached = getattr(self, "_pidx_cache", None)
+        now = time.monotonic()
+        if cached and cached[0] > now:
+            return cached[1]
+        first = string.ascii_lowercase + string.digits
+        candidates = [a + b for a in first for b in first + "_"]
+
+        def has_rows(prefix):
+            rows, _ = self.store.query("identity", "PIDX#" + prefix, limit=1)
+            return prefix if rows else None
+
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            found = [p for p in pool.map(has_rows, candidates) if p]
+        self._pidx_cache = (now + self.PARTITION_TTL, found)
+        return found
+
+    def suggestions(self, actor, limit=12):
+        """Sugestoes de gente para seguir, sem consulta: amigos de amigos e quem o usuario
+        segue seguem (2o grau), depois quem segue o usuario e, por fim, perfis do indice
+        de busca. Nunca inclui o proprio usuario nem quem ja e seguido ou amigo."""
+        self.identity.authorize(actor, admitted=True)
+        me = actor.subject
+        known = {me}
+        known.update(self._relation_subjects(me, "FOLLOWING#", "active"))
+        known.update(self._relation_subjects(me, "FOLLOWING#", "pending"))
+        known.update(self._friend_ids(me))
+        order = []
+        seen = set()
+
+        def consider(subject):
+            if subject not in known and subject not in seen:
+                seen.add(subject)
+                order.append(subject)
+
+        direct = sorted(
+            set(self._relation_subjects(me, "FOLLOWING#", "active")) | set(self._friend_ids(me))
+        )
+        for via in direct[:20]:
+            for subject in self._relation_subjects(via, "FOLLOWING#", "active")[:20]:
+                consider(subject)
+            for subject in self._friend_ids(via)[:20]:
+                consider(subject)
+        for subject in self._relation_subjects(me, "FOLLOWER#", "active"):
+            consider(subject)
+        items = []
+        for subject in order:
+            profile = self._active_profile(self.store.get, subject)
+            if profile:
+                items.append(profile)
+            if len(items) >= limit:
+                break
+        if len(items) < limit:
+            have = {p["id"] for p in items}
+            for prefix in self._index_partitions():
+                for sk, _ in self._list("identity", "PIDX#" + prefix, None, 20):
+                    subject = sk.split("#", 1)[1]
+                    if subject in known or subject in seen or subject in have:
+                        continue
+                    profile = self._active_profile(self.store.get, subject)
+                    if profile:
+                        have.add(subject)
+                        items.append(profile)
+                    if len(items) >= limit:
+                        break
+                if len(items) >= limit:
+                    break
+        return {"items": [self._card(p, me) for p in items[:limit]]}
 
     def profile_view(self, actor, subject):
         self.identity.authorize(actor, admitted=True)
@@ -624,6 +702,78 @@ class SocialService:
             result["nextCursor"] = _cursor_encode([last.get("completedAt", ""), last["id"]])
         return result
 
+    def edition_registrants(self, actor, edition_id, limit=30, cursor=None):
+        """Quem marcou "inscrito" nesta edicao (plano `registered`), mais recentes primeiro.
+
+        Le o ponteiro `EDPLAN#<edicao>` e reconfere plano e conta na leitura. So lista perfis
+        que o leitor pode ver (mesma regra de `can_view` dos participantes); `total` conta todos
+        os inscritos validos, sem identificar ninguem."""
+        self.identity.authorize(actor, admitted=True)
+        after = _cursor_decode(cursor) if cursor else None
+        valid = []
+        for sk, pointer in self._list("history", "EDPLAN#" + edition_id, "U#", self.REVIEW_SCAN):
+            owner = pointer["owner"]
+            plan = self.store.get(("history", "USER#" + owner, "PLAN#" + edition_id))
+            profile = self._active_profile(self.store.get, owner)
+            if not plan or plan.get("status") != "registered" or not profile:
+                continue
+            valid.append((plan.get("updatedAt", ""), owner, plan, profile))
+        valid.sort(key=lambda r: (r[0], r[1]), reverse=True)
+        visible = [r for r in valid if self.can_view(self.store.get, actor.subject, r[1])]
+        window = [r for r in visible if after is None or (r[0], r[1]) < tuple(after)]
+        page = window[:limit]
+        items = [
+            {
+                "author": self._card(profile, actor.subject),
+                **({"distanceId": plan["distanceId"]} if plan.get("distanceId") else {}),
+                "registeredAt": updated,
+            }
+            for updated, _, plan, profile in page
+        ]
+        result = {"items": items, "total": len(valid)}
+        if len(window) > limit:
+            result["nextCursor"] = _cursor_encode([page[-1][0], page[-1][1]])
+        return result
+
+    def edition_photos(self, actor, edition_id, distance_id=None, limit=30, cursor=None):
+        """Fotos de medalha que os corredores publicaram para a edicao, mais recentes primeiro.
+
+        Mesma regra de `may_view_photo` (publicacao de conta ativa) e so entra quem enviou a
+        propria foto (origem `runner`), nunca a arte padrao do catalogo. `total` conta as fotos
+        visiveis para o leitor. Assume volume pequeno na beta (como o feed publico)."""
+        self.identity.authorize(actor, admitted=True)
+        after = _cursor_decode(cursor) if cursor else None
+        done = self._edition_completions(edition_id, distance_id)
+        done.sort(key=lambda r: (r[0].get("completedAt", ""), r[0]["id"]), reverse=True)
+        visible = []
+        for part, _, profile in done:
+            if not self.may_view_photo(self.store.get, actor, part["owner"], part):
+                continue
+            medal = self.store.get(
+                ("history", "USER#" + part["owner"], "P#" + part["id"] + "#MEDAL")
+            )
+            if medal and medal.get("imageOrigin") == "runner":
+                visible.append((part, profile))
+        window = [
+            r
+            for r in visible
+            if after is None or (r[0].get("completedAt", ""), r[0]["id"]) < tuple(after)
+        ]
+        page = window[:limit]
+        items = [
+            {
+                "participationId": part["id"],
+                "author": self._card(profile, actor.subject),
+                **{k: part[k] for k in ("distanceId", "completedAt") if k in part},
+            }
+            for part, profile in page
+        ]
+        result = {"items": items, "total": len(visible)}
+        if len(window) > limit:
+            last = page[-1][0]
+            result["nextCursor"] = _cursor_encode([last.get("completedAt", ""), last["id"]])
+        return result
+
     def edition_reviews(self, actor, edition_id, distance_id=None, limit=20, cursor=None):
         """Avaliacoes publicas validas da edicao, mais recentes primeiro, com o resumo do conjunto.
 
@@ -921,6 +1071,26 @@ class SocialService:
             actor, "deleteMyNotification", key, {"id": notification_id}, work, admitted=True
         )
 
+    MENTION = re.compile(r"(?<![\w@])@([A-Za-z0-9_]{3,30})")
+    MAX_MENTIONS = 5
+
+    def _mentions(self, read, text):
+        """Pessoas marcadas com @usuario no texto: so contas ativas que existem, sem repetir e
+        sem o proprio texto livre (guardamos id + usuario para a tela abrir o perfil)."""
+        found, seen = [], set()
+        for match in self.MENTION.finditer(text):
+            name = match.group(1).lower()
+            if name in seen:
+                continue
+            seen.add(name)
+            claim = read(("identity", "USERNAME#" + name, "CLAIM"))
+            profile = self._active_profile(read, claim["owner"]) if claim else None
+            if profile:
+                found.append({"id": profile["id"], "username": profile["username"]})
+            if len(found) >= self.MAX_MENTIONS:
+                break
+        return found
+
     def comment(self, actor, post_id, key, text, parent_id=None):
         text = text.strip()
         if not text or len(text) > 1000:
@@ -961,6 +1131,9 @@ class SocialService:
             }
             if root:
                 row["parentId"] = root
+            mentions = self._mentions(read, text)
+            if mentions:
+                row["mentions"] = mentions
             comment_key = ("history", "POST#" + post_id, sk)
             loc_key = ("history", "COMMENT#" + comment_id, "LOC")
             write(comment_key, row)
@@ -989,6 +1162,50 @@ class SocialService:
             **{k: v for k, v in row.items() if k != "author"},
             "author": self._card(profile, viewer) if profile else {"id": row["author"]},
         }
+
+    def edit_comment(self, actor, comment_id, key, text, expected_version=None):
+        """So o autor edita o proprio comentario (o dono da publicacao pode apagar, nao editar).
+        Marca `edited`, sobe a versao e recalcula as pessoas marcadas."""
+        text = text.strip()
+        if not text or len(text) > 1000:
+            raise Problem(422, "INVALID_COMMENT")
+
+        def work(read, write, account, now, replay):
+            loc = read(("history", "COMMENT#" + comment_id, "LOC"))
+            if not loc or loc["author"] != actor.subject:
+                raise Problem(404, "COMMENT_NOT_FOUND")
+            row_key = ("history", "POST#" + loc["postId"], loc["sk"])
+            row = read(row_key)
+            if not row:
+                raise Problem(404, "COMMENT_NOT_FOUND")
+            if replay is not None:  # mesmo pedido repetido: devolve o estado atual, sem reeditar
+                return self._comment_out(row, actor), replay
+            if expected_version is not None and row.get("version") != expected_version:
+                raise Problem(409, "VERSION_CONFLICT")
+            self._authorized_post(read, actor.subject, loc["postId"])
+            new = {
+                **row,
+                "text": text,
+                "edited": True,
+                "editedAt": stamp(now),
+                "version": row.get("version", 1) + 1,
+            }
+            mentions = self._mentions(read, text)
+            if mentions:
+                new["mentions"] = mentions
+            else:
+                new.pop("mentions", None)
+            write(row_key, new)
+            return self._comment_out(new, actor), {"id": comment_id}
+
+        return self.identity.transact(
+            actor,
+            "editOwnComment",
+            key,
+            {"id": comment_id, "text": text, "expectedVersion": expected_version},
+            work,
+            admitted=True,
+        )
 
     def delete_comment(self, actor, comment_id, key):
         def work(read, write, account, now, replay):

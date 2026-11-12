@@ -64,6 +64,15 @@ class AdminUsers:
         self.store, self.cognito, self.clock = store, cognito, clock
         self.runner_pool_id, self.operator_pool_id = runner_pool_id, operator_pool_id
 
+    def _username(self, subject):
+        """@usuario do perfil publico (o "id" que a pessoa escolheu no cadastro); nulo se a
+        conta ainda nao criou o perfil. Nao expoe o id interno completo."""
+        try:
+            profile = self.store.get(("identity", "USER#" + subject, "PROFILE"))
+        except Unavailable:
+            return None
+        return (profile or {}).get("username")
+
     def registered_runners(self, actor, limit=200):
         """Cadastros do app (pool dos corredores): quem criou conta, quando e se confirmou o e-mail."""
         items, token, pages = [], None, 0
@@ -86,6 +95,7 @@ class AdminUsers:
                 items.append(
                     {
                         "id": user["Username"][:8],
+                        "username": self._username(user["Username"]),
                         "email": mask_email(email),
                         "status": status,
                         "enabled": bool(user.get("Enabled", True)),

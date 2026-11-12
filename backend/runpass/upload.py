@@ -64,6 +64,13 @@ class MemoryBlobStore:
             raise Problem(503, "DERIVED_COLLISION")
         self.derived[reference] = value
 
+    def read_derived(self, owner, reference):
+        """Bytes e tipo da copia tratada de uma pessoa (uso da equipe ao aprovar um banner enviado por ela)."""
+        item = self.derived.get(reference)
+        if not item or item["owner"] != owner:
+            raise Problem(404, "IMAGE_NOT_AVAILABLE")
+        return item["data"], item["contentType"]
+
     def view_url(self, owner, reference):
         item = self.derived.get(reference)
         if not item or item["owner"] != owner:
@@ -143,6 +150,34 @@ class UploadService:
             return {"owner": subject, "reference": medal["imageReference"], "now": now}, {}
 
         found = self.identity.transact(actor, "getMedalImage", None, {}, work, admitted=True)
+        link = self.blobs.view_url(found["owner"], found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
+
+    def medal_display_image(self, actor, participation_id):
+        """Foto da prateleira: o recorte reposicionado pela pessoa quando existir, senao a
+        mesma foto sanitizada de medal_image. A foto oficial nunca e alterada por isso."""
+
+        def work(read, write, account, now, replay):
+            owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
+            if not owner:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            subject = owner["owner"]
+            part = read(("history", "USER#" + subject, "P#" + participation_id + "#PART"))
+            if not part or not self.may_view(read, actor, subject, part):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            medal = read(("history", "USER#" + subject, "P#" + participation_id + "#MEDAL"))
+            if part.get("state") != "completed" or not medal:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            if medal.get("imageOrigin") != "runner":
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            reference = part.get("medalDisplayImageReference") or medal["imageReference"]
+            return {"owner": subject, "reference": reference, "now": now}, {}
+
+        found = self.identity.transact(actor, "getMedalDisplayImage", None, {}, work, admitted=True)
         link = self.blobs.view_url(found["owner"], found["reference"])
         return {
             "url": link["url"],

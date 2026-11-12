@@ -565,6 +565,50 @@
         "x-requires-beta-admission": true
       }
     },
+    "/participations/{id}/display-image": {
+      "get": {
+        "operationId": "getParticipationDisplayImage",
+        "summary": "Link temporario e assinado para a foto da prateleira: o recorte reposicionado pela pessoa quando existir, senao a mesma foto sanitizada de getParticipationImage. Nunca altera a foto oficial.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
     "/participations": {
       "post": {
         "operationId": "createParticipationDraft",
@@ -868,6 +912,18 @@
                 "open",
                 "closed",
                 "sold_out"
+              ]
+            }
+          },
+          {
+            "name": "audience",
+            "in": "query",
+            "description": "kids = name has Kids/Infantil/Mirim; adult = every other edition. Deduced from the name (product decision 2026-11-11) until the catalog has an audience field per distance.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "kids",
+                "adult"
               ]
             }
           },
@@ -1186,6 +1242,61 @@
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
+    "/profiles/suggestions": {
+      "get": {
+        "operationId": "listProfileSuggestions",
+        "description": "Suggestions shown before any query: people followed by people the caller follows, followers, then search-index profiles. Excludes self, already followed/friends, deleted and suspended accounts.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Profiles"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 12
             }
           }
         ],
@@ -2937,38 +3048,14 @@
         "tags": [
           "Social"
         ],
-        "description": "Author-only text edit with optimistic version and idempotency. Preserve createdAt and existing identity; set edited=true and editedAt on actual text change. Replay or unchanged text must not generate a new edit timestamp. Recheck post visibility, deletion, moderation, account state and bilateral blocks; an edit must not republish hidden content. No role or author changes accepted. Lake history approved for reviews is not automatically extended to social comments.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchComment"
-              }
-            }
-          }
-        },
+        "description": "Edit own comment (author only; the post owner may delete but not edit). Sets edited=true, bumps version and recomputes the people tagged with @username (existing active accounts, max 5; returned as `mentions`). Optional expectedVersion for optimistic concurrency.",
         "responses": {
           "200": {
-            "description": "Updated owned comment, or same idempotent result",
+            "description": "Edited comment",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Comment"
+                  "type": "object"
                 }
               }
             }
@@ -2995,7 +3082,46 @@
             "$ref": "#/components/responses/Error"
           }
         },
-        "x-requires-beta-admission": true
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "x-requires-beta-admission": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "text"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/me/wishlist": {
@@ -5653,6 +5779,232 @@
         "x-requires-beta-admission": true
       }
     },
+    "/editions/{id}/photos": {
+      "get": {
+        "operationId": "listEditionPhotos",
+        "description": "Photos runners published for this edition (own medal photo of published participations of active accounts), newest first. Never the catalog's generic art. `total` counts the photos visible to the reader.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "distanceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
+    "/editions/{id}/banner-suggestions": {
+      "post": {
+        "operationId": "suggestEditionBanner",
+        "description": "Suggest a banner for an edition already in the catalog. Only a reference to an image the caller already uploaded and processed (same rule as a request banner). It enters the team's banner queue; nothing is published without the team's decision, credit and authorization. One open suggestion per person and edition, at most 5 open.",
+        "responses": {
+          "201": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "EditionRequests"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "imageReference"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "imageReference": {
+                    "type": "string",
+                    "pattern": "^img_[a-f0-9]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/editions/{id}/registrants": {
+      "get": {
+        "operationId": "listEditionRegistrants",
+        "description": "Runners who marked this edition as registered (plan status `registered`), newest first. Only profiles the reader may see (same rule as participants); `total` counts every valid registrant without identifying anyone.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
     "/editions/{id}/banner": {
       "get": {
         "operationId": "getEditionBanner",
@@ -5858,6 +6210,42 @@
           },
           "medalImageReference": {
             "type": "string"
+          },
+          "medalFrameId": {
+            "type": "string",
+            "enum": [
+              "circular_prata_azul",
+              "circular_rose_rosa",
+              "circular_grafite_preto",
+              "hexagonal_bronze_verde",
+              "hexagonal_rose_lilas",
+              "quadrada_rose_malva",
+              "escudo_grafite_azul",
+              "assimetrica_prata_lima",
+              "triangular_grafite_preto",
+              "triangular_rose_rosa"
+            ]
+          },
+          "medalDescription": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "medalCity": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "medalState": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$"
+          },
+          "medalYear": {
+            "type": "integer",
+            "minimum": 1900,
+            "maximum": 2100
+          },
+          "medalDisplayImageReference": {
+            "type": "string",
+            "description": "Recorte opcional so para a prateleira (reposicionamento); a foto oficial (medalImageReference) nao muda."
           }
         }
       },
@@ -6108,6 +6496,57 @@
             "minimum": 0,
             "exclusiveMinimum": true,
             "description": "Only for a missing-edition request draft before it has a catalog distanceId. Final completion resolves a valid catalog distance."
+          },
+          "medalFrameId": {
+            "type": "string",
+            "enum": [
+              "circular_prata_azul",
+              "circular_rose_rosa",
+              "circular_grafite_preto",
+              "hexagonal_bronze_verde",
+              "hexagonal_rose_lilas",
+              "quadrada_rose_malva",
+              "escudo_grafite_azul",
+              "assimetrica_prata_lima",
+              "triangular_grafite_preto",
+              "triangular_rose_rosa"
+            ],
+            "nullable": true,
+            "description": "Modelo de medalha do catálogo (imagem com furo central); null volta ao padrão (circular_prata_azul)."
+          },
+          "medalDescription": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "nullable": true,
+            "description": "Legenda da medalha; null volta a usar o nome da edição do catálogo."
+          },
+          "medalCity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "nullable": true,
+            "description": "Cidade exibida na legenda da medalha; null volta a usar a cidade da edição do catálogo."
+          },
+          "medalState": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "nullable": true,
+            "description": "UF exibida na legenda da medalha; null volta a usar a UF da edição do catálogo."
+          },
+          "medalYear": {
+            "type": "integer",
+            "minimum": 1900,
+            "maximum": 2100,
+            "nullable": true,
+            "description": "Ano exibido na legenda da medalha; null volta a usar o ano da data da edição do catálogo."
+          },
+          "medalDisplayImageReference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "nullable": true,
+            "description": "Identificador opaco de uma foto recortada pela pessoa so para a prateleira; null volta ao recorte automatico da foto oficial da medalha (medalImageReference), que nunca é alterada."
           }
         }
       },
@@ -6505,6 +6944,24 @@
             "type": "string",
             "maxLength": 200,
             "description": "Credit shown with the edition banner; present only with imageReference."
+          },
+          "instagramUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Instagram profile (https://www.instagram.com/<user>/), reviewed by the team."
+          },
+          "facebookUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Facebook page (https://www.facebook.com/<page>), reviewed by the team."
+          },
+          "organizerPostUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "One public post/reel/video of the organizer, approved by the team. The app only DISPLAYS it with Meta's official embed; nothing from the post is copied or stored."
           }
         }
       },
@@ -6891,6 +7348,11 @@
             "type": "string",
             "nullable": true,
             "description": "Imagem do banner do perfil (mesmo envio de imagens); nulo remove."
+          },
+          "birthDate": {
+            "type": "string",
+            "format": "date",
+            "description": "Owner-only birth date. Must keep the admission minimum age (13). Never returned by public profile routes."
           }
         },
         "description": "Somente campos enviados mudam; null limpa opcionais. Username ASCII normalizado em minúsculas e reservado atomicamente. Nome não pode ser apenas whitespace. Versão obrigatória; não altera idade, admissão ou papéis."
@@ -7009,7 +7471,8 @@
             "format": "uri"
           },
           "imageReference": {
-            "type": "string"
+            "type": "string",
+            "description": "Banner suggested by the runner: an image already uploaded and validated by the same runner. Never published automatically; the team approves it with credit and rights."
           }
         }
       },
@@ -7048,6 +7511,14 @@
           },
           "linkedEditionId": {
             "type": "string"
+          },
+          "bannerState": {
+            "type": "string",
+            "enum": [
+              "published",
+              "dismissed"
+            ],
+            "description": "Decision of the team on the banner suggested with the request; absent while undecided."
           }
         },
         "description": "Owner-only view, not a public catalog record. Reviewed request preserves associated draft until owner completes it."
@@ -8168,6 +8639,24 @@
           "sourceExternalId": {
             "type": "string",
             "description": "Identificador da prova na fonte."
+          },
+          "instagramUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Instagram profile (https://www.instagram.com/<user>/), reviewed by the team."
+          },
+          "facebookUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Facebook page (https://www.facebook.com/<page>), reviewed by the team."
+          },
+          "organizerPostUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "One public post/reel/video of the organizer, approved by the team. The app only DISPLAYS it with Meta's official embed; nothing from the post is copied or stored."
           }
         },
         "required": [
@@ -8295,6 +8784,24 @@
           "sourceExternalId": {
             "type": "string",
             "description": "Identificador da prova na fonte."
+          },
+          "instagramUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Instagram profile (https://www.instagram.com/<user>/), reviewed by the team."
+          },
+          "facebookUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Facebook page (https://www.facebook.com/<page>), reviewed by the team."
+          },
+          "organizerPostUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "One public post/reel/video of the organizer, approved by the team. The app only DISPLAYS it with Meta's official embed; nothing from the post is copied or stored."
           }
         },
         "required": [

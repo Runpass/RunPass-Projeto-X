@@ -13,10 +13,12 @@ from pydantic import ValidationError
 from .catalog import CatalogFilters
 from .identity import AuthFailure
 from .models import (
+    BannerSuggestion,
     CompleteParticipation,
     CreateComment,
     CreateParticipation,
     CreateProfile,
+    EditComment,
     EditionRequestFields,
     Eligibility,
     PatchEditionRequest,
@@ -155,6 +157,7 @@ def create_app(
         distanceKm: Decimal | None = Query(None, gt=0),
         q: str | None = Query(None, min_length=1, max_length=160),
         registrationStatus: str | None = Query(None, pattern=r"^(unknown|open|closed|sold_out)$"),
+        audience: str | None = Query(None, pattern=r"^(kids|adult)$"),
         lat: float | None = Query(None, ge=-90, le=90),
         lon: float | None = Query(None, ge=-180, le=180),
         radiusKm: float | None = Query(None, gt=0, le=500),
@@ -173,6 +176,7 @@ def create_app(
                 distanceKm=distanceKm,
                 q=q,
                 registrationStatus=registrationStatus,
+                audience=audience,
                 lat=lat,
                 lon=lon,
                 radiusKm=radiusKm,
@@ -276,6 +280,33 @@ def create_app(
             raise Unavailable()
         return uploads.edition_banner(actor, catalog.detail(actor, id))
 
+    @app.get("/editions/{id}/registrants", operation_id="listEditionRegistrants")
+    def edition_registrants(
+        id: str,
+        actor: Actor,
+        limit: int = Query(30, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_registrants(actor, id, limit, cursor)
+
+    @app.get("/editions/{id}/photos", operation_id="listEditionPhotos")
+    def edition_photos(
+        id: str,
+        actor: Actor,
+        limit: int = Query(30, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+        distanceId: str | None = Query(None, min_length=1, max_length=100),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_photos(actor, id, distanceId, limit, cursor)
+
     @app.get("/editions/{id}/participants", operation_id="listEditionParticipants")
     def edition_participants(
         id: str,
@@ -336,6 +367,18 @@ def create_app(
         if edition_requests is None:
             raise Unavailable()
         return edition_requests.create(actor, idempotency_key, body)
+
+    @app.post(
+        "/editions/{id}/banner-suggestions",
+        status_code=201,
+        operation_id="suggestEditionBanner",
+    )
+    def suggest_edition_banner(
+        id: str, body: BannerSuggestion, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.suggest_banner(actor, idempotency_key, id, body.imageReference)
 
     @app.get("/me/edition-requests", operation_id="listMyEditionRequests")
     def list_my_edition_requests(
@@ -433,6 +476,10 @@ def create_app(
         limit: int = Query(20, ge=1, le=50),
     ):
         return friends().search(actor, q, limit)
+
+    @app.get("/profiles/suggestions", operation_id="listProfileSuggestions")
+    def profile_suggestions(actor: Actor, limit: int = Query(12, ge=1, le=30)):
+        return friends().suggestions(actor, limit)
 
     @app.get("/profiles/{id}", operation_id="getPublicProfile")
     def public_profile(id: str, actor: Actor):
@@ -556,6 +603,10 @@ def create_app(
     def delete_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().like_comment(actor, id, idempotency_key, False)
 
+    @app.patch("/comments/{id}", operation_id="editOwnComment")
+    def edit_comment(id: str, body: EditComment, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().edit_comment(actor, id, idempotency_key, body.text, body.expectedVersion)
+
     @app.delete("/comments/{id}", operation_id="deleteOwnComment")
     def delete_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().delete_comment(actor, id, idempotency_key)
@@ -577,6 +628,12 @@ def create_app(
         if uploads is None:
             raise Unavailable()
         return uploads.medal_image(actor, id)
+
+    @app.get("/participations/{id}/display-image", operation_id="getParticipationDisplayImage")
+    def participation_display_image(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.medal_display_image(actor, id)
 
     @app.get("/uploads/{id}/status", operation_id="getUploadStatus")
     def upload_status(id: str, actor: Actor):
