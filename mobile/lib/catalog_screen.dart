@@ -153,12 +153,21 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
 /// isso, então, antes do primeiro /me da sessão, a aba mostra o ícone padrão.
 final Map<IdentityGateway, Map<String, dynamic>> _navProfiles = {};
 
-void rememberNavProfile(
-  IdentityGateway gateway,
-  Map<String, dynamic> profile,
-) => _navProfiles[gateway] = profile;
+/// Avisa a aba "Perfil" (em qualquer tela já aberta) para redesenhar com a foto nova, mesmo
+/// quando a tela que buscou o /me não dá outro motivo para o menu inferior ser reconstruído
+/// (por exemplo, ao abrir o app: a primeira busca do Início termina depois do primeiro
+/// desenho da tela, sem nenhum setState próprio até alguma interação).
+final ValueNotifier<int> _navProfileVersion = ValueNotifier(0);
 
-void forgetNavProfile(IdentityGateway gateway) => _navProfiles.remove(gateway);
+void rememberNavProfile(IdentityGateway gateway, Map<String, dynamic> profile) {
+  _navProfiles[gateway] = profile;
+  _navProfileVersion.value++;
+}
+
+void forgetNavProfile(IdentityGateway gateway) {
+  _navProfiles.remove(gateway);
+  _navProfileVersion.value++;
+}
 
 /// [subScreen]: tela interna (detalhe, rascunho). Tocar na aba já destacada leva à tela principal
 /// da aba, em vez de não fazer nada.
@@ -168,11 +177,14 @@ Widget runPassNavigation(
   int selectedIndex, {
   bool subScreen = false,
 }) {
-  Widget avatar() => ProfileAvatar(
-    key: const Key('nav-profile-avatar'),
-    radius: 12,
-    gateway: gateway,
-    profile: _navProfiles[gateway],
+  Widget avatar() => ValueListenableBuilder<int>(
+    valueListenable: _navProfileVersion,
+    builder: (context, _, _) => ProfileAvatar(
+      key: const Key('nav-profile-avatar'),
+      radius: 15,
+      gateway: gateway,
+      profile: _navProfiles[gateway],
+    ),
   );
   return RunPassBottomNav(
     selectedIndex: selectedIndex,
@@ -180,7 +192,7 @@ Widget runPassNavigation(
     profileIconSelected: Container(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: runPassOrange, width: 2),
+        border: Border.all(color: Colors.white, width: 2),
       ),
       child: avatar(),
     ),
