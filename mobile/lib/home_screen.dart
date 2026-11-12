@@ -10,6 +10,7 @@ import 'location_picker.dart';
 import 'notifications.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
+import 'podium_logo.dart';
 
 export 'post_card.dart' show FeedEntry;
 
@@ -482,7 +483,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     child: const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(Icons.directions_run_rounded, color: runPassOrange, size: 42),
+        PodiumLogo(size: 46),
         SizedBox(height: 18),
         Text(
           'Sua próxima história começa na linha de largada.',

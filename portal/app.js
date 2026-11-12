@@ -951,8 +951,8 @@ async function carregarCadastros() {
         ? el(
             'table',
             { class: 'tabela' },
-            el('thead', {}, el('tr', {}, el('th', {}, 'Cadastro'), el('th', {}, 'E-mail'), el('th', {}, 'Situação'), el('th', {}, 'Criado em'))),
-            el('tbody', {}, r.items.map((u) => el('tr', {}, el('td', {}, u.id), el('td', {}, u.email), el('td', {}, statusCadastro(u.status) + (u.enabled ? '' : ' (desativado)')), el('td', {}, (u.createdAt || '').slice(0, 10).split('-').reverse().join('/'))))),
+            el('thead', {}, el('tr', {}, el('th', {}, 'Cadastro'), el('th', {}, 'Usuário (ID)'), el('th', {}, 'E-mail'), el('th', {}, 'Situação'), el('th', {}, 'Criado em'))),
+            el('tbody', {}, r.items.map((u) => el('tr', {}, el('td', {}, u.id), el('td', {}, u.username ? '@' + u.username : '—'), el('td', {}, u.email), el('td', {}, statusCadastro(u.status) + (u.enabled ? '' : ' (desativado)')), el('td', {}, (u.createdAt || '').slice(0, 10).split('-').reverse().join('/'))))),
           )
         : el('p', { class: 'vazio' }, 'Nenhum cadastro ainda.'),
     );
