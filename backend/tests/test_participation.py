@@ -174,7 +174,6 @@ class ParticipationTests(unittest.TestCase):
 
     def test_medal_customization_rejects_invalid_state_and_frame(self):
         from pydantic import ValidationError
-
         from runpass.models import PatchParticipation
 
         with self.assertRaises(ValidationError):
