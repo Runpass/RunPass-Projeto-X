@@ -10,6 +10,7 @@ import 'location_picker.dart';
 import 'notifications.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
+import 'podium_logo.dart';
 
 export 'post_card.dart' show FeedEntry;
 
@@ -484,7 +485,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     child: const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(Icons.directions_run_rounded, color: runPassOrange, size: 42),
+        PodiumLogo(size: 46),
         SizedBox(height: 18),
         Text(
           'Sua próxima história começa na linha de largada.',
@@ -588,7 +589,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     final friendsCount = (myProfile?['friendsCount'] as num?)?.toInt();
     final followingCount = (myProfile?['followingCount'] as num?)?.toInt();
     final invite = switch (filter) {
-      FeedFilter.friends when friendsCount == 0 => 'Você ainda não tem amigos confirmados no RunPass. Envie pedidos de amizade para as pessoas que você conhece e acompanhe as corridas delas por aqui.',
+      FeedFilter.friends when friendsCount == 0 => 'Você ainda não tem amigos confirmados no MeuPódio. Envie pedidos de amizade para as pessoas que você conhece e acompanhe as corridas delas por aqui.',
       FeedFilter.network when followingCount == 0 => 'Você ainda não está seguindo ninguém. Siga pessoas que você conhece para ver as publicações delas por aqui.',
       _ => null,
     };

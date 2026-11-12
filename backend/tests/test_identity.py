@@ -546,6 +546,48 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 422)
 
+    def test_owner_can_update_name_bio_and_birth_date_with_the_minimum_age_rule(self):
+        self.client.put(
+            "/me", json={"displayName": "Thiago", "username": "thiago"}, headers=self.headers
+        )
+        self.client.post("/beta/admissions", json=ADULT, headers=self.headers)
+        response = self.client.patch(
+            "/me",
+            json={
+                "expectedVersion": 1,
+                "displayName": "Thiago G.",
+                "bio": "Correr e o meu jeito de pensar",
+                "birthDate": "1991-05-20",
+            },
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("birthDate", response.json())  # nunca na resposta publica
+        mine = self.client.get("/me", headers=self.headers).json()
+        self.assertEqual(
+            (mine["displayName"], mine["bio"], mine["birthDate"]),
+            ("Thiago G.", "Correr e o meu jeito de pensar", "1991-05-20"),
+        )
+        # Menor de 13 anos, data futura, formato ruim e data apagada: recusados.
+        for i, bad in enumerate(("2020-01-01", "2999-01-01", "20/05/1991", None)):
+            response = self.client.patch(
+                "/me",
+                json={"expectedVersion": 2, "birthDate": bad},
+                headers={**self.headers, "Idempotency-Key": f"bad-{i}"},
+            )
+            self.assertIn(response.status_code, (422,), bad)
+        self.assertEqual(
+            self.client.get("/me", headers=self.headers).json()["birthDate"], "1991-05-20"
+        )
+        # A frase pode ser apagada.
+        response = self.client.patch(
+            "/me",
+            json={"expectedVersion": 2, "bio": None},
+            headers={**self.headers, "Idempotency-Key": "clear-bio"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("bio", self.client.get("/me", headers=self.headers).json())
+
     def test_other_subject_cannot_read_or_patch_owner(self):
         self.client.put(
             "/me", json={"displayName": "Name", "username": "runner"}, headers=self.headers

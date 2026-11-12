@@ -1,8 +1,8 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
-  resumoPedido, segundosAteExpirar, statusCadastro,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  resumoPedido, segundosAteExpirar, statusCadastro, montarBannerArquivo, dimensoesEnvio, resumoImporte,
 } from './lib.js';
 
 // O token fica só em memória: recarregar a página ou fechar a aba encerra a sessão.
@@ -100,12 +100,20 @@ async function carregarPedidos() {
   const lista = $('pedidos');
   lista.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
   try {
-    const { items, awaiting, linkedNow } = await api('/admin/edition-requests');
+    const { items, awaiting, images, linkedNow } = await api('/admin/edition-requests');
     const espera = awaiting || [];
+    const banners = images || [];
     if (linkedNow) aviso(`${linkedNow} pedido(s) que aguardavam foram vinculados automaticamente.`, 'ok');
     lista.replaceChildren(
       el('h2', {}, 'Pendentes de decisão'),
       ...(items.length ? items.map((p) => cartaoPedido(p)) : [el('p', { class: 'vazio' }, 'Nenhum pedido pendente.')]),
+      ...(banners.length
+        ? [
+            el('h2', {}, 'Banners sugeridos por usuários'),
+            el('p', { class: 'ajuda' }, 'Nada é publicado sem a sua decisão: confira a imagem, informe o crédito e a base de autorização, e só então publique. Publicar substitui o banner atual da corrida, se houver.'),
+            ...banners.map(cartaoBanner),
+          ]
+        : []),
       ...(espera.length
         ? [
             el('h2', {}, 'Aprovados, aguardando a carga da corrida'),
@@ -132,6 +140,82 @@ async function verificarVinculos() {
   }
 }
 
+/** Carrega a imagem enviada no pedido (rota protegida) e a mostra em `alvo`. */
+async function carregarImagemPedido(id, alvo) {
+  try {
+    const r = await fetch(`${cfg.apiUrl}/admin/edition-requests/${encodeURIComponent(id)}/image`, { headers: { Authorization: `Bearer ${token}` } });
+    if (r.status === 401) return sair('INVALID_TOKEN');
+    if (!r.ok) throw new Error('erro');
+    alvo.replaceChildren(el('img', { class: 'previa', src: URL.createObjectURL(await r.blob()), alt: 'Banner enviado pelo usuário' }));
+  } catch (falha) {
+    if (token) alvo.replaceChildren(el('p', { class: 'aviso erro' }, 'Não foi possível carregar a imagem enviada.'));
+  }
+}
+
+function cartaoBanner(pedido) {
+  const d = pedido.details || {};
+  const e = pedido.edition || {};
+  const previa = el('div', {}, el('p', { class: 'meta' }, 'Carregando a imagem...'));
+  carregarImagemPedido(pedido.id, previa);
+  const credito = el('input', { type: 'text', maxlength: '200', placeholder: 'ex.: Divulgação: Organizador', autocomplete: 'off' });
+  const nota = el('textarea', { rows: '3', maxlength: '1000', placeholder: 'Como o direito de uso foi obtido (fica só no registro interno)' });
+  const confirmar = el('input', { type: 'checkbox' });
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const publicar = el('button', { type: 'button', class: 'ok' }, 'Publicar banner');
+  const descartar = el('button', { type: 'button', class: 'perigo' }, 'Descartar');
+  publicar.addEventListener('click', async () => {
+    let corpo;
+    try {
+      corpo = montarPublicacaoBanner({ credito: credito.value, nota: nota.value, confirmou: confirmar.checked });
+      erro.hidden = true;
+    } catch (falha) {
+      erro.hidden = false;
+      erro.textContent = falha.message;
+      return;
+    }
+    if (!window.confirm('Publicar PUBLICA esta imagem como banner da corrida, com o crédito informado. Confirmar?')) return;
+    publicar.disabled = descartar.disabled = true;
+    try {
+      await api(`/admin/edition-requests/${encodeURIComponent(pedido.id)}/banner`, { method: 'POST', body: JSON.stringify(corpo) });
+      aviso('Banner publicado.', 'ok');
+      await carregarPedidos();
+    } catch (falha) {
+      publicar.disabled = descartar.disabled = false;
+      if (token) {
+        erro.hidden = false;
+        erro.textContent = falha.codigo ? mensagem(falha.codigo) : falha.message;
+      }
+    }
+  });
+  descartar.addEventListener('click', async () => {
+    const motivo = window.prompt('Descartar este banner (nada é publicado). Motivo, opcional:', '');
+    if (motivo === null) return;
+    publicar.disabled = descartar.disabled = true;
+    try {
+      await api(`/admin/edition-requests/${encodeURIComponent(pedido.id)}/banner/dismiss`, { method: 'POST', body: JSON.stringify({ reason: motivo.trim() }) });
+      aviso('Banner descartado.', 'ok');
+      await carregarPedidos();
+    } catch (falha) {
+      publicar.disabled = descartar.disabled = false;
+      if (token) aviso(falha.codigo ? mensagem(falha.codigo) : falha.message, 'erro');
+    }
+  });
+  return el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, e.name || d.name || '(corrida)'),
+    el('div', { class: 'linha' }, [e.date ? dataBr(e.date) : '', [e.city, e.state].filter(Boolean).join('/')].filter(Boolean).join(' · ')),
+    pedido.kind === 'banner' ? el('div', { class: 'meta' }, 'Sugestão de banner enviada por um usuário para esta corrida já cadastrada.') : '',
+    pedido.editionHasBanner ? el('div', { class: 'aviso' }, 'Esta corrida já tem banner: publicar substitui.') : '',
+    previa,
+    el('label', {}, 'Crédito (aparece no app)', credito),
+    el('label', {}, 'Base de autorização (como você obteve o direito de usar; fica só no registro interno)', nota),
+    el('label', { class: 'confirma' }, confirmar, ' Confirmo que a base de autorização acima é verdadeira.'),
+    erro,
+    el('div', { class: 'acoes' }, publicar, descartar),
+  );
+}
+
 function cartaoPedido(pedido, aguardando = false) {
   const resumo = resumoPedido(pedido);
   const link = linkSeguro(resumo.fonte);
@@ -145,6 +229,13 @@ function cartaoPedido(pedido, aguardando = false) {
       ? el('div', { class: 'meta' }, 'Fonte informada: ', el('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, link))
       : '',
     el('div', { class: 'meta' }, `Pedido ${pedido.id} · versão ${pedido.version}`),
+    ...(((pedido.details || {}).imageReference)
+      ? (() => {
+          const caixa = el('div', {}, el('p', { class: 'meta' }, 'Carregando o banner enviado...'));
+          carregarImagemPedido(pedido.id, caixa);
+          return [el('div', { class: 'meta' }, 'Banner enviado pelo usuário (só entra na fila de publicação depois que o pedido for aprovado e vinculado):'), caixa];
+        })()
+      : []),
     el(
       'div',
       { class: 'acoes' },
@@ -179,11 +270,31 @@ function painelAprovacao(area, pedido, aguardando) {
   const estado = el('input', { type: 'text', maxlength: '2', placeholder: 'UF, ex.: SP', autocomplete: 'off', value: d.state || '' });
   const distancias = el('input', { type: 'text', maxlength: '80', placeholder: 'ex.: 5, 10', autocomplete: 'off', value: d.distanceKm ? String(d.distanceKm) : '' });
   const erro = el('p', { class: 'aviso erro', hidden: true });
+  // Banner opcional, enviado como arquivo junto com a aprovação (credito e autorizacao obrigatorios).
+  const arquivo = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' });
+  const credito = el('input', { type: 'text', maxlength: '200', placeholder: 'ex.: Divulgação: Organizador', autocomplete: 'off' });
+  const nota = el('textarea', { rows: '3', maxlength: '1000', placeholder: 'Como o direito de uso foi obtido (fica só no registro interno)' });
+  const confirmaDireito = el('input', { type: 'checkbox' });
+  const previaBanner = el('div');
+  let pronto = null;
+  arquivo.addEventListener('change', async () => {
+    pronto = null;
+    previaBanner.replaceChildren(el('p', { class: 'meta' }, 'Preparando a imagem...'));
+    try {
+      pronto = await prepararArquivo(arquivo.files[0]);
+      previaBanner.replaceChildren(pronto ? el('img', { class: 'previa', src: pronto.previa, alt: 'Prévia do banner' }) : '');
+    } catch (falha) {
+      previaBanner.replaceChildren(el('p', { class: 'aviso erro' }, falha.message));
+    }
+  });
   const confirmar = el('button', { type: 'button', class: 'ok' }, aguardando ? 'Criar a corrida e vincular' : 'Aprovar');
   confirmar.addEventListener('click', async () => {
     let corpo;
+    let corpoBanner = null;
     try {
       corpo = montarAprovacao({ versao: pedido.version, estado: estado.value, distancias: distancias.value });
+      // Valida o banner ANTES de criar a corrida, para não criar e depois falhar.
+      if (pronto) corpoBanner = montarBannerArquivo({ editionId: 'a-definir', base64: pronto.base64, tipo: pronto.tipo, credito: credito.value, nota: nota.value, confirmou: confirmaDireito.checked });
       erro.hidden = true;
     } catch (falha) {
       erro.hidden = false;
@@ -194,6 +305,17 @@ function painelAprovacao(area, pedido, aguardando) {
     try {
       const r = await api(`/admin/edition-requests/${encodeURIComponent(pedido.id)}/approve`, { method: 'POST', body: JSON.stringify(corpo) });
       aviso(textoAprovacao(r.outcome), 'ok');
+      const editionId = r.request && r.request.linkedEditionId;
+      if (corpoBanner && editionId) {
+        try {
+          await api('/admin/banners/approve', { method: 'POST', body: JSON.stringify({ ...corpoBanner, editionId }) });
+          aviso('Corrida aprovada e banner publicado.', 'ok');
+        } catch (falha) {
+          aviso(`A corrida foi aprovada, mas o banner NÃO foi publicado (${falha.codigo ? mensagem(falha.codigo) : falha.message}). Envie na aba Banners.`, 'erro');
+        }
+      } else if (corpoBanner) {
+        aviso('O banner não foi enviado porque a corrida ainda não existe no catálogo. Envie na aba Banners depois.', 'erro');
+      }
       await carregarPedidos();
     } catch (falha) {
       confirmar.disabled = false;
@@ -207,6 +329,13 @@ function painelAprovacao(area, pedido, aguardando) {
     el('label', {}, 'Estado (UF)', estado),
     el('label', {}, 'Distâncias em km (separe por vírgula)', distancias),
     el('p', { class: 'meta' }, 'Se a mesma corrida já estiver no catálogo (mesma data e nome parecido), o usuário é só vinculado a ela. Sem o estado, o pedido fica aguardando a carga.'),
+    el('fieldset', {}, el('legend', {}, 'Banner da corrida (opcional)'),
+      el('label', {}, 'Arquivo da imagem (JPEG, PNG ou WebP)', arquivo),
+      previaBanner,
+      el('label', {}, 'Crédito (aparece no app)', credito),
+      el('label', {}, 'Base de autorização (como você obteve o direito de usar; fica só no registro interno)', nota),
+      el('label', { class: 'confirma' }, confirmaDireito, ' Confirmo que a base de autorização acima é verdadeira.'),
+    ),
     erro,
     confirmar,
   );
@@ -371,18 +500,57 @@ async function carregarDivergencias() {
 
 // ---- qualidade da busca ---------------------------------------------------------------------------
 
+/** "Última execução": números lidos dos relatórios da rotina (atualiza sozinho). Não mede acerto. */
+function painelUltimaExecucao(vivo) {
+  const partes = [
+    el('h2', {}, 'Última execução da rotina'),
+    el('p', { class: 'meta' }, 'Lido dos relatórios que a própria rotina grava a cada execução, então se atualiza sozinho. Mostra o que ela fez (quantas corridas achou, quantas vieram com fonte, quantas esperam decisão). Não mede acerto: isso só vem de conferência humana (a medição manual abaixo e as decisões da aba Divergências). Execuções de teste (dry-run) ficam de fora.'),
+  ];
+  if (!vivo) {
+    partes.push(el('p', { class: 'aviso erro' }, 'Não foi possível ler os relatórios da rotina agora. Tente atualizar.'));
+    return el('div', {}, ...partes);
+  }
+  if (!vivo.runs.length) partes.push(el('p', { class: 'vazio' }, 'Nenhuma execução encontrada nos relatórios ainda.'));
+  for (const run of vivo.runs) {
+    partes.push(
+      el('h3', {}, run.label),
+      el('p', { class: 'meta' }, `Execução de ${dataBr(run.date)}${run.generatedAt ? ` · gerada em ${dataHoraBr(run.generatedAt)}` : ''}${run.interrupted ? ' · INTERROMPIDA antes do fim' : ''}`),
+      el('div', { class: 'grade' }, ...run.metrics.map((m) => cartaoNumero(m.label, m.of != null ? taxa(m.value, m.of) : String(m.value), m.note))),
+    );
+  }
+  const d = vivo.decisions;
+  if (d) {
+    const n = d.nothingFound;
+    partes.push(
+      el('h3', {}, 'Decisões humanas (aba Divergências)'),
+      el(
+        'div',
+        { class: 'grade' },
+        cartaoNumero('Esperam decisão', String(d.pending), d.pending ? 'Abra a aba Divergências' : 'Nada pendente'),
+        cartaoNumero('Aceitas', taxa(d.accepted, d.total)),
+        cartaoNumero('Reprovadas', taxa(d.rejected, d.total)),
+        cartaoNumero('"Nada encontrado" conferidas', taxa(n.checked, n.total), 'Das que a rotina não achou, quantas uma pessoa já conferiu'),
+        cartaoNumero('Tinham informação útil', taxa(n.hadInfo, n.checked), 'O que a rotina deixou de achar (mede a revocação)'),
+      ),
+    );
+  }
+  return el('div', {}, ...partes);
+}
+
 async function carregarQualidade() {
   const alvo = $('qualidade');
   alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
   try {
-    const r = await api('/admin/quality');
+    const [r, vivo] = await Promise.all([api('/admin/quality'), api('/admin/quality/live').catch(() => null)]);
     const x = r.extraction;
     const e = r.enrichment;
     const f = e.filled;
     const contagem = r.spotCheck.reduce((a, c) => ({ ...a, [c.result]: (a[c.result] || 0) + 1 }), {});
     const decidir = x.notExtracted.filter((i) => i.decision === 'decidir').length;
     alvo.replaceChildren(
-      el('p', { class: 'meta' }, `Medição de ${dataBr(r.date)}. ${r.scope}`),
+      painelUltimaExecucao(vivo),
+      el('h2', {}, `Medição manual de ${dataBr(r.date)} (conferida por uma pessoa)`),
+      el('p', { class: 'meta' }, r.scope),
       el('h2', {}, 'Extração do calendário da prefeitura'),
       el(
         'div',
@@ -612,10 +780,57 @@ function seletorEdicao(textoInicial, aoEscolher, idInicial = null) {
 /** Formulário de aprovação: imagem (com prévia), crédito, base de autorização e confirmação. */
 const candidatasPublicadas = new Set();
 
+const LIMITE_ARQUIVO_BYTES = 3_000_000;
+
+/**
+ * Lê o arquivo escolhido, reduz (maior lado 1920 px) e converte em JPEG de até ~3 MB, pronto para ir no JSON
+ * (a Lambda aceita até 6 MB). Devolve { base64, tipo, previa (endereço local), bytes }.
+ */
+async function prepararArquivo(arquivo) {
+  if (!arquivo) return null;
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(arquivo.type)) throw new Error('Use uma imagem JPEG, PNG ou WebP.');
+  const origem = URL.createObjectURL(arquivo);
+  try {
+    const img = await new Promise((ok, falha) => {
+      const i = new Image();
+      i.onload = () => ok(i);
+      i.onerror = () => falha(new Error('Não foi possível ler a imagem.'));
+      i.src = origem;
+    });
+    const { largura, altura } = dimensoesEnvio(img.naturalWidth, img.naturalHeight);
+    const tela = document.createElement('canvas');
+    tela.width = largura;
+    tela.height = altura;
+    const ctx = tela.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, largura, altura);
+    ctx.drawImage(img, 0, 0, largura, altura);
+    let qualidade = 0.92;
+    let blob;
+    do {
+      blob = await new Promise((ok) => tela.toBlob(ok, 'image/jpeg', qualidade));
+      qualidade -= 0.1;
+    } while (blob && blob.size > LIMITE_ARQUIVO_BYTES && qualidade > 0.4);
+    if (!blob || blob.size > LIMITE_ARQUIVO_BYTES) throw new Error('A imagem continua grande demais. Escolha uma menor.');
+    const base64 = await new Promise((ok, falha) => {
+      const leitor = new FileReader();
+      leitor.onload = () => ok(String(leitor.result).split(',')[1]);
+      leitor.onerror = () => falha(new Error('Não foi possível ler a imagem.'));
+      leitor.readAsDataURL(blob);
+    });
+    return { base64, tipo: 'image/jpeg', previa: URL.createObjectURL(blob), bytes: blob.size };
+  } finally {
+    URL.revokeObjectURL(origem);
+  }
+}
+
 function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
   let escolhida = null;
   let urlPrevia = null;
   const campoUrl = imagem ? null : el('input', { type: 'url', placeholder: 'https://...', maxlength: '2000' });
+  // Arquivo do computador (alternativa ao endereço); só no formulário manual, não nas candidatas da coleta.
+  const campoArquivo = imagem ? null : el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' });
+  let arquivoPronto = null;
   const previa = el('div');
   const campoCredito = el('input', { type: 'text', maxlength: '200', value: credito || '', placeholder: 'Ex.: Divulgação: Organizador' });
   const campoNota = el('textarea', { rows: '4', maxlength: '1000' });
@@ -631,15 +846,36 @@ function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
     edicao ? edicao.id : null,
   );
   const endereco = () => (imagem || campoUrl.value.trim());
+  const temFonte = () => Boolean(arquivoPronto || endereco());
   const habilitar = () => {
-    aprovar.disabled = !(escolhida && endereco() && campoCredito.value.trim() && campoNota.value.trim().length >= 10 && confirmar.checked);
+    aprovar.disabled = !(escolhida && temFonte() && campoCredito.value.trim() && campoNota.value.trim().length >= 10 && confirmar.checked);
   };
   for (const c of [campoCredito, campoNota, confirmar]) c.addEventListener('input', habilitar);
   if (campoUrl) campoUrl.addEventListener('input', habilitar);
+  if (campoArquivo) {
+    campoArquivo.addEventListener('change', async () => {
+      arquivoPronto = null;
+      previa.replaceChildren(el('p', { class: 'meta' }, 'Preparando a imagem...'));
+      try {
+        arquivoPronto = await prepararArquivo(campoArquivo.files[0]);
+        previa.replaceChildren(
+          arquivoPronto
+            ? el('div', {}, el('img', { class: 'previa', src: arquivoPronto.previa, alt: 'Prévia do banner' }), el('p', { class: 'meta' }, `Arquivo pronto (${Math.round(arquivoPronto.bytes / 1024)} KB). O servidor ainda remove os metadados antes de publicar.`))
+            : '',
+        );
+      } catch (falha) {
+        previa.replaceChildren(el('p', { class: 'aviso erro' }, falha.message));
+      }
+      habilitar();
+    });
+  }
 
   const verPrevia = el('button', { type: 'button', class: 'sec' }, 'Ver a imagem como ficará no app');
   verPrevia.addEventListener('click', async () => {
-    if (!endereco()) return aviso('Informe o endereço da imagem.', 'erro');
+    if (arquivoPronto) {
+      return previa.replaceChildren(el('img', { class: 'previa', src: arquivoPronto.previa, alt: 'Prévia do banner' }));
+    }
+    if (!endereco()) return aviso('Informe o endereço da imagem ou escolha um arquivo.', 'erro');
     verPrevia.disabled = true;
     // O resultado e os erros aparecem AQUI, junto do botão (o aviso global fica no topo da página, fora da vista).
     previa.replaceChildren(el('p', { class: 'meta' }, 'Gerando a prévia... pode levar até 30 segundos.'));
@@ -666,14 +902,19 @@ function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
   });
 
   aprovar.addEventListener('click', async () => {
+    let corpo;
+    try {
+      corpo = arquivoPronto
+        ? montarBannerArquivo({ editionId: escolhida, base64: arquivoPronto.base64, tipo: arquivoPronto.tipo, credito: campoCredito.value, nota: campoNota.value, confirmou: confirmar.checked })
+        : { editionId: escolhida, imageUrl: endereco(), credit: campoCredito.value.trim(), rightsNote: campoNota.value.trim(), confirmRights: confirmar.checked };
+    } catch (falha) {
+      return aviso(falha.message, 'erro');
+    }
     if (!window.confirm('Aprovar PUBLICA esta imagem no app, com o crédito informado. Confirmar?')) return;
     aprovar.disabled = true;
     try {
-      await api('/admin/banners/approve', {
-        method: 'POST',
-        body: JSON.stringify({ editionId: escolhida, imageUrl: endereco(), credit: campoCredito.value.trim(), rightsNote: campoNota.value.trim(), confirmRights: confirmar.checked }),
-      });
-      if (endereco()) candidatasPublicadas.add(endereco());
+      await api('/admin/banners/approve', { method: 'POST', body: JSON.stringify(corpo) });
+      if (!arquivoPronto && endereco()) candidatasPublicadas.add(endereco());
       aviso('Banner publicado.', 'ok');
       await carregarBanners();
     } catch (erro) {
@@ -687,6 +928,7 @@ function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
     'div',
     {},
     campoUrl ? el('label', {}, 'Endereço da imagem (https)', campoUrl) : '',
+    campoArquivo ? el('label', {}, 'Ou envie o arquivo da imagem (JPEG, PNG ou WebP; o portal reduz antes de enviar)', campoArquivo) : '',
     el('div', { class: 'acoes' }, verPrevia),
     previa,
     seletor.caixa,
@@ -694,6 +936,59 @@ function formularioBanner({ imagem, credito, pagina, edicao, nomeBusca }) {
     el('label', {}, 'Base de autorização (como você obteve o direito de usar; fica só no registro interno)', campoNota),
     el('label', { class: 'confirma' }, confirmar, ' Confirmo que a base de autorização acima é verdadeira.'),
     aprovar,
+  );
+}
+
+/** Redes do organizador de uma corrida: perfis (Instagram/Facebook) e UM post a exibir pelo embed da Meta. */
+function formularioRedes(sugestao = null) {
+  let escolhida = null;
+  const instagram = el('input', { type: 'url', maxlength: '500', placeholder: 'https://www.instagram.com/usuario/' });
+  const facebook = el('input', { type: 'url', maxlength: '500', placeholder: 'https://www.facebook.com/pagina' });
+  const post = el('input', { type: 'url', maxlength: '500', placeholder: 'https://www.instagram.com/p/... (post, reel ou vídeo público)' });
+  const salvar = el('button', { type: 'button', class: 'ok', disabled: true }, 'Salvar redes');
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const seletor = seletorEdicao(
+    sugestao ? sugestao.nome : '',
+    (e) => {
+      escolhida = e ? e.id : null;
+      salvar.disabled = !escolhida;
+      instagram.value = (e && e.instagramUrl) || (sugestao && sugestao.instagram) || '';
+      facebook.value = (e && e.facebookUrl) || (sugestao && sugestao.facebook) || '';
+      post.value = (e && e.organizerPostUrl) || '';
+    },
+    sugestao ? sugestao.edicaoId : null,
+  );
+  salvar.addEventListener('click', async () => {
+    if (!escolhida) return;
+    salvar.disabled = true;
+    erro.hidden = true;
+    try {
+      // Vazio apaga; so mandamos o que a pessoa deixou no formulario.
+      await api(`/admin/editions/${encodeURIComponent(escolhida)}/social`, {
+        method: 'PUT',
+        body: JSON.stringify({ instagramUrl: instagram.value.trim(), facebookUrl: facebook.value.trim(), organizerPostUrl: post.value.trim() }),
+      });
+      aviso('Redes da corrida salvas.', 'ok');
+    } catch (falha) {
+      if (token) {
+        erro.hidden = false;
+        erro.textContent = falha.codigo ? mensagem(falha.codigo) : falha.message;
+      }
+    } finally {
+      salvar.disabled = !escolhida;
+    }
+  });
+  seletor.pesquisar();
+  return el(
+    'div',
+    {},
+    seletor.caixa,
+    el('label', {}, 'Instagram do organizador (perfil)', instagram),
+    el('label', {}, 'Facebook do organizador (página)', facebook),
+    el('label', {}, 'Post para mostrar na corrida (opcional, só post público)', post),
+    el('p', { class: 'meta' }, 'Deixar um campo vazio e salvar apaga aquele link.'),
+    erro,
+    salvar,
   );
 }
 
@@ -712,12 +1007,23 @@ async function carregarBanners() {
               el('div', { class: 'linha' }, `${dataBr(c.date)} · direitos: ${c.rights || 'não verificado'}`),
               linkSeguro(c.officialPage) ? el('div', { class: 'meta' }, 'Página oficial: ', el('a', { href: linkSeguro(c.officialPage), target: '_blank', rel: 'noopener noreferrer' }, c.officialPage)) : '',
               formularioBanner({ imagem: c.imageUrl, credito: c.credit, pagina: c.officialPage, edicao: c.edition, nomeBusca: c.name }),
+              c.instagramUrl || c.facebookUrl
+                ? el(
+                    'details',
+                    {},
+                    el('summary', {}, 'Instagram/Facebook que o organizador divulga na página oficial'),
+                    c.instagramUrl ? el('div', { class: 'meta' }, 'Instagram: ', el('a', { href: c.instagramUrl, target: '_blank', rel: 'noopener noreferrer' }, c.instagramUrl)) : '',
+                    c.facebookUrl ? el('div', { class: 'meta' }, 'Facebook: ', el('a', { href: c.facebookUrl, target: '_blank', rel: 'noopener noreferrer' }, c.facebookUrl)) : '',
+                    formularioRedes({ nome: c.name, edicaoId: c.edition ? c.edition.id : null, instagram: c.instagramUrl, facebook: c.facebookUrl }),
+                  )
+                : '',
               el('div', { class: 'acoes' }, el('button', { type: 'button', class: 'perigo', onclick: () => excluirCandidata(c) }, 'Excluir candidata')),
             ),
           )
         : [el('p', { class: 'vazio' }, 'Nenhuma imagem candidata pendente. Para trocar o banner de uma corrida, retire o atual ou use o formulário manual.')]),
     );
     $('banner-manual').replaceChildren(formularioBanner({ imagem: '', credito: '', pagina: '', edicao: null, nomeBusca: '' }));
+    $('redes-organizador').replaceChildren(formularioRedes());
     $('banners-publicados').replaceChildren(
       ...(pub.items.length
         ? pub.items.map((e) =>
@@ -861,8 +1167,8 @@ async function carregarCadastros() {
         ? el(
             'table',
             { class: 'tabela' },
-            el('thead', {}, el('tr', {}, el('th', {}, 'Cadastro'), el('th', {}, 'E-mail'), el('th', {}, 'Situação'), el('th', {}, 'Criado em'))),
-            el('tbody', {}, r.items.map((u) => el('tr', {}, el('td', {}, u.id), el('td', {}, u.email), el('td', {}, statusCadastro(u.status) + (u.enabled ? '' : ' (desativado)')), el('td', {}, (u.createdAt || '').slice(0, 10).split('-').reverse().join('/'))))),
+            el('thead', {}, el('tr', {}, el('th', {}, 'Cadastro'), el('th', {}, 'Usuário (ID)'), el('th', {}, 'E-mail'), el('th', {}, 'Situação'), el('th', {}, 'Criado em'))),
+            el('tbody', {}, r.items.map((u) => el('tr', {}, el('td', {}, u.id), el('td', {}, u.username ? '@' + u.username : '—'), el('td', {}, u.email), el('td', {}, statusCadastro(u.status) + (u.enabled ? '' : ' (desativado)')), el('td', {}, (u.createdAt || '').slice(0, 10).split('-').reverse().join('/'))))),
           )
         : el('p', { class: 'vazio' }, 'Nenhum cadastro ainda.'),
     );
@@ -1066,7 +1372,85 @@ async function carregarExecucoes() {
   }
 }
 
+/** Importe automático: interruptor, resumo da última rodada e lista do que entrou, com Desfazer. */
+async function carregarImporteAutomatico() {
+  const alvo = $('importe-automatico-corpo');
+  try {
+    const e = await api('/admin/catalog/auto-import');
+    const caixa = el('input', { type: 'checkbox' });
+    caixa.checked = e.enabled;
+    caixa.addEventListener('change', async () => {
+      const ligar = caixa.checked;
+      if (ligar && !window.confirm('Ligar o importe automático? As corridas que passarem nas travas serão PUBLICADAS no app sem a sua revisão. Você poderá desfazer cada uma.')) {
+        caixa.checked = false;
+        return;
+      }
+      caixa.disabled = true;
+      try {
+        await api('/admin/catalog/auto-import', { method: 'PUT', body: JSON.stringify({ enabled: ligar }) });
+        aviso(ligar ? 'Importe automático ligado.' : 'Importe automático desligado.', 'ok');
+      } catch (falha) {
+        caixa.checked = !ligar;
+        if (token) aviso(mensagem(falha.codigo), 'erro');
+      } finally {
+        caixa.disabled = false;
+        carregarImporteAutomatico();
+      }
+    });
+    const agora = el('button', { type: 'button', class: 'sec' }, 'Importar agora');
+    agora.addEventListener('click', async () => {
+      agora.disabled = true;
+      try {
+        const r = await api('/admin/catalog/auto-import/run', { method: 'POST' });
+        aviso(r.skipped ? 'O importe automático está desligado.' : `Importe feito: ${r.created} corrida(s) nova(s).`, r.skipped ? 'erro' : 'ok');
+      } catch (falha) {
+        if (token) aviso(mensagem(falha.codigo), 'erro');
+      } finally {
+        agora.disabled = false;
+        carregarImporteAutomatico();
+      }
+    });
+    const ultimo = e.lastRun ? resumoImporte(e.lastRun.detalhe) : null;
+    alvo.replaceChildren(
+      el('label', { class: 'confirma' }, caixa, ' Importe automático ligado'),
+      el('p', { class: 'meta' }, 'Travas (todas precisam passar): ' + e.gates.join('; ') + '. Roda de hora em hora.'),
+      e.lastRun
+        ? el('p', { class: 'meta' }, `Última rodada: ${dataHoraBr(e.lastRun.at)} (${e.lastRun.trigger === 'manual' ? 'manual' : 'agendada'}) · ${ultimo.texto}${ultimo.detalhes.length ? ` (para revisão: ${ultimo.detalhes.join('; ')})` : ''}`)
+        : el('p', { class: 'meta' }, 'Nenhuma rodada ainda.'),
+      el('div', { class: 'acoes' }, agora),
+      el('h3', {}, 'Importadas automaticamente'),
+      ...(e.recent.length
+        ? e.recent.map((c) =>
+            el(
+              'div',
+              { class: 'linha' },
+              `${c.name} · ${dataBr(c.date)} · ${dataHoraBr(c.at)} `,
+              c.undone || c.archived
+                ? el('span', { class: 'meta' }, '(desfeita)')
+                : el('button', { type: 'button', class: 'perigo', onclick: () => desfazerImporte(c) }, 'Desfazer'),
+            ),
+          )
+        : [el('p', { class: 'vazio' }, 'Nada importado automaticamente ainda.')]),
+    );
+  } catch (erro) {
+    if (token) alvo.replaceChildren(el('p', { class: 'aviso erro' }, mensagem(erro.codigo)));
+  }
+}
+
+async function desfazerImporte(c) {
+  const motivo = window.prompt(`Desfazer a corrida "${c.name}" (ela é arquivada e some do app). Motivo:`, '');
+  if (motivo === null) return;
+  try {
+    await api('/admin/catalog/auto-import/undo', { method: 'POST', body: JSON.stringify({ editionId: c.id, reason: motivo.trim() }) });
+    aviso('Corrida desfeita (arquivada).', 'ok');
+    carregarImporteAutomatico();
+  } catch (falha) {
+    if (token) aviso(mensagem(falha.codigo), 'erro');
+  }
+}
+
 async function carregarUltimoDisparo() {
+  carregarImporteAutomatico();
   carregarAgendamentos();
   carregarExecucoes();
   try {

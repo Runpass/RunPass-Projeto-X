@@ -161,6 +161,67 @@ class CatalogImportTests(unittest.TestCase):
         self.assertEqual(saved["counts"]["created"], 2)
         self.assertNotIn("payload", saved)
 
+    def test_csv_aceita_perfis_sociais_validos_e_recusa_o_resto_da_linha(self):
+        from runpass.catalog_import import row_to_payload
+
+        linha = {
+            "source_external_id": "social-1",
+            "name": "Corrida Social Exemplo",
+            "event_date": "2027-06-06",
+            "city": "São Paulo",
+            "state": "SP",
+            "distances_km": "10",
+            "instagram_url": "https://instagram.com/corrida_exemplo",
+            "facebook_url": "https://www.facebook.com/corridaexemplo",
+            "organizer_post_url": "https://www.instagram.com/p/AbC123xyz/",
+        }
+        payload = row_to_payload(linha, "csv-sp")
+        self.assertEqual(payload["instagramUrl"], "https://instagram.com/corrida_exemplo")
+        # A normalizacao acontece no modelo da corrida (o que e gravado no catalogo).
+        from runpass.catalog import ImportEdition
+
+        edicao = ImportEdition(**payload)
+        self.assertEqual(edicao.instagramUrl, "https://www.instagram.com/corrida_exemplo/")
+        self.assertEqual(edicao.organizerPostUrl, "https://www.instagram.com/p/AbC123xyz/")
+        with self.assertRaises(ValueError):
+            row_to_payload({**linha, "instagram_url": "https://exemplo.org/x"}, "csv-sp")
+
+    def test_audience_filter_kids_by_name_and_adult_is_the_rest(self):
+        for slug, name in (
+            ("adulta", "Corrida de Rua Adulta"),
+            ("kids", "Corrida KIDS do Parque"),
+            ("infantil", "Mini Maratona Infantil"),
+            ("mirim", "Circuito Mirim"),
+            ("kidney", "Corrida Solidaria Kidney"),  # 'kidney' nao e a palavra 'kids'
+        ):
+            CatalogImporter(self.catalog).put(
+                {
+                    "id": "aud-" + slug,
+                    "name": name,
+                    "date": "2027-05-16",
+                    "city": "São Paulo",
+                    "state": "SP",
+                    "distances": [{"id": "5k", "kilometers": 5}],
+                },
+                expected_version=0,
+                origin="https://admin.invalid/manual",
+                synthetic=True,
+            )
+
+        def ids(**f):
+            # O catalogo de teste ja traz outras corridas sinteticas: olha so as desta prova.
+            return sorted(
+                e["id"] for e in self.listed(state="SP", **f) if e["id"].startswith("aud-")
+            )
+
+        self.assertEqual(ids(audience="kids"), ["aud-infantil", "aud-kids", "aud-mirim"])
+        self.assertEqual(ids(audience="adult"), ["aud-adulta", "aud-kidney"])
+        self.assertEqual(len(ids()), 5)  # sem o filtro, todas
+        # Combina com os outros filtros e rejeita valor desconhecido.
+        self.assertEqual(ids(audience="kids", q="parque"), ["aud-kids"])
+        with self.assertRaises(ValueError):
+            CatalogFilters(audience="todos")
+
     # ---- filtros novos ----
     def test_new_filters_name_contains_registration_and_radius(self):
         self.run_csv(dry_run=False)

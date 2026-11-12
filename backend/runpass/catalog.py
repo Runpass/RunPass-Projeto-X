@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+import re
 import unicodedata
 from copy import deepcopy
 from datetime import date, timedelta
@@ -26,6 +27,16 @@ def normalized(value):
         .casefold()
         .split()
     )
+
+
+KIDS_WORDS = re.compile(r"\b(kids?|infantil|infantis|mirim|crianca|criancas)\b")
+
+
+def is_kids(name):
+    """Corrida kids pelo NOME (palavras explicitas como Kids, Infantil, Mirim). E uma deducao
+    simples e transparente, nao um dado curado: decisao do produto em 11/11/2026, ate o catalogo
+    ter um campo proprio de publico por distancia."""
+    return bool(KIDS_WORDS.search(normalized(name)))
 
 
 def distance(value):
@@ -59,6 +70,8 @@ class CatalogFilters(Input):
     # Nome contendo o texto (sem acento nem caixa). Filtra o resultado; nao muda o indice.
     q: str | None = Field(default=None, min_length=1, max_length=160)
     registrationStatus: Literal["unknown", "open", "closed", "sold_out"] | None = None
+    # kids = nome com Kids/Infantil/Mirim; adult = o resto (ver is_kids).
+    audience: Literal["kids", "adult"] | None = None
     # Raio em torno de um ponto: os tres juntos ou nenhum.
     lat: float | None = Field(default=None, ge=-90, le=90)
     lon: float | None = Field(default=None, ge=-180, le=180)
@@ -262,6 +275,8 @@ class CatalogService:
                     continue
                 if filters.q and filters.q not in normalized(body["name"]):
                     continue
+                if filters.audience and is_kids(body["name"]) != (filters.audience == "kids"):
+                    continue
                 # Inscricao desconhecida nunca vira "aberta": so casa com "unknown".
                 if (
                     filters.registrationStatus
@@ -358,6 +373,10 @@ class ImportEdition(Input):
     organizerId: str | None = None
     officialUrl: str | None = None
     registrationUrl: str | None = None
+    # Redes do organizador (links conferidos por uma pessoa) e UM post para exibir pelo embed da Meta.
+    instagramUrl: str | None = None
+    facebookUrl: str | None = None
+    organizerPostUrl: str | None = None
     imageReference: str | None = None
     # Credito exibido junto do banner (ex.: "Divulgação: Organizador"); so com imageReference.
     imageCredit: str | None = Field(default=None, min_length=1, max_length=200)
@@ -390,6 +409,17 @@ class ImportEdition(Input):
             return Decimal(str(value))
         except InvalidOperation as error:
             raise ValueError("Coordenada invalida") from error
+
+    @field_validator("instagramUrl", "facebookUrl", "organizerPostUrl")
+    @classmethod
+    def social(cls, value, info):
+        from .social_links import check_post, check_profile
+
+        if info.field_name == "organizerPostUrl":
+            return check_post(value)
+        return check_profile(
+            "instagram" if info.field_name == "instagramUrl" else "facebook", value
+        )
 
     @field_validator("lastVerifiedAt")
     @classmethod
@@ -434,16 +464,29 @@ def index_rows(body, version):
     return rows
 
 
+class AutoImportActor:
+    """Ator do importe automatico (sem pessoa e sem MFA). So vale em um importador criado com
+    `allow_system=True`, o que so o servico de importe automatico faz (ver auto_import.py)."""
+
+    subject = "system:auto-import"
+    token_digest = ""
+
+
 class CatalogImporter:
     """Internal operation; there is no HTTP bypass for runners or MFA-less operators."""
 
-    def __init__(self, catalog):
+    def __init__(self, catalog, allow_system=False):
         self.catalog, self.store = catalog, catalog.store
+        self.allow_system = allow_system
 
     def _authorization(self, actor, synthetic):
         if synthetic:
             if not isinstance(self.store, MemoryStore):
                 raise ValueError("Synthetic loader is local-memory only")
+            return {}
+        if isinstance(actor, AutoImportActor):
+            if not self.allow_system:
+                raise Problem(403, "OPERATOR_SESSION_REQUIRED")
             return {}
         if actor is None:
             raise Problem(403, "OPERATOR_SESSION_REQUIRED")

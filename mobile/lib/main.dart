@@ -52,7 +52,7 @@ class MainApp extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<bool>(
     valueListenable: ThemeController.dark,
     builder: (context, dark, _) => MaterialApp(
-      title: 'RunPass',
+      title: 'MeuPódio',
       navigatorKey: runPassNavigatorKey,
       navigatorObservers: [runPassRouteObserver],
       // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
@@ -122,10 +122,14 @@ class IdentityScreen extends StatefulWidget {
   /// Aviso mostrado na tela de entrada (por exemplo, depois de excluir a conta).
   final String? notice;
   final ProfilePhotoPicker photoPicker;
+
+  /// Falso depois de "Sair" com biometria ligada: nao entra sozinho de volta.
+  final bool autoRestore;
   const IdentityScreen({
     super.key,
     this.gateway,
     this.notice,
+    this.autoRestore = true,
     this.photoPicker = pickProfilePhoto,
   });
   @override
@@ -164,8 +168,41 @@ class _IdentityScreenState extends State<IdentityScreen> {
   void initState() {
     super.initState();
     message = widget.notice;
-    if (widget.gateway?.canRestore ?? false) restoreSession();
+    email.addListener(() {
+      if (mounted && step == Step.signIn) setState(() {});
+    });
+    loadSavedAccount();
+    if (widget.autoRestore && (widget.gateway?.canRestore ?? false)) {
+      restoreSession();
+    }
   }
+
+  /// E-mail lembrado deste aparelho e se da para entrar so com o rosto (biometria ligada
+  /// e token guardado). A senha nunca e guardada.
+  String? savedEmail;
+  bool faceReady = false;
+
+  Future<void> loadSavedAccount() async {
+    final saved = await SavedAccount.email();
+    final gateway = widget.gateway;
+    final ready =
+        gateway != null &&
+        gateway.canRestore &&
+        await BiometricPrefs.enabled() &&
+        await gateway.hasStoredSession &&
+        await biometricGate.available();
+    if (!mounted) return;
+    setState(() {
+      savedEmail = saved;
+      faceReady = ready;
+      if (saved != null && email.text.isEmpty) email.text = saved;
+    });
+  }
+
+  /// O e-mail digitado e o da conta lembrada neste aparelho.
+  bool get emailIsSaved =>
+      savedEmail != null &&
+      email.text.trim().toLowerCase() == savedEmail!.toLowerCase();
 
   /// Mostra "Entrar com biometria" quando a trava esta ligada e ha sessao guardada.
   bool biometricLocked = false;
@@ -173,11 +210,13 @@ class _IdentityScreenState extends State<IdentityScreen> {
   Future<void> restoreSession() async {
     setState(() => restoring = true);
     try {
-      if (await BiometricPrefs.enabled()) {
+      // Sessao trancada pelo "Sair": o proprio Keychain pede o rosto ao ler o token, entao
+      // nao ha segundo pedido aqui.
+      if (await BiometricPrefs.enabled() && !await widget.gateway!.isLocked) {
         // Trava ligada: a biometria vem antes de renovar o acesso. Falhou ou cancelou:
         // cai na tela de entrada (senha) com o botao para tentar de novo.
         final ok = await biometricGate.authenticate(
-          'Entrar no RunPass com a biometria',
+          'Entrar no MeuPódio com a biometria',
         );
         if (!ok) {
           if (mounted) {
@@ -199,7 +238,10 @@ class _IdentityScreenState extends State<IdentityScreen> {
     } on Exception {
       // Sem rede ou falha: cai na tela de entrada; a sessao guardada continua valendo.
     }
-    if (mounted) setState(() => restoring = false);
+    if (mounted) {
+      setState(() => restoring = false);
+      loadSavedAccount();
+    }
   }
 
   @override
@@ -589,6 +631,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
           keepSignedIn: keepSignedIn,
         );
         password.clear();
+        await SavedAccount.save(email.text.trim());
         await resume();
       case Step.signUp:
         await gateway.signUp(email.text.trim());
@@ -722,7 +765,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.reset,
     ].contains(step);
     final title = switch (step) {
-      Step.signIn => 'Entre no RunPass',
+      Step.signIn => 'Entre no MeuPódio',
       Step.signUp => 'Crie sua conta',
       Step.confirm => 'Confirme seu e-mail',
       Step.setPassword => 'Crie sua senha',
@@ -746,7 +789,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
               padding: const EdgeInsets.all(24),
               child: gateway == null
                   ? const Text(
-                      'O RunPass ainda não está disponível neste ambiente.',
+                      'O MeuPódio ainda não está disponível neste ambiente.',
                     )
                   : restoring
                   ? const Padding(
@@ -1038,7 +1081,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     : 'Continuar',
                               ),
                             ),
-                          if (step == Step.signIn && biometricLocked)
+                          if (step == Step.signIn &&
+                              (biometricLocked || (faceReady && emailIsSaved)))
                             OutlinedButton.icon(
                               key: const Key('biometric-retry'),
                               onPressed: busy ? null : restoreSession,

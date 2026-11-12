@@ -374,6 +374,45 @@ void main() {
     );
   });
 
+  testWidgets(
+    'o filtro de ano alcança corridas cadastradas fora da faixa padrão',
+    (tester) async {
+      big(tester);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              upcoming('A', date: '2019-05-01'),
+              upcoming('B', date: '2029-03-01'),
+              upcoming('C', date: '2026-11-08'),
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      final box = find.byKey(const ValueKey('filter-year-0'));
+      await tester.ensureVisible(box);
+      for (final year in ['2029', '2019', '2024']) {
+        final chip = find.descendant(of: box, matching: find.text(year));
+        await tester.ensureVisible(chip);
+        expect(chip, findsOneWidget, reason: 'ano $year no seletor');
+      }
+      // escolher um ano antigo filtra por ele e o ano continua disponível depois
+      final old = find.descendant(of: box, matching: find.text('2019'));
+      await tester.ensureVisible(old);
+      await tester.tap(old);
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: box, matching: find.text('2019')),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('ao digitar o nome, sugere as corridas para escolher uma', (
     tester,
   ) async {
@@ -578,7 +617,7 @@ void participantsTests() {
     (tester) async {
       await openTab(tester, {'total': 0, 'items': []});
       expect(
-        find.textContaining('Ninguém concluiu esta prova'),
+        find.textContaining('Ninguém concluiu nem se inscreveu'),
         findsOneWidget,
       );
     },
@@ -709,6 +748,29 @@ void searchTests() {
       expect(yearRange(bad), isNull, reason: bad);
     }
     expect(filterYears(DateTime(2026, 11, 10)), [2027, 2026, 2025, 2024]);
+    // Corridas fora da faixa estendem a lista: mais antigas e mais adiante.
+    expect(filterYears(DateTime(2026, 11, 10), [2022, 2026]), [
+      2027,
+      2026,
+      2025,
+      2024,
+      2023,
+      2022,
+    ]);
+    expect(filterYears(DateTime(2026, 11, 10), [2029]), [
+      2029,
+      2028,
+      2027,
+      2026,
+      2025,
+      2024,
+    ]);
+    expect(filterYears(DateTime(2026, 11, 10), const []), [
+      2027,
+      2026,
+      2025,
+      2024,
+    ]);
   });
 
   Future<List<Map<String, String>>> openForm(WidgetTester tester) async {
@@ -728,6 +790,17 @@ void searchTests() {
   }
 
   Future<void> pick(WidgetTester tester, String field, String option) async {
+    if (field == 'filter-year') {
+      // O ano é um seletor em linha (como Todas/Adultos/Kids): basta tocar no ano.
+      final year = find.descendant(
+        of: find.byKey(const ValueKey('filter-year-0')),
+        matching: find.text(option),
+      );
+      await tester.ensureVisible(year);
+      await tester.tap(year);
+      await tester.pumpAndSettle();
+      return;
+    }
     final box = find.byKey(ValueKey('$field-0'));
     await tester.ensureVisible(box);
     await tester.tap(box);
@@ -835,7 +908,14 @@ void searchTests() {
     expect(calls.last.containsKey('state'), isFalse);
     expect(calls.last.containsKey('dateFrom'), isFalse);
     expect(find.text('Todos os estados e cidades'), findsOneWidget);
-    expect(find.text('Qualquer ano'), findsOneWidget);
+    final year = tester.widget<SegmentedButton<String>>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is SegmentedButton<String> &&
+            w.key.toString().contains('filter-year'),
+      ),
+    );
+    expect(year.selected, {''}); // volta para "Todos"
   });
 
   testWidgets('pedir cadastro e minhas solicitações ficam sempre visíveis', (

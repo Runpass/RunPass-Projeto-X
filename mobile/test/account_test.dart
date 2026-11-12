@@ -56,7 +56,7 @@ void main() {
     await tester.tap(find.byKey(const Key('sign-out')));
     await tester.pumpAndSettle();
     expect(gateway.signedIn, isFalse);
-    expect(find.text('Entre no RunPass'), findsOneWidget);
+    expect(find.text('Entre no MeuPódio'), findsOneWidget);
     expect(find.byType(SettingsScreen), findsNothing);
   });
 
@@ -72,7 +72,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(calls, contains('DELETE /me'));
     expect(gateway.signedIn, isFalse);
-    expect(find.text('Entre no RunPass'), findsOneWidget);
+    expect(find.text('Entre no MeuPódio'), findsOneWidget);
     expect(
       find.text('Exclusão aceita. O acesso à conta foi encerrado.'),
       findsOneWidget,

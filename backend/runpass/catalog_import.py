@@ -38,6 +38,9 @@ OPTIONAL = (
     "latitude",
     "longitude",
     "last_verified_at",
+    "instagram_url",
+    "facebook_url",
+    "organizer_post_url",
 )
 KNOWN_LABELS = {Decimal("21.0975"): "Meia Maratona", Decimal("42.195"): "Maratona"}
 DATE_INDEX = "CAT#GLOBAL#ANY#DATE"
@@ -106,6 +109,13 @@ def row_to_payload(row, source_code):
     for column, field in (("official_url", "officialUrl"), ("registration_url", "registrationUrl")):
         if (row.get(column) or "").strip():
             payload[field] = _url(row[column].strip())
+    for column, field in (
+        ("instagram_url", "instagramUrl"),
+        ("facebook_url", "facebookUrl"),
+        ("organizer_post_url", "organizerPostUrl"),
+    ):
+        if (row.get(column) or "").strip():
+            payload[field] = row[column].strip()  # ImportEdition valida e normaliza o endereco
     for column in ("latitude", "longitude"):
         if (row.get(column) or "").strip():
             payload[column] = row[column].strip().replace(",", ".")
@@ -182,11 +192,21 @@ def classify(catalog, payload, origin, source_code):
     return "updated", None, int(head["version"])
 
 
-def import_rows(catalog, actor, results, *, origin, source_code, dry_run=True, synthetic=False):
+def import_rows(
+    catalog,
+    actor,
+    results,
+    *,
+    origin,
+    source_code,
+    dry_run=True,
+    synthetic=False,
+    allow_system=False,
+):
     """Aplica (ou simula) as linhas validas. Devolve o relatorio com contadores e o detalhe."""
     counts = {"created": 0, "updated": 0, "unchanged": 0, "needs_review": 0, "error": 0}
     report = []
-    importer = CatalogImporter(catalog)
+    importer = CatalogImporter(catalog, allow_system=allow_system)
     for result in results:
         entry = {"row": result["row"], "externalId": result["externalId"]}
         if result["errors"]:

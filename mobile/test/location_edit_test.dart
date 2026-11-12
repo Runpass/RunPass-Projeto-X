@@ -48,14 +48,17 @@ void main() {
         MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      expect(
-        find.text('Toque para informar seu estado e cidade'),
-        findsOneWidget,
-      );
+      // So o icone ao lado do nome (sem cartao "Editar perfil").
+      expect(find.text('Editar perfil'), findsNothing);
+      expect(find.byTooltip('Editar perfil'), findsOneWidget);
       await tester.tap(find.byKey(const Key('edit-profile')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('edit-location')));
       await tester.pumpAndSettle();
       // Aceita o primeiro da lista (Acre/Acrelândia).
       await tester.tap(find.byKey(const Key('location-done')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('edit-save')));
       await tester.pumpAndSettle();
       expect(patches, [
         {
@@ -77,6 +80,6 @@ void main() {
       MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
     );
     await tester.pumpAndSettle();
-    expect(find.text('SP - Taboão da Serra'), findsOneWidget);
+    expect(find.textContaining('SP - Taboão da Serra'), findsOneWidget);
   });
 }

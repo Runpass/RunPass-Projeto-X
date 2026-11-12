@@ -65,6 +65,36 @@ class SocialTests(unittest.TestCase):
             {"expectedVersion": profile["version"], "isPrivate": True},
         )
 
+    # ---- suggestions ----
+    def test_suggestions_without_query_exclude_self_and_people_already_followed(self):
+        names = lambda a: sorted(p["username"] for p in self.social.suggestions(a)["items"])  # noqa: E731
+        self.assertEqual(names(self.bia), ["ana_runs", "caio"])
+        self.social.follow(self.bia, "ana", "s1")
+        self.assertEqual(names(self.bia), ["caio"])
+
+    def test_suggestions_never_query_with_an_empty_prefix(self):
+        # O DynamoDB recusa begins_with com texto vazio; o MemoryStore aceitaria.
+        real = self.store.query
+
+        def strict(table, pk, **kw):
+            if kw.get("prefix") == "":
+                raise AssertionError("begins_with vazio")
+            return real(table, pk, **kw)
+
+        self.store.query = strict
+        self.assertTrue(self.social.suggestions(self.bia)["items"])
+
+    def test_suggestions_find_profiles_in_any_index_partition(self):
+        self.person("zeca", "Zeca Quintanilha", "zq_runs")
+        found = [p["username"] for p in self.social.suggestions(self.bia)["items"]]
+        self.assertIn("zq_runs", found)
+
+    def test_suggestions_prefer_people_followed_by_the_ones_i_follow(self):
+        self.social.follow(self.bia, "ana", "s2")
+        self.social.follow(self.ana, "caio", "s3")
+        first = self.social.suggestions(self.bia)["items"][0]
+        self.assertEqual(first["username"], "caio")
+
     # ---- search ----
     def test_search_by_username_and_by_name_ignoring_accents_and_excluding_self(self):
         self.assertEqual(
@@ -330,6 +360,50 @@ class SocialTests(unittest.TestCase):
         self.assertEqual(stranger.exception.status, 404)
         self.social.delete_comment(self.ana, made["id"], "d1")
         self.assertEqual(self.social.comments(self.ana, "p1")["items"], [])
+
+    def test_only_the_author_edits_a_comment_and_edits_are_marked(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        made = self.social.comment(self.bia, "p1", "c1", "Parabens!")
+        self.assertEqual((made["version"], made["edited"]), (1, False))
+        edited = self.social.edit_comment(self.bia, made["id"], "e1", "  Parabens, campea!  ")
+        self.assertEqual(edited["text"], "Parabens, campea!")
+        self.assertEqual((edited["version"], edited["edited"]), (2, True))
+        self.assertIn("editedAt", edited)
+        listed = self.social.comments(self.ana, "p1")["items"]
+        self.assertEqual([c["text"] for c in listed], ["Parabens, campea!"])
+        # O dono da publicacao pode apagar, mas nao editar o comentario dos outros.
+        for outsider in (self.ana, self.caio):
+            with self.assertRaises(Problem) as denied:
+                self.social.edit_comment(outsider, made["id"], "x-" + outsider.subject, "hack")
+            self.assertEqual(denied.exception.status, 404)
+        with self.assertRaises(Problem) as stale:
+            self.social.edit_comment(self.bia, made["id"], "e2", "outra", expected_version=1)
+        self.assertEqual(stale.exception.code, "VERSION_CONFLICT")
+        self.assertEqual(
+            self.social.comments(self.ana, "p1")["items"][0]["text"], "Parabens, campea!"
+        )
+        # Repetir o mesmo pedido (mesma chave) devolve o mesmo resultado.
+        again = self.social.edit_comment(self.bia, made["id"], "e1", "  Parabens, campea!  ")
+        self.assertEqual(again["version"], 2)
+
+    def test_mentions_tag_existing_active_people_only(self):
+        self.complete(self.ana, "p1", "2026-11-01T10:00:00Z")
+        made = self.social.comment(
+            self.bia, "p1", "m1", "Oi @ana_runs e @caio, tambem @ana_runs e @naoexiste e a@b.com"
+        )
+        self.assertEqual(
+            made["mentions"],
+            [{"id": "ana", "username": "ana_runs"}, {"id": "caio", "username": "caio"}],
+        )
+        plain = self.social.comment(self.bia, "p1", "m2", "sem marcacao")
+        self.assertNotIn("mentions", plain)
+        # Editar recalcula as marcacoes (e remove quando nao ha mais nenhuma).
+        edited = self.social.edit_comment(self.bia, made["id"], "m3", "agora so @CAIO")
+        self.assertEqual(edited["mentions"], [{"id": "caio", "username": "caio"}])
+        cleared = self.social.edit_comment(self.bia, made["id"], "m4", "ninguem")
+        self.assertNotIn("mentions", cleared)
+        listed = self.social.comments(self.ana, "p1")["items"]
+        self.assertTrue(any(c.get("mentions") == [] or "mentions" not in c for c in listed))
 
     def test_private_post_can_still_be_commented_by_anyone(self):
         # Decisao de 08/11/2026: publicacoes sao sempre publicas, perfil privado ou nao.

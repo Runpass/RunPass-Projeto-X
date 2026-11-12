@@ -25,15 +25,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void soon(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
-  void toSignIn([String? notice]) => Navigator.of(context).pushAndRemoveUntil(
-    MaterialPageRoute<void>(
-      builder: (_) => IdentityScreen(gateway: widget.gateway, notice: notice),
-    ),
-    (route) => false,
-  );
+  void toSignIn([String? notice, bool autoRestore = true]) =>
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (_) => IdentityScreen(
+            gateway: widget.gateway,
+            notice: notice,
+            autoRestore: autoRestore,
+          ),
+        ),
+        (route) => false,
+      );
 
-  Future<void> signOut() async {
+  /// `forget`: encerra de vez neste aparelho (token revogado, biometria e e-mail salvo
+  /// apagados); sem ele, com biometria ligada, so tranca a sessao.
+  Future<void> signOut({bool forget = false}) async {
     NotificationCenter.instance.stop();
+    if (forget) await SavedAccount.clear();
+    if (!forget &&
+        await BiometricPrefs.enabled() &&
+        await widget.gateway.hasStoredSession) {
+      // Biometria ligada: sai daqui, mas o rosto/digital entra de novo sem a senha.
+      await widget.gateway.lockSession();
+      if (mounted) {
+        toSignIn(
+          'Você saiu. Digite seu e-mail e entre com o rosto ou a digital.',
+          false,
+        );
+      }
+      return;
+    }
     await BiometricPrefs.clear();
     try {
       await widget.gateway.signOut();
@@ -72,6 +93,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     NotificationCenter.instance.stop();
     await BiometricPrefs.clear();
+    await SavedAccount.clear();
     await widget.gateway.forgetSession();
     if (mounted) {
       toSignIn('Exclusão aceita. O acesso à conta foi encerrado.');
@@ -141,6 +163,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: const Text('Sair'),
                 subtitle: const Text('Encerra a sessão neste aparelho.'),
                 onTap: signOut,
+              ),
+              const Divider(height: 1),
+              ListTile(
+                key: const Key('sign-out-forget'),
+                leading: const Icon(Icons.phonelink_erase_rounded),
+                title: const Text('Sair e esquecer este aparelho'),
+                subtitle: const Text(
+                  'Revoga o acesso, apaga o e-mail salvo e desliga a entrada por rosto ou digital. Use ao emprestar ou vender o celular.',
+                ),
+                onTap: () => signOut(forget: true),
               ),
               const Divider(height: 1),
               ListTile(

@@ -38,9 +38,21 @@ class PatchProfile(Input):
         default=None, ge=-180, le=180, max_digits=12, decimal_places=7
     )
     bio: Annotated[str, Field(max_length=500)] | None = None
+    # Data de nascimento (so o proprio titular a ve): continua valendo a regra de idade minima
+    # da admissao (13 anos), conferida no servico.
+    birthDate: date | None = None
     photoReference: str | None = None
     bannerReference: str | None = None
     isPrivate: bool | None = None
+
+    @field_validator("birthDate", mode="before")
+    @classmethod
+    def birth_date(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("Date must be YYYY-MM-DD")
+        return date.fromisoformat(value)
 
     @field_validator("latitude", "longitude", mode="before")
     @classmethod
@@ -215,8 +227,27 @@ class CreateComment(Input):
         return value.strip()
 
 
+class EditComment(Input):
+    text: Annotated[str, Field(min_length=1, max_length=1000)]
+    expectedVersion: Annotated[int, Field(ge=1)] | None = None
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Comment cannot be blank")
+        return value.strip()
+
+
+class BannerSuggestion(Input):
+    """Banner sugerido para uma corrida ja cadastrada: so a referencia de uma imagem JA enviada e tratada."""
+
+    imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+
+
 class EditionRequestFields(Input):
-    """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` nao e aceito ainda."""
+    """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
+    (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""
 
     name: Annotated[str, Field(min_length=1, max_length=160)]
     date: date
@@ -224,6 +255,7 @@ class EditionRequestFields(Input):
     state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
     distanceKm: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
     officialUrl: Annotated[str, Field(max_length=500, pattern=r"^https://[^\s]+$")] | None = None
+    imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
 
     @field_validator("name", "city")
     @classmethod

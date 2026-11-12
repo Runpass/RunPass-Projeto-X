@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'podium_logo.dart';
+
 const runPassOrange = Color(0xfffc5426);
 const runPassGold = Color(0xffe8b23a);
 const runPassNavy = Color(0xff101b2b);
@@ -149,11 +151,7 @@ class RunPassWordmark extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Icon(
-        Icons.directions_run_rounded,
-        color: runPassOrange,
-        size: compact ? 25 : 35,
-      ),
+      PodiumLogo(size: compact ? 28 : 38),
       const SizedBox(width: 5),
       RichText(
         text: TextSpan(
@@ -164,9 +162,9 @@ class RunPassWordmark extends StatelessWidget {
             color: context.isDark ? Colors.white : runPassNavy,
           ),
           children: const [
-            TextSpan(text: 'Run'),
+            TextSpan(text: 'Meu'),
             TextSpan(
-              text: 'Pass',
+              text: 'Pódio',
               style: TextStyle(color: runPassOrange),
             ),
           ],

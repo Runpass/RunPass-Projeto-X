@@ -271,6 +271,8 @@ void main() {
         '/editions/A',
         '/editions/A/reviews',
         '/editions/A/participants',
+        '/editions/A/registrants',
+        '/editions/A/photos',
         '/me/race-plans/A',
         '/editions/A/reviews',
       ]);
@@ -397,6 +399,8 @@ void main() {
         'GET /editions/A',
         'GET /editions/A/reviews',
         'GET /editions/A/participants',
+        'GET /editions/A/registrants',
+        'GET /editions/A/photos',
         'GET /me/race-plans/A',
         'GET /editions/A/reviews',
         'POST /participations',
@@ -1020,6 +1024,10 @@ void main() {
   testWidgets('the reviews tab shows the review I already registered', (
     tester,
   ) async {
+    // A minha avaliação fica abaixo do resumo geral: janela alta para ela ser construída.
+    tester.view.physicalSize = const Size(800, 3200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     final gateway = await signed((uri, method, headers, body) async {
       if (uri.path == '/me/participations') {
         return const JsonReply(200, {
@@ -1246,6 +1254,63 @@ void main() {
     await tester.pump();
     expect(find.text('Não foi possível abrir o link.'), findsOneWidget);
   });
+
+  testWidgets(
+    'detalhe mostra Instagram e Facebook só de perfis das próprias redes',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final opened = <Uri>[];
+      final original = linkOpener;
+      linkOpener = (uri) async {
+        opened.add(uri);
+        return true;
+      };
+      addTearDown(() => linkOpener = original);
+      Future<void> open(Map<String, dynamic> extra) async {
+        final gateway = await signed((uri, method, headers, body) async {
+          if (uri.path == '/editions/E1') {
+            return JsonReply(200, {...entry('A'), 'id': 'E1', ...extra});
+          }
+          return const JsonReply(200, {'items': []});
+        });
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpWidget(
+          MaterialApp(
+            home: EditionScreen(gateway: gateway, editionId: 'E1'),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await open({});
+      expect(find.byKey(const Key('link-instagram')), findsNothing);
+      expect(find.byKey(const Key('link-facebook')), findsNothing);
+      // Outro domínio, http e esquemas perigosos nunca viram botão.
+      await open({
+        'instagramUrl': 'https://exemplo.org/instagram/corrida/',
+        'facebookUrl': 'http://www.facebook.com/corridaexemplo',
+      });
+      expect(find.byKey(const Key('link-instagram')), findsNothing);
+      expect(find.byKey(const Key('link-facebook')), findsNothing);
+      await open({'instagramUrl': 'javascript:alert(1)'});
+      expect(find.byKey(const Key('link-instagram')), findsNothing);
+      await open({
+        'instagramUrl': 'https://www.instagram.com/corrida_exemplo/',
+        'facebookUrl': 'https://www.facebook.com/corridaexemplo',
+      });
+      expect(find.text('Ver no Instagram'), findsOneWidget);
+      expect(find.text('Ver no Facebook'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('link-instagram')));
+      await tester.tap(find.byKey(const Key('link-facebook')));
+      await tester.pump();
+      expect(opened.map((u) => u.toString()), [
+        'https://www.instagram.com/corrida_exemplo/',
+        'https://www.facebook.com/corridaexemplo',
+      ]);
+    },
+  );
 
   group('busca por frase livre', () {
     Future<void> typePhrase(WidgetTester tester, String text) async {
@@ -1980,15 +2045,6 @@ void ratingTests() {
     await tester.pumpAndSettle();
   }
 
-  Future<void> choose(WidgetTester tester, String key, String option) async {
-    final box = find.byKey(Key(key));
-    await tester.ensureVisible(box);
-    await tester.tap(box);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(option).last);
-    await tester.pumpAndSettle();
-  }
-
   List<String> order(WidgetTester tester) {
     final tops = {
       for (final id in ['A', 'B', 'C', 'D'])
@@ -2027,7 +2083,108 @@ void ratingTests() {
     },
   );
 
-  testWidgets('o filtro de ano envia só o ano e "Qualquer ano" o remove', (
+  testWidgets(
+    'os ícones de ordem ficam na linha do público e os espaços são iguais',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        return JsonReply(200, {
+          'items': [rated('A', '2026-05-01', score: 4, reviews: 3)],
+        });
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      Finder audience() => find.byWidgetPredicate(
+        (w) =>
+            w is SegmentedButton<String> &&
+            w.key.toString().contains('filter-audience'),
+      );
+      Finder year() => find.byWidgetPredicate(
+        (w) =>
+            w is SegmentedButton<String> &&
+            w.key.toString().contains('filter-year'),
+      );
+      final mine = tester
+          .getBottomLeft(find.byKey(const Key('catalog-request-mine')))
+          .dy;
+      final sortDate = tester.getRect(find.byKey(const Key('catalog-sort')));
+      final sortStar = tester.getRect(
+        find.byKey(const Key('catalog-sort-rating')),
+      );
+      final aud = tester.getRect(audience());
+      final yr = tester.getRect(year());
+      // Ícones de ordem na mesma linha do seletor de público, à direita dele.
+      expect(sortDate.center.dy, closeTo(aud.center.dy, 1));
+      expect(sortStar.center.dy, closeTo(aud.center.dy, 1));
+      expect(sortDate.left, greaterThan(aud.right));
+      expect(sortStar.left, greaterThan(sortDate.left));
+      // O ano ocupa a largura toda, sem os ícones ao lado.
+      final yearArea = tester.getRect(
+        find
+            .ancestor(of: year(), matching: find.byType(SingleChildScrollView))
+            .first,
+      );
+      expect(yearArea.right, greaterThan(sortStar.right - 1));
+      // Espaços iguais: Minhas solicitações -> linha do público -> ano.
+      final rowTop = sortDate.top < aud.top ? sortDate.top : aud.top;
+      final rowBottom = sortDate.bottom > aud.bottom
+          ? sortDate.bottom
+          : aud.bottom;
+      final gap1 = rowTop - mine;
+      final gap2 = yr.top - rowBottom;
+      expect(gap1, closeTo(12, 1.5));
+      expect(gap2, closeTo(12, 1.5));
+      // Mais ar entre a linha do ano e o primeiro cartão da lista.
+      final firstCard = tester.getTopLeft(find.byType(Card).first).dy;
+      expect(firstCard - yr.bottom, greaterThan(15));
+      expect(firstCard - yr.bottom, lessThan(30));
+      // O pedido de cadastro fica acima, sem encostar nos demais blocos.
+      final request = tester.getRect(
+        find.byKey(const Key('catalog-request-new')),
+      );
+      expect(request.bottom, lessThanOrEqualTo(mine + 1));
+    },
+  );
+
+  testWidgets('o filtro de público envia kids/adult e "Todas" o remove', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final calls = <Map<String, String>>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions') calls.add(uri.queryParameters);
+      return JsonReply(200, {
+        'items': [rated('A', '2026-05-01', score: 4, reviews: 3)],
+      });
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    expect(calls.last.containsKey('audience'), isFalse);
+    await tester.tap(find.text('Kids'));
+    await tester.pumpAndSettle();
+    expect(calls.last['audience'], 'kids');
+    await tester.tap(find.text('Adultos'));
+    await tester.pumpAndSettle();
+    expect(calls.last['audience'], 'adult');
+    await tester.tap(find.text('Todas'));
+    await tester.pumpAndSettle();
+    expect(calls.last.containsKey('audience'), isFalse);
+    // Combina com o ano.
+    await tester.tap(find.text('Kids'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2026'));
+    await tester.pumpAndSettle();
+    expect(calls.last['audience'], 'kids');
+    expect(calls.last['dateFrom'], '2026-01-01');
+  });
+
+  testWidgets('o filtro de ano envia só o ano e "Todos" o remove', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 3000);
@@ -2043,11 +2200,13 @@ void ratingTests() {
     await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
     expect(calls.last.containsKey('dateFrom'), isFalse);
-    await choose(tester, 'filter-year-0', '2026');
+    await tester.tap(find.text('2026'));
+    await tester.pumpAndSettle();
     expect(calls.last['dateFrom'], '2026-01-01');
     expect(calls.last['dateTo'], '2026-12-31');
     expect(calls.last.containsKey('namePrefix'), isFalse);
-    await choose(tester, 'filter-year-0', 'Qualquer ano');
+    await tester.tap(find.text('Todos'));
+    await tester.pumpAndSettle();
     expect(calls.last.containsKey('dateFrom'), isFalse);
     expect(calls.last.containsKey('dateTo'), isFalse);
   });

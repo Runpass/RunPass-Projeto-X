@@ -487,17 +487,28 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('no-my-posts')), findsNothing);
-      // Mesmo cartao do Feed (PostCard), um abaixo do outro — nao em grade.
+      // Miniaturas em grade, 3 por linha.
       expect(find.byKey(const Key('my-post-p1')), findsOneWidget);
       expect(find.byKey(const Key('my-post-p2')), findsOneWidget);
       expect(find.byKey(const Key('my-post-p3')), findsNothing);
       expect(paths, containsAll(['/posts/p1', '/posts/p2']));
-      // Mais recente primeiro: p1 (set/2026) acima de p2 (mai/2025).
-      final p1Top = tester.getTopLeft(find.byKey(const Key('my-post-p1'))).dy;
-      final p2Top = tester.getTopLeft(find.byKey(const Key('my-post-p2'))).dy;
-      expect(p1Top, lessThan(p2Top));
+      // Mais recente primeiro: p1 (set/2026) antes de p2 (mai/2025), na mesma linha.
+      final p1 = tester.getTopLeft(find.byKey(const Key('my-post-p1')));
+      final p2 = tester.getTopLeft(find.byKey(const Key('my-post-p2')));
+      expect(p1.dy, p2.dy);
+      expect(p1.dx, lessThan(p2.dx));
+      final grid = tester.getSize(find.byKey(const Key('my-posts-grid')));
+      final tile = tester.getSize(find.byKey(const Key('my-post-p1')));
+      expect(tile.width, lessThan(grid.width / 3));
+      expect(tile.width, greaterThan(grid.width / 3 - 12));
+      expect(find.text('Corrida A'), findsOneWidget);
+      expect(find.text('Corrida B'), findsOneWidget);
+      // Tocar abre a publicacao inteira.
+      await tester.ensureVisible(find.byKey(const Key('my-post-p1')));
+      await tester.tap(find.byKey(const Key('my-post-p1')));
+      await tester.pumpAndSettle();
+      expect(find.text('Publicação'), findsOneWidget);
       expect(find.text('concluiu Corrida A'), findsOneWidget);
-      expect(find.text('concluiu Corrida B'), findsOneWidget);
     },
   );
 }
