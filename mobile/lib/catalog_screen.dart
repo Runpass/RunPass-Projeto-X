@@ -1349,36 +1349,35 @@ class _CatalogScreenState extends State<CatalogScreen> {
           const SizedBox(height: 10),
           Row(
             children: [
+              // Ano no mesmo padrão do seletor de público (Todas/Adultos/Kids), mas com a lista
+              // de anos, que rola para o lado quando não cabe.
               Expanded(
-                child: DropdownButtonFormField<String?>(
-                  key: ValueKey('filter-year-$registrationEpoch'),
-                  initialValue: fields['year']!.text.isEmpty
-                      ? null
-                      : fields['year']!.text,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Ano',
-                    isDense: true,
-                    prefixIcon: Icon(Icons.calendar_today_rounded, size: 18),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SegmentedButton<String>(
+                    key: ValueKey('filter-year-$registrationEpoch'),
+                    showSelectedIcon: false,
+                    segments: [
+                      const ButtonSegment(
+                        value: '',
+                        label: Text('Todos'),
+                        icon: Icon(Icons.calendar_today_rounded, size: 16),
+                      ),
+                      for (final y in filterYears(null, {
+                        ...knownYears,
+                        ?selectedYear,
+                      }))
+                        ButtonSegment(value: '$y', label: Text('$y')),
+                    ],
+                    selected: {fields['year']!.text},
+                    // O ano filtra na hora: é a única forma de escolher a data.
+                    onSelectionChanged: loading
+                        ? null
+                        : (value) {
+                            setState(() => fields['year']!.text = value.first);
+                            load();
+                          },
                   ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: null,
-                      child: Text('Qualquer ano'),
-                    ),
-                    for (final y in filterYears(null, {
-                      ...knownYears,
-                      ?selectedYear,
-                    }))
-                      DropdownMenuItem(value: '$y', child: Text('$y')),
-                  ],
-                  // O ano filtra na hora: é a única forma de escolher a data.
-                  onChanged: loading
-                      ? null
-                      : (value) {
-                          fields['year']!.text = value ?? '';
-                          load();
-                        },
                 ),
               ),
               const SizedBox(width: 8),

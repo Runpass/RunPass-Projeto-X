@@ -396,17 +396,20 @@ void main() {
       await tester.pumpAndSettle();
       final box = find.byKey(const ValueKey('filter-year-0'));
       await tester.ensureVisible(box);
-      await tester.tap(box);
-      await tester.pumpAndSettle();
       for (final year in ['2029', '2019', '2024']) {
-        expect(find.text(year), findsWidgets, reason: 'ano $year no seletor');
+        final chip = find.descendant(of: box, matching: find.text(year));
+        await tester.ensureVisible(chip);
+        expect(chip, findsOneWidget, reason: 'ano $year no seletor');
       }
       // escolher um ano antigo filtra por ele e o ano continua disponível depois
-      await tester.tap(find.text('2019').last);
+      final old = find.descendant(of: box, matching: find.text('2019'));
+      await tester.ensureVisible(old);
+      await tester.tap(old);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('filter-year-0')));
-      await tester.pumpAndSettle();
-      expect(find.text('2019'), findsWidgets);
+      expect(
+        find.descendant(of: box, matching: find.text('2019')),
+        findsOneWidget,
+      );
     },
   );
 
@@ -787,6 +790,17 @@ void searchTests() {
   }
 
   Future<void> pick(WidgetTester tester, String field, String option) async {
+    if (field == 'filter-year') {
+      // O ano é um seletor em linha (como Todas/Adultos/Kids): basta tocar no ano.
+      final year = find.descendant(
+        of: find.byKey(const ValueKey('filter-year-0')),
+        matching: find.text(option),
+      );
+      await tester.ensureVisible(year);
+      await tester.tap(year);
+      await tester.pumpAndSettle();
+      return;
+    }
     final box = find.byKey(ValueKey('$field-0'));
     await tester.ensureVisible(box);
     await tester.tap(box);
@@ -894,7 +908,14 @@ void searchTests() {
     expect(calls.last.containsKey('state'), isFalse);
     expect(calls.last.containsKey('dateFrom'), isFalse);
     expect(find.text('Todos os estados e cidades'), findsOneWidget);
-    expect(find.text('Qualquer ano'), findsOneWidget);
+    final year = tester.widget<SegmentedButton<String>>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is SegmentedButton<String> &&
+            w.key.toString().contains('filter-year'),
+      ),
+    );
+    expect(year.selected, {''}); // volta para "Todos"
   });
 
   testWidgets('pedir cadastro e minhas solicitações ficam sempre visíveis', (

@@ -1988,15 +1988,6 @@ void ratingTests() {
     await tester.pumpAndSettle();
   }
 
-  Future<void> choose(WidgetTester tester, String key, String option) async {
-    final box = find.byKey(Key(key));
-    await tester.ensureVisible(box);
-    await tester.tap(box);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(option).last);
-    await tester.pumpAndSettle();
-  }
-
   List<String> order(WidgetTester tester) {
     final tops = {
       for (final id in ['A', 'B', 'C', 'D'])
@@ -2063,12 +2054,13 @@ void ratingTests() {
     // Combina com o ano.
     await tester.tap(find.text('Kids'));
     await tester.pumpAndSettle();
-    await choose(tester, 'filter-year-0', '2026');
+    await tester.tap(find.text('2026'));
+    await tester.pumpAndSettle();
     expect(calls.last['audience'], 'kids');
     expect(calls.last['dateFrom'], '2026-01-01');
   });
 
-  testWidgets('o filtro de ano envia só o ano e "Qualquer ano" o remove', (
+  testWidgets('o filtro de ano envia só o ano e "Todos" o remove', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 3000);
@@ -2084,11 +2076,13 @@ void ratingTests() {
     await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
     expect(calls.last.containsKey('dateFrom'), isFalse);
-    await choose(tester, 'filter-year-0', '2026');
+    await tester.tap(find.text('2026'));
+    await tester.pumpAndSettle();
     expect(calls.last['dateFrom'], '2026-01-01');
     expect(calls.last['dateTo'], '2026-12-31');
     expect(calls.last.containsKey('namePrefix'), isFalse);
-    await choose(tester, 'filter-year-0', 'Qualquer ano');
+    await tester.tap(find.text('Todos'));
+    await tester.pumpAndSettle();
     expect(calls.last.containsKey('dateFrom'), isFalse);
     expect(calls.last.containsKey('dateTo'), isFalse);
   });
