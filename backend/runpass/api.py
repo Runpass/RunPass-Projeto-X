@@ -17,6 +17,7 @@ from .models import (
     CreateComment,
     CreateParticipation,
     CreateProfile,
+    EditComment,
     EditionRequestFields,
     Eligibility,
     PatchEditionRequest,
@@ -588,6 +589,10 @@ def create_app(
     @app.delete("/comments/{id}/like", operation_id="unlikeComment")
     def delete_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().like_comment(actor, id, idempotency_key, False)
+
+    @app.patch("/comments/{id}", operation_id="editOwnComment")
+    def edit_comment(id: str, body: EditComment, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().edit_comment(actor, id, idempotency_key, body.text, body.expectedVersion)
 
     @app.delete("/comments/{id}", operation_id="deleteOwnComment")
     def delete_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):

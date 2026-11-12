@@ -3048,38 +3048,14 @@
         "tags": [
           "Social"
         ],
-        "description": "Author-only text edit with optimistic version and idempotency. Preserve createdAt and existing identity; set edited=true and editedAt on actual text change. Replay or unchanged text must not generate a new edit timestamp. Recheck post visibility, deletion, moderation, account state and bilateral blocks; an edit must not republish hidden content. No role or author changes accepted. Lake history approved for reviews is not automatically extended to social comments.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchComment"
-              }
-            }
-          }
-        },
+        "description": "Edit own comment (author only; the post owner may delete but not edit). Sets edited=true, bumps version and recomputes the people tagged with @username (existing active accounts, max 5; returned as `mentions`). Optional expectedVersion for optimistic concurrency.",
         "responses": {
           "200": {
-            "description": "Updated owned comment, or same idempotent result",
+            "description": "Edited comment",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Comment"
+                  "type": "object"
                 }
               }
             }
@@ -3106,7 +3082,46 @@
             "$ref": "#/components/responses/Error"
           }
         },
-        "x-requires-beta-admission": true
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "x-requires-beta-admission": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "text"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/me/wishlist": {

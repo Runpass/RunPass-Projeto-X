@@ -13,6 +13,7 @@ account erasure removes them too.
 
 import base64
 import json
+import re
 import string
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -1070,6 +1071,26 @@ class SocialService:
             actor, "deleteMyNotification", key, {"id": notification_id}, work, admitted=True
         )
 
+    MENTION = re.compile(r"(?<![\w@])@([A-Za-z0-9_]{3,30})")
+    MAX_MENTIONS = 5
+
+    def _mentions(self, read, text):
+        """Pessoas marcadas com @usuario no texto: so contas ativas que existem, sem repetir e
+        sem o proprio texto livre (guardamos id + usuario para a tela abrir o perfil)."""
+        found, seen = [], set()
+        for match in self.MENTION.finditer(text):
+            name = match.group(1).lower()
+            if name in seen:
+                continue
+            seen.add(name)
+            claim = read(("identity", "USERNAME#" + name, "CLAIM"))
+            profile = self._active_profile(read, claim["owner"]) if claim else None
+            if profile:
+                found.append({"id": profile["id"], "username": profile["username"]})
+            if len(found) >= self.MAX_MENTIONS:
+                break
+        return found
+
     def comment(self, actor, post_id, key, text, parent_id=None):
         text = text.strip()
         if not text or len(text) > 1000:
@@ -1110,6 +1131,9 @@ class SocialService:
             }
             if root:
                 row["parentId"] = root
+            mentions = self._mentions(read, text)
+            if mentions:
+                row["mentions"] = mentions
             comment_key = ("history", "POST#" + post_id, sk)
             loc_key = ("history", "COMMENT#" + comment_id, "LOC")
             write(comment_key, row)
@@ -1138,6 +1162,50 @@ class SocialService:
             **{k: v for k, v in row.items() if k != "author"},
             "author": self._card(profile, viewer) if profile else {"id": row["author"]},
         }
+
+    def edit_comment(self, actor, comment_id, key, text, expected_version=None):
+        """So o autor edita o proprio comentario (o dono da publicacao pode apagar, nao editar).
+        Marca `edited`, sobe a versao e recalcula as pessoas marcadas."""
+        text = text.strip()
+        if not text or len(text) > 1000:
+            raise Problem(422, "INVALID_COMMENT")
+
+        def work(read, write, account, now, replay):
+            loc = read(("history", "COMMENT#" + comment_id, "LOC"))
+            if not loc or loc["author"] != actor.subject:
+                raise Problem(404, "COMMENT_NOT_FOUND")
+            row_key = ("history", "POST#" + loc["postId"], loc["sk"])
+            row = read(row_key)
+            if not row:
+                raise Problem(404, "COMMENT_NOT_FOUND")
+            if replay is not None:  # mesmo pedido repetido: devolve o estado atual, sem reeditar
+                return self._comment_out(row, actor), replay
+            if expected_version is not None and row.get("version") != expected_version:
+                raise Problem(409, "VERSION_CONFLICT")
+            self._authorized_post(read, actor.subject, loc["postId"])
+            new = {
+                **row,
+                "text": text,
+                "edited": True,
+                "editedAt": stamp(now),
+                "version": row.get("version", 1) + 1,
+            }
+            mentions = self._mentions(read, text)
+            if mentions:
+                new["mentions"] = mentions
+            else:
+                new.pop("mentions", None)
+            write(row_key, new)
+            return self._comment_out(new, actor), {"id": comment_id}
+
+        return self.identity.transact(
+            actor,
+            "editOwnComment",
+            key,
+            {"id": comment_id, "text": text, "expectedVersion": expected_version},
+            work,
+            admitted=True,
+        )
 
     def delete_comment(self, actor, comment_id, key):
         def work(read, write, account, now, replay):

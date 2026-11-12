@@ -1,4 +1,7 @@
 // ignore_for_file: curly_braces_in_flow_control_structures
+import 'dart:async';
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
@@ -948,6 +951,17 @@ class _CommentsScreenState extends State<CommentsScreen> {
   /// Comentario principal que esta sendo respondido (nulo = comentario novo).
   Map<String, dynamic>? replyingTo;
 
+  /// Comentario meu que esta sendo editado (o campo de baixo vira "Editando").
+  Map<String, dynamic>? editing;
+
+  /// Exclusoes que ainda podem ser desfeitas: somem da tela na hora, mas so vao ao servidor
+  /// quando o aviso "Desfazer" acaba (ou ao sair da tela).
+  final pendingDeletes = <String>{};
+
+  /// Pessoas sugeridas enquanto digita "@..." no comentario.
+  List<Map<String, dynamic>> mentionSuggestions = [];
+  Timer? mentionTimer;
+
   @override
   void initState() {
     super.initState();
@@ -956,6 +970,13 @@ class _CommentsScreenState extends State<CommentsScreen> {
 
   @override
   void dispose() {
+    mentionTimer?.cancel();
+    // Quem sai da tela com uma exclusao pendente: ela vale (nao fica meio apagada).
+    for (final id in pendingDeletes.toList()) {
+      widget.gateway
+          .request('/comments/${Uri.encodeComponent(id)}', method: 'DELETE')
+          .then<void>((_) {}, onError: (_) {});
+    }
     text.dispose();
     input.dispose();
     super.dispose();
@@ -991,13 +1012,24 @@ class _CommentsScreenState extends State<CommentsScreen> {
     if (value.isEmpty || sending) return;
     setState(() => sending = true);
     try {
-      await widget.gateway.request(
-        path,
-        method: 'POST',
-        body: {'text': value, 'parentId': ?replyingTo?['id']},
-      );
+      final target = editing;
+      if (target != null) {
+        await widget.gateway.request(
+          '/comments/${Uri.encodeComponent(target['id'] as String)}',
+          method: 'PATCH',
+          body: {'text': value},
+        );
+        editing = null;
+      } else {
+        await widget.gateway.request(
+          path,
+          method: 'POST',
+          body: {'text': value, 'parentId': ?replyingTo?['id']},
+        );
+        replyingTo = null;
+      }
       text.clear();
-      replyingTo = null;
+      mentionSuggestions = [];
       await load();
     } on Exception catch (e) {
       fail(e);
@@ -1006,7 +1038,112 @@ class _CommentsScreenState extends State<CommentsScreen> {
     }
   }
 
+  void startEdit(Map<String, dynamic> c) {
+    setState(() {
+      editing = c;
+      replyingTo = null;
+      text.text = c['text'] as String? ?? '';
+      text.selection = TextSelection.collapsed(offset: text.text.length);
+    });
+    input.requestFocus();
+  }
+
+  void cancelEdit() {
+    setState(() {
+      editing = null;
+      text.clear();
+      mentionSuggestions = [];
+    });
+  }
+
+  // ---- @menções: ao digitar "@", sugere pessoas e insere o @usuario escolhido ----
+  static final _mentionToken = RegExp(r'(?:^|[\s(])@([A-Za-z0-9_]{0,30})$');
+
+  void onTextChanged(String value) {
+    final caret = text.selection.baseOffset;
+    final before = caret < 0 || caret > value.length
+        ? value
+        : value.substring(0, caret);
+    final match = _mentionToken.firstMatch(before);
+    mentionTimer?.cancel();
+    if (match == null) {
+      if (mentionSuggestions.isNotEmpty) {
+        setState(() => mentionSuggestions = []);
+      }
+      return;
+    }
+    final token = match.group(1)!;
+    if (token.length == 1) return; // a busca pede 2 letras; espera mais uma
+    mentionTimer = Timer(
+      const Duration(milliseconds: 250),
+      () => loadMentionSuggestions(token),
+    );
+  }
+
+  Future<void> loadMentionSuggestions(String token) async {
+    try {
+      final page = token.isEmpty
+          ? await widget.gateway.request(
+              '/profiles/suggestions',
+              query: {'limit': '5'},
+            )
+          : await widget.gateway.request(
+              '/profiles',
+              query: {'q': token, 'limit': '5'},
+            );
+      if (!mounted) return;
+      setState(
+        () => mentionSuggestions = (page['items'] as List)
+            .cast<Map<String, dynamic>>(),
+      );
+    } on Exception {
+      if (mounted) setState(() => mentionSuggestions = []);
+    }
+  }
+
+  void insertMention(Map<String, dynamic> person) {
+    final caret = text.selection.baseOffset;
+    final value = text.text;
+    final end = caret < 0 || caret > value.length ? value.length : caret;
+    final before = value.substring(0, end);
+    final match = _mentionToken.firstMatch(before);
+    if (match == null) return;
+    final at = before.lastIndexOf('@');
+    final inserted = '@${person['username']} ';
+    text.value = TextEditingValue(
+      text: value.replaceRange(at, end, inserted),
+      selection: TextSelection.collapsed(offset: at + inserted.length),
+    );
+    setState(() => mentionSuggestions = []);
+    input.requestFocus();
+  }
+
+  /// Apagar com "Desfazer": o comentário some da tela na hora e só é apagado no servidor se a
+  /// pessoa não desfizer no aviso (ou ao sair da tela).
   Future<void> remove(String id) async {
+    setState(() => pendingDeletes.add(id));
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    final reason = await messenger
+        .showSnackBar(
+          SnackBar(
+            key: const Key('comment-deleted-snack'),
+            content: const Text('Comentário excluído'),
+            duration: const Duration(seconds: 6),
+            persist: false, // com ação o aviso não some sozinho, a menos que se diga o contrário
+            action: SnackBarAction(
+              key: const Key('undo-delete-comment'),
+              label: 'Desfazer',
+              onPressed: () {},
+            ),
+          ),
+        )
+        .closed;
+    if (!pendingDeletes.contains(id)) return;
+    if (reason == SnackBarClosedReason.action) {
+      if (mounted) setState(() => pendingDeletes.remove(id));
+      return;
+    }
     try {
       await widget.gateway.request(
         '/comments/${Uri.encodeComponent(id)}',
@@ -1015,7 +1152,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
     } on Exception catch (e) {
       fail(e);
     }
-    await load();
+    pendingDeletes.remove(id);
+    if (mounted) await load();
   }
 
   /// Curtir e descurtir um comentario (otimista; volta se falhar).
@@ -1094,14 +1232,20 @@ class _CommentsScreenState extends State<CommentsScreen> {
                   onTap: () => openProfile(author),
                   child: Text(
                     '${author['displayName'] ?? 'Corredor'}'
-                    ' · ${timeAgo(DateTime.tryParse(c['createdAt'] as String? ?? '') ?? DateTime.now())}',
+                    ' · ${timeAgo(DateTime.tryParse(c['createdAt'] as String? ?? '') ?? DateTime.now())}'
+                    '${c['edited'] == true ? ' · editado' : ''}',
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
-                Text(c['text'] as String? ?? ''),
+                MentionText(
+                  c['text'] as String? ?? '',
+                  mentions: (c['mentions'] as List? ?? const [])
+                      .cast<Map<String, dynamic>>(),
+                  onOpen: (person) => openProfile(person),
+                ),
                 Row(
                   children: [
                     TextButton(
@@ -1114,6 +1258,14 @@ class _CommentsScreenState extends State<CommentsScreen> {
                       onPressed: () => reply(root ?? c),
                       child: const Text('Responder'),
                     ),
+                    if (author['id'] == widget.myId)
+                      IconButton(
+                        key: Key('edit-comment-${c['id']}'),
+                        tooltip: 'Editar comentário',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                        onPressed: () => startEdit(c),
+                      ),
                     if (canDelete)
                       IconButton(
                         key: Key('delete-comment-${c['id']}'),
@@ -1173,7 +1325,10 @@ class _CommentsScreenState extends State<CommentsScreen> {
                   'Ainda não há comentários. Seja o primeiro!',
                   key: Key('no-comments'),
                 ),
-              for (final c in comments ?? const <Map<String, dynamic>>[]) ...[
+              for (final c
+                  in (comments ?? const <Map<String, dynamic>>[]).where(
+                    (c) => !pendingDeletes.contains(c['id']),
+                  )) ...[
                 commentTile(c),
                 if ((c['replies'] as List? ?? const []).isNotEmpty)
                   Padding(
@@ -1182,7 +1337,10 @@ class _CommentsScreenState extends State<CommentsScreen> {
                       children: [
                         for (final r
                             in (c['replies'] as List)
-                                .cast<Map<String, dynamic>>())
+                                .cast<Map<String, dynamic>>()
+                                .where(
+                                  (r) => !pendingDeletes.contains(r['id']),
+                                ))
                           commentTile(r, root: c),
                       ],
                     ),
@@ -1191,6 +1349,47 @@ class _CommentsScreenState extends State<CommentsScreen> {
             ],
           ),
         ),
+        if (editing != null)
+          Container(
+            key: const Key('editing-comment'),
+            width: double.infinity,
+            color: context.softFill,
+            padding: const EdgeInsets.fromLTRB(16, 6, 4, 6),
+            child: Row(
+              children: [
+                const Expanded(child: Text('Editando comentário')),
+                IconButton(
+                  key: const Key('cancel-edit'),
+                  tooltip: 'Cancelar edição',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  onPressed: cancelEdit,
+                ),
+              ],
+            ),
+          ),
+        if (mentionSuggestions.isNotEmpty)
+          Material(
+            key: const Key('mention-suggestions'),
+            color: context.softFill,
+            child: Column(
+              children: [
+                for (final person in mentionSuggestions)
+                  ListTile(
+                    key: Key('mention-${person['id']}'),
+                    dense: true,
+                    leading: ProfileAvatar(
+                      radius: 14,
+                      gateway: widget.gateway,
+                      profile: person,
+                    ),
+                    title: Text('${person['displayName'] ?? ''}'),
+                    subtitle: Text('@${person['username']}'),
+                    onTap: () => insertMention(person),
+                  ),
+              ],
+            ),
+          ),
         if (replyingTo != null)
           Container(
             key: const Key('replying-to'),
@@ -1225,9 +1424,12 @@ class _CommentsScreenState extends State<CommentsScreen> {
                     controller: text,
                     focusNode: input,
                     maxLength: 1000,
+                    onChanged: onTextChanged,
                     decoration: InputDecoration(
-                      hintText: replyingTo == null
-                          ? 'Escreva um comentário'
+                      hintText: editing != null
+                          ? 'Edite seu comentário'
+                          : replyingTo == null
+                          ? 'Escreva um comentário (use @ para marcar alguém)'
                           : 'Escreva sua resposta',
                       counterText: '',
                     ),
@@ -1246,6 +1448,77 @@ class _CommentsScreenState extends State<CommentsScreen> {
       ],
     ),
   );
+}
+
+/// Texto de comentário com as pessoas marcadas (@usuario) em destaque; tocar abre o perfil.
+/// Só vira link quem veio em `mentions` (conta existente); o resto do @ fica como texto.
+class MentionText extends StatefulWidget {
+  final String text;
+  final List<Map<String, dynamic>> mentions;
+  final void Function(Map<String, dynamic> person) onOpen;
+  const MentionText(
+    this.text, {
+    super.key,
+    this.mentions = const [],
+    required this.onOpen,
+  });
+
+  @override
+  State<MentionText> createState() => _MentionTextState();
+}
+
+class _MentionTextState extends State<MentionText> {
+  final _recognizers = <TapGestureRecognizer>[];
+
+  @override
+  void dispose() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+    if (widget.mentions.isEmpty) return Text(widget.text);
+    final byName = {
+      for (final m in widget.mentions)
+        (m['username'] as String).toLowerCase(): m,
+    };
+    final spans = <InlineSpan>[];
+    var last = 0;
+    for (final match in RegExp(
+      r'(?<![\w@])@([A-Za-z0-9_]{3,30})',
+    ).allMatches(widget.text)) {
+      final person = byName[match.group(1)!.toLowerCase()];
+      if (person == null) continue;
+      if (match.start > last) {
+        spans.add(TextSpan(text: widget.text.substring(last, match.start)));
+      }
+      final recognizer = TapGestureRecognizer()
+        ..onTap = () => widget.onOpen(person);
+      _recognizers.add(recognizer);
+      spans.add(
+        TextSpan(
+          text: match.group(0),
+          recognizer: recognizer,
+          style: const TextStyle(
+            color: runPassOrange,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+      last = match.end;
+    }
+    if (last < widget.text.length) {
+      spans.add(TextSpan(text: widget.text.substring(last)));
+    }
+    return Text.rich(TextSpan(children: spans), key: const Key('mention-text'));
+  }
 }
 
 /// Chave "Perfil privado" do próprio perfil. Público é o padrão.

@@ -227,6 +227,18 @@ class CreateComment(Input):
         return value.strip()
 
 
+class EditComment(Input):
+    text: Annotated[str, Field(min_length=1, max_length=1000)]
+    expectedVersion: Annotated[int, Field(ge=1)] | None = None
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Comment cannot be blank")
+        return value.strip()
+
+
 class EditionRequestFields(Input):
     """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
     (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""
