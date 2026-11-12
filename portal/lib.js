@@ -1,0 +1,448 @@
+// Lógica pura do portal (sem DOM), testável com `node --test`.
+
+export const MENSAGENS = {
+  NotAuthorizedException: 'E-mail ou senha incorretos.',
+  UserNotFoundException: 'E-mail ou senha incorretos.',
+  CodeMismatchException: 'Código do autenticador incorreto. Digite o código atual.',
+  ExpiredCodeException: 'Código expirado. Digite o código atual.',
+  TooManyRequestsException: 'Muitas tentativas. Aguarde um pouco.',
+  LimitExceededException: 'Muitas tentativas. Aguarde um pouco.',
+  PasswordResetRequiredException: 'É preciso redefinir a senha antes de entrar. Peça a um administrador para refazer o acesso (aba Operadores > Refazer senha e autenticador).',
+  UserNotConfirmedException: 'Este usuário ainda não foi confirmado. Peça a um administrador para refazer o acesso.',
+  NetworkError: 'Não consegui falar com o login (Cognito). Confira a internet, bloqueadores de conteúdo ou VPN e tente de novo.',
+  PASSWORD_RESET_REQUIRED: 'É preciso redefinir a senha antes de entrar.',
+  MFA_SETUP: 'Este usuário ainda não cadastrou o autenticador (MFA).',
+  InvalidPasswordException: 'A senha não atende às regras (12+ caracteres com maiúscula, minúscula, número e símbolo).',
+  NO_PORTAL_ACCESS: 'Login correto, mas esta conta não tem acesso ativo ao portal. Peça a um administrador para conceder o acesso (aba Operadores).',
+  ACCESS_ALREADY_EXISTS: 'Este operador já tem acesso: altere as permissões ou reative.',
+  OPERATOR_EXISTS: 'Já existe um operador com este e-mail.',
+  CANNOT_CHANGE_SELF: 'Você não pode alterar o seu próprio acesso. Peça a outro administrador.',
+  LAST_ADMIN: 'Esta ação deixaria a conta sem nenhum administrador de usuários ativo.',
+  OPERATOR_NOT_FOUND: 'Operador não encontrado.',
+  OPERATOR_NOT_ACTIVE: 'O acesso deste operador não está ativo. Reative-o primeiro.',
+  INVALID_IMAGE_URL: 'Endereço de imagem inválido: use https, sem usuário e senha.',
+  IMAGE_URL_BLOCKED: 'Este endereço aponta para uma rede interna e foi bloqueado.',
+  IMAGE_TOO_LARGE: 'A imagem passa de 6 MB.',
+  INVALID_IMAGE: 'O arquivo não é uma imagem JPEG, PNG ou WebP válida.',
+  IMAGE_FETCH_FAILED: 'Não foi possível baixar a imagem (site fora do ar, bloqueio ou endereço errado).',
+  RIGHTS_NOT_CONFIRMED: 'Confirme que a base de autorização informada é verdadeira.',
+  EDITION_NOT_FOUND: 'Corrida não encontrada no catálogo.',
+  NO_BANNER: 'Esta corrida não tem banner.',
+  ACCESS_CONFLICT: 'A conta foi criada, mas a concessão de acesso falhou. Avise o administrador.',
+  RUN_TOO_SOON: 'A rotina foi disparada há pouco. Aguarde 10 minutos entre disparos.',
+  INVALID_TOKEN: 'Sua sessão expirou ou o acesso foi retirado. Entre de novo.',
+  PERMISSION_REQUIRED: 'Você não tem permissão para esta ação.',
+  REQUEST_NOT_PENDING: 'Este pedido já foi decidido por outra pessoa.',
+  VERSION_CONFLICT: 'O pedido mudou. Atualize a lista e tente de novo.',
+  CONCURRENT_RETRY_REQUIRED: 'Outra alteração aconteceu ao mesmo tempo. Tente de novo.',
+  EDITION_NOT_LINKABLE: 'Essa corrida não pode receber vínculo (não existe, está arquivada ou não foi aprovada).',
+  EDITION_REQUEST_NOT_FOUND: 'Pedido não encontrado.',
+  INVALID_INPUT: 'Confira os campos: rejeitar exige um motivo; vincular exige escolher uma corrida.',
+  DEPENDENCY_UNAVAILABLE: 'Serviço indisponível agora. Tente de novo em instantes.',
+  SCHEDULE_EXISTS: 'Já existe um agendamento com esse nome. Escolha outro.',
+  SCHEDULE_LIMIT: 'Limite de 20 agendamentos criados pelo portal. Apague algum antes de criar outro.',
+  SCHEDULE_NOT_FOUND: 'Agendamento não encontrado. Atualize a lista.',
+  ALREADY_DECIDED: 'Esta divergência já foi decidida. Atualize a lista.',
+  DIVERGENCE_NOT_FOUND: 'Divergência não encontrada na coleta mais recente. Atualize a lista.',
+  INVALID_CATALOG_ENTRY: 'Os dados do pedido não formam uma corrida válida (confira nome, data, cidade, estado e distâncias).',
+};
+
+export function mensagem(codigo) {
+  if (MENSAGENS[codigo]) return MENSAGENS[codigo];
+  const c = typeof codigo === 'string' ? codigo : '';
+  if (c.startsWith('UnsupportedChallenge:')) {
+    return `O login pediu uma etapa que o portal ainda não suporta (${c.slice(21)}). Avise um administrador.`;
+  }
+  // Códigos do Cognito (terminam em "Exception") ajudam no suporte e não são segredo; os demais ficam ocultos.
+  if (/^[A-Za-z]{3,60}Exception$/.test(c)) return `Não foi possível concluir (${c}). Tente novamente ou avise um administrador.`;
+  return 'Não foi possível concluir. Tente novamente.';
+}
+
+/** Corpo do POST de decisão. Lança Error com texto para a pessoa quando faltar algo. */
+export function montarDecisao({ versao, decisao, edicaoId, motivo }) {
+  const v = Number(versao);
+  if (!Number.isInteger(v) || v < 1) throw new Error('Versão do pedido inválida. Atualize a lista.');
+  if (decisao === 'reject') {
+    const texto = (motivo || '').trim();
+    if (!texto) throw new Error('Informe o motivo da recusa.');
+    if (texto.length > 500) throw new Error('O motivo pode ter até 500 caracteres.');
+    return { expectedVersion: v, decision: 'reject', reason: texto };
+  }
+  if (decisao !== 'approve' && decisao !== 'link') throw new Error('Decisão desconhecida.');
+  if (!edicaoId) throw new Error('Escolha a corrida do catálogo.');
+  return { expectedVersion: v, decision: decisao, editionId: edicaoId };
+}
+
+/** "20/12/2026" a partir de "2026-12-20" (sem fuso: data civil). */
+export function dataBr(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+
+export function resumoPedido(p) {
+  const d = p.details || {};
+  const lugar = [d.city, d.state].filter(Boolean).join('/');
+  return {
+    titulo: d.name || '(sem nome)',
+    linha: [dataBr(d.date), lugar, d.distanceKm ? `${d.distanceKm} km` : ''].filter(Boolean).join(' · '),
+    fonte: d.officialUrl || '',
+  };
+}
+
+/** Só endereços https viram link clicável (nunca javascript: nem data:). */
+export function linkSeguro(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Segundos até o token expirar, lendo o `exp` do JWT (sem validar: quem valida é a API). */
+export function segundosAteExpirar(token, agoraMs = Date.now()) {
+  try {
+    const corpo = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return Math.max(0, Math.floor(corpo.exp - agoraMs / 1000));
+  } catch {
+    return 0;
+  }
+}
+
+export const PERMISSOES = {
+  catalog_admin: 'Catálogo (pedidos de corrida e atualização)',
+  moderation: 'Moderação',
+  lake_read: 'Leitura de dados analíticos',
+  user_admin: 'Usuários (cadastros e operadores)',
+  cost_read: 'Custos (AWS e OpenAI)',
+};
+
+export const MODOS_CATALOGO = {
+  semanal: 'Rotina semanal (séries conhecidas)',
+  simulacao: 'Simulação (não grava nada)',
+  enriquecer: 'Enriquecer provas do último calendário',
+  imagens: 'Coletar imagens candidatas',
+};
+
+export const STATUS_CADASTRO = {
+  CONFIRMED: 'Confirmado',
+  UNCONFIRMED: 'E-mail não confirmado',
+  FORCE_CHANGE_PASSWORD: 'Troca de senha pendente',
+  RESET_REQUIRED: 'Redefinição pendente',
+};
+
+export function statusCadastro(s) {
+  return STATUS_CADASTRO[s] || s || '—';
+}
+
+export function emailValido(texto) {
+  return /^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{2,}$/.test((texto || '').trim());
+}
+
+/** Resumo "12 cadastros: 10 confirmados, 2 e-mail não confirmado". */
+export function resumoCadastros(r) {
+  const partes = Object.entries(r.byStatus || {}).map(([s, n]) => `${n} ${statusCadastro(s).toLowerCase()}`);
+  return `${r.total} cadastro${r.total === 1 ? '' : 's'}${partes.length ? ': ' + partes.join(', ') : ''}${r.partial ? ' (lista parcial)' : ''}`;
+}
+
+export const SITUACAO_EXECUCAO = {
+  waiting: 'Aguardando início',
+  running: 'Em execução',
+  done: 'Concluída',
+  failed: 'Terminou com erro',
+  timeout: 'Tempo esgotado (15 min)',
+  dispatch_failed: 'Não foi possível disparar',
+  no_record: 'Sem registro da execução',
+  unknown: 'Situação indisponível',
+};
+
+export function situacaoExecucao(status) {
+  return SITUACAO_EXECUCAO[status] || status || '—';
+}
+
+export function duracao(ms) {
+  if (!Number.isFinite(ms)) return '';
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}min ${s % 60}s`;
+}
+
+/** "10/11/2026 12:30" no fuso de São Paulo, a partir de "2026-11-10T15:30:00Z". */
+export function dataHoraBr(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
+}
+
+export function ativa(execucoes) {
+  return execucoes.some((e) => e.status === 'waiting' || e.status === 'running');
+}
+
+/** Linha da tabela de agendamentos: quando, o que faz e a situação. */
+export function descreverAgendamento(a) {
+  let quando = 'Desativado';
+  if (a.enabled) quando = a.nextRun ? dataHoraBr(a.nextRun) : `Ver expressão: ${a.expression}`;
+  return {
+    quando,
+    oque: a.description || a.name,
+    situacao: a.enabled ? 'Ativo' : 'Desativado',
+  };
+}
+
+export function usd(v) {
+  return Number.isFinite(v) ? `US$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+}
+
+export function compacto(n) {
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 1e6) return `${(n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi`;
+  if (n >= 1e3) return `${(n / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`;
+  return String(n);
+}
+
+/** Percentual inteiro de `valor` sobre `limite` (sem limite = null). */
+export function percentual(valor, limite) {
+  return Number.isFinite(valor) && Number.isFinite(limite) && limite > 0 ? Math.round((valor / limite) * 100) : null;
+}
+
+/** Retângulos de um gráfico de barras: valores -> {x, y, w, h} dentro de largura x altura. */
+export function barras(valores, largura, altura) {
+  const maximo = Math.max(...valores, 0);
+  const n = valores.length || 1;
+  const passo = largura / n;
+  return valores.map((v, i) => {
+    const h = maximo > 0 ? Math.max(v > 0 ? 1 : 0, (v / maximo) * altura) : 0;
+    return { x: i * passo + passo * 0.1, y: altura - h, w: passo * 0.8, h };
+  });
+}
+
+/** "2026-11" -> "11/2026". */
+export function mesBr(m) {
+  const [a, b] = (m || '').split('-');
+  return a && b ? `${b}/${a}` : '';
+}
+
+export function situacaoOperador(o) {
+  if (!o.enabled) return 'Desativado';
+  const estado = o.access && o.access.state;
+  if (!estado) return 'Sem acesso ao portal (conta existe)';
+  if (estado === 'revoked') return 'Acesso retirado';
+  if (o.status === 'FORCE_CHANGE_PASSWORD') return 'Convite enviado (ainda não entrou)';
+  return 'Ativo';
+}
+
+export function permissoesDe(o) {
+  return (o.access && o.access.permissions) || [];
+}
+
+/** Texto inicial da base de autorização: a pessoa lê, ajusta e só então confirma que é verdadeiro. */
+export function notaDireitosPadrao(paginaOficial, hojeIso) {
+  const [a, m, d] = (hojeIso || '').split('-');
+  const data = a && m && d ? `${d}/${m}/${a}` : '';
+  const origem = paginaOficial ? ` (${paginaOficial})` : '';
+  return `Imagem de divulgação publicada pelo organizador na página oficial${origem}. Sem autorização formal; risco assumido pelo responsável do produto em ${data}. Remover a pedido do organizador.`;
+}
+
+export function dataHojeIso(agora = new Date()) {
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(agora);
+  return p;
+}
+
+/** Motivo (código curto vindo da API) -> frase para a pessoa. Nunca mostra detalhes da chave. */
+export function motivoOpenAi(codigo) {
+  const c = codigo || '';
+  // http_<status>[:<codigo>][@<consulta>][~<espera em segundos>], ex.: http_429:rate_limit_exceeded@costs~30
+  const m = /^http_(\d{3})(?::([a-z0-9_]+))?(?:@([a-z_]+))?(?:~(\d+))?$/.exec(c);
+  if (m && m[1] === '429') {
+    const [, , detalhe, consulta, espera] = m;
+    if (detalhe === 'insufficient_quota') {
+      return 'A OpenAI recusou por cota: a conta está sem crédito ou estourou o limite de gasto. Confira Billing e Limits no console.';
+    }
+    const quando = espera ? `Tente de novo em ${espera} s.` : 'Tente de novo em instantes.';
+    return `A OpenAI limitou as consultas${detalhe ? ` (${detalhe})` : ''}${consulta ? ` na consulta "${consulta}"` : ''}. ${quando}`;
+  }
+  if (c.startsWith('key_read_failed')) {
+    const tipo = c.split(':')[1] || '';
+    return `Não consegui ler a chave no SSM (${tipo || 'erro'}): confira o nome do parâmetro, se ele é SecureString e se a região é sa-east-1.`;
+  }
+  const mapa = {
+    empty_key: 'O parâmetro do SSM está vazio.',
+    http_401: 'A OpenAI recusou a chave: ela é inválida, foi revogada ou não é uma chave de administrador (sk-admin-...).',
+    http_403: 'A OpenAI recusou a chave: ela não tem permissão para ler custos e uso.',
+    http_400: 'A OpenAI recusou a consulta (confira o ID do projeto, proj_...).',
+    http_404: 'A OpenAI não encontrou o recurso (confira o ID do projeto, proj_...).',
+    http_429: 'A OpenAI limitou as consultas agora. Tente de novo em instantes.',
+    network: 'Sem resposta da OpenAI agora.',
+    not_configured: 'A chave de administrador não está configurada neste deploy.',
+  };
+  const base = m ? `http_${m[1]}` : c;
+  if (mapa[base]) return mapa[base];
+  return base.startsWith('http_') ? `A OpenAI respondeu com erro (${base.slice(5)}).` : 'Motivo não identificado.';
+}
+
+/** "42 de 44 (95%)": parte, total e porcentagem inteira; sem total válido, só o número. */
+export function taxa(parte, total) {
+  if (!Number.isFinite(parte)) return '—';
+  if (!Number.isFinite(total) || total <= 0) return String(parte);
+  return `${parte} de ${total} (${Math.round((parte / total) * 100)}%)`;
+}
+
+export const RESULTADO_CONFERENCIA = {
+  confere: 'Confere',
+  parcial: 'Confere em parte',
+  nao_verificado: 'Não verificado',
+  errada: 'Errada',
+};
+
+export const DIAS_SEMANA = [
+  ['MON', 'Seg'],
+  ['TUE', 'Ter'],
+  ['WED', 'Qua'],
+  ['THU', 'Qui'],
+  ['FRI', 'Sex'],
+  ['SAT', 'Sáb'],
+  ['SUN', 'Dom'],
+];
+
+export const TIPOS_AGENDAMENTO = {
+  semanal: 'Pesquisa semanal (pedidos e séries)',
+  calendario: 'Calendário da Prefeitura',
+  enriquecer: 'Enriquecimento das provas do calendário',
+  imagens: 'Coleta de imagens candidatas (revisão)',
+};
+
+export const MAX_PROVAS_POR_EXECUCAO = 25;
+
+/** "Seg, Qui às 06:00" (dias MON...) ou "20/11/2026 às 06:00" (execução única, `data` AAAA-MM-DD); vazio se não for nenhum. */
+export function quandoTexto(dias, horario, data = null) {
+  if (data && horario) return `${data.slice(8, 10)}/${data.slice(5, 7)}/${data.slice(0, 4)} às ${horario} (uma vez)`;
+  if (!Array.isArray(dias) || !dias.length || !horario) return '';
+  const nomes = DIAS_SEMANA.filter(([c]) => dias.includes(c)).map(([, n]) => n);
+  return `${nomes.join(', ')} às ${horario}`;
+}
+
+/** Confere o formulário de agendamento antes de enviar. Devolve o texto do erro, ou '' quando está tudo certo.
+ *  `novo`: nome e tipo obrigatórios. Dias e horário andam juntos (editar pode deixar os dois vazios). */
+export function validarAgendamento({ novo, nome, tipo, dias, horario, rodada, max, meses, modo = 'semanal', data = '' }) {
+  if (novo) {
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(nome || '') || nome.length < 3 || nome.length > 40) {
+      return 'O nome deve ter de 3 a 40 caracteres: letras minúsculas, números e hífen (ex.: enriquecimento-quinta).';
+    }
+    if (!Object.keys(TIPOS_AGENDAMENTO).includes(tipo)) return 'Escolha o que o agendamento faz.';
+  }
+  const temDias = Array.isArray(dias) && dias.length > 0;
+  const temHorario = !!horario;
+  if (modo === 'uma-vez') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data || '')) return 'Escolha a data da execução.';
+    if (!temHorario) return 'Informe o horário da execução.';
+  } else {
+    if (novo && !(temDias && temHorario)) return 'Escolha ao menos um dia da semana e o horário.';
+    if (temDias !== temHorario) return 'Informe os dias da semana e o horário juntos.';
+  }
+  if (temHorario && !/^([01]\d|2[0-3]):[0-5]\d$/.test(horario)) return 'Horário inválido (use HH:MM).';
+  if (tipo === 'enriquecer') {
+    if (!Number.isInteger(rodada) || rodada < 1 || rodada > 3) return 'A rodada deve ser 1, 2 ou 3.';
+    if (!Number.isInteger(max) || max < 1 || max > MAX_PROVAS_POR_EXECUCAO) return `O máximo de provas por execução vai de 1 a ${MAX_PROVAS_POR_EXECUCAO}.`;
+  }
+  if (tipo === 'calendario' && (!Number.isInteger(meses) || meses < 1 || meses > 6)) return 'Os meses do calendário vão de 1 a 6.';
+  return '';
+}
+
+export const TIPO_DIVERGENCIA = {
+  parcial: 'Pista parcial: a prova existe, mas falta a distância',
+  ambigua: 'Ambígua: há mais de uma prova parecida na mesma data',
+  sugestao: 'Sugestão: dados vêm de outra edição, não confirmados',
+  nada: 'Nada encontrado: a rotina não achou informação. Confira à mão',
+};
+
+/** "5, 10 km; 21,0975" -> ['5', '10', '21,0975'] (só os números; o servidor valida de novo). */
+export function listaKm(texto) {
+  return (String(texto || '').match(/\d+(?:[.,]\d+)?/g) || []);
+}
+
+/** Confere a decisão antes de enviar. Devolve o texto do erro, ou '' quando está tudo certo.
+ *  Aceitar exige distância, fonte https e trecho curto (regra do projeto: fato sem evidência é anulado). */
+export function validarDecisao({ decisao, distancias, fonte, trecho, motivo }) {
+  if (decisao === 'rejected') return (motivo || '').length > 200 ? 'O motivo pode ter até 200 caracteres.' : '';
+  if (decisao !== 'accepted') return 'Decisão desconhecida.';
+  const km = Array.isArray(distancias) ? distancias : [];
+  if (!km.length) return 'Informe ao menos uma distância em km.';
+  if (km.length > 8) return 'No máximo 8 distâncias.';
+  if (km.some((d) => { const n = Number(String(d).replace(',', '.')); return !(n > 0 && n <= 1000); })) return 'Distância inválida (use números entre 0 e 1000).';
+  let url;
+  try { url = new URL(fonte || ''); } catch { return 'Informe o link da fonte (começa com https://).'; }
+  if (url.protocol !== 'https:' || url.username || url.password || (fonte || '').length > 500) return 'O link da fonte deve começar com https:// e não pode ter usuário ou senha.';
+  const t = (trecho || '').trim();
+  if (!t) return 'Cole o trecho da fonte que comprova a distância (até 160 caracteres).';
+  if (t.length > 160) return 'O trecho da fonte pode ter até 160 caracteres.';
+  return '';
+}
+
+/** Texto do indicador de revocação: das "nada encontrado" já conferidas, quantas tinham informação. */
+export function textoRevocacao(n) {
+  if (!n || !n.checked) return { valor: '—', detalhe: `${n ? n.total : 0} sem informação para conferir` };
+  const pct = Math.round((n.hadInfo / n.checked) * 100);
+  return { valor: `${n.hadInfo} de ${n.checked} (${pct}%)`, detalhe: `a rotina deixou de achar · ${n.total - n.checked} ainda por conferir` };
+}
+
+/** Abas do painel: [rótulo, permissão exigida]. A ordem é a do menu. */
+export const ABAS = {
+  pedidos: ['Pedidos de corrida', 'catalog_admin'],
+  catalogo: ['Atualizar catálogo', 'catalog_admin'],
+  cadastros: ['Cadastros no app', 'user_admin'],
+  banners: ['Banners', 'catalog_admin'],
+  divergencias: ['Divergências', 'catalog_admin'],
+  qualidade: ['Qualidade da busca', 'catalog_admin'],
+  custos: ['Custos', 'cost_read'],
+  operadores: ['Operadores', 'user_admin'],
+};
+
+export const TEMAS = { auto: 'Automático (segue o sistema)', claro: 'Claro', escuro: 'Escuro' };
+
+/** Preferências salvas (texto JSON do navegador) -> valores válidos; qualquer coisa estranha vira o padrão. */
+export function lerPrefs(texto) {
+  let bruto = {};
+  try { bruto = JSON.parse(texto || '{}') || {}; } catch { bruto = {}; }
+  return {
+    tema: Object.keys(TEMAS).includes(bruto.tema) ? bruto.tema : 'auto',
+    abaInicial: typeof bruto.abaInicial === 'string' && Object.keys(ABAS).includes(bruto.abaInicial) ? bruto.abaInicial : '',
+  };
+}
+
+/** Aba que abre ao entrar: a preferida se a pessoa tem permissão; senão a primeira que ela pode ver. */
+export function abaInicial(preferida, permissoes) {
+  const pode = (nome) => ABAS[nome] && permissoes.includes(ABAS[nome][1]);
+  if (preferida && pode(preferida)) return preferida;
+  if (pode('pedidos')) return 'pedidos';
+  if (pode('cadastros')) return 'cadastros';
+  if (pode('custos')) return 'custos';
+  return Object.keys(ABAS).find(pode) || '';
+}
+
+/** Corpo do POST de aprovação (cria a corrida e vincula). Estado e distâncias são opcionais: sem estado, o pedido
+ *  fica aguardando a carga. Lança Error com texto para a pessoa quando algo estiver errado. */
+export function montarAprovacao({ versao, estado, distancias }) {
+  const v = Number(versao);
+  if (!Number.isInteger(v) || v < 1) throw new Error('Versão do pedido inválida. Atualize a lista.');
+  const corpo = { expectedVersion: v };
+  const uf = (estado || '').trim().toUpperCase();
+  if (uf) {
+    if (!/^[A-Z]{2}$/.test(uf)) throw new Error('O estado deve ter 2 letras (ex.: SP).');
+    corpo.state = uf;
+  }
+  const km = Array.isArray(distancias) ? distancias : listaKm(distancias);
+  if (km.length > 8) throw new Error('No máximo 8 distâncias.');
+  if (km.some((d) => { const n = Number(String(d).replace(',', '.')); return !(n > 0 && n <= 1000); })) throw new Error('Distância inválida (use números entre 0 e 1000).');
+  if (km.length) corpo.distances = km.map(String);
+  return corpo;
+}
+
+/** Frase para o resultado da aprovação, conforme o que o sistema fez. */
+export function textoAprovacao(resultado) {
+  return (
+    {
+      created: 'Corrida criada e usuário vinculado.',
+      linked: 'Já existia uma corrida igual no catálogo: o usuário foi vinculado a ela.',
+      awaiting: 'Aprovado. Falta o estado (UF) para criar a corrida: o pedido ficou aguardando e será vinculado sozinho quando a corrida entrar no catálogo.',
+    }[resultado] || 'Pedido aprovado.'
+  );
+}

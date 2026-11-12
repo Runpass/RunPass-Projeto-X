@@ -15,6 +15,7 @@ Map<String, dynamic> upcoming(String id, {String date = '2099-05-01'}) => {
 };
 
 void main() {
+  raceArtTests();
   searchTests();
   homeWidthsTests();
   participantsTests();
@@ -46,7 +47,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     final icons = tester.getRect(find.byTooltip('Voltar'));
-    final title = tester.getRect(find.textContaining('CORRIDA A COM UM NOME'));
+    final title = tester.getRect(find.textContaining('Corrida A com um nome'));
     expect(
       title.top >= icons.bottom,
       isTrue,
@@ -200,6 +201,179 @@ void main() {
     expect(find.byKey(const Key('agenda-EB')), findsNothing);
   });
 
+  Future<void> openCalendar(
+    WidgetTester tester,
+    List<Map<String, dynamic>> plans,
+  ) async {
+    big(tester);
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/me/race-plans' && method == 'GET') {
+        return JsonReply(200, {'items': plans});
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: AgendaScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+  }
+
+  List<Map<String, dynamic>> calendarPlans() => [
+    {
+      'editionId': 'EA',
+      'status': 'wanted',
+      'version': 1,
+      'edition': upcoming('A', date: '2099-01-10'),
+    },
+    {
+      'editionId': 'EC',
+      'status': 'wanted',
+      'version': 1,
+      'edition': upcoming('C', date: '2099-01-20'),
+    },
+    {
+      'editionId': 'ED',
+      'status': 'wanted',
+      'version': 1,
+      'edition': upcoming('D', date: '2099-03-05'),
+    },
+    {
+      'editionId': 'EB',
+      'status': 'registered',
+      'version': 1,
+      'edition': upcoming('B', date: '2099-06-15'),
+    },
+  ];
+
+  test('monthCells: grade que começa no domingo, com células em branco', () {
+    // 1/11/2026 é domingo: sem células em branco antes do dia 1.
+    final nov = monthCells(DateTime(2026, 11));
+    expect(nov.where((c) => c == null).length, 0);
+    expect(nov.length, 30);
+    // 1/12/2026 é terça: duas células em branco.
+    final dec = monthCells(DateTime(2026, 12));
+    expect(dec.where((c) => c == null).length, 2);
+    expect(dec.whereType<DateTime>().length, 31);
+    // fevereiro de 2024 (bissexto) começa numa quinta: 4 em branco e 29 dias.
+    final feb = monthCells(DateTime(2024, 2));
+    expect(feb.where((c) => c == null).length, 4);
+    expect(feb.whereType<DateTime>().length, 29);
+  });
+
+  testWidgets('a agenda é um calendário do mês da próxima corrida, com os dias '
+      'das corridas marcados', (tester) async {
+    await openCalendar(tester, calendarPlans());
+    expect(find.byKey(const Key('agenda-calendar-wanted')), findsOneWidget);
+    expect(find.text('janeiro de 2099'), findsOneWidget);
+    expect(find.text('D'), findsWidgets); // cabeçalho dos dias da semana
+    // os dias 10 e 20 existem e respondem ao toque; um dia sem corrida não
+    expect(
+      find.byKey(const Key('agenda-day-wanted-2099-01-10')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('agenda-day-wanted-2099-01-20')),
+      findsOneWidget,
+    );
+    final semCorrida = tester.widget<InkWell>(
+      find.byKey(const Key('agenda-day-wanted-2099-01-11')),
+    );
+    expect(semCorrida.onTap, isNull);
+    // a lista abaixo mostra todas as corridas da aba, de qualquer mês
+    for (final id in ['EA', 'EC', 'ED']) {
+      expect(find.byKey(Key('agenda-$id')), findsOneWidget);
+    }
+    expect(find.byKey(const Key('agenda-EB')), findsNothing); // é de Inscritas
+  });
+
+  testWidgets('tocar num dia mostra só as corridas dele e "Ver todas" volta', (
+    tester,
+  ) async {
+    await openCalendar(tester, calendarPlans());
+    await tester.tap(find.byKey(const Key('agenda-day-wanted-2099-01-10')));
+    await tester.pumpAndSettle();
+    expect(find.text('Corridas em 10/01/2099'), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EC')), findsNothing);
+    expect(find.byKey(const Key('agenda-ED')), findsNothing);
+    // tocar no mesmo dia de novo desmarca
+    await tester.tap(find.byKey(const Key('agenda-day-wanted-2099-01-10')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-EC')), findsOneWidget);
+    // outro dia, e "Ver todas"
+    await tester.tap(find.byKey(const Key('agenda-day-wanted-2099-01-20')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-EA')), findsNothing);
+    expect(find.byKey(const Key('agenda-EC')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('agenda-clear-day-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-ED')), findsOneWidget);
+  });
+
+  testWidgets('as setas trocam o mês e limpam o dia escolhido', (tester) async {
+    await openCalendar(tester, calendarPlans());
+    await tester.tap(find.byKey(const Key('agenda-day-wanted-2099-01-10')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('agenda-next-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.text('fevereiro de 2099'), findsOneWidget);
+    expect(find.text('Corridas em 10/01/2099'), findsNothing); // dia limpo
+    await tester.tap(find.byKey(const Key('agenda-next-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.text('março de 2099'), findsOneWidget);
+    expect(
+      find.byKey(const Key('agenda-day-wanted-2099-03-05')),
+      findsOneWidget,
+    );
+    // virada de ano para trás: de janeiro para dezembro do ano anterior
+    await tester.tap(find.byKey(const Key('agenda-prev-wanted')));
+    await tester.tap(find.byKey(const Key('agenda-prev-wanted')));
+    await tester.tap(find.byKey(const Key('agenda-prev-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.text('dezembro de 2098'), findsOneWidget);
+  });
+
+  testWidgets('cada aba tem o seu calendário, no mês da sua próxima corrida', (
+    tester,
+  ) async {
+    await openCalendar(tester, calendarPlans());
+    expect(find.text('janeiro de 2099'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('agenda-tab-registered')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-calendar-registered')), findsOneWidget);
+    expect(find.text('junho de 2099'), findsOneWidget);
+    expect(
+      find.byKey(const Key('agenda-day-registered-2099-06-15')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('agenda-EB')), findsOneWidget);
+  });
+
+  testWidgets('sem corridas a agenda mostra o calendário do mês atual e o '
+      'aviso', (tester) async {
+    await openCalendar(tester, []);
+    expect(find.byKey(const Key('agenda-calendar-wanted')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-empty-wanted')), findsOneWidget);
+    final hoje = DateTime.now();
+    const meses = [
+      'janeiro',
+      'fevereiro',
+      'março',
+      'abril',
+      'maio',
+      'junho',
+      'julho',
+      'agosto',
+      'setembro',
+      'outubro',
+      'novembro',
+      'dezembro',
+    ];
+    expect(
+      find.text('${meses[hoje.month - 1]} de ${hoje.year}'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('ao digitar o nome, sugere as corridas para escolher uma', (
     tester,
   ) async {
@@ -239,7 +413,7 @@ void main() {
     await tester.tap(find.byKey(const Key('suggestion-EB')));
     await tester.pumpAndSettle();
     expect(find.byType(EditionScreen), findsOneWidget);
-    expect(find.text('CIRCUITO DAS ESTAÇÕES PRIMAVERA'), findsOneWidget);
+    expect(find.text('Circuito das Estações Primavera'), findsOneWidget);
   });
 
   testWidgets(
@@ -456,7 +630,7 @@ void bannerTests() {
     );
     expect(find.byKey(const Key('hero-image')), findsOneWidget);
     expect(find.text('Foto: Divulgação: Org'), findsOneWidget);
-    expect(find.textContaining('CORRIDA A COM UM NOME'), findsOneWidget);
+    expect(find.textContaining('Corrida A com um nome'), findsOneWidget);
   });
 
   testWidgets('sem banner aprovado não pede imagem nem mostra crédito', (
@@ -482,7 +656,7 @@ void bannerTests() {
     }, () => const JsonReply(503, {'code': 'UNAVAILABLE'}));
     expect(find.byKey(const Key('hero-image')), findsNothing);
     expect(find.byKey(const Key('hero-credit')), findsNothing);
-    expect(find.textContaining('CORRIDA A COM UM NOME'), findsOneWidget);
+    expect(find.textContaining('Corrida A com um nome'), findsOneWidget);
   });
 }
 
@@ -535,8 +709,6 @@ void searchTests() {
       expect(yearRange(bad), isNull, reason: bad);
     }
     expect(filterYears(DateTime(2026, 11, 10)), [2027, 2026, 2025, 2024]);
-    expect(brazilianStates.length, 27);
-    expect(brazilianStates['SP'], 'São Paulo');
   });
 
   Future<List<Map<String, String>>> openForm(WidgetTester tester) async {
@@ -564,7 +736,17 @@ void searchTests() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('só o nome é obrigatório; UF e ano são seletores', (
+  Future<void> pickLocation(WidgetTester tester) async {
+    // Mesmo seletor do editar perfil; aceitar o padrão escolhe o primeiro da lista (Acre / Acrelândia).
+    final field = find.byKey(const Key('filter-location'));
+    await tester.ensureVisible(field);
+    await tester.tap(field);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('location-done')));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('só o nome é obrigatório; estado e cidade e ano são seletores', (
     tester,
   ) async {
     final calls = await openForm(tester);
@@ -572,46 +754,87 @@ void searchTests() {
     await tester.ensureVisible(find.text('Buscar'));
     await tester.tap(find.text('Buscar'));
     await tester.pumpAndSettle();
-    expect(find.text('Informe o nome da corrida.'), findsOneWidget);
+    expect(
+      find.text('Informe o nome da corrida ou escolha outro filtro.'),
+      findsOneWidget,
+    );
     expect(calls.length, before, reason: 'sem nome nada é enviado');
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Nome da corrida (obrigatório)'),
+      find.widgetWithText(TextFormField, 'Nome da corrida'),
       'meia',
     );
-    await pick(tester, 'filter-state', 'SP · São Paulo');
+    await pickLocation(tester);
     await pick(tester, 'filter-year', '2026');
     await tester.ensureVisible(find.text('Buscar'));
     await tester.tap(find.text('Buscar'));
     await tester.pumpAndSettle();
     expect(calls.last['namePrefix'], 'meia');
-    expect(calls.last['state'], 'SP');
+    expect(calls.last['state'], 'AC');
+    expect(calls.last['city'], 'Acrelândia');
     expect(calls.last['dateFrom'], '2026-01-01');
     expect(calls.last['dateTo'], '2026-12-31');
     expect(
-      calls.last.containsKey('city'),
+      calls.last.containsKey('distanceKm'),
       isFalse,
-      reason: 'cidade e os demais são opcionais',
+    ); // distância e o resto são opcionais
+  });
+
+  testWidgets('com outro filtro o nome deixa de ser obrigatório', (
+    tester,
+  ) async {
+    final calls = await openForm(tester);
+    await pick(tester, 'filter-year', '2026');
+    await tester.ensureVisible(find.text('Buscar'));
+    await tester.tap(find.text('Buscar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Informe o nome da corrida ou escolha outro filtro.'),
+      findsNothing,
     );
+    expect(calls.last.containsKey('namePrefix'), isFalse);
+    expect(calls.last['dateFrom'], '2026-01-01');
+    expect(calls.last['dateTo'], '2026-12-31');
+  });
+
+  testWidgets('atalhos de km preenchem a distância e a busca a envia', (
+    tester,
+  ) async {
+    final calls = await openForm(tester);
+    final chip = find.byKey(const Key('km-chip-10'));
+    await tester.ensureVisible(chip);
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextFormField, '10'), findsOneWidget);
+    await tester.ensureVisible(find.text('Buscar'));
+    await tester.tap(find.text('Buscar'));
+    await tester.pumpAndSettle();
+    expect(calls.last['distanceKm'], '10');
+    expect(calls.last.containsKey('namePrefix'), isFalse);
+    // tocar de novo no atalho selecionado limpa a distância
+    await tester.ensureVisible(chip);
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextFormField, '10'), findsNothing);
   });
 
   testWidgets('limpar a busca zera UF e ano nos seletores', (tester) async {
     final calls = await openForm(tester);
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Nome da corrida (obrigatório)'),
+      find.widgetWithText(TextFormField, 'Nome da corrida'),
       'meia',
     );
-    await pick(tester, 'filter-state', 'RJ · Rio de Janeiro');
+    await pickLocation(tester);
     await pick(tester, 'filter-year', '2025');
     await tester.ensureVisible(find.text('Buscar'));
     await tester.tap(find.text('Buscar'));
     await tester.pumpAndSettle();
-    expect(calls.last['state'], 'RJ');
+    expect(calls.last['state'], 'AC');
     await tester.ensureVisible(find.text('Limpar busca'));
     await tester.tap(find.text('Limpar busca'));
     await tester.pumpAndSettle();
     expect(calls.last.containsKey('state'), isFalse);
     expect(calls.last.containsKey('dateFrom'), isFalse);
-    expect(find.text('Todos os estados'), findsOneWidget);
+    expect(find.text('Todos os estados e cidades'), findsOneWidget);
     expect(find.text('Qualquer ano'), findsOneWidget);
   });
 
@@ -634,7 +857,7 @@ void searchTests() {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      EditionThumb.cache.clear();
+      EditionCover.cache.clear();
       final banners = <String>[];
       final gateway = await signed((uri, method, headers, body) async {
         if (uri.path == '/editions') {
@@ -660,9 +883,62 @@ void searchTests() {
       );
       await tester.pumpAndSettle();
       expect(banners, ['/editions/EA/banner']);
-      expect(find.byKey(const Key('edition-thumb')), findsOneWidget);
+      expect(find.byKey(const Key('edition-cover-image')), findsOneWidget);
       // A outra corrida segue com o ícone, sem imagem.
-      expect(find.byType(EditionThumb), findsNWidgets(2));
+      expect(find.byType(EditionCover), findsNWidgets(2));
+      // Sem imagem, a distância da arte fica no canto superior esquerdo do cartão.
+      expect(
+        tester.widget<RaceArt>(find.byType(RaceArt).first).labelAtLeft,
+        isTrue,
+      );
     },
   );
+}
+
+void raceArtTests() {
+  testWidgets(
+    'corrida sem imagem tem arte própria no banner e na lista, sempre a mesma',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 2000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions/EA') {
+          return JsonReply(200, {
+            ...upcoming('A'),
+            'distances': [
+              {'id': '5k', 'kilometers': 5},
+              {'id': '21k', 'kilometers': 21.097},
+            ],
+          });
+        }
+        if (uri.path.startsWith('/me/race-plans/')) {
+          return const JsonReply(404, {'code': 'PLAN_NOT_FOUND'});
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditionScreen(gateway: gateway, editionId: 'EA'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('race-art')), findsOneWidget);
+      expect(
+        find.text('21K'),
+        findsOneWidget,
+      ); // a maior distância identifica a prova
+      expect(find.byKey(const Key('hero-image')), findsNothing);
+    },
+  );
+
+  test('a cor da arte é estável por corrida e varia entre corridas', () {
+    List<Color> of(String id) =>
+        RaceArt(edition: {'id': id, 'distances': const []}).colors;
+    expect(of('csv-sp-corrida-x'), of('csv-sp-corrida-x'));
+    final distinct = {
+      for (var i = 0; i < 40; i++) of('corrida-$i').first.toARGB32(),
+    };
+    expect(distinct.length > 1, isTrue);
+  });
 }

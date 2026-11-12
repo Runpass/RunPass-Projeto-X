@@ -129,3 +129,10 @@ login de operador nesta sessão), e a tela em aparelho. A fila é um índice em 
 Limites: o operador não vê quem pediu; não há aviso ao corredor quando a decisão sai (só "Minhas solicitações");
 rascunho de participação a partir de pedido ainda pendente não existe (depois de aprovado, a corrida está no
 catálogo e o registro é normal); só a fila `pending` tem índice.
+
+## Links na tela da corrida (10/11/2026)
+A aba "Sobre" do detalhe mostra **Comprar inscrição** (`registrationUrl`) e **Site da corrida** (`officialUrl`) quando a
+fonte informou o link. Só abre `https` com domínio e sem usuário/senha embutidos; qualquer outro esquema (`javascript:`,
+`http:`...) é ignorado. Com inscrição `closed` ou `sold_out` o botão vira "Página de inscrição", para não convidar a comprar.
+O app usa o pacote `url_launcher` e abre o link fora do app. **O link das fotos ainda não existe**: exige campo novo no
+modelo, no CSV de importação, no contrato da API e na tela, e ficou para um passo seguinte.

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>RunPass Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topo">
+    <strong class="marca">Run<span>Pass</span> <small>Admin</small></strong>
+    <div id="sessao" class="sessao" hidden>
+      <span id="quem"></span>
+      <span id="expira"></span>
+    </div>
+  </header>
+  <main>
+    <p id="aviso" role="status" aria-live="polite" class="aviso" hidden></p>
+    <section id="entrar" class="cartao">
+      <h1>Entrar</h1>
+      <p class="ajuda">Acesso só para operadores. A senha e o código do autenticador vão direto para o login seguro (Cognito).</p>
+      <form id="form-senha" autocomplete="on">
+        <label>E-mail do operador <input id="email" type="email" required autocomplete="username"></label>
+        <label>Senha <input id="senha" type="password" required autocomplete="current-password"></label>
+        <button type="submit">Continuar</button>
+      </form>
+      <form id="form-mfa" hidden autocomplete="off">
+        <label>Código do autenticador (6 dígitos)
+          <input id="codigo" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code">
+        </label>
+        <button type="submit">Entrar</button>
+        <button type="button" id="voltar" class="sec">Voltar</button>
+      </form>
+      <form id="form-nova" hidden autocomplete="off">
+        <p class="ajuda">Primeiro acesso: defina sua senha (12+ caracteres, com maiúscula, minúscula, número e símbolo).</p>
+        <label>Nova senha <input id="nova-senha" type="password" required minlength="12" autocomplete="new-password"></label>
+        <button type="submit">Definir senha</button>
+      </form>
+      <form id="form-setup" hidden autocomplete="off">
+        <p class="ajuda">Cadastre o autenticador: no app (Google Authenticator, 1Password, Authy...) escolha "inserir chave" e digite a chave abaixo. Depois informe o código de 6 dígitos.</p>
+        <p><code id="segredo" class="segredo"></code></p>
+        <label>Código do autenticador (6 dígitos)
+          <input id="codigo-setup" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code">
+        </label>
+        <button type="submit">Concluir cadastro</button>
+      </form>
+    </section>
+    <section id="painel" hidden>
+      <nav class="abas" role="tablist">
+        <button role="tab" id="aba-pedidos" data-aba="pedidos" aria-selected="true">Pedidos de corrida</button>
+        <button role="tab" id="aba-catalogo" data-aba="catalogo" aria-selected="false">Atualizar catálogo</button>
+        <button role="tab" id="aba-cadastros" data-aba="cadastros" aria-selected="false">Cadastros no app</button>
+        <button role="tab" id="aba-banners" data-aba="banners" aria-selected="false">Banners</button>
+        <button role="tab" id="aba-divergencias" data-aba="divergencias" aria-selected="false">Divergências</button>
+        <button role="tab" id="aba-qualidade" data-aba="qualidade" aria-selected="false">Qualidade da busca</button>
+        <button role="tab" id="aba-custos" data-aba="custos" aria-selected="false">Custos</button>
+        <button role="tab" id="aba-operadores" data-aba="operadores" aria-selected="false">Operadores</button>
+        <button role="tab" id="aba-preferencias" data-aba="preferencias" aria-selected="false" class="rodape">Preferências</button>
+        <button id="sair" type="button" class="sair">Sair</button>
+      </nav>
+      <section id="sec-pedidos" data-sec="pedidos">
+        <div class="barra">
+          <h1>Pedidos de corrida</h1>
+          <div class="acoes">
+            <button id="verificar-vinculos" type="button" class="sec">Verificar vínculos</button>
+            <button id="atualizar" type="button" class="sec">Atualizar</button>
+          </div>
+        </div>
+        <p class="ajuda">Aprovar cria a corrida com os dados do pedido (confira o estado e as distâncias) e vincula o usuário na hora. Sem o estado, o pedido fica aguardando e é vinculado sozinho quando a corrida entrar no catálogo; isso é verificado toda vez que você abre esta aba. Com o vínculo, o usuário passa a poder registrar a participação e sugerir a imagem e a medalha da corrida.</p>
+        <div id="pedidos"></div>
+      </section>
+      <section id="sec-catalogo" data-sec="catalogo" hidden>
+        <div class="barra"><h1>Atualizar o catálogo</h1></div>
+        <p class="ajuda">Dispara a rotina do catálogo agora. Ela usa a cota da OpenAI e roda em segundo plano (alguns minutos). Só um disparo a cada 10 minutos. Nada é publicado: o resultado vai para revisão.</p>
+        <article class="cartao">
+          <label>O que rodar <select id="modo-catalogo"></select></label>
+          <button id="rodar" type="button">Disparar</button>
+          <p id="ultimo-disparo" class="meta"></p>
+        </article>
+        <div class="barra">
+          <h2>Próximos agendamentos</h2>
+        </div>
+        <p class="ajuda">O que está programado para rodar sozinho (horário de São Paulo). Você pode criar, editar, pausar e apagar. Cada execução ativa gasta a cota da OpenAI: no máximo 1 vez por dia, 25 provas por execução e 20 agendamentos criados pelo portal.</p>
+        <div id="agendamentos"></div>
+        <div class="barra">
+          <h2>Execuções recentes</h2>
+          <button id="atualizar-execucoes" type="button" class="sec">Atualizar</button>
+        </div>
+        <p class="ajuda">Disparos feitos aqui e execuções agendadas dos últimos 7 dias. A situação vem dos registros da própria rotina e atualiza sozinha enquanto houver uma em andamento.</p>
+        <div id="execucoes"></div>
+      </section>
+      <section id="sec-cadastros" data-sec="cadastros" hidden>
+        <div class="barra">
+          <h1>Cadastros no app</h1>
+          <button id="atualizar-cadastros" type="button" class="sec">Atualizar</button>
+        </div>
+        <p class="ajuda">Quem já criou conta no aplicativo. E-mails aparecem mascarados e cada consulta fica registrada.</p>
+        <p id="resumo-cadastros" class="linha"></p>
+        <div id="cadastros"></div>
+      </section>
+      <section id="sec-banners" data-sec="banners" hidden>
+        <div class="barra">
+          <h1>Banners das corridas</h1>
+          <button id="atualizar-banners" type="button" class="sec">Atualizar</button>
+        </div>
+        <p class="ajuda">Aprovar publica a imagem no app, com o crédito escolhido. Nada é publicado sem você ver a imagem, informar o crédito e a base de autorização e confirmar que ela é verdadeira.</p>
+        <div id="banners-candidatas"></div>
+        <article class="cartao">
+          <h2>Outra imagem (endereço manual)</h2>
+          <div id="banner-manual"></div>
+        </article>
+        <div class="barra"><h2>Banners publicados</h2></div>
+        <div id="banners-publicados"></div>
+      </section>
+      <section id="sec-divergencias" data-sec="divergencias" hidden>
+        <div class="barra">
+          <h1>Divergências da rotina</h1>
+          <div class="acoes">
+            <button id="baixar-aceitas" type="button" class="sec">Baixar CSV das aceitas</button>
+            <button id="atualizar-divergencias" type="button" class="sec">Atualizar</button>
+          </div>
+        </div>
+        <p class="ajuda">Provas em que a rotina não decidiu sozinha, e as "nada encontrado". Aceitar exige a distância e a fonte com um trecho curto; reprovar descarta a prova. Em "nada encontrado": se existe informação útil, aceite e informe os dados (conta como o que a rotina deixou de achar); se não existe, descarte. Aceitar não publica nada no catálogo: baixe o CSV das aceitas, confira e importe com o <code>import-csv</code>.</p>
+        <div id="divergencias"></div>
+      </section>
+      <section id="sec-qualidade" data-sec="qualidade" hidden>
+        <div class="barra">
+          <h1>Qualidade da busca do catálogo</h1>
+          <button id="atualizar-qualidade" type="button" class="sec">Atualizar</button>
+        </div>
+        <div id="qualidade"></div>
+      </section>
+      <section id="sec-custos" data-sec="custos" hidden>
+        <div class="barra">
+          <h1>Custos</h1>
+          <button id="atualizar-custos" type="button" class="sec">Atualizar</button>
+        </div>
+        <div id="custos"></div>
+      </section>
+      <section id="sec-preferencias" data-sec="preferencias" hidden>
+        <div class="barra"><h1>Preferências</h1></div>
+        <p class="ajuda">Valem só neste navegador: ficam salvas nele, não na sua conta.</p>
+        <article class="cartao">
+          <label>Tema <select id="pref-tema"></select></label>
+          <label>Aba que abre ao entrar <select id="pref-aba"></select></label>
+          <div class="acoes"><button id="pref-padrao" type="button" class="sec">Restaurar o padrão</button></div>
+          <p id="pref-aviso" class="meta" role="status"></p>
+        </article>
+      </section>
+      <section id="sec-operadores" data-sec="operadores" hidden>
+        <div class="barra">
+          <h1>Operadores</h1>
+          <button id="atualizar-operadores" type="button" class="sec">Atualizar</button>
+        </div>
+        <p class="ajuda">Quem entra neste portal. Alterações valem na hora: retirar o acesso derruba a sessão do operador. Você não altera o seu próprio acesso, e a conta sempre mantém um administrador de usuários ativo.</p>
+        <div id="operadores"></div>
+        <div class="barra"><h2>Criar operador</h2></div>
+        <p class="ajuda">O operador recebe um e-mail com senha temporária e, no primeiro acesso, define a senha e cadastra o autenticador (MFA obrigatório).</p>
+        <form id="form-operador" class="cartao" autocomplete="off">
+          <label>E-mail <input id="op-email" type="email" required maxlength="320"></label>
+          <fieldset id="op-permissoes"><legend>Permissões</legend></fieldset>
+          <button type="submit">Criar e conceder acesso</button>
+        </form>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

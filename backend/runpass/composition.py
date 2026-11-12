@@ -1,9 +1,15 @@
 """Explicit AWS composition, called only by a separately authorized environment entry point."""
 
+import time
 from dataclasses import dataclass
 
+from .admin_api import MfaPolicy, create_admin_app, find_portal_dir
+from .admin_banners import BannerAdmin
+from .admin_costs import AwsCosts, OpenAiOrg, OpenAiUsage
+from .admin_divergences import DivergenceReview
+from .admin_users import AdminUsers, CatalogRunner, CatalogSchedules
 from .api import create_app
-from .aws_adapters import CognitoAccountRemover, S3AuditSink
+from .aws_adapters import CognitoAccountRemover, S3AuditSink, S3BlobStore
 from .catalog import CatalogService
 from .edition_requests import EditionRequestService
 from .erasure import ErasureProcessor
@@ -97,6 +103,102 @@ def create_aws_app(
         social,
         natural_search,
         edition_requests,
+    )
+
+
+def _openai_log_groups(catalog_function):
+    """Logs das Lambdas do catalogo que chamam a OpenAI (rotina semanal e busca em linguagem natural)."""
+    if not catalog_function:
+        return []
+    base = catalog_function.rsplit("-", 1)[0]
+    return [f"/aws/lambda/{base}-semanal", f"/aws/lambda/{base}-busca"]
+
+
+def _banner_admin(service, catalog, clock, media):
+    if not media:
+        return None
+    return BannerAdmin(
+        service.store,
+        catalog,
+        S3BlobStore(media["s3"], media["medal_bucket"]),
+        media["s3"],
+        media.get("report_bucket", ""),
+        clock,
+    )
+
+
+def _divergences(service, clock, media):
+    if not media:
+        return None
+    return DivergenceReview(service.store, media["s3"], media.get("report_bucket", ""), clock)
+
+
+def create_admin_aws_app(
+    settings: AwsSettings,
+    dynamodb_client,
+    cognito_client,
+    operator_issuer,
+    operator_client_id,
+    operator_pool_id,
+    portal_origin,
+    runner_pool_id="",
+    lambda_client=None,
+    catalog_function="",
+    logs_client=None,
+    scheduler_client=None,
+    costs=None,
+    media=None,
+):
+    """API do portal: so tokens do pool de operadores; o MFA do pool e conferido (ver admin_api)."""
+    service = _identity_service(settings, dynamodb_client)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    verifier = CognitoVerifier(
+        operator_issuer,
+        operator_client_id,
+        JwksProvider(operator_issuer, settings.region),
+        CognitoDirectory(cognito_client),
+        audience="operator",
+    )
+    portal = find_portal_dir()
+    clock = time.time
+    return create_admin_app(
+        service.store,
+        catalog,
+        verifier,
+        MfaPolicy(cognito_client, operator_pool_id),
+        portal_origin,
+        clock=clock,
+        users=AdminUsers(service.store, cognito_client, runner_pool_id, operator_pool_id, clock),
+        runner=CatalogRunner(service.store, lambda_client, catalog_function, clock, logs_client),
+        banners=_banner_admin(service, catalog, clock, media),
+        divergences=_divergences(service, clock, media),
+        openai_org=OpenAiOrg(
+            (costs or {}).get("openai_key_loader"),
+            clock,
+            (costs or {}).get("openai_project", ""),
+            (costs or {}).get("limit"),
+        ),
+        schedules=CatalogSchedules(
+            scheduler_client,
+            catalog_function,
+            clock,
+            (costs or {}).get("scheduler_role_arn", ""),
+            (costs or {}).get("catalog_function_arn", ""),
+            service.store,
+        ),
+        aws_costs=AwsCosts((costs or {}).get("ce"), clock, (costs or {}).get("budget")),
+        openai_usage=OpenAiUsage(
+            logs_client,
+            _openai_log_groups(catalog_function),
+            clock,
+            (costs or {}).get("prices"),
+            (costs or {}).get("limit"),
+        ),
+        site=(
+            {"directory": portal, "region": settings.region, "client_id": operator_client_id}
+            if portal
+            else None
+        ),
     )
 
 

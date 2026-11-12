@@ -96,18 +96,35 @@ Future<void> openSearch(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// Estado e cidade pelo mesmo seletor do editar perfil; aceitar o padrão escolhe Acre / Acrelândia.
+Future<void> pickFilterLocation(WidgetTester tester) async {
+  final field = find.byKey(const Key('filter-location'));
+  await reveal(tester, field, backwards: true);
+  await tester.tap(field);
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('location-done')));
+  await tester.pumpAndSettle();
+}
+
 /// O nome é o único campo obrigatório do formulário de filtros.
 Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
-  final field = find.widgetWithText(
-    TextFormField,
-    'Nome da corrida (obrigatório)',
-  );
+  final field = find.widgetWithText(TextFormField, 'Nome da corrida');
   await reveal(tester, field, backwards: true);
   await tester.enterText(field, name);
 }
 
 void main() {
+  test('rótulos dos status do pedido, inclusive aguardando a carga', () {
+    expect(requestStatusLabel('pending'), 'Em análise pela equipe');
+    expect(
+      requestStatusLabel('awaiting_load'),
+      contains('assim que a corrida entrar no catálogo'),
+    );
+    expect(requestStatusLabel('outro'), 'Situação desconhecida');
+  });
+  priorityOrderTests();
   defaultOrderTests();
+  ratingTests();
   test('query parameters preserve stage and encode filters without leaking into path', () async {
     final gateway = await signed((uri, method, headers, body) async {
       expect(uri.path, '/dev/editions');
@@ -137,15 +154,13 @@ void main() {
             'items': [entry('B')],
           });
         }
-        if (uri.queryParameters['city'] == 'Santos') {
+        if (uri.queryParameters['city'] == 'Acrelândia') {
           return const JsonReply(200, {'items': []});
         }
         return const JsonReply(200, {'items': [], 'nextCursor': 'next'});
       });
       await tester.pumpWidget(
-        MaterialApp(
-          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-        ),
+        MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
       );
       await tester.pumpAndSettle();
       await openSearch(tester);
@@ -162,21 +177,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Corrida B'), findsOneWidget);
       expect(calls.last['cursor'], 'next');
-      await reveal(
-        tester,
-        find.widgetWithText(TextFormField, 'Cidade'),
-        backwards: true,
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Cidade'),
-        'Santos',
-      );
+      await pickFilterLocation(tester);
       await fillName(tester);
       await tester.ensureVisible(find.text('Buscar'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Buscar'));
       await tester.pumpAndSettle();
-      expect(calls.last['city'], 'Santos');
+      expect(calls.last['city'], 'Acrelândia');
       expect(calls.last['namePrefix'], 'Corrida');
       expect(calls.last.containsKey('cursor'), false);
       await reveal(
@@ -202,29 +209,23 @@ void main() {
       return const JsonReply(200, {'items': []});
     });
     await tester.pumpWidget(
-      MaterialApp(
-        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-      ),
+      MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
     );
     await tester.pumpAndSettle();
     expect(find.text('Encontre sua próxima conquista'), findsNothing);
     await openSearch(tester);
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Cidade'),
-      'Santos',
-    );
     await fillName(tester);
-    await reveal(tester, find.byKey(const ValueKey('filter-state-0')));
-    await tester.tap(find.byKey(const ValueKey('filter-state-0')));
+    await reveal(tester, find.byKey(const Key('filter-location')));
+    await tester.tap(find.byKey(const Key('filter-location')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('SP · São Paulo').last);
+    await tester.tap(find.byKey(const Key('location-done')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Buscar'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Buscar'));
     await tester.pumpAndSettle();
-    expect(calls.last['city'], 'Santos');
-    expect(calls.last['state'], 'SP');
+    expect(calls.last['state'], 'AC');
+    expect(calls.last['city'], 'Acrelândia');
     await reveal(tester, find.text('Limpar busca'));
     await tester.tap(find.text('Limpar busca'));
     await tester.pumpAndSettle();
@@ -233,14 +234,10 @@ void main() {
     expect(calls.last.containsKey('namePrefix'), false);
     await reveal(
       tester,
-      find.widgetWithText(TextFormField, 'Cidade'),
+      find.byKey(const Key('filter-location')),
       backwards: true,
     );
-    final city = tester.widget<TextFormField>(
-      find.widgetWithText(TextFormField, 'Cidade'),
-    );
-    expect(city.controller!.text, '');
-    expect(find.text('Todos os estados'), findsOneWidget);
+    expect(find.text('Todos os estados e cidades'), findsOneWidget);
   });
 
   testWidgets(
@@ -257,22 +254,20 @@ void main() {
             : JsonReply(200, entry('A'));
       });
       await tester.pumpWidget(
-        MaterialApp(
-          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-        ),
+        MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
       );
       await tester.pumpAndSettle();
       await reveal(tester, find.text('Corrida A'));
       await tester.tap(find.text('Corrida A'));
       await tester.pumpAndSettle();
-      // O nome da corrida aparece só no banner (em maiúsculas), não repetido abaixo.
-      expect(find.text('CORRIDA A'), findsOneWidget);
-      expect(find.text('Corrida A'), findsNothing);
+      // O nome da corrida aparece só no banner, não repetido abaixo.
+      expect(find.text('Corrida A'), findsOneWidget);
       await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
       expect(find.text('Distância selecionada.'), findsOneWidget);
       expect(paths.where((c) => c != '/me/participations'), [
         '/editions',
+        '/me/race-plans', // marcas dos atalhos da lista
         '/editions/A',
         '/editions/A/reviews',
         '/editions/A/participants',
@@ -554,9 +549,7 @@ void main() {
           const JsonReply(403, {'code': 'BETA_ADMISSION_REQUIRED'}),
     );
     await tester.pumpWidget(
-      MaterialApp(
-        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-      ),
+      MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
     );
     await tester.pumpAndSettle();
     await reveal(
@@ -846,9 +839,7 @@ void main() {
       return JsonReply(200, entry('A'));
     });
     await tester.pumpWidget(
-      MaterialApp(
-        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-      ),
+      MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
     );
     await tester.pumpAndSettle();
     await reveal(tester, find.textContaining('Já está na sua lista'));
@@ -1128,9 +1119,7 @@ void main() {
         return const JsonReply(200, {'items': []});
       });
       await tester.pumpWidget(
-        MaterialApp(
-          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-        ),
+        MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
       );
       await tester.pumpAndSettle();
       await openSearch(tester);
@@ -1185,6 +1174,79 @@ void main() {
     expect(find.text('Local: Parque Exemplo'), findsOneWidget);
   });
 
+  testWidgets('detalhe mostra site e compra so com links https validos', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final opened = <Uri>[];
+    final original = linkOpener;
+    linkOpener = (uri) async {
+      opened.add(uri);
+      return true;
+    };
+    addTearDown(() => linkOpener = original);
+    Future<void> open(Map<String, dynamic> extra) async {
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions/E1') {
+          return JsonReply(200, {...entry('A'), 'id': 'E1', ...extra});
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditionScreen(gateway: gateway, editionId: 'E1'),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await open({});
+    expect(find.byKey(const Key('link-compra')), findsNothing);
+    expect(find.byKey(const Key('link-site')), findsNothing);
+
+    // Esquemas perigosos, http puro e usuario/senha embutidos nunca viram botao.
+    await open({
+      'officialUrl': 'javascript:alert(1)',
+      'registrationUrl': 'http://exemplo.test/inscricao',
+    });
+    expect(find.byKey(const Key('link-compra')), findsNothing);
+    expect(find.byKey(const Key('link-site')), findsNothing);
+    await open({'registrationUrl': 'https://user:senha@exemplo.test/x'});
+    expect(find.byKey(const Key('link-compra')), findsNothing);
+
+    await open({
+      'officialUrl': 'https://corrida.exemplo.test/',
+      'registrationUrl': 'https://ingressos.exemplo.test/e/1',
+      'registrationStatus': 'open',
+    });
+    expect(find.text('Comprar inscrição'), findsOneWidget);
+    expect(find.text('Site da corrida'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('link-compra')));
+    await tester.tap(find.byKey(const Key('link-site')));
+    await tester.pump();
+    expect(opened.map((u) => u.toString()), [
+      'https://ingressos.exemplo.test/e/1',
+      'https://corrida.exemplo.test/',
+    ]);
+
+    // Inscricao encerrada: o botao nao convida a comprar.
+    await open({
+      'registrationUrl': 'https://ingressos.exemplo.test/e/1',
+      'registrationStatus': 'closed',
+    });
+    expect(find.text('Comprar inscrição'), findsNothing);
+    expect(find.text('Página de inscrição'), findsOneWidget);
+
+    // Falha ao abrir avisa a pessoa em vez de ficar em silencio.
+    linkOpener = (uri) async => false;
+    await tester.tap(find.byKey(const Key('link-compra')));
+    await tester.pump();
+    expect(find.text('Não foi possível abrir o link.'), findsOneWidget);
+  });
+
   group('busca por frase livre', () {
     Future<void> typePhrase(WidgetTester tester, String text) async {
       await tester.enterText(find.byKey(const Key('catalog-phrase')), text);
@@ -1224,7 +1286,7 @@ void main() {
         });
         await tester.pumpWidget(
           MaterialApp(
-            home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+            home: CatalogScreen(gateway: gateway, serverPaging: true),
           ),
         );
         await tester.pumpAndSettle();
@@ -1273,9 +1335,7 @@ void main() {
         return const JsonReply(200, {'items': []});
       });
       await tester.pumpWidget(
-        MaterialApp(
-          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-        ),
+        MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
       );
       await tester.pumpAndSettle();
       await openSearch(tester);
@@ -1317,22 +1377,17 @@ void main() {
         });
       });
       await tester.pumpWidget(
-        MaterialApp(
-          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-        ),
+        MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
       );
       await tester.pumpAndSettle();
       await openSearch(tester);
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Cidade'),
-        'Sao Paulo',
-      );
+      await pickFilterLocation(tester);
       await fillName(tester);
       await tester.ensureVisible(find.text('Buscar'));
       await tester.tap(find.text('Buscar'));
       await tester.pumpAndSettle();
       expect(calls.last.path, '/editions');
-      expect(calls.last.queryParameters['city'], 'Sao Paulo');
+      expect(calls.last.queryParameters['city'], 'Acrelândia');
       await typePhrase(tester, 'qualquer coisa');
       expect(calls.last.path, '/editions/search');
       expect(find.byKey(const Key('catalog-search-notice')), findsOneWidget);
@@ -1386,7 +1441,7 @@ void main() {
         });
         await tester.pumpWidget(
           MaterialApp(
-            home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
+            home: CatalogScreen(gateway: gateway, serverPaging: true),
           ),
         );
         await tester.pumpAndSettle();
@@ -1552,9 +1607,7 @@ void main() {
         });
       });
       await tester.pumpWidget(
-        MaterialApp(
-          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-        ),
+        MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
       );
       await tester.pumpAndSettle();
       // Sem tocar na lupa: o campo ja esta na tela, com o rotulo certo.
@@ -1590,9 +1643,7 @@ void main() {
       return const JsonReply(200, {'items': []});
     });
     await tester.pumpWidget(
-      MaterialApp(
-        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-      ),
+      MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
     );
     await tester.pumpAndSettle();
     expect(
@@ -1617,9 +1668,7 @@ void main() {
       });
     });
     await tester.pumpWidget(
-      MaterialApp(
-        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-      ),
+      MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
@@ -1627,97 +1676,239 @@ void main() {
     expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
   });
 
-  testWidgets('ordenar a lista por data e por nota (ranking das melhores)', (
+  testWidgets(
+    'o ícone de data alterna entre decrescente e crescente, começando em decrescente',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              {...entry('A'), 'id': 'EA', 'date': '2024-05-01'},
+              {...entry('B'), 'id': 'EB', 'date': '2025-05-01'},
+              {...entry('C'), 'id': 'EC', 'date': '2026-05-01'},
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      double top(String text) =>
+          tester.getTopLeft(find.textContaining(text)).dy;
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
+      expect(top('Corrida C') < top('Corrida B'), isTrue);
+      expect(top('Corrida B') < top('Corrida A'), isTrue);
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(top('Corrida A') < top('Corrida B'), isTrue);
+      expect(top('Corrida B') < top('Corrida C'), isTrue);
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      expect(top('Corrida C') < top('Corrida A'), isTrue);
+      // Só ícones: sem seletor nem rótulo de ordenação; o ano é um filtro à parte.
+      expect(find.text('Ordenar por'), findsNothing);
+      expect(find.byKey(const Key('filter-year-0')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-sort-rating')), findsOneWidget);
+    },
+  );
+
+  testWidgets('a lista carrega todas as páginas com o mesmo limite do cursor', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 3000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    Map<String, dynamic> race(String id, String date, {double? score}) => {
-      ...entry(id),
-      'id': 'E$id',
-      'date': date,
-      if (score != null) 'runScore': {'value': score, 'reviewCount': 12},
-    };
+    final calls = <Map<String, String>>[];
     final gateway = await signed((uri, method, headers, body) async {
-      if (uri.path == '/editions') {
+      if (uri.path != '/editions') return const JsonReply(200, {'items': []});
+      calls.add(uri.queryParameters);
+      final q = uri.queryParameters;
+      if (q['cursor'] != null && q['limit'] != '100') {
+        return const JsonReply(422, {'code': 'INVALID_CURSOR'});
+      }
+      if (q['cursor'] == 'c2') {
         return JsonReply(200, {
           'items': [
-            race('A', '2024-05-01', score: 4.2),
-            race('B', '2025-05-01'),
-            race('C', '2026-05-01', score: 4.8),
+            {...entry('B'), 'id': 'EB', 'date': '2026-01-01'},
           ],
         });
       }
-      return const JsonReply(200, {'items': []});
+      return JsonReply(200, {
+        'items': [
+          {...entry('A'), 'id': 'EA', 'date': '2025-01-01'},
+        ],
+        'nextCursor': 'c2',
+      });
     });
-    await tester.pumpWidget(
-      MaterialApp(
-        home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-      ),
-    );
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
-    double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
-    expect(top('Corrida A') < top('Corrida B'), isTrue); // padrão: do servidor
-    Future<void> choose(String label) async {
-      await tester.tap(find.byKey(const Key('catalog-sort')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(label).last);
-      await tester.pumpAndSettle();
-    }
-
-    await choose('Data: mais recentes');
-    expect(top('Corrida C') < top('Corrida B'), isTrue);
-    expect(top('Corrida B') < top('Corrida A'), isTrue);
-    await choose('Melhores avaliadas');
-    expect(find.textContaining('#1 · Corrida C'), findsOneWidget);
-    expect(find.textContaining('#2 · Corrida A'), findsOneWidget);
-    expect(
-      find.textContaining('#3'),
-      findsNothing,
-    ); // sem nota: fim, sem posição
-    expect(top('Corrida A') < top('Corrida B'), isTrue);
-    expect(find.textContaining('★ 4,8 · 12 avaliações'), findsOneWidget);
+    expect(calls.map((c) => c['limit']), ['100', '100']);
+    expect(calls.last['cursor'], 'c2');
+    expect(find.byKey(const Key('catalog-error')), findsNothing);
+    expect(find.textContaining('Corrida A'), findsOneWidget);
+    expect(find.textContaining('Corrida B'), findsOneWidget);
+    expect(find.text('Carregar mais'), findsNothing);
   });
 
   testWidgets(
-    'trocar a ordem no meio da paginação recomeça a busca com o mesmo limite no cursor',
+    'atalhos da lista: quero correr, inscrito e já corri sem abrir a corrida',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      final calls = <Map<String, String>>[];
+      final plans = <String, String>{};
+      final calls = <String>[];
       final gateway = await signed((uri, method, headers, body) async {
-        if (uri.path != '/editions') return const JsonReply(200, {'items': []});
-        calls.add(uri.queryParameters);
-        final q = uri.queryParameters;
-        // O cursor do servidor é amarrado ao limite: outro limite com o mesmo cursor é recusado.
-        if (q['cursor'] != null && q['limit'] != '20') {
-          return const JsonReply(422, {'code': 'INVALID_CURSOR'});
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              {
+                ...entry('A'),
+                'id': 'EA',
+                'status': 'upcoming',
+                'date': '2099-05-01',
+              },
+              {
+                ...entry('B'),
+                'id': 'EB',
+                'status': 'past',
+                'date': '2020-05-01',
+              },
+            ],
+          });
         }
-        return JsonReply(200, {
-          'items': [
-            {...entry('A'), 'id': 'EA', 'date': '2025-01-01'},
-            {...entry('B'), 'id': 'EB', 'date': '2026-01-01'},
-          ],
-          if (q['limit'] == '20') 'nextCursor': 'c20',
-        });
+        if (uri.path == '/me/race-plans' && method == 'GET') {
+          return JsonReply(200, {
+            'items': [
+              for (final e in plans.entries)
+                {'editionId': e.key, 'status': e.value, 'version': 1},
+            ],
+          });
+        }
+        if (uri.path.startsWith('/me/race-plans/')) {
+          final id = uri.pathSegments.last;
+          calls.add('$method $id ${body?['status'] ?? ''}');
+          if (method == 'DELETE') {
+            plans.remove(id);
+            return const JsonReply(204, {});
+          }
+          plans[id] = body!['status'] as String;
+          return JsonReply(200, {
+            'editionId': id,
+            'status': plans[id],
+            'version': 1,
+          });
+        }
+        if (uri.path == '/participations' && method == 'POST') {
+          calls.add('POST ${body?['editionId']} ${body?['distanceId']}');
+          return JsonReply(201, {
+            'id': 'draft-1',
+            'editionId': body?['editionId'],
+            'distanceId': body?['distanceId'],
+            'state': 'draft',
+            'version': 1,
+          });
+        }
+        return const JsonReply(200, {'items': []});
       });
       await tester.pumpWidget(
-        MaterialApp(
-          home: CatalogScreen(gateway: gateway, initialSort: 'dateAsc'),
-        ),
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      expect(calls.single['limit'], '20');
+      // Corrida futura: os três atalhos; corrida passada: só "já corri".
+      expect(find.byKey(const Key('quick-wanted-EA')), findsOneWidget);
+      expect(find.byKey(const Key('quick-registered-EA')), findsOneWidget);
+      expect(find.byKey(const Key('quick-ran-EA')), findsOneWidget);
+      expect(find.byKey(const Key('quick-wanted-EB')), findsNothing);
+      expect(find.byKey(const Key('quick-registered-EB')), findsNothing);
+      expect(find.byKey(const Key('quick-ran-EB')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('quick-wanted-EA')));
+      await tester.pumpAndSettle();
+      expect(calls.last, 'PUT EA wanted');
+      expect(find.byIcon(Icons.favorite), findsOneWidget);
+      await tester.tap(find.byKey(const Key('quick-registered-EA')));
+      await tester.pumpAndSettle();
+      expect(calls.last, 'PUT EA registered');
+      expect(find.byIcon(Icons.favorite), findsNothing);
+      await tester.tap(find.byKey(const Key('quick-registered-EA')));
+      await tester.pumpAndSettle();
+      expect(calls.last, 'DELETE EA ');
+      // Sem abrir a corrida: nenhuma tela de detalhe foi aberta.
+      expect(find.byType(EditionScreen), findsNothing);
+    },
+  );
+}
+
+void priorityOrderTests() {
+  testWidgets(
+    'as corridas minhas vêm primeiro: corri, inscrito, desejo; depois as demais, por data',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      Map<String, dynamic> race(String id, String date) => {
+        ...entry(id),
+        'id': 'E$id',
+        'date': date,
+        'status': 'upcoming',
+      };
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              race('A', '2027-01-01'), // sem marca, a mais recente
+              race('B', '2026-06-01'), // desejo
+              race('C', '2026-05-01'), // inscrito
+              race('D', '2024-01-01'), // já corri, a mais antiga
+              race('E', '2026-12-01'), // sem marca
+              race('F', '2026-07-01'), // desejo
+            ],
+          });
+        }
+        if (uri.path == '/me/participations') {
+          return const JsonReply(200, {
+            'items': [
+              {
+                'editionId': 'ED',
+                'state': 'completed',
+                'id': 'p1',
+                'version': 1,
+              },
+            ],
+          });
+        }
+        if (uri.path == '/me/race-plans') {
+          return const JsonReply(200, {
+            'items': [
+              {'editionId': 'EB', 'status': 'wanted', 'version': 1},
+              {'editionId': 'EC', 'status': 'registered', 'version': 1},
+              {'editionId': 'EF', 'status': 'wanted', 'version': 1},
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      double top(String id) =>
+          tester.getTopLeft(find.byKey(Key('quick-ran-E$id'))).dy;
+      List<String> order() =>
+          (['A', 'B', 'C', 'D', 'E', 'F']
+            ..sort((a, b) => top(a).compareTo(top(b))));
+      // Decrescente (padrão): D (corri), C (inscrito), F e B (desejo, F é mais recente), A e E (demais, A é mais recente).
+      expect(order(), ['D', 'C', 'F', 'B', 'A', 'E']);
       await tester.tap(find.byKey(const Key('catalog-sort')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Data: mais recentes').last);
-      await tester.pumpAndSettle();
-      expect(calls.last['limit'], '100');
-      expect(calls.last.containsKey('cursor'), isFalse);
-      expect(find.byKey(const Key('catalog-error')), findsNothing);
-      expect(find.textContaining('Corrida B'), findsOneWidget);
+      // Crescente: os grupos continuam na mesma ordem; só a data dentro de cada um inverte.
+      expect(order(), ['D', 'C', 'B', 'F', 'E', 'A']);
     },
   );
 }
@@ -1750,7 +1941,114 @@ void defaultOrderTests() {
       double top(String text) =>
           tester.getTopLeft(find.textContaining(text)).dy;
       expect(top('Corrida B') < top('Corrida A'), isTrue);
-      expect(find.text('Data: mais recentes'), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
     },
   );
+}
+
+void ratingTests() {
+  Map<String, dynamic> rated(
+    String id,
+    String date, {
+    num? score,
+    int reviews = 0,
+  }) => {
+    ...entry(id),
+    'id': 'E$id',
+    'date': date,
+    if (score != null) 'runScore': {'value': score, 'reviewCount': reviews},
+  };
+
+  Future<void> openList(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions') {
+        return JsonReply(200, {
+          'items': [
+            rated('A', '2026-05-01', score: 3.5, reviews: 4),
+            rated('B', '2024-05-01', score: 4.8, reviews: 9),
+            rated('C', '2026-09-01'),
+            rated('D', '2025-05-01', score: 4.8, reviews: 20),
+          ],
+        });
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> choose(WidgetTester tester, String key, String option) async {
+    final box = find.byKey(Key(key));
+    await tester.ensureVisible(box);
+    await tester.tap(box);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(option).last);
+    await tester.pumpAndSettle();
+  }
+
+  List<String> order(WidgetTester tester) {
+    final tops = {
+      for (final id in ['A', 'B', 'C', 'D'])
+        id: find.textContaining('Corrida $id').evaluate().isEmpty
+            ? null
+            : tester.getTopLeft(find.textContaining('Corrida $id').first).dy,
+    };
+    final shown = tops.entries.where((e) => e.value != null).toList()
+      ..sort((a, b) => a.value!.compareTo(b.value!));
+    return [for (final e in shown) e.key];
+  }
+
+  testWidgets(
+    'a estrela ordena por avaliação, inverte ao tocar de novo e a data '
+    'volta ao padrão',
+    (tester) async {
+      await openList(tester);
+      expect(order(tester), ['C', 'A', 'D', 'B']); // padrão: data, mais recente
+      await tester.tap(find.byKey(const Key('catalog-sort-rating')));
+      await tester.pumpAndSettle();
+      // melhor primeiro; empate (D e B, 4,8) por nº de avaliações; sem nota por último
+      expect(order(tester), ['D', 'B', 'A', 'C']);
+      expect(find.byIcon(Icons.star_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
+      await tester.tap(find.byKey(const Key('catalog-sort-rating')));
+      await tester.pumpAndSettle();
+      // pior primeiro; quem não tem nota continua por último
+      expect(order(tester), ['A', 'D', 'B', 'C']);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      // o ícone de data devolve a ordem por data, mais recente primeiro
+      await tester.tap(find.byKey(const Key('catalog-sort')));
+      await tester.pumpAndSettle();
+      expect(order(tester), ['C', 'A', 'D', 'B']);
+      expect(find.byIcon(Icons.star_border_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
+    },
+  );
+
+  testWidgets('o filtro de ano envia só o ano e "Qualquer ano" o remove', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final calls = <Map<String, String>>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions') calls.add(uri.queryParameters);
+      return JsonReply(200, {
+        'items': [rated('A', '2026-05-01', score: 4, reviews: 3)],
+      });
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    expect(calls.last.containsKey('dateFrom'), isFalse);
+    await choose(tester, 'filter-year-0', '2026');
+    expect(calls.last['dateFrom'], '2026-01-01');
+    expect(calls.last['dateTo'], '2026-12-31');
+    expect(calls.last.containsKey('namePrefix'), isFalse);
+    await choose(tester, 'filter-year-0', 'Qualquer ano');
+    expect(calls.last.containsKey('dateFrom'), isFalse);
+    expect(calls.last.containsKey('dateTo'), isFalse);
+  });
 }
