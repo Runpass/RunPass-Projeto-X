@@ -2,7 +2,7 @@ import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
   dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
-  resumoPedido, segundosAteExpirar, statusCadastro, montarBannerArquivo, dimensoesEnvio,
+  resumoPedido, segundosAteExpirar, statusCadastro, montarBannerArquivo, dimensoesEnvio, resumoImporte,
 } from './lib.js';
 
 // O token fica só em memória: recarregar a página ou fechar a aba encerra a sessão.
@@ -1372,7 +1372,85 @@ async function carregarExecucoes() {
   }
 }
 
+/** Importe automático: interruptor, resumo da última rodada e lista do que entrou, com Desfazer. */
+async function carregarImporteAutomatico() {
+  const alvo = $('importe-automatico-corpo');
+  try {
+    const e = await api('/admin/catalog/auto-import');
+    const caixa = el('input', { type: 'checkbox' });
+    caixa.checked = e.enabled;
+    caixa.addEventListener('change', async () => {
+      const ligar = caixa.checked;
+      if (ligar && !window.confirm('Ligar o importe automático? As corridas que passarem nas travas serão PUBLICADAS no app sem a sua revisão. Você poderá desfazer cada uma.')) {
+        caixa.checked = false;
+        return;
+      }
+      caixa.disabled = true;
+      try {
+        await api('/admin/catalog/auto-import', { method: 'PUT', body: JSON.stringify({ enabled: ligar }) });
+        aviso(ligar ? 'Importe automático ligado.' : 'Importe automático desligado.', 'ok');
+      } catch (falha) {
+        caixa.checked = !ligar;
+        if (token) aviso(mensagem(falha.codigo), 'erro');
+      } finally {
+        caixa.disabled = false;
+        carregarImporteAutomatico();
+      }
+    });
+    const agora = el('button', { type: 'button', class: 'sec' }, 'Importar agora');
+    agora.addEventListener('click', async () => {
+      agora.disabled = true;
+      try {
+        const r = await api('/admin/catalog/auto-import/run', { method: 'POST' });
+        aviso(r.skipped ? 'O importe automático está desligado.' : `Importe feito: ${r.created} corrida(s) nova(s).`, r.skipped ? 'erro' : 'ok');
+      } catch (falha) {
+        if (token) aviso(mensagem(falha.codigo), 'erro');
+      } finally {
+        agora.disabled = false;
+        carregarImporteAutomatico();
+      }
+    });
+    const ultimo = e.lastRun ? resumoImporte(e.lastRun.detalhe) : null;
+    alvo.replaceChildren(
+      el('label', { class: 'confirma' }, caixa, ' Importe automático ligado'),
+      el('p', { class: 'meta' }, 'Travas (todas precisam passar): ' + e.gates.join('; ') + '. Roda de hora em hora.'),
+      e.lastRun
+        ? el('p', { class: 'meta' }, `Última rodada: ${dataHoraBr(e.lastRun.at)} (${e.lastRun.trigger === 'manual' ? 'manual' : 'agendada'}) · ${ultimo.texto}${ultimo.detalhes.length ? ` (para revisão: ${ultimo.detalhes.join('; ')})` : ''}`)
+        : el('p', { class: 'meta' }, 'Nenhuma rodada ainda.'),
+      el('div', { class: 'acoes' }, agora),
+      el('h3', {}, 'Importadas automaticamente'),
+      ...(e.recent.length
+        ? e.recent.map((c) =>
+            el(
+              'div',
+              { class: 'linha' },
+              `${c.name} · ${dataBr(c.date)} · ${dataHoraBr(c.at)} `,
+              c.undone || c.archived
+                ? el('span', { class: 'meta' }, '(desfeita)')
+                : el('button', { type: 'button', class: 'perigo', onclick: () => desfazerImporte(c) }, 'Desfazer'),
+            ),
+          )
+        : [el('p', { class: 'vazio' }, 'Nada importado automaticamente ainda.')]),
+    );
+  } catch (erro) {
+    if (token) alvo.replaceChildren(el('p', { class: 'aviso erro' }, mensagem(erro.codigo)));
+  }
+}
+
+async function desfazerImporte(c) {
+  const motivo = window.prompt(`Desfazer a corrida "${c.name}" (ela é arquivada e some do app). Motivo:`, '');
+  if (motivo === null) return;
+  try {
+    await api('/admin/catalog/auto-import/undo', { method: 'POST', body: JSON.stringify({ editionId: c.id, reason: motivo.trim() }) });
+    aviso('Corrida desfeita (arquivada).', 'ok');
+    carregarImporteAutomatico();
+  } catch (falha) {
+    if (token) aviso(mensagem(falha.codigo), 'erro');
+  }
+}
+
 async function carregarUltimoDisparo() {
+  carregarImporteAutomatico();
   carregarAgendamentos();
   carregarExecucoes();
   try {

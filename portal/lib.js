@@ -21,6 +21,7 @@ export const MENSAGENS = {
   OPERATOR_NOT_FOUND: 'Operador não encontrado.',
   OPERATOR_NOT_ACTIVE: 'O acesso deste operador não está ativo. Reative-o primeiro.',
   INVALID_IMAGE_URL: 'Endereço de imagem inválido: use https, sem usuário e senha.',
+  AUTOIMPORT_ENTRY_NOT_FOUND: 'Essa corrida não foi importada pelo importe automático (ou já foi desfeita).',
   INVALID_SOCIAL_URL: 'Endereço inválido: use o perfil do organizador (Instagram ou Facebook) ou o endereço de um post, reel ou vídeo público.',
   IMAGE_URL_BLOCKED: 'Este endereço aponta para uma rede interna e foi bloqueado.',
   IMAGE_TOO_LARGE: 'A imagem passa de 6 MB.',
@@ -483,4 +484,29 @@ export function montarBannerArquivo({ editionId, base64, tipo, credito, nota, co
   if (!TIPOS_IMAGEM_BANNER.includes(tipo)) throw new Error('Use uma imagem JPEG, PNG ou WebP.');
   if (base64.length > 5_800_000) throw new Error('A imagem ficou grande demais. Escolha uma menor.');
   return { editionId, imageBase64: base64, contentType: tipo, ...montarPublicacaoBanner({ credito, nota, confirmou }) };
+}
+
+/** Motivos pelos quais o importe automático deixou uma corrida para a revisão, em português. */
+export const MOTIVOS_IMPORTE = {
+  fora_da_capital: 'fora da capital',
+  data_fora_da_janela: 'data fora da janela (passada ou a mais de 18 meses)',
+  sem_pagina_https: 'sem página oficial ou de inscrição em https',
+  parecida_com: 'parecida com uma corrida que já existe no mesmo dia',
+};
+
+/** Resumo de uma rodada do importe automático: o que entrou e o que ficou para a revisão. */
+export function resumoImporte(detalhe) {
+  const arquivos = Array.isArray(detalhe) ? detalhe : [];
+  const soma = { created: 0, blocked: 0, review: 0, invalid: 0, later: 0 };
+  const motivos = {};
+  for (const a of arquivos) {
+    for (const k of Object.keys(soma)) soma[k] += Number((a.counts || {})[k]) || 0;
+    for (const [m, n] of Object.entries(a.reasons || {})) motivos[m] = (motivos[m] || 0) + Number(n);
+  }
+  const partes = [`${soma.created} importada(s)`];
+  const revisao = soma.blocked + soma.review + soma.invalid;
+  if (revisao) partes.push(`${revisao} para revisão`);
+  if (soma.later) partes.push(`${soma.later} ficaram para a próxima rodada`);
+  const detalhes = Object.entries(motivos).map(([m, n]) => `${n} ${MOTIVOS_IMPORTE[m] || m}`);
+  return { texto: partes.join(' · '), detalhes };
 }

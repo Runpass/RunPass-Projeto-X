@@ -72,7 +72,12 @@
       </section>
       <section id="sec-catalogo" data-sec="catalogo" hidden>
         <div class="barra"><h1>Atualizar o catálogo</h1></div>
-        <p class="ajuda">Dispara a rotina do catálogo agora. Ela usa a cota da OpenAI e roda em segundo plano (alguns minutos). Só um disparo a cada 10 minutos. Nada é publicado: o resultado vai para revisão.</p>
+        <p class="ajuda">Dispara a rotina do catálogo agora. Ela usa a cota da OpenAI e roda em segundo plano (alguns minutos). Só um disparo a cada 10 minutos. Com o importe automático desligado nada é publicado: o resultado vai para revisão.</p>
+        <article class="cartao" id="importe-automatico">
+          <h2>Importe automático</h2>
+          <p class="ajuda">Depois de cada busca ou enriquecimento, o portal importa e <strong>publica sozinho</strong> as corridas do relatório que passam em todas as travas. O que não passa fica para a sua revisão. Desligado por padrão.</p>
+          <div id="importe-automatico-corpo"></div>
+        </article>
         <article class="cartao">
           <label>O que rodar <select id="modo-catalogo"></select></label>
           <button id="rodar" type="button">Disparar</button>

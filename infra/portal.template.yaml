@@ -310,6 +310,35 @@ Resources:
         - {Key: Project, Value: RunPass}
         - {Key: Environment, Value: !Ref Environment}
 
+  # Importe automatico das corridas achadas pela rotina: a cada hora a regra chama a funcao do portal com um evento
+  # proprio (nao e HTTP). A funcao so age se o interruptor do portal (aba Atualizar catalogo) estiver ligado; ate la
+  # responde "desligado" sem tocar no catalogo. Sem nova tentativa: repetir e seguro, mas nao precisa.
+  AutoImportRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Importe automatico das corridas achadas pela rotina (desligado ate o portal ligar)
+      ScheduleExpression: rate(1 hour)
+      State: ENABLED
+      Targets:
+        - Id: admin-auto-import
+          Arn: !GetAtt AdminFunction.Arn
+          Input: '{"autoImport": true}'
+
+  AutoImportPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AdminFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AutoImportRule.Arn
+
+  AdminFunctionNoRetry:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref AdminFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 0
+
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:

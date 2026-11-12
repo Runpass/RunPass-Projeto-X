@@ -13,6 +13,7 @@ from runpass.admin_api import MfaPolicy, admit_operator, create_admin_app
 from runpass.admin_banners import BannerAdmin
 from runpass.admin_divergences import DivergenceReview
 from runpass.admin_users import AdminUsers, CatalogRunner, CatalogSchedules, next_run
+from runpass.auto_import import AutoImport
 from runpass.catalog import CatalogService, seed_synthetic
 from runpass.edition_requests import EditionRequestService
 from runpass.identity import AuthFailure, Principal
@@ -320,6 +321,13 @@ class AdminApiTests(unittest.TestCase):
                     self.store,
                 ),
                 divergences=DivergenceReview(self.store, self.s3, "relatorios", lambda: self.now),
+                auto_import=AutoImport(
+                    self.store,
+                    self.catalog,
+                    self.s3,
+                    "relatorios",
+                    lambda: datetime.fromtimestamp(self.now, timezone.utc),
+                ),
                 quality_live=LiveQuality(
                     self.s3,
                     "relatorios",
@@ -2260,6 +2268,88 @@ class AdminApiTests(unittest.TestCase):
         )
         # Decisoes humanas vem da aba Divergencias (aqui nao ha enriquecimento em CSV: sem itens).
         self.assertIn("decisions", corpo)
+
+    def test_importe_automatico_liga_importa_lista_e_desfaz_pelo_portal(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/auto-import"
+        cabecalho = (
+            "source_external_id,name,event_date,city,state,country,distances_km,registration_status,"
+            "official_url,registration_url,organizer_name,venue,event_status,last_verified_at\n"
+        )
+        self.s3.objects["semanal/2026-11-10/candidatos.csv"] = cabecalho + (
+            "auto-1,Corrida Automatica Sintetica,2027-03-14,São Paulo,SP,BR,10,unknown,"
+            "https://exemplo.invalid/p,,Org,Local,scheduled,2026-11-10\n"
+        )
+        # Permissao e estado inicial: desligado.
+        self.assertEqual(self.client.get(url, headers=self.auth(token("adm"))).status_code, 403)
+        self.assertEqual(
+            self.client.put(
+                url, json={"enabled": True}, headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        estado = self.client.get(url, headers=h).json()
+        self.assertEqual((estado["enabled"], estado["recent"]), (False, []))
+        self.assertTrue(estado["gates"])
+        # Desligado: "importar agora" nao faz nada.
+        r = self.client.post(url + "/run", headers=h)
+        self.assertEqual((r.status_code, r.json()), (200, {"skipped": "disabled"}))
+        self.assertIsNone(self.catalog._edition("catalogo-auto-auto-1"))
+        # Liga e importa; so o corpo `{"enabled": bool}` vale.
+        self.assertEqual(
+            self.client.put(url, json={"enabled": "talvez"}, headers=h).status_code, 422
+        )
+        self.assertEqual(
+            self.client.put(url, json={"enabled": True, "x": 1}, headers=h).status_code, 422
+        )
+        self.assertEqual(
+            self.client.put(url, json={"enabled": True}, headers=h).json(), {"enabled": True}
+        )
+        r = self.client.post(url + "/run", headers=h)
+        self.assertEqual((r.status_code, r.json()["created"]), (200, 1), r.text)
+        self.assertEqual(
+            self.catalog._edition("catalogo-auto-auto-1")["name"], "Corrida Automatica Sintetica"
+        )
+        estado = self.client.get(url, headers=h).json()
+        self.assertTrue(estado["enabled"])
+        self.assertEqual([e["id"] for e in estado["recent"]], ["catalogo-auto-auto-1"])
+        self.assertEqual(estado["lastRun"]["created"], 1)
+        # Desfazer arquiva a corrida; exige motivo e so vale para o que o importe automatico criou.
+        desfazer = url + "/undo"
+        corpo = {"editionId": "catalogo-auto-auto-1", "reason": "nao e uma corrida de rua"}
+        self.assertEqual(
+            self.client.post(desfazer, json={**corpo, "reason": " "}, headers=h).status_code, 422
+        )
+        self.assertEqual(
+            self.client.post(desfazer, json=corpo, headers=self.auth(token("adm"))).status_code, 403
+        )
+        self.assertEqual(
+            self.client.post(
+                desfazer, json={**corpo, "editionId": "synthetic-sp-2026"}, headers=h
+            ).status_code,
+            404,
+        )
+        r = self.client.post(desfazer, json=corpo, headers=h)
+        self.assertEqual(
+            (r.status_code, r.json()), (200, {"id": "catalogo-auto-auto-1", "undone": True}), r.text
+        )
+        self.assertEqual(self.catalog._edition("catalogo-auto-auto-1")["status"], "archived")
+        self.assertTrue(self.client.get(url, headers=h).json()["recent"][0]["undone"])
+        self.assertEqual(
+            self.client.post(desfazer, json=corpo, headers=h).status_code, 404
+        )  # nao desfaz duas vezes
+        trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
+        acoes = {row["action"] for _, row in trilha}
+        self.assertTrue({"autoimport.config", "autoimport.run", "autoimport.undo"} <= acoes)
+        # Desligar de novo para tudo.
+        self.assertEqual(
+            self.client.put(url, json={"enabled": False}, headers=h).json(), {"enabled": False}
+        )
+        self.s3.objects["semanal/2026-11-11/candidatos.csv"] = cabecalho + (
+            "auto-2,Outra Automatica Sintetica,2027-04-14,São Paulo,SP,BR,10,unknown,"
+            "https://exemplo.invalid/q,,Org,Local,scheduled,2026-11-11\n"
+        )
+        self.assertEqual(self.client.post(url + "/run", headers=h).json(), {"skipped": "disabled"})
 
     def test_banner_preview_aprovar_e_retirar(self):
         h = self.auth(token("op"))

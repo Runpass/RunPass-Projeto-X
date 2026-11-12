@@ -3,7 +3,7 @@
 import os
 from functools import lru_cache
 
-from .composition import create_admin_aws_app
+from .composition import create_admin_aws_app, create_auto_import_aws
 from .lambda_entry import _boto_client, _settings
 
 
@@ -74,5 +74,18 @@ def _admin():
     return Mangum(app, lifespan="off")
 
 
+@lru_cache(maxsize=1)
+def _auto_import():
+    return create_auto_import_aws(
+        _settings(with_cursor_key=True),
+        _boto_client("dynamodb"),
+        _boto_client("s3"),
+        os.environ.get("RUNPASS_CATALOG_REPORT_BUCKET", ""),
+    )
+
+
 def handler(event, context):
+    # Evento da regra horaria (nao e uma chamada HTTP): importe automatico das corridas achadas pela rotina.
+    if isinstance(event, dict) and event.get("autoImport") is True:
+        return _auto_import().run("schedule")
     return _admin()(event, context)

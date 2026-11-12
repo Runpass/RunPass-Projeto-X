@@ -191,6 +191,7 @@ def create_admin_app(
     banners=None,
     divergences=None,
     quality_live=None,
+    auto_import=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
@@ -624,6 +625,43 @@ def create_admin_app(
     def quality(op: Operator):
         need(op, "catalog_admin")
         return QUALITY_REPORT
+
+    class AutoImportSwitch(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        enabled: bool
+
+    class AutoImportUndo(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        editionId: str = Field(max_length=120)
+        reason: str = Field(max_length=200)
+
+    def need_auto_import(op):
+        actor = need(op, "catalog_admin")
+        if auto_import is None:
+            raise Unavailable()
+        return actor
+
+    @app.get("/admin/catalog/auto-import")
+    def auto_import_status(op: Operator):
+        need_auto_import(op)
+        return auto_import.status()
+
+    @app.put("/admin/catalog/auto-import")
+    def auto_import_switch(payload: AutoImportSwitch, op: Operator):
+        actor = need_auto_import(op)
+        return auto_import.set_enabled(actor, payload.enabled)
+
+    @app.post("/admin/catalog/auto-import/run")
+    def auto_import_run(op: Operator):
+        actor = need_auto_import(op)
+        summary = auto_import.run("manual")
+        audit(store, actor.subject, "autoimport.run", {"created": summary.get("created", 0)}, clock)
+        return summary
+
+    @app.post("/admin/catalog/auto-import/undo")
+    def auto_import_undo(payload: AutoImportUndo, op: Operator):
+        actor = need_auto_import(op)
+        return auto_import.undo(actor, payload.editionId, payload.reason)
 
     @app.get("/admin/quality/live")
     def quality_live_report(op: Operator):

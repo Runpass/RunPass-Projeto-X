@@ -9,6 +9,7 @@ from .admin_costs import AwsCosts, OpenAiOrg, OpenAiUsage
 from .admin_divergences import DivergenceReview
 from .admin_users import AdminUsers, CatalogRunner, CatalogSchedules
 from .api import create_app
+from .auto_import import AutoImport
 from .aws_adapters import CognitoAccountRemover, S3AuditSink, S3BlobStore
 from .catalog import CatalogService
 from .edition_requests import EditionRequestService
@@ -137,6 +138,19 @@ def _quality_live(service, clock, media):
     return LiveQuality(media["s3"], media.get("report_bucket", ""), review)
 
 
+def _auto_import(service, catalog, media):
+    if not media or not media.get("report_bucket"):
+        return None
+    return AutoImport(service.store, catalog, media["s3"], media["report_bucket"])
+
+
+def create_auto_import_aws(settings: AwsSettings, dynamodb_client, s3_client, report_bucket):
+    """Importe automatico fora da API (evento agendado da funcao do portal). Desligado ate o portal ligar."""
+    service = _identity_service(settings, dynamodb_client)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    return AutoImport(service.store, catalog, s3_client, report_bucket)
+
+
 def _divergences(service, clock, media):
     if not media:
         return None
@@ -183,6 +197,7 @@ def create_admin_aws_app(
         banners=_banner_admin(service, catalog, clock, media),
         divergences=_divergences(service, clock, media),
         quality_live=_quality_live(service, clock, media),
+        auto_import=_auto_import(service, catalog, media),
         openai_org=OpenAiOrg(
             (costs or {}).get("openai_key_loader"),
             clock,

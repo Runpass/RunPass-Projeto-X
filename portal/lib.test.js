@@ -288,3 +288,14 @@ test('montarBannerArquivo exige corrida, arquivo válido, crédito, base e confi
   assert.throws(() => montarBannerArquivo({ ...ok, nota: 'curta' }), /base de autorização/);
   assert.throws(() => montarBannerArquivo({ ...ok, confirmou: false }), /Confirme/);
 });
+
+test('resumoImporte soma as rodadas e traduz os motivos', async () => {
+  const { resumoImporte } = await import('./lib.js');
+  assert.deepEqual(resumoImporte(undefined), { texto: '0 importada(s)', detalhes: [] });
+  const r = resumoImporte([
+    { counts: { created: 1, blocked: 2, review: 0, invalid: 1, later: 0 }, reasons: { fora_da_capital: 1, parecida_com: 1 } },
+    { counts: { created: 2, blocked: 1, review: 1, invalid: 0, later: 3 }, reasons: { fora_da_capital: 1 } },
+  ]);
+  assert.equal(r.texto, '3 importada(s) · 5 para revisão · 3 ficaram para a próxima rodada');
+  assert.deepEqual(r.detalhes, ['2 fora da capital', '1 parecida com uma corrida que já existe no mesmo dia']);
+});

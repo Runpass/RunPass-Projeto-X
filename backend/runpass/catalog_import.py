@@ -192,11 +192,21 @@ def classify(catalog, payload, origin, source_code):
     return "updated", None, int(head["version"])
 
 
-def import_rows(catalog, actor, results, *, origin, source_code, dry_run=True, synthetic=False):
+def import_rows(
+    catalog,
+    actor,
+    results,
+    *,
+    origin,
+    source_code,
+    dry_run=True,
+    synthetic=False,
+    allow_system=False,
+):
     """Aplica (ou simula) as linhas validas. Devolve o relatorio com contadores e o detalhe."""
     counts = {"created": 0, "updated": 0, "unchanged": 0, "needs_review": 0, "error": 0}
     report = []
-    importer = CatalogImporter(catalog)
+    importer = CatalogImporter(catalog, allow_system=allow_system)
     for result in results:
         entry = {"row": result["row"], "externalId": result["externalId"]}
         if result["errors"]:

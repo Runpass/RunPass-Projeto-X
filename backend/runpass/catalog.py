@@ -464,16 +464,29 @@ def index_rows(body, version):
     return rows
 
 
+class AutoImportActor:
+    """Ator do importe automatico (sem pessoa e sem MFA). So vale em um importador criado com
+    `allow_system=True`, o que so o servico de importe automatico faz (ver auto_import.py)."""
+
+    subject = "system:auto-import"
+    token_digest = ""
+
+
 class CatalogImporter:
     """Internal operation; there is no HTTP bypass for runners or MFA-less operators."""
 
-    def __init__(self, catalog):
+    def __init__(self, catalog, allow_system=False):
         self.catalog, self.store = catalog, catalog.store
+        self.allow_system = allow_system
 
     def _authorization(self, actor, synthetic):
         if synthetic:
             if not isinstance(self.store, MemoryStore):
                 raise ValueError("Synthetic loader is local-memory only")
+            return {}
+        if isinstance(actor, AutoImportActor):
+            if not self.allow_system:
+                raise Problem(403, "OPERATOR_SESSION_REQUIRED")
             return {}
         if actor is None:
             raise Problem(403, "OPERATOR_SESSION_REQUIRED")
