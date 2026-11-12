@@ -226,6 +226,34 @@ void main() {
     expect(s.calls, ['POST /uploads', 'POST /uploads/up1/finalize']);
   });
 
+  testWidgets(
+    'sugestão de banner de corrida cadastrada aparece como tal e mostra a situação',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final s = await setup(
+        mine: [
+          {
+            ...listed('linked'),
+            'id': 'sug1',
+            'kind': 'banner',
+            'linkedEditionId': 'E1',
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(home: MyEditionRequestsScreen(gateway: s.gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Sugestão de banner para uma corrida já cadastrada'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('aguardando a decisão'), findsOneWidget);
+    },
+  );
+
   testWidgets('ao corrigir um pedido recusado não há campo de banner', (
     tester,
   ) async {

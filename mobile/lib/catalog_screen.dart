@@ -13,6 +13,7 @@ import 'identity_gateway.dart';
 import 'location_picker.dart';
 import 'my_races.dart';
 import 'notifications.dart';
+import 'organizer_post.dart';
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 
@@ -34,6 +35,18 @@ Uri? safeHttpsUri(Object? value) {
   if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return null;
   if (uri.userInfo.isNotEmpty) return null;
   return uri;
+}
+
+/// Perfil do organizador numa rede social: só https e só dos domínios da própria rede (o servidor
+/// já valida; aqui é a segunda barreira antes de abrir o navegador).
+Uri? socialProfileUri(Object? value, String network) {
+  final uri = safeHttpsUri(value);
+  if (uri == null) return null;
+  final host = uri.host.toLowerCase();
+  final domains = network == 'instagram'
+      ? const ['instagram.com', 'www.instagram.com']
+      : const ['facebook.com', 'www.facebook.com', 'fb.com', 'www.fb.com'];
+  return domains.contains(host) ? uri : null;
 }
 
 String registrationText(String? status) => switch (status) {
@@ -1450,10 +1463,20 @@ class _CatalogScreenState extends State<CatalogScreen> {
 class EditionScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final String editionId;
+
+  /// Escolhe e recorta a imagem do banner sugerido; nulo se a pessoa desistir. Troque nos testes.
+  final Future<List<int>?> Function(BuildContext context)? bannerSelector;
+
+  /// Busca e desenha o embed do post do organizador. Trocáveis nos testes (a WebView não roda lá).
+  final OEmbedFetcher? oembedFetcher;
+  final OEmbedViewBuilder? embedBuilder;
   const EditionScreen({
     super.key,
     required this.gateway,
     required this.editionId,
+    this.bannerSelector,
+    this.oembedFetcher,
+    this.embedBuilder,
   });
   @override
   State<EditionScreen> createState() => _EditionScreenState();
@@ -1479,6 +1502,7 @@ class _EditionScreenState extends State<EditionScreen> {
   int photoColumns = GridColumns.standard;
   bool loadingPhotos = false;
   bool showAllReviews = false;
+  bool sendingBanner = false;
   // Detalhes (itens avaliados) da avaliação geral e da minha: recolher e expandir.
   bool showSummaryDetails = true, showMyDetails = true;
   Map<String, dynamic>? mine;
@@ -2138,7 +2162,11 @@ class _EditionScreenState extends State<EditionScreen> {
   Widget linksSection(Map<String, dynamic> body) {
     final site = safeHttpsUri(body['officialUrl']);
     final buy = safeHttpsUri(body['registrationUrl']);
-    if (site == null && buy == null) return const SizedBox.shrink();
+    final instagram = socialProfileUri(body['instagramUrl'], 'instagram');
+    final facebook = socialProfileUri(body['facebookUrl'], 'facebook');
+    if (site == null && buy == null && instagram == null && facebook == null) {
+      return const SizedBox.shrink();
+    }
     final closed =
         body['registrationStatus'] == 'closed' ||
         body['registrationStatus'] == 'sold_out';
@@ -2161,6 +2189,20 @@ class _EditionScreenState extends State<EditionScreen> {
               onPressed: () => openLink(site),
               icon: const Icon(Icons.public_rounded),
               label: const Text('Site da corrida'),
+            ),
+          if (instagram != null)
+            OutlinedButton.icon(
+              key: const Key('link-instagram'),
+              onPressed: () => openLink(instagram),
+              icon: const Icon(Icons.camera_alt_outlined),
+              label: const Text('Ver no Instagram'),
+            ),
+          if (facebook != null)
+            OutlinedButton.icon(
+              key: const Key('link-facebook'),
+              onPressed: () => openLink(facebook),
+              icon: const Icon(Icons.thumb_up_alt_outlined),
+              label: const Text('Ver no Facebook'),
             ),
         ],
       ),
@@ -2241,8 +2283,68 @@ class _EditionScreenState extends State<EditionScreen> {
             style: TextStyle(fontSize: 12, color: context.muted),
           ),
         ),
+      const SizedBox(height: 20),
+      OutlinedButton.icon(
+        key: const Key('suggest-banner'),
+        onPressed: sendingBanner ? null : suggestBanner,
+        icon: const Icon(Icons.add_photo_alternate_outlined),
+        label: Text(
+          sendingBanner ? 'Enviando…' : 'Sugerir banner desta corrida',
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(
+          'A equipe confere a autorização da imagem antes de publicar.',
+          style: TextStyle(fontSize: 12, color: context.muted),
+        ),
+      ),
     ],
   );
+
+  /// Sugere o banner desta corrida: a imagem vai para a fila da equipe, que confere a autorização e decide.
+  Future<void> suggestBanner() async {
+    final messenger = ScaffoldMessenger.of(context);
+    List<int>? bytes;
+    try {
+      if (widget.bannerSelector != null) {
+        bytes = await widget.bannerSelector!(context);
+      } else {
+        final choice = await askPhotoChoice(context);
+        if (choice == null || choice == PhotoChoice.remove || !mounted) return;
+        bytes = await pickBannerPhoto(context, choice);
+      }
+    } on Exception catch (problem) {
+      messenger.showSnackBar(SnackBar(content: Text(photoError(problem))));
+      return;
+    }
+    if (bytes == null || !mounted) return;
+    setState(() => sendingBanner = true);
+    var message =
+        'Banner enviado. A equipe confere a autorização e decide se publica.';
+    try {
+      final reference = await uploadProfilePhoto(widget.gateway, bytes);
+      await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/banner-suggestions',
+        method: 'POST',
+        body: {'imageReference': reference},
+      );
+    } on IdentityIssue catch (issue) {
+      message = switch (issue.code) {
+        'BANNER_SUGGESTION_EXISTS' => 'Você já enviou um banner para esta corrida e ele aguarda a decisão da equipe.',
+        'TOO_MANY_PENDING_REQUESTS' => 'Você já tem 5 banners aguardando decisão. Espere a equipe decidir para enviar outro.',
+        'EDITION_ARCHIVED' =>
+          'Esta corrida saiu de circulação e não aceita banner.',
+        _ => photoError(issue),
+      };
+    } on Exception {
+      message =
+          'Sem conexão com o servidor. Verifique a internet e tente novamente.';
+    } finally {
+      if (mounted) setState(() => sendingBanner = false);
+    }
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
 
   Future<void> createDraft() async {
     setState(() {
@@ -2630,7 +2732,16 @@ class _EditionScreenState extends State<EditionScreen> {
   Widget photosTab() {
     final list = photos;
     final own = _ownPhoto;
-    if (loadingPhotos && list == null && own == null) {
+    // Post escolhido pela equipe: so e mostrado (embed oficial da Meta), nunca copiado.
+    final postRef = organizerPostRef(edition?['organizerPostUrl']);
+    final organizer = postRef == null
+        ? null
+        : OrganizerPostCard(
+            post: postRef,
+            fetcher: widget.oembedFetcher ?? fetchOEmbedHtml,
+            embedBuilder: widget.embedBuilder ?? webViewEmbed,
+          );
+    if (loadingPhotos && list == null && own == null && organizer == null) {
       return const Center(child: CircularProgressIndicator());
     }
     final others = list ?? const <Map<String, dynamic>>[];
@@ -2641,11 +2752,19 @@ class _EditionScreenState extends State<EditionScreen> {
       ...others,
     ];
     if (shown.isEmpty) {
-      return emptyTab(
-        Icons.photo_library_outlined,
-        list == null
-            ? 'Não foi possível carregar as fotos agora.'
-            : 'As fotos desta prova aparecerão aqui.',
+      final note = list == null
+          ? 'Não foi possível carregar as fotos agora.'
+          : 'As fotos desta prova aparecerão aqui.';
+      if (organizer == null) {
+        return emptyTab(Icons.photo_library_outlined, note);
+      }
+      return ListView(
+        key: const Key('photos-list'),
+        padding: const EdgeInsets.all(16),
+        children: [
+          organizer,
+          Text(note, style: TextStyle(color: context.muted)),
+        ],
       );
     }
     final total = shown.length - others.length + photoTotal;
@@ -2653,6 +2772,7 @@ class _EditionScreenState extends State<EditionScreen> {
       key: const Key('photos-list'),
       padding: const EdgeInsets.all(16),
       children: [
+        ?organizer,
         Row(
           children: [
             Expanded(

@@ -490,7 +490,10 @@ class _MyEditionRequestsScreenState extends State<MyEditionRequestsScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              requestStatusLabel(status),
+              // Sugestão de banner de corrida já cadastrada: não é um pedido de cadastro.
+              request['kind'] == 'banner'
+                  ? 'Sugestão de banner para uma corrida já cadastrada'
+                  : requestStatusLabel(status),
               key: Key('status-${request['id']}'),
             ),
             if (details['imageReference'] != null &&

@@ -1255,6 +1255,63 @@ void main() {
     expect(find.text('Não foi possível abrir o link.'), findsOneWidget);
   });
 
+  testWidgets(
+    'detalhe mostra Instagram e Facebook só de perfis das próprias redes',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final opened = <Uri>[];
+      final original = linkOpener;
+      linkOpener = (uri) async {
+        opened.add(uri);
+        return true;
+      };
+      addTearDown(() => linkOpener = original);
+      Future<void> open(Map<String, dynamic> extra) async {
+        final gateway = await signed((uri, method, headers, body) async {
+          if (uri.path == '/editions/E1') {
+            return JsonReply(200, {...entry('A'), 'id': 'E1', ...extra});
+          }
+          return const JsonReply(200, {'items': []});
+        });
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpWidget(
+          MaterialApp(
+            home: EditionScreen(gateway: gateway, editionId: 'E1'),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await open({});
+      expect(find.byKey(const Key('link-instagram')), findsNothing);
+      expect(find.byKey(const Key('link-facebook')), findsNothing);
+      // Outro domínio, http e esquemas perigosos nunca viram botão.
+      await open({
+        'instagramUrl': 'https://exemplo.org/instagram/corrida/',
+        'facebookUrl': 'http://www.facebook.com/corridaexemplo',
+      });
+      expect(find.byKey(const Key('link-instagram')), findsNothing);
+      expect(find.byKey(const Key('link-facebook')), findsNothing);
+      await open({'instagramUrl': 'javascript:alert(1)'});
+      expect(find.byKey(const Key('link-instagram')), findsNothing);
+      await open({
+        'instagramUrl': 'https://www.instagram.com/corrida_exemplo/',
+        'facebookUrl': 'https://www.facebook.com/corridaexemplo',
+      });
+      expect(find.text('Ver no Instagram'), findsOneWidget);
+      expect(find.text('Ver no Facebook'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('link-instagram')));
+      await tester.tap(find.byKey(const Key('link-facebook')));
+      await tester.pump();
+      expect(opened.map((u) => u.toString()), [
+        'https://www.instagram.com/corrida_exemplo/',
+        'https://www.facebook.com/corridaexemplo',
+      ]);
+    },
+  );
+
   group('busca por frase livre', () {
     Future<void> typePhrase(WidgetTester tester, String text) async {
       await tester.enterText(find.byKey(const Key('catalog-phrase')), text);

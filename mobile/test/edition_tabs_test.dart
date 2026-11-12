@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -432,6 +434,105 @@ void main() {
       );
     },
   );
+
+  final onePixelPng = base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  );
+
+  Future<(IdentityGateway, List<String>, List<Map<String, dynamic>?>)>
+  suggestionGateway({int status = 201, String code = 'X'}) async {
+    final calls = <String>[];
+    final bodies = <Map<String, dynamic>?>[];
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.example'),
+      api: Uri.parse('https://api.example'),
+      clientId: 'synthetic',
+      byteTransport: (uri, method, headers, bytes) async => 200,
+      transport: (uri, method, headers, body) async {
+        if (uri.host == 'cognito.example') {
+          return const JsonReply(200, {
+            'AuthenticationResult': {'AccessToken': 'synthetic'},
+          });
+        }
+        calls.add('$method ${uri.path}');
+        if (uri.path == '/editions/E1') return const JsonReply(200, edition);
+        if (uri.path == '/uploads') {
+          return const JsonReply(201, {
+            'uploadId': 'up1',
+            'uploadUrl': 'https://signed.example/up1',
+            'uploadMethod': 'PUT',
+            'uploadHeaders': {'Content-Type': 'image/png'},
+          });
+        }
+        if (uri.path == '/uploads/up1/finalize') {
+          return JsonReply(200, {
+            'uploadId': 'up1',
+            'state': 'valid',
+            'imageReference': 'img_${'a' * 64}',
+          });
+        }
+        if (uri.path == '/editions/E1/banner-suggestions') {
+          bodies.add(body);
+          return status == 201
+              ? const JsonReply(201, {'id': 'r1', 'status': 'linked'})
+              : JsonReply(status, {'code': code});
+        }
+        return const JsonReply(200, {'items': [], 'total': 0});
+      },
+    );
+    await gateway.signIn('synthetic@example.test', 'synthetic');
+    return (gateway, calls, bodies);
+  }
+
+  Future<void> tapSuggest(WidgetTester tester, IdentityGateway gateway) async {
+    tester.view.physicalSize = const Size(800, 3200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(
+          gateway: gateway,
+          editionId: 'E1',
+          bannerSelector: (context) async => onePixelPng,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final button = find.byKey(const Key('suggest-banner'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'Sugerir banner: envia a imagem e a sugestão só leva a referência',
+    (tester) async {
+      final (gateway, calls, bodies) = await suggestionGateway();
+      await tapSuggest(tester, gateway);
+      expect(calls.where((c) => c.startsWith('POST')), [
+        'POST /uploads',
+        'POST /uploads/up1/finalize',
+        'POST /editions/E1/banner-suggestions',
+      ]);
+      expect(bodies.single, {'imageReference': 'img_${'a' * 64}'});
+      expect(
+        find.textContaining('A equipe confere a autorização'),
+        findsWidgets,
+      );
+      expect(find.text('Sugerir banner desta corrida'), findsOneWidget);
+    },
+  );
+
+  testWidgets('Sugerir banner: avisa quando já há uma sugestão aguardando', (
+    tester,
+  ) async {
+    final (gateway, _, _) = await suggestionGateway(
+      status: 409,
+      code: 'BANNER_SUGGESTION_EXISTS',
+    );
+    await tapSuggest(tester, gateway);
+    expect(find.textContaining('aguarda a decisão da equipe'), findsOneWidget);
+  });
 
   testWidgets('Fotos: sem fotos mostra o aviso', (tester) async {
     final empty = await gatewayWith(photos: {'items': [], 'total': 0});
