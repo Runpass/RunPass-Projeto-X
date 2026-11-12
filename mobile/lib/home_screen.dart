@@ -174,6 +174,7 @@ Future<FeedLoad> loadFeed(
   Map<String, dynamic>? profile;
   try {
     profile = await gateway.request('/me');
+    rememberNavProfile(gateway, profile);
   } on Exception {
     profile = null;
   }
@@ -274,6 +275,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     Map<String, dynamic>? profile;
     try {
       profile = await widget.gateway.request('/me');
+      rememberNavProfile(widget.gateway, profile);
     } on Exception {
       return false;
     }

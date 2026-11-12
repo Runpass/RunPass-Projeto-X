@@ -99,7 +99,7 @@ void main() {
         MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Minhas Medalhas'), findsOneWidget);
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
       expect(find.text('Corrida A'), findsOneWidget);
       expect(find.text('Corrida B'), findsOneWidget);
       // Two completed races in two cities; the draft is not a medal.
@@ -140,7 +140,7 @@ void main() {
     },
   );
 
-  testWidgets('tocar na foto de perfil na tela de medalhas abre o Perfil', (
+  testWidgets('tocar na aba Perfil (foto do usuário) abre o Perfil', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -148,7 +148,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(RunnerProfileScreen), findsNothing);
-    await tester.tap(find.byKey(const Key('medals-profile-avatar')));
+    expect(find.byKey(const Key('nav-profile-avatar')), findsOneWidget);
+    await tester.tap(find.text('Perfil'));
     await tester.pumpAndSettle();
     expect(find.byType(RunnerProfileScreen), findsOneWidget);
     expect(find.byType(MedalCollectionScreen), findsNothing);

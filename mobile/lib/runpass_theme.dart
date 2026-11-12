@@ -179,27 +179,41 @@ class RunPassWordmark extends StatelessWidget {
 class RunPassBottomNav extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int>? onDestinationSelected;
+
+  /// Miniatura da foto do usuário, no lugar do ícone padrão da aba "Perfil"
+  /// (mesma foto sempre visível, como no Instagram). Sem foto, cai no ícone padrão.
+  final Widget? profileIcon;
+  final Widget? profileIconSelected;
   const RunPassBottomNav({
     super.key,
     required this.selectedIndex,
     this.onDestinationSelected,
+    this.profileIcon,
+    this.profileIconSelected,
   });
 
   @override
   Widget build(BuildContext context) => NavigationBar(
     selectedIndex: selectedIndex,
     onDestinationSelected: onDestinationSelected,
-    destinations: const [
-      NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Início'),
-      NavigationDestination(
+    destinations: [
+      const NavigationDestination(
+        icon: Icon(Icons.home_outlined),
+        label: 'Início',
+      ),
+      const NavigationDestination(
         icon: Icon(Icons.directions_run),
         label: 'Corridas',
       ),
-      NavigationDestination(
+      const NavigationDestination(
         icon: Icon(Icons.emoji_events_outlined),
         label: 'Medalhas',
       ),
-      NavigationDestination(icon: Icon(Icons.person_outline), label: 'Perfil'),
+      NavigationDestination(
+        icon: profileIcon ?? const Icon(Icons.person_outline),
+        selectedIcon: profileIconSelected ?? profileIcon,
+        label: 'Perfil',
+      ),
     ],
   );
 }
