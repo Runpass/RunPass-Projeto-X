@@ -29,6 +29,23 @@ def _write_review_pointer(read, write, pk, edition_id, participation_id, item, o
     write(ref, {"sharedKeys": [list(pointer), *kept]})
 
 
+def _sync_plan_pointer(read, write, pk, subject, edition_id, registered, now):
+    """Ponteiro `EDPLAN#<edicao>` dos inscritos (status `registered`), para listar quem vai
+    correr sem Scan. A leitura reconfere plano e conta; o ponteiro entra no `sharedKeys` do dono
+    (linha `PLANREF#`), entao o apagamento da conta o remove."""
+    pointer = ("history", "EDPLAN#" + edition_id, "U#" + subject)
+    ref = ("history", pk, "PLANREF#" + edition_id)
+    had_pointer, had_ref = read(pointer), read(ref)
+    if registered:
+        write(pointer, {"owner": subject, "editionId": edition_id, "updatedAt": stamp(now)})
+        write(ref, {"sharedKeys": [list(pointer)]})
+        return
+    if had_pointer:
+        write(pointer, None)
+    if had_ref:
+        write(ref, None)
+
+
 PLAN_STATES = ("wanted", "registered")
 MAX_PLANS = 200
 
@@ -326,6 +343,15 @@ class ParticipationService:
             if distance_id:
                 item["distanceId"] = distance_id
             write(key, item)
+            _sync_plan_pointer(
+                read,
+                write,
+                "USER#" + actor.subject,
+                actor.subject,
+                edition_id,
+                status == "registered",
+                now,
+            )
             return plan_projection(item), {}
 
         return self.identity.transact(actor, "putRacePlan", None, {}, work, admitted=True)
@@ -347,15 +373,48 @@ class ParticipationService:
         def work(read, write, account, now, replay):
             if read(key):
                 write(key, None)
+            _sync_plan_pointer(
+                read, write, "USER#" + actor.subject, actor.subject, edition_id, False, now
+            )
             return None, {}
 
         self.identity.transact(actor, "deleteRacePlan", None, {}, work, admitted=True)
+
+    def _repair_plan_pointers(self, actor, registered):
+        """Planos `registered` criados antes do indice de inscritos ganham o ponteiro na primeira
+        vez que o dono abre a propria agenda. Idempotente; so escreve o que falta e nunca
+        atrapalha a listagem (melhor esforco)."""
+        subject = actor.subject
+        missing = [
+            item["editionId"]
+            for item in registered
+            if self.store.get(("history", "EDPLAN#" + item["editionId"], "U#" + subject)) is None
+        ]
+        if not missing:
+            return
+
+        def work(read, write, account, now, replay):
+            for edition_id in missing:
+                current = read(("history", "USER#" + subject, "PLAN#" + edition_id))
+                if current and current.get("status") == "registered":
+                    _sync_plan_pointer(
+                        read, write, "USER#" + subject, subject, edition_id, True, now
+                    )
+            return None, {}
+
+        try:
+            self.identity.transact(actor, "repairPlanIndex", None, {}, work, admitted=True)
+        except Exception:  # noqa: BLE001 - reparo e opcional: a agenda abre mesmo assim
+            return
 
     def list_plans(self, actor, status=None):
         """Planos da propria pessoa com um resumo da edicao, por data (agenda)."""
         self.identity.authorize(actor, admitted=True)
         rows, _ = self.store.query(
             "history", "USER#" + actor.subject, prefix="PLAN#", limit=MAX_PLANS
+        )
+        self._repair_plan_pointers(
+            actor, [item for _, item in rows if item.get("status") == "registered"]
         )
         items = []
         for _, item in rows:

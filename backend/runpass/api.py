@@ -155,6 +155,7 @@ def create_app(
         distanceKm: Decimal | None = Query(None, gt=0),
         q: str | None = Query(None, min_length=1, max_length=160),
         registrationStatus: str | None = Query(None, pattern=r"^(unknown|open|closed|sold_out)$"),
+        audience: str | None = Query(None, pattern=r"^(kids|adult)$"),
         lat: float | None = Query(None, ge=-90, le=90),
         lon: float | None = Query(None, ge=-180, le=180),
         radiusKm: float | None = Query(None, gt=0, le=500),
@@ -173,6 +174,7 @@ def create_app(
                 distanceKm=distanceKm,
                 q=q,
                 registrationStatus=registrationStatus,
+                audience=audience,
                 lat=lat,
                 lon=lon,
                 radiusKm=radiusKm,
@@ -275,6 +277,33 @@ def create_app(
         if catalog is None or uploads is None:
             raise Unavailable()
         return uploads.edition_banner(actor, catalog.detail(actor, id))
+
+    @app.get("/editions/{id}/registrants", operation_id="listEditionRegistrants")
+    def edition_registrants(
+        id: str,
+        actor: Actor,
+        limit: int = Query(30, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_registrants(actor, id, limit, cursor)
+
+    @app.get("/editions/{id}/photos", operation_id="listEditionPhotos")
+    def edition_photos(
+        id: str,
+        actor: Actor,
+        limit: int = Query(30, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+        distanceId: str | None = Query(None, min_length=1, max_length=100),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_photos(actor, id, distanceId, limit, cursor)
 
     @app.get("/editions/{id}/participants", operation_id="listEditionParticipants")
     def edition_participants(

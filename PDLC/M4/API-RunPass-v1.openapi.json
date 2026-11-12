@@ -916,6 +916,18 @@
             }
           },
           {
+            "name": "audience",
+            "in": "query",
+            "description": "kids = name has Kids/Infantil/Mirim; adult = every other edition. Deduced from the name (product decision 2026-11-11) until the catalog has an audience field per distance.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "kids",
+                "adult"
+              ]
+            }
+          },
+          {
             "name": "lat",
             "in": "query",
             "schema": {
@@ -5752,6 +5764,156 @@
         "x-requires-beta-admission": true
       }
     },
+    "/editions/{id}/photos": {
+      "get": {
+        "operationId": "listEditionPhotos",
+        "description": "Photos runners published for this edition (own medal photo of published participations of active accounts), newest first. Never the catalog's generic art. `total` counts the photos visible to the reader.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "distanceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
+    "/editions/{id}/registrants": {
+      "get": {
+        "operationId": "listEditionRegistrants",
+        "description": "Runners who marked this edition as registered (plan status `registered`), newest first. Only profiles the reader may see (same rule as participants); `total` counts every valid registrant without identifying anyone.",
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Catalog"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      }
+    },
     "/editions/{id}/banner": {
       "get": {
         "operationId": "getEditionBanner",
@@ -7077,6 +7239,11 @@
             "type": "string",
             "nullable": true,
             "description": "Imagem do banner do perfil (mesmo envio de imagens); nulo remove."
+          },
+          "birthDate": {
+            "type": "string",
+            "format": "date",
+            "description": "Owner-only birth date. Must keep the admission minimum age (13). Never returned by public profile routes."
           }
         },
         "description": "Somente campos enviados mudam; null limpa opcionais. Username ASCII normalizado em minúsculas e reservado atomicamente. Nome não pode ser apenas whitespace. Versão obrigatória; não altera idade, admissão ou papéis."

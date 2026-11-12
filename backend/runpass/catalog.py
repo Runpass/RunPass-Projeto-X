@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+import re
 import unicodedata
 from copy import deepcopy
 from datetime import date, timedelta
@@ -26,6 +27,16 @@ def normalized(value):
         .casefold()
         .split()
     )
+
+
+KIDS_WORDS = re.compile(r"\b(kids?|infantil|infantis|mirim|crianca|criancas)\b")
+
+
+def is_kids(name):
+    """Corrida kids pelo NOME (palavras explicitas como Kids, Infantil, Mirim). E uma deducao
+    simples e transparente, nao um dado curado: decisao do produto em 11/11/2026, ate o catalogo
+    ter um campo proprio de publico por distancia."""
+    return bool(KIDS_WORDS.search(normalized(name)))
 
 
 def distance(value):
@@ -59,6 +70,8 @@ class CatalogFilters(Input):
     # Nome contendo o texto (sem acento nem caixa). Filtra o resultado; nao muda o indice.
     q: str | None = Field(default=None, min_length=1, max_length=160)
     registrationStatus: Literal["unknown", "open", "closed", "sold_out"] | None = None
+    # kids = nome com Kids/Infantil/Mirim; adult = o resto (ver is_kids).
+    audience: Literal["kids", "adult"] | None = None
     # Raio em torno de um ponto: os tres juntos ou nenhum.
     lat: float | None = Field(default=None, ge=-90, le=90)
     lon: float | None = Field(default=None, ge=-180, le=180)
@@ -261,6 +274,8 @@ class CatalogService:
                 ):
                     continue
                 if filters.q and filters.q not in normalized(body["name"]):
+                    continue
+                if filters.audience and is_kids(body["name"]) != (filters.audience == "kids"):
                     continue
                 # Inscricao desconhecida nunca vira "aberta": so casa com "unknown".
                 if (

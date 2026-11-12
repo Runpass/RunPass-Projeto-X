@@ -701,6 +701,78 @@ class SocialService:
             result["nextCursor"] = _cursor_encode([last.get("completedAt", ""), last["id"]])
         return result
 
+    def edition_registrants(self, actor, edition_id, limit=30, cursor=None):
+        """Quem marcou "inscrito" nesta edicao (plano `registered`), mais recentes primeiro.
+
+        Le o ponteiro `EDPLAN#<edicao>` e reconfere plano e conta na leitura. So lista perfis
+        que o leitor pode ver (mesma regra de `can_view` dos participantes); `total` conta todos
+        os inscritos validos, sem identificar ninguem."""
+        self.identity.authorize(actor, admitted=True)
+        after = _cursor_decode(cursor) if cursor else None
+        valid = []
+        for sk, pointer in self._list("history", "EDPLAN#" + edition_id, "U#", self.REVIEW_SCAN):
+            owner = pointer["owner"]
+            plan = self.store.get(("history", "USER#" + owner, "PLAN#" + edition_id))
+            profile = self._active_profile(self.store.get, owner)
+            if not plan or plan.get("status") != "registered" or not profile:
+                continue
+            valid.append((plan.get("updatedAt", ""), owner, plan, profile))
+        valid.sort(key=lambda r: (r[0], r[1]), reverse=True)
+        visible = [r for r in valid if self.can_view(self.store.get, actor.subject, r[1])]
+        window = [r for r in visible if after is None or (r[0], r[1]) < tuple(after)]
+        page = window[:limit]
+        items = [
+            {
+                "author": self._card(profile, actor.subject),
+                **({"distanceId": plan["distanceId"]} if plan.get("distanceId") else {}),
+                "registeredAt": updated,
+            }
+            for updated, _, plan, profile in page
+        ]
+        result = {"items": items, "total": len(valid)}
+        if len(window) > limit:
+            result["nextCursor"] = _cursor_encode([page[-1][0], page[-1][1]])
+        return result
+
+    def edition_photos(self, actor, edition_id, distance_id=None, limit=30, cursor=None):
+        """Fotos de medalha que os corredores publicaram para a edicao, mais recentes primeiro.
+
+        Mesma regra de `may_view_photo` (publicacao de conta ativa) e so entra quem enviou a
+        propria foto (origem `runner`), nunca a arte padrao do catalogo. `total` conta as fotos
+        visiveis para o leitor. Assume volume pequeno na beta (como o feed publico)."""
+        self.identity.authorize(actor, admitted=True)
+        after = _cursor_decode(cursor) if cursor else None
+        done = self._edition_completions(edition_id, distance_id)
+        done.sort(key=lambda r: (r[0].get("completedAt", ""), r[0]["id"]), reverse=True)
+        visible = []
+        for part, _, profile in done:
+            if not self.may_view_photo(self.store.get, actor, part["owner"], part):
+                continue
+            medal = self.store.get(
+                ("history", "USER#" + part["owner"], "P#" + part["id"] + "#MEDAL")
+            )
+            if medal and medal.get("imageOrigin") == "runner":
+                visible.append((part, profile))
+        window = [
+            r
+            for r in visible
+            if after is None or (r[0].get("completedAt", ""), r[0]["id"]) < tuple(after)
+        ]
+        page = window[:limit]
+        items = [
+            {
+                "participationId": part["id"],
+                "author": self._card(profile, actor.subject),
+                **{k: part[k] for k in ("distanceId", "completedAt") if k in part},
+            }
+            for part, profile in page
+        ]
+        result = {"items": items, "total": len(visible)}
+        if len(window) > limit:
+            last = page[-1][0]
+            result["nextCursor"] = _cursor_encode([last.get("completedAt", ""), last["id"]])
+        return result
+
     def edition_reviews(self, actor, edition_id, distance_id=None, limit=20, cursor=None):
         """Avaliacoes publicas validas da edicao, mais recentes primeiro, com o resumo do conjunto.
 

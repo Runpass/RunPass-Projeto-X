@@ -161,6 +161,42 @@ class CatalogImportTests(unittest.TestCase):
         self.assertEqual(saved["counts"]["created"], 2)
         self.assertNotIn("payload", saved)
 
+    def test_audience_filter_kids_by_name_and_adult_is_the_rest(self):
+        for slug, name in (
+            ("adulta", "Corrida de Rua Adulta"),
+            ("kids", "Corrida KIDS do Parque"),
+            ("infantil", "Mini Maratona Infantil"),
+            ("mirim", "Circuito Mirim"),
+            ("kidney", "Corrida Solidaria Kidney"),  # 'kidney' nao e a palavra 'kids'
+        ):
+            CatalogImporter(self.catalog).put(
+                {
+                    "id": "aud-" + slug,
+                    "name": name,
+                    "date": "2027-05-16",
+                    "city": "São Paulo",
+                    "state": "SP",
+                    "distances": [{"id": "5k", "kilometers": 5}],
+                },
+                expected_version=0,
+                origin="https://admin.invalid/manual",
+                synthetic=True,
+            )
+
+        def ids(**f):
+            # O catalogo de teste ja traz outras corridas sinteticas: olha so as desta prova.
+            return sorted(
+                e["id"] for e in self.listed(state="SP", **f) if e["id"].startswith("aud-")
+            )
+
+        self.assertEqual(ids(audience="kids"), ["aud-infantil", "aud-kids", "aud-mirim"])
+        self.assertEqual(ids(audience="adult"), ["aud-adulta", "aud-kidney"])
+        self.assertEqual(len(ids()), 5)  # sem o filtro, todas
+        # Combina com os outros filtros e rejeita valor desconhecido.
+        self.assertEqual(ids(audience="kids", q="parque"), ["aud-kids"])
+        with self.assertRaises(ValueError):
+            CatalogFilters(audience="todos")
+
     # ---- filtros novos ----
     def test_new_filters_name_contains_registration_and_radius(self):
         self.run_csv(dry_run=False)

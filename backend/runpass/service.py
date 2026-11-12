@@ -243,6 +243,14 @@ class IdentityService:
                     self._swap_profile_photo(
                         read, write, principal.subject, profile, payload, field
                     )
+            if "birthDate" in payload:
+                birth = payload["birthDate"]
+                if birth is None:
+                    raise Problem(422, "BIRTH_DATE_REQUIRED")
+                text = birth if isinstance(birth, str) else birth.isoformat()
+                self.eligible({"birthDate": text, "declaresAdult": True}, now)
+                private_key = ("identity", pk, "PRIVATE")
+                write(private_key, {**(read(private_key) or {}), "birthDate": text})
             new_username = payload.get("username", profile["username"]).lower()
             if new_username != profile["username"]:
                 new = ("identity", "USERNAME#" + new_username, "CLAIM")
@@ -254,7 +262,7 @@ class IdentityService:
                 write(new, {"owner": principal.subject})
                 write(old, None)
             for name, value in payload.items():
-                if name == "expectedVersion":
+                if name in ("expectedVersion", "birthDate"):
                     continue
                 if value is None:
                     profile.pop(name, None)
