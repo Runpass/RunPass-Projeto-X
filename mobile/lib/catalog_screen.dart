@@ -148,6 +148,18 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   _ => 'Não foi possível concluir agora. Pode ser falta de conexão ou instabilidade do serviço. Tente novamente em instantes.',
 };
 
+/// Perfil para a miniatura da aba "Perfil" do menu inferior. Guardado quando alguma tela já
+/// busca o /me por conta própria (Início, Perfil); o menu nunca faz uma requisição só para
+/// isso, então, antes do primeiro /me da sessão, a aba mostra o ícone padrão.
+final Map<IdentityGateway, Map<String, dynamic>> _navProfiles = {};
+
+void rememberNavProfile(
+  IdentityGateway gateway,
+  Map<String, dynamic> profile,
+) => _navProfiles[gateway] = profile;
+
+void forgetNavProfile(IdentityGateway gateway) => _navProfiles.remove(gateway);
+
 /// [subScreen]: tela interna (detalhe, rascunho). Tocar na aba já destacada leva à tela principal
 /// da aba, em vez de não fazer nada.
 Widget runPassNavigation(
@@ -155,24 +167,40 @@ Widget runPassNavigation(
   IdentityGateway gateway,
   int selectedIndex, {
   bool subScreen = false,
-}) => RunPassBottomNav(
-  selectedIndex: selectedIndex,
-  onDestinationSelected: (index) {
-    if (index == selectedIndex && !subScreen) return;
-    final screen = switch (index) {
-      0 => RunPassHomeScreen(gateway: gateway),
-      1 => CatalogScreen(gateway: gateway),
-      2 => MedalCollectionScreen(gateway: gateway),
-      _ => RunnerProfileScreen(gateway: gateway),
-    };
-    final route = MaterialPageRoute<void>(builder: (_) => screen);
-    if (subScreen) {
-      Navigator.of(context).pushAndRemoveUntil(route, (r) => r.isFirst);
-    } else {
-      Navigator.of(context).pushReplacement(route);
-    }
-  },
-);
+}) {
+  Widget avatar() => ProfileAvatar(
+    key: const Key('nav-profile-avatar'),
+    radius: 12,
+    gateway: gateway,
+    profile: _navProfiles[gateway],
+  );
+  return RunPassBottomNav(
+    selectedIndex: selectedIndex,
+    profileIcon: avatar(),
+    profileIconSelected: Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: runPassOrange, width: 2),
+      ),
+      child: avatar(),
+    ),
+    onDestinationSelected: (index) {
+      if (index == selectedIndex && !subScreen) return;
+      final screen = switch (index) {
+        0 => RunPassHomeScreen(gateway: gateway),
+        1 => CatalogScreen(gateway: gateway),
+        2 => MedalCollectionScreen(gateway: gateway),
+        _ => RunnerProfileScreen(gateway: gateway),
+      };
+      final route = MaterialPageRoute<void>(builder: (_) => screen);
+      if (subScreen) {
+        Navigator.of(context).pushAndRemoveUntil(route, (r) => r.isFirst);
+      } else {
+        Navigator.of(context).pushReplacement(route);
+      }
+    },
+  );
+}
 
 /// Participações (rascunho ou concluída) da pessoa por edição, para marcar "já está na sua lista".
 /// Falhas deixam o mapa vazio: a marca é só uma ajuda e nunca bloqueia a tela.

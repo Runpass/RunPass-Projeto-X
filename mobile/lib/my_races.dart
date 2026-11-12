@@ -1349,7 +1349,6 @@ class MedalCollectionScreen extends StatefulWidget {
 
 class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late Future<List<RaceRecord>> races = loadMyRaces(widget.gateway);
-  late final Future<Map> profile = widget.gateway.request('/me');
   MedalGrouping grouping = MedalGrouping.all;
   bool newestFirst = true;
 
@@ -1635,39 +1634,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     child: Builder(
       builder: (context) => Scaffold(
         appBar: AppBar(
-          leading: Padding(
-            padding: const EdgeInsets.all(6),
-            child: FutureBuilder<Map>(
-              future: profile,
-              builder: (context, snapshot) => InkWell(
-                key: const Key('medals-profile-avatar'),
-                customBorder: const CircleBorder(),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        RunnerProfileScreen(gateway: widget.gateway),
-                  ),
-                ),
-                child: Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: runPassOrange, width: 2),
-                  ),
-                  child: ProfileAvatar(
-                    radius: 16,
-                    gateway: widget.gateway,
-                    profile: snapshot.data,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          centerTitle: true,
-          title: const Text(
-            'Minhas Medalhas',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
+          title: const RunPassWordmark(compact: true),
           actions: [
             NotificationBell(gateway: widget.gateway),
             const SizedBox(width: 8),
@@ -2187,6 +2154,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
         },
       );
       forgetProfilePhoto(profile['id'] as String);
+      forgetNavProfile(widget.gateway);
       if (mounted) {
         setState(() {
           data = load();
@@ -2268,6 +2236,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
 
   Future<ProfileData> load() async {
     final profile = await widget.gateway.request('/me');
+    rememberNavProfile(widget.gateway, profile);
     var races = const <RaceRecord>[];
     var plans = const <Map<String, dynamic>>[];
     try {
