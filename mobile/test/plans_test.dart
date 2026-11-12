@@ -201,6 +201,179 @@ void main() {
     expect(find.byKey(const Key('agenda-EB')), findsNothing);
   });
 
+  Future<void> openCalendar(
+    WidgetTester tester,
+    List<Map<String, dynamic>> plans,
+  ) async {
+    big(tester);
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/me/race-plans' && method == 'GET') {
+        return JsonReply(200, {'items': plans});
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: AgendaScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+  }
+
+  List<Map<String, dynamic>> calendarPlans() => [
+    {
+      'editionId': 'EA',
+      'status': 'wanted',
+      'version': 1,
+      'edition': upcoming('A', date: '2099-01-10'),
+    },
+    {
+      'editionId': 'EC',
+      'status': 'wanted',
+      'version': 1,
+      'edition': upcoming('C', date: '2099-01-20'),
+    },
+    {
+      'editionId': 'ED',
+      'status': 'wanted',
+      'version': 1,
+      'edition': upcoming('D', date: '2099-03-05'),
+    },
+    {
+      'editionId': 'EB',
+      'status': 'registered',
+      'version': 1,
+      'edition': upcoming('B', date: '2099-06-15'),
+    },
+  ];
+
+  test('monthCells: grade que começa no domingo, com células em branco', () {
+    // 1/11/2026 é domingo: sem células em branco antes do dia 1.
+    final nov = monthCells(DateTime(2026, 11));
+    expect(nov.where((c) => c == null).length, 0);
+    expect(nov.length, 30);
+    // 1/12/2026 é terça: duas células em branco.
+    final dec = monthCells(DateTime(2026, 12));
+    expect(dec.where((c) => c == null).length, 2);
+    expect(dec.whereType<DateTime>().length, 31);
+    // fevereiro de 2024 (bissexto) começa numa quinta: 4 em branco e 29 dias.
+    final feb = monthCells(DateTime(2024, 2));
+    expect(feb.where((c) => c == null).length, 4);
+    expect(feb.whereType<DateTime>().length, 29);
+  });
+
+  testWidgets('a agenda é um calendário do mês da próxima corrida, com os dias '
+      'das corridas marcados', (tester) async {
+    await openCalendar(tester, calendarPlans());
+    expect(find.byKey(const Key('agenda-calendar-wanted')), findsOneWidget);
+    expect(find.text('janeiro de 2099'), findsOneWidget);
+    expect(find.text('D'), findsWidgets); // cabeçalho dos dias da semana
+    // os dias 10 e 20 existem e respondem ao toque; um dia sem corrida não
+    expect(
+      find.byKey(const Key('agenda-day-wanted-2099-01-10')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('agenda-day-wanted-2099-01-20')),
+      findsOneWidget,
+    );
+    final semCorrida = tester.widget<InkWell>(
+      find.byKey(const Key('agenda-day-wanted-2099-01-11')),
+    );
+    expect(semCorrida.onTap, isNull);
+    // a lista abaixo mostra todas as corridas da aba, de qualquer mês
+    for (final id in ['EA', 'EC', 'ED']) {
+      expect(find.byKey(Key('agenda-$id')), findsOneWidget);
+    }
+    expect(find.byKey(const Key('agenda-EB')), findsNothing); // é de Inscritas
+  });
+
+  testWidgets('tocar num dia mostra só as corridas dele e "Ver todas" volta', (
+    tester,
+  ) async {
+    await openCalendar(tester, calendarPlans());
+    await tester.tap(find.byKey(const Key('agenda-day-wanted-2099-01-10')));
+    await tester.pumpAndSettle();
+    expect(find.text('Corridas em 10/01/2099'), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EC')), findsNothing);
+    expect(find.byKey(const Key('agenda-ED')), findsNothing);
+    // tocar no mesmo dia de novo desmarca
+    await tester.tap(find.byKey(const Key('agenda-day-wanted-2099-01-10')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-EC')), findsOneWidget);
+    // outro dia, e "Ver todas"
+    await tester.tap(find.byKey(const Key('agenda-day-wanted-2099-01-20')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-EA')), findsNothing);
+    expect(find.byKey(const Key('agenda-EC')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('agenda-clear-day-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-ED')), findsOneWidget);
+  });
+
+  testWidgets('as setas trocam o mês e limpam o dia escolhido', (tester) async {
+    await openCalendar(tester, calendarPlans());
+    await tester.tap(find.byKey(const Key('agenda-day-wanted-2099-01-10')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('agenda-next-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.text('fevereiro de 2099'), findsOneWidget);
+    expect(find.text('Corridas em 10/01/2099'), findsNothing); // dia limpo
+    await tester.tap(find.byKey(const Key('agenda-next-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.text('março de 2099'), findsOneWidget);
+    expect(
+      find.byKey(const Key('agenda-day-wanted-2099-03-05')),
+      findsOneWidget,
+    );
+    // virada de ano para trás: de janeiro para dezembro do ano anterior
+    await tester.tap(find.byKey(const Key('agenda-prev-wanted')));
+    await tester.tap(find.byKey(const Key('agenda-prev-wanted')));
+    await tester.tap(find.byKey(const Key('agenda-prev-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.text('dezembro de 2098'), findsOneWidget);
+  });
+
+  testWidgets('cada aba tem o seu calendário, no mês da sua próxima corrida', (
+    tester,
+  ) async {
+    await openCalendar(tester, calendarPlans());
+    expect(find.text('janeiro de 2099'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('agenda-tab-registered')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-calendar-registered')), findsOneWidget);
+    expect(find.text('junho de 2099'), findsOneWidget);
+    expect(
+      find.byKey(const Key('agenda-day-registered-2099-06-15')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('agenda-EB')), findsOneWidget);
+  });
+
+  testWidgets('sem corridas a agenda mostra o calendário do mês atual e o '
+      'aviso', (tester) async {
+    await openCalendar(tester, []);
+    expect(find.byKey(const Key('agenda-calendar-wanted')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-empty-wanted')), findsOneWidget);
+    final hoje = DateTime.now();
+    const meses = [
+      'janeiro',
+      'fevereiro',
+      'março',
+      'abril',
+      'maio',
+      'junho',
+      'julho',
+      'agosto',
+      'setembro',
+      'outubro',
+      'novembro',
+      'dezembro',
+    ];
+    expect(
+      find.text('${meses[hoje.month - 1]} de ${hoje.year}'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('ao digitar o nome, sugere as corridas para escolher uma', (
     tester,
   ) async {
