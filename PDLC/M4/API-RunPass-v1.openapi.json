@@ -5858,6 +5858,82 @@
         "x-requires-beta-admission": true
       }
     },
+    "/editions/{id}/banner-suggestions": {
+      "post": {
+        "operationId": "suggestEditionBanner",
+        "description": "Suggest a banner for an edition already in the catalog. Only a reference to an image the caller already uploaded and processed (same rule as a request banner). It enters the team's banner queue; nothing is published without the team's decision, credit and authorization. One open suggestion per person and edition, at most 5 open.",
+        "responses": {
+          "201": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "EditionRequests"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "imageReference"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "imageReference": {
+                    "type": "string",
+                    "pattern": "^img_[a-f0-9]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
     "/editions/{id}/registrants": {
       "get": {
         "operationId": "listEditionRegistrants",
@@ -6868,6 +6944,24 @@
             "type": "string",
             "maxLength": 200,
             "description": "Credit shown with the edition banner; present only with imageReference."
+          },
+          "instagramUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Instagram profile (https://www.instagram.com/<user>/), reviewed by the team."
+          },
+          "facebookUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Facebook page (https://www.facebook.com/<page>), reviewed by the team."
+          },
+          "organizerPostUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "One public post/reel/video of the organizer, approved by the team. The app only DISPLAYS it with Meta's official embed; nothing from the post is copied or stored."
           }
         }
       },
@@ -8545,6 +8639,24 @@
           "sourceExternalId": {
             "type": "string",
             "description": "Identificador da prova na fonte."
+          },
+          "instagramUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Instagram profile (https://www.instagram.com/<user>/), reviewed by the team."
+          },
+          "facebookUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Facebook page (https://www.facebook.com/<page>), reviewed by the team."
+          },
+          "organizerPostUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "One public post/reel/video of the organizer, approved by the team. The app only DISPLAYS it with Meta's official embed; nothing from the post is copied or stored."
           }
         },
         "required": [
@@ -8672,6 +8784,24 @@
           "sourceExternalId": {
             "type": "string",
             "description": "Identificador da prova na fonte."
+          },
+          "instagramUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Instagram profile (https://www.instagram.com/<user>/), reviewed by the team."
+          },
+          "facebookUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Organizer Facebook page (https://www.facebook.com/<page>), reviewed by the team."
+          },
+          "organizerPostUrl": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "One public post/reel/video of the organizer, approved by the team. The app only DISPLAYS it with Meta's official embed; nothing from the post is copied or stored."
           }
         },
         "required": [

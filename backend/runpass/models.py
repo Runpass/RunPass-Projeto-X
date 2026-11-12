@@ -239,6 +239,12 @@ class EditComment(Input):
         return value.strip()
 
 
+class BannerSuggestion(Input):
+    """Banner sugerido para uma corrida ja cadastrada: so a referencia de uma imagem JA enviada e tratada."""
+
+    imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+
+
 class EditionRequestFields(Input):
     """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
     (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""

@@ -16,6 +16,7 @@ from .erasure import ErasureProcessor
 from .events import EventProcessor
 from .identity import CognitoDirectory, CognitoVerifier, JwksProvider
 from .participation import ParticipationService
+from .quality_live import LiveQuality
 from .service import IdentityService
 from .social import SocialService
 from .store import DynamoStore
@@ -84,7 +85,9 @@ def create_aws_app(
         catalog = CatalogService(service, settings.cursor_encryption_key)
         if settings.history_table:
             participations = ParticipationService(service, catalog, settings.cursor_encryption_key)
-            edition_requests = EditionRequestService(service, settings.cursor_encryption_key)
+            edition_requests = EditionRequestService(
+                service, settings.cursor_encryption_key, catalog
+            )
     social = SocialService(service) if settings.history_table else None
     uploads = None
     if blob_store is not None:
@@ -125,6 +128,13 @@ def _banner_admin(service, catalog, clock, media):
         media.get("report_bucket", ""),
         clock,
     )
+
+
+def _quality_live(service, clock, media):
+    if not media:
+        return None
+    review = DivergenceReview(service.store, media["s3"], media.get("report_bucket", ""), clock)
+    return LiveQuality(media["s3"], media.get("report_bucket", ""), review)
 
 
 def _divergences(service, clock, media):
@@ -172,6 +182,7 @@ def create_admin_aws_app(
         runner=CatalogRunner(service.store, lambda_client, catalog_function, clock, logs_client),
         banners=_banner_admin(service, catalog, clock, media),
         divergences=_divergences(service, clock, media),
+        quality_live=_quality_live(service, clock, media),
         openai_org=OpenAiOrg(
             (costs or {}).get("openai_key_loader"),
             clock,

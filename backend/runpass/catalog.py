@@ -373,6 +373,10 @@ class ImportEdition(Input):
     organizerId: str | None = None
     officialUrl: str | None = None
     registrationUrl: str | None = None
+    # Redes do organizador (links conferidos por uma pessoa) e UM post para exibir pelo embed da Meta.
+    instagramUrl: str | None = None
+    facebookUrl: str | None = None
+    organizerPostUrl: str | None = None
     imageReference: str | None = None
     # Credito exibido junto do banner (ex.: "Divulgação: Organizador"); so com imageReference.
     imageCredit: str | None = Field(default=None, min_length=1, max_length=200)
@@ -405,6 +409,17 @@ class ImportEdition(Input):
             return Decimal(str(value))
         except InvalidOperation as error:
             raise ValueError("Coordenada invalida") from error
+
+    @field_validator("instagramUrl", "facebookUrl", "organizerPostUrl")
+    @classmethod
+    def social(cls, value, info):
+        from .social_links import check_post, check_profile
+
+        if info.field_name == "organizerPostUrl":
+            return check_post(value)
+        return check_profile(
+            "instagram" if info.field_name == "instagramUrl" else "facebook", value
+        )
 
     @field_validator("lastVerifiedAt")
     @classmethod

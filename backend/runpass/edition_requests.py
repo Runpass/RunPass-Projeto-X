@@ -68,6 +68,7 @@ def projection(item):
             "reason",
             "linkedEditionId",
             "bannerState",
+            "kind",
         )
         if key in item
     }
@@ -95,10 +96,14 @@ def stored_details(model: EditionRequestFields):
     return details
 
 
+MAX_BANNER_SUGGESTIONS = 5  # sugestoes de banner ainda sem decisao, por pessoa
+
+
 class EditionRequestService:
-    def __init__(self, identity, cursor_key):
+    def __init__(self, identity, cursor_key, catalog=None):
         self.identity, self.store = identity, identity.store
         self.cipher = Fernet(cursor_key)
+        self.catalog = catalog
 
     def _pending_count(self, actor):
         rows, _ = self.store.query("history", "USER#" + actor.subject, prefix="EREQ#", limit=100)
@@ -157,6 +162,79 @@ class EditionRequestService:
 
         return self.identity.transact(
             actor, "createEditionRequest", key, payload, work, admitted=True
+        )
+
+    def suggest_banner(self, actor, key, edition_id, image_reference):
+        """Sugere o banner de uma corrida JA cadastrada. Vira um item `kind=banner` ja vinculado a corrida
+        e entra so na fila de banners da equipe (a mesma dos pedidos): nada e publicado sem a decisao
+        dela, com credito e autorizacao. Uma sugestao em aberto por pessoa e corrida, no maximo 5 no total."""
+        if self.catalog is None:
+            raise Unavailable()
+        edition = self.catalog.detail(actor, edition_id)  # 404 se nao existe
+        if edition.get("status") == "archived":
+            raise Problem(409, "EDITION_ARCHIVED")
+        details = {
+            "name": edition["name"],
+            "date": edition["date"],
+            "city": edition["city"],
+            "distanceKm": max(d["kilometers"] for d in edition["distances"]),
+            "imageReference": image_reference,
+        }
+        if edition.get("state"):
+            details["state"] = edition["state"]
+
+        def work(read, write, account, now, replay):
+            if replay is not None:
+                item = read(item_key(actor.subject, replay["id"]))
+                if not item:
+                    raise Problem(404, "EDITION_REQUEST_NOT_FOUND")
+                return projection(item), replay
+            rows, _ = self.store.query(
+                "history", "USER#" + actor.subject, prefix="EREQ#", limit=100
+            )
+            open_ones = [
+                i for _, i in rows if i.get("kind") == "banner" and not i.get("bannerState")
+            ]
+            if any(i.get("linkedEditionId") == edition_id for i in open_ones):
+                raise Problem(409, "BANNER_SUGGESTION_EXISTS")
+            if len(open_ones) >= MAX_BANNER_SUGGESTIONS:
+                raise Problem(409, "TOO_MANY_PENDING_REQUESTS")
+            image_key = ("operations", "USER#" + actor.subject, "IMAGE#" + image_reference)
+            image = read(image_key)
+            if (
+                not image
+                or image.get("state") != "valid"
+                or image.get("owner") != actor.subject
+                or image.get("origin") != "runner"
+            ):
+                raise Problem(422, "IMAGE_NOT_VALID")
+            request_id, created = new_id(now), stamp(now)
+            owner, image_queue = owner_key(request_id), image_queue_key(created, request_id)
+            item = {
+                "id": request_id,
+                "owner": actor.subject,
+                "kind": "banner",
+                "status": "linked",
+                "version": 1,
+                "details": details,
+                "linkedEditionId": edition_id,
+                "createdAt": created,
+                "updatedAt": created,
+                "sharedKeys": [list(owner), list(image_queue)],
+            }
+            write(item_key(actor.subject, request_id), item)
+            write(owner, {"owner": actor.subject})
+            write(image_queue, {"id": request_id, "createdAt": created})
+            write(image_key, {**image, "refs": image.get("refs", 0) + 1})
+            return projection(item), {"id": request_id}
+
+        return self.identity.transact(
+            actor,
+            "suggestEditionBanner",
+            key,
+            {"editionId": edition_id, "imageReference": image_reference},
+            work,
+            admitted=True,
         )
 
     def get(self, actor, request_id):

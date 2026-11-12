@@ -21,6 +21,7 @@ export const MENSAGENS = {
   OPERATOR_NOT_FOUND: 'Operador não encontrado.',
   OPERATOR_NOT_ACTIVE: 'O acesso deste operador não está ativo. Reative-o primeiro.',
   INVALID_IMAGE_URL: 'Endereço de imagem inválido: use https, sem usuário e senha.',
+  INVALID_SOCIAL_URL: 'Endereço inválido: use o perfil do organizador (Instagram ou Facebook) ou o endereço de um post, reel ou vídeo público.',
   IMAGE_URL_BLOCKED: 'Este endereço aponta para uma rede interna e foi bloqueado.',
   IMAGE_TOO_LARGE: 'A imagem passa de 6 MB.',
   INVALID_IMAGE: 'O arquivo não é uma imagem JPEG, PNG ou WebP válida.',
@@ -460,4 +461,26 @@ export function montarPublicacaoBanner({ credito, nota, confirmou }) {
   if (n.length > 1000) throw new Error('A base de autorização pode ter até 1000 caracteres.');
   if (!confirmou) throw new Error('Confirme que a base de autorização é verdadeira.');
   return { credit: c, rightsNote: n, confirmRights: true };
+}
+
+/** Tipos de imagem que o servidor aceita no banner enviado como arquivo. */
+export const TIPOS_IMAGEM_BANNER = ['image/jpeg', 'image/png', 'image/webp'];
+
+/** Tamanho (largura x altura) para enviar: o maior lado nunca passa de `maximo`, mantendo a proporção. */
+export function dimensoesEnvio(largura, altura, maximo = 1920) {
+  if (!(largura > 0) || !(altura > 0)) throw new Error('Imagem sem tamanho válido.');
+  const escala = Math.min(1, maximo / Math.max(largura, altura));
+  return { largura: Math.max(1, Math.round(largura * escala)), altura: Math.max(1, Math.round(altura * escala)) };
+}
+
+/**
+ * Corpo do banner enviado como ARQUIVO (base64 dentro do JSON; o portal reduz a imagem antes porque a
+ * Lambda aceita até 6 MB). Mesma exigência do banner por endereço: crédito, base de autorização e confirmação.
+ */
+export function montarBannerArquivo({ editionId, base64, tipo, credito, nota, confirmou }) {
+  if (!editionId) throw new Error('Escolha a corrida do banner.');
+  if (!base64) throw new Error('Escolha o arquivo da imagem.');
+  if (!TIPOS_IMAGEM_BANNER.includes(tipo)) throw new Error('Use uma imagem JPEG, PNG ou WebP.');
+  if (base64.length > 5_800_000) throw new Error('A imagem ficou grande demais. Escolha uma menor.');
+  return { editionId, imageBase64: base64, contentType: tipo, ...montarPublicacaoBanner({ credito, nota, confirmou }) };
 }

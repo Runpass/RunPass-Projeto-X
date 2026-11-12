@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from .catalog import CatalogFilters
 from .identity import AuthFailure
 from .models import (
+    BannerSuggestion,
     CompleteParticipation,
     CreateComment,
     CreateParticipation,
@@ -366,6 +367,18 @@ def create_app(
         if edition_requests is None:
             raise Unavailable()
         return edition_requests.create(actor, idempotency_key, body)
+
+    @app.post(
+        "/editions/{id}/banner-suggestions",
+        status_code=201,
+        operation_id="suggestEditionBanner",
+    )
+    def suggest_edition_banner(
+        id: str, body: BannerSuggestion, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.suggest_banner(actor, idempotency_key, id, body.imageReference)
 
     @app.get("/me/edition-requests", operation_id="listMyEditionRequests")
     def list_my_edition_requests(

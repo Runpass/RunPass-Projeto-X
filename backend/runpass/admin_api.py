@@ -15,7 +15,7 @@ import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 import jwt
@@ -24,13 +24,14 @@ from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .admin_users import audit
 from .catalog import normalized
 from .edition_requests import EditionRequestReview
 from .identity import AuthFailure
 from .models import ReviewRequestDecision
+from .operator_admin import set_social_links
 from .quality_report import REPORT as QUALITY_REPORT
 from .service import Problem
 from .store import Conflict, Unavailable
@@ -148,7 +149,22 @@ def search_editions(catalog, text, limit=20):
             if words and words not in normalized(body["name"]):
                 continue
             seen.add(body["id"])
-            found.append({k: body[k] for k in ("id", "name", "date", "city", "state") if k in body})
+            found.append(
+                {
+                    k: body[k]
+                    for k in (
+                        "id",
+                        "name",
+                        "date",
+                        "city",
+                        "state",
+                        "instagramUrl",
+                        "facebookUrl",
+                        "organizerPostUrl",
+                    )
+                    if k in body
+                }
+            )
             if len(found) >= limit:
                 break
         if after is None:
@@ -174,6 +190,7 @@ def create_admin_app(
     openai_org=None,
     banners=None,
     divergences=None,
+    quality_live=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
@@ -354,17 +371,58 @@ def create_admin_app(
         model_config = ConfigDict(extra="forbid")
         permissions: list[str] = Field(min_length=1, max_length=8)
 
+    class SocialLinks(BaseModel):
+        """Perfis do organizador e post a exibir. So as chaves enviadas mudam; texto vazio ou nulo apaga."""
+
+        model_config = ConfigDict(extra="forbid")
+        instagramUrl: str | None = Field(default=None, max_length=500)
+        facebookUrl: str | None = Field(default=None, max_length=500)
+        organizerPostUrl: str | None = Field(default=None, max_length=500)
+
+    @app.put("/admin/editions/{edition_id}/social")
+    def edition_social(edition_id: str, payload: SocialLinks, op: Operator):
+        actor = need(op, "catalog_admin")
+        links = payload.model_dump(exclude_unset=True)
+        if not links:
+            raise Problem(422, "INVALID_INPUT")
+        try:
+            result = set_social_links(
+                catalog, actor, edition_id, links, "https://portal.runpass.invalid/redes"
+            )
+        except ValueError as error:
+            raise Problem(422, "INVALID_SOCIAL_URL") from error
+        audit(
+            store,
+            actor.subject,
+            "edition.social",
+            {"editionId": edition_id, "fields": sorted(links)},
+            clock,
+        )
+        return result
+
     class ImageUrl(BaseModel):
         model_config = ConfigDict(extra="forbid")
         imageUrl: str = Field(max_length=2000)
 
     class BannerApproval(BaseModel):
+        """Banner por endereco (`imageUrl`) OU por arquivo enviado no portal (`imageBase64` + `contentType`).
+        O arquivo vai em base64 dentro do JSON (a Lambda aceita ate 6 MB): o portal reduz a imagem antes."""
+
         model_config = ConfigDict(extra="forbid")
         editionId: str = Field(max_length=120)
-        imageUrl: str = Field(max_length=2000)
+        imageUrl: str | None = Field(default=None, max_length=2000)
+        imageBase64: str | None = Field(default=None, max_length=5_800_000)
+        contentType: Literal["image/jpeg", "image/png", "image/webp"] | None = None
         credit: str = Field(max_length=200)
         rightsNote: str = Field(max_length=1000)
         confirmRights: bool
+
+        @model_validator(mode="after")
+        def one_source(self):
+            by_file = self.imageBase64 is not None
+            if (self.imageUrl is not None) == by_file or (by_file and self.contentType is None):
+                raise ValueError("Use imageUrl OR imageBase64 with contentType")
+            return self
 
     class BannerRemoval(BaseModel):
         model_config = ConfigDict(extra="forbid")
@@ -477,6 +535,16 @@ def create_admin_app(
     @app.post("/admin/banners/approve", status_code=201)
     def banner_approve(payload: BannerApproval, op: Operator):
         actor = need_banners(op)
+        if payload.imageBase64 is not None:
+            return banners.approve_file(
+                actor,
+                payload.editionId,
+                payload.imageBase64,
+                payload.contentType,
+                payload.credit,
+                payload.rightsNote,
+                payload.confirmRights,
+            )
         return banners.approve(
             actor,
             payload.editionId,
@@ -556,6 +624,13 @@ def create_admin_app(
     def quality(op: Operator):
         need(op, "catalog_admin")
         return QUALITY_REPORT
+
+    @app.get("/admin/quality/live")
+    def quality_live_report(op: Operator):
+        need(op, "catalog_admin")
+        if quality_live is None:
+            raise Unavailable()
+        return quality_live.latest()
 
     @app.get("/admin/costs")
     def costs(op: Operator):

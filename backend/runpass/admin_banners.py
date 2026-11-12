@@ -7,6 +7,8 @@ endereco REAL da conexao precisa ser publico (confere depois de conectar, o que 
 resposta); o pedido so e enviado depois dessa conferencia.
 """
 
+import base64
+import binascii
 import csv
 import hashlib
 import http.client
@@ -220,6 +222,9 @@ class BannerAdmin:
                     "imageUrl": row["imagem_url"],
                     "credit": row.get("credito_sugerido", ""),
                     "rights": row.get("direitos", ""),
+                    # Perfis que a propria pagina oficial divulga (so os de formato valido).
+                    "instagramUrl": _valid_social("instagram", row.get("instagram_url")),
+                    "facebookUrl": _valid_social("facebook", row.get("facebook_url")),
                     "edition": self._brief(match) if match else None,
                 }
             )
@@ -299,6 +304,49 @@ class BannerAdmin:
         )
         return result
 
+    def approve_file(
+        self, actor, edition_id, image_base64, content_type, credit, rights_note, confirmed
+    ):
+        """Banner enviado como ARQUIVO pelo portal (sem endereco): mesma exigencia de credito e autorizacao.
+        A imagem passa pelo mesmo tratamento (JPEG/PNG; WebP vira JPEG; sem metadados)."""
+        if not confirmed:
+            raise Problem(422, "RIGHTS_NOT_CONFIRMED")
+        if not (credit or "").strip() or len((rights_note or "").strip()) < 10:
+            raise Problem(422, "INVALID_INPUT")
+        try:
+            raw = base64.b64decode(image_base64, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise Problem(422, "INVALID_IMAGE") from error
+        if not raw or len(raw) > MAX_BYTES:
+            raise Problem(422, "IMAGE_TOO_LARGE" if raw else "INVALID_IMAGE")
+        try:
+            data, kind = normalize_image(raw, content_type)
+        except ValueError as error:
+            raise Problem(422, "INVALID_IMAGE") from error
+        source = "https://portal.runpass.invalid/arquivo/" + hashlib.sha256(raw).hexdigest()[:16]
+        try:
+            result = approve_banner(
+                self.catalog,
+                self.blobs,
+                actor,
+                edition_id,
+                data,
+                kind,
+                credit,
+                rights_note,
+                source,
+            )
+        except ValueError as error:
+            raise Problem(422, "INVALID_INPUT") from error
+        audit(
+            self.store,
+            actor.subject,
+            "banner.approve_file",
+            {"editionId": edition_id, "reference": result["reference"]},
+            self.clock,
+        )
+        return result
+
     def remove(self, actor, edition_id, reason):
         if len((reason or "").strip()) < 5:
             raise Problem(422, "INVALID_INPUT")
@@ -316,6 +364,15 @@ class BannerAdmin:
             self.clock,
         )
         return result
+
+
+def _valid_social(kind, value):
+    from .social_links import check_profile
+
+    try:
+        return check_profile(kind, value)
+    except ValueError:
+        return None
 
 
 def _stamp(clock):

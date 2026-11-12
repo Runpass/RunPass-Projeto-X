@@ -18,6 +18,7 @@ from runpass.edition_requests import EditionRequestService
 from runpass.identity import AuthFailure, Principal
 from runpass.models import EditionRequestFields
 from runpass.operator_admin import grant_access
+from runpass.quality_live import LiveQuality
 from runpass.service import IdentityService, Problem
 from runpass.store import MemoryStore, Unavailable
 from runpass.upload import MemoryBlobStore
@@ -266,7 +267,7 @@ class AdminApiTests(unittest.TestCase):
         self.store = self.identity.store
         self.catalog = CatalogService(self.identity, Fernet.generate_key())
         seed_synthetic(self.catalog, ROOT / "backend/fixtures/catalog.synthetic.json")
-        self.requests = EditionRequestService(self.identity, Fernet.generate_key())
+        self.requests = EditionRequestService(self.identity, Fernet.generate_key(), self.catalog)
         self.mfa_on = True
         self.now = NOW.timestamp()
         self.cognito, self.lam, self.logs = FakeUsers(), FakeLambda(), FakeLogs()
@@ -319,6 +320,11 @@ class AdminApiTests(unittest.TestCase):
                     self.store,
                 ),
                 divergences=DivergenceReview(self.store, self.s3, "relatorios", lambda: self.now),
+                quality_live=LiveQuality(
+                    self.s3,
+                    "relatorios",
+                    DivergenceReview(self.store, self.s3, "relatorios", lambda: self.now),
+                ),
                 banners=BannerAdmin(
                     self.store,
                     self.catalog,
@@ -674,6 +680,54 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(self.banner(request).status_code, 409)
         registro = self.store.get(("operations", "EREQ#" + request["id"], "BANNER"))
         self.assertEqual((registro["state"], registro["by"]), ("published", "op"))
+
+    def test_sugerir_banner_de_corrida_ja_cadastrada_vai_para_a_fila_da_equipe(self):
+        person = Principal("rui", True)
+        self.identity.create_profile(person, "pr", {"displayName": "Rui", "username": "rui_x"})
+        self.identity.admit(person, "ar", {"birthDate": "1990-01-01", "declaresAdult": True})
+        ref = self.imagem_do_usuario("rui")
+        edition_id = "synthetic-sp-2026"
+        sugestao = self.requests.suggest_banner(person, "sb1", edition_id, ref)
+        self.assertEqual(
+            (sugestao["kind"], sugestao["status"], sugestao["linkedEditionId"]),
+            ("banner", "linked", edition_id),
+        )
+        self.assertEqual(
+            self.requests.suggest_banner(person, "sb1", edition_id, ref)["id"], sugestao["id"]
+        )  # mesma chave: mesmo resultado
+        imagem = self.store.get(("operations", "USER#rui", "IMAGE#" + ref))
+        self.assertEqual(imagem["refs"], 1)
+        # Nada publicado: a fila da equipe mostra a sugestao com a corrida e sem pedido pendente.
+        fila = self.client.get("/admin/edition-requests", headers=self.auth()).json()
+        self.assertEqual([i["id"] for i in fila["images"]], [sugestao["id"]])
+        self.assertEqual(fila["images"][0]["kind"], "banner")
+        self.assertEqual(fila["images"][0]["edition"]["id"], edition_id)
+        self.assertNotIn(sugestao["id"], [i["id"] for i in fila["items"]])
+        self.assertFalse(self.catalog._edition(edition_id).get("imageReference"))
+        # Uma sugestao em aberto por pessoa e corrida.
+        outra = self.imagem_do_usuario("rui2", owner="rui")
+        with self.assertRaises(Problem) as dup:
+            self.requests.suggest_banner(person, "sb2", edition_id, outra)
+        self.assertEqual(dup.exception.code, "BANNER_SUGGESTION_EXISTS")
+        # Imagem alheia, corrida inexistente e arquivada: recusados.
+        alheia = self.imagem_do_usuario("zed")
+        with self.assertRaises(Problem) as ruim:
+            self.requests.suggest_banner(person, "sb3", "synthetic-sp-2025", alheia)
+        self.assertEqual(ruim.exception.code, "IMAGE_NOT_VALID")
+        with self.assertRaises(Problem) as nada:
+            self.requests.suggest_banner(person, "sb4", "nao-existe", ref)
+        self.assertEqual(nada.exception.status, 404)
+        # A equipe publica com credito e autorizacao, igual ao banner de pedido.
+        ok = self.banner(sugestao)
+        self.assertEqual(ok.status_code, 201, ok.text)
+        self.assertTrue(self.catalog._edition(edition_id)["imageReference"].startswith("banner_"))
+        self.assertEqual(self.requests.get(person, sugestao["id"])["bannerState"], "published")
+        self.assertEqual(
+            self.client.get("/admin/edition-requests", headers=self.auth()).json()["images"], []
+        )
+        # Depois de decidida, a pessoa pode sugerir outra para a mesma corrida.
+        nova = self.requests.suggest_banner(person, "sb5", edition_id, outra)
+        self.assertEqual(nova["status"], "linked")
 
     def test_descartar_o_banner_sugerido_nao_publica_nada(self):
         person, request = self.pedido(
@@ -1996,6 +2050,216 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(
             sum(1 for _, row in trilha if row["action"] == "banner.dismiss"), 1
         )  # so a primeira audita
+
+    def test_banner_por_arquivo_do_portal_exige_credito_autorizacao_e_imagem_valida(self):
+        import base64
+
+        h = self.auth(token("op"))
+        arquivo = base64.b64encode(self.png()).decode()
+        corpo = {
+            "editionId": "synthetic-sp-2026",
+            "imageBase64": arquivo,
+            "contentType": "image/png",
+            "credit": "Divulgação: Org Sintética",
+            "rightsNote": "Arquivo enviado pelo organizador com autorizacao por escrito",
+            "confirmRights": True,
+        }
+        # Nada publicado sem confirmar, sem credito, com nota curta, sem fonte ou com as duas fontes.
+        for mudanca in (
+            {"confirmRights": False},
+            {"credit": " "},
+            {"rightsNote": "ok"},
+            {"imageBase64": None},
+            {"imageUrl": "https://o.exemplo/b.png"},
+            {"contentType": None},
+            {"contentType": "image/gif"},
+            {"imageBase64": "isso-nao-e-base64!!"},
+            {"imageBase64": base64.b64encode(b"nao sou uma imagem").decode()},
+        ):
+            corpo_ruim = {k: v for k, v in {**corpo, **mudanca}.items() if v is not None}
+            r = self.client.post("/admin/banners/approve", json=corpo_ruim, headers=h)
+            self.assertEqual(r.status_code, 422, mudanca)
+        self.assertEqual(self.blobs.derived, {})
+        self.assertEqual(
+            self.client.post(
+                "/admin/banners/approve", json=corpo, headers=self.auth(token("adm"))
+            ).status_code,
+            403,
+        )
+        r = self.client.post("/admin/banners/approve", json=corpo, headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        row = self.store.get(
+            ("operations", "EDITION#synthetic-sp-2026", "IMAGE#" + r.json()["reference"])
+        )
+        self.assertEqual(
+            (row["credit"], row["approvedBy"], row["origin"]),
+            ("Divulgação: Org Sintética", "op", "admin"),
+        )
+        self.assertTrue(row["sourceUrl"].startswith("https://portal.runpass.invalid/arquivo/"))
+        self.assertIn("autorizacao por escrito", row["rightsNote"])
+        publicados = self.client.get("/admin/banners/published", headers=h).json()["items"]
+        self.assertEqual([p["id"] for p in publicados], ["synthetic-sp-2026"])
+        trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
+        self.assertTrue(any(row["action"] == "banner.approve_file" for _, row in trilha))
+        # corrida inexistente
+        r = self.client.post(
+            "/admin/banners/approve", json={**corpo, "editionId": "nao-existe"}, headers=h
+        )
+        self.assertEqual(r.status_code, 404)
+
+    def test_redes_do_organizador_sao_salvas_na_corrida_e_chegam_ao_app(self):
+        h = self.auth(token("op"))
+        url = "/admin/editions/synthetic-sp-2026/social"
+        corpo = {
+            "instagramUrl": "https://instagram.com/corrida_exemplo",
+            "facebookUrl": "https://www.facebook.com/corridaexemplo",
+            "organizerPostUrl": "https://www.instagram.com/p/AbC123xyz/?utm_source=ig",
+        }
+        self.assertEqual(
+            self.client.put(url, json=corpo, headers=self.auth(token("adm"))).status_code, 403
+        )
+        for ruim in (
+            {"instagramUrl": "https://exemplo.org/x"},
+            {"facebookUrl": "https://www.facebook.com/sharer/sharer.php"},
+            {"organizerPostUrl": "https://www.instagram.com/corrida_exemplo/"},
+            {},
+            {"outraCoisa": "x"},
+        ):
+            self.assertEqual(self.client.put(url, json=ruim, headers=h).status_code, 422, ruim)
+        antes = self.catalog._edition("synthetic-sp-2026")
+        self.assertNotIn("instagramUrl", antes)
+        r = self.client.put(url, json=corpo, headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["instagramUrl"], "https://www.instagram.com/corrida_exemplo/")
+        self.assertEqual(r.json()["organizerPostUrl"], "https://www.instagram.com/p/AbC123xyz/")
+        depois = self.catalog._edition("synthetic-sp-2026")
+        self.assertEqual(depois["facebookUrl"], "https://www.facebook.com/corridaexemplo")
+        self.assertEqual(depois["version"], antes["version"] + 1)
+        # A busca do portal traz os links para a pessoa editar; o app recebe no detalhe da corrida.
+        achadas = self.client.get("/admin/editions?q=sint", headers=h).json()["items"]
+        achada = next(e for e in achadas if e["id"] == "synthetic-sp-2026")
+        self.assertEqual(achada["instagramUrl"], "https://www.instagram.com/corrida_exemplo/")
+        # Mudar so um campo mantem os outros; vazio apaga.
+        r = self.client.put(url, json={"organizerPostUrl": ""}, headers=h)
+        self.assertEqual(r.status_code, 200)
+        final = self.catalog._edition("synthetic-sp-2026")
+        self.assertNotIn("organizerPostUrl", final)
+        self.assertEqual(final["instagramUrl"], "https://www.instagram.com/corrida_exemplo/")
+        # Um banner publicado depois nao apaga os links (a nova versao herda os campos).
+        arquivo = __import__("base64").b64encode(self.png()).decode()
+        ok = self.client.post(
+            "/admin/banners/approve",
+            json={
+                "editionId": "synthetic-sp-2026",
+                "imageBase64": arquivo,
+                "contentType": "image/png",
+                "credit": "Divulgação: Org",
+                "rightsNote": "Arquivo enviado pelo organizador com autorizacao",
+                "confirmRights": True,
+            },
+            headers=h,
+        )
+        self.assertEqual(ok.status_code, 201, ok.text)
+        self.assertEqual(
+            self.catalog._edition("synthetic-sp-2026")["facebookUrl"],
+            "https://www.facebook.com/corridaexemplo",
+        )
+        trilha = self.store.query("operations", "OPERATOR#op", prefix="AUDIT#")[0]
+        self.assertTrue(any(row["action"] == "edition.social" for _, row in trilha))
+        self.assertEqual(
+            self.client.put("/admin/editions/nao-existe/social", json=corpo, headers=h).status_code,
+            404,
+        )
+
+    def test_qualidade_ao_vivo_le_os_relatorios_mais_recentes_sem_dry_run(self):
+        import json
+
+        h = self.auth(token("op"))
+        self.assertEqual(
+            self.client.get("/admin/quality/live", headers=self.auth(token("adm"))).status_code, 403
+        )
+        vazio = self.client.get("/admin/quality/live", headers=h).json()
+        self.assertEqual(vazio["runs"], [])
+        put = lambda k, v: self.s3.objects.__setitem__(k, json.dumps(v))  # noqa: E731
+        put(
+            "semanal/2026-11-09/enriquecimento/relatorio.json",
+            {"contagens": {"pronta": 99}, "provas": [{"fonte": "x"}]},
+        )  # antigo: perde para o mais recente
+        put(
+            "semanal/2026-11-10/enriquecimento/relatorio.json",
+            {
+                "contagens": {"nada": 1, "pronta": 2, "sem_distancia": 1, "linhas_importador": 2},
+                "provas": [{"fonte": "https://a"}, {"fonte": "https://b"}, {"fonte": None}, {}],
+            },
+        )
+        put(
+            "semanal/2026-11-11/dry-run/relatorio.json",
+            {"resumo": {"pedidos_na_fila": 77}},
+        )  # teste: nunca conta
+        put(
+            "semanal/2026-11-11/relatorio.json",
+            {
+                "pedidos": [{"situacao": "nao_encontrada"}, {"situacao": "encontrada"}],
+                "catalogo": [
+                    {"serie": "a", "situacao": "consultado", "novas_propostas": 2},
+                    {"serie": "b", "situacao": "adiado", "novas_propostas": 0},
+                ],
+                "resumo": {"pedidos_na_fila": 2, "pesquisados": 2, "linhas_no_csv": 3},
+                "interrompido": None,
+            },
+        )
+        put(
+            "semanal/2026-11-10/calendario-prefeitura-sp-gov-br/relatorio.json",
+            {
+                "meses": [
+                    {"situacao": "consultado", "retornadas": 25, "validas": 24, "rejeitadas": 1},
+                    {"situacao": "consultado", "retornadas": 17, "validas": 17, "rejeitadas": 0},
+                ],
+                "candidatos": [
+                    {"fonte_url": "https://f", "distancia_na_fonte": True},
+                    {"fonte_url": "https://f", "distancia_na_fonte": False},
+                    {"fonte_url": "", "distancia_na_fonte": False},
+                ],
+            },
+        )
+        self.s3.objects["semanal/2026-11-10/imagens/relatorio.json"] = "isto nao e json"
+        r = self.client.get("/admin/quality/live", headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        corpo = r.json()
+        por_tipo = {x["kind"]: x for x in corpo["runs"]}
+        self.assertEqual(
+            sorted(por_tipo), ["calendario", "enriquecimento", "semanal"]
+        )  # imagens quebrado fica de fora sem derrubar o painel
+        self.assertEqual(por_tipo["enriquecimento"]["date"], "2026-11-10")
+        metricas = lambda k: {m["label"]: m for m in por_tipo[k]["metrics"]}  # noqa: E731
+        enr = metricas("enriquecimento")
+        self.assertEqual(
+            (enr["Prontas para importar"]["value"], enr["Prontas para importar"]["of"]), (2, 4)
+        )
+        self.assertEqual(enr["Com fonte citada"]["value"], 2)
+        semanal = metricas("semanal")
+        self.assertEqual(semanal["Novas propostas"]["value"], 2)
+        self.assertEqual(
+            (
+                semanal["Series da lista consultadas"]["value"],
+                semanal["Series da lista consultadas"]["of"],
+            ),
+            (1, 2),
+        )
+        self.assertEqual(
+            semanal["Pedidos de prova ausente na fila"]["value"], 2
+        )  # nao os 77 do dry-run
+        cal = metricas("calendario")
+        self.assertEqual(cal["Corridas devolvidas pela busca"]["value"], 42)
+        self.assertEqual(
+            (
+                cal["Candidatas com fonte e trecho"]["value"],
+                cal["Candidatas com fonte e trecho"]["of"],
+            ),
+            (2, 3),
+        )
+        # Decisoes humanas vem da aba Divergencias (aqui nao ha enriquecimento em CSV: sem itens).
+        self.assertIn("decisions", corpo)
 
     def test_banner_preview_aprovar_e_retirar(self):
         h = self.auth(token("op"))

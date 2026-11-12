@@ -44,7 +44,7 @@ class EditionRequestTests(unittest.TestCase):
         self.store = self.identity.store
         self.catalog = CatalogService(self.identity, Fernet.generate_key())
         seed_synthetic(self.catalog, ROOT / "backend/fixtures/catalog.synthetic.json")
-        self.service = EditionRequestService(self.identity, Fernet.generate_key())
+        self.service = EditionRequestService(self.identity, Fernet.generate_key(), self.catalog)
         self.people = {}
         for name in ("ana", "bia"):
             actor = Principal(name, True)

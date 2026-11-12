@@ -144,6 +144,35 @@ def approve_banner(
     return {"reference": reference, "version": updated["version"], "contentType": actual_type}
 
 
+def set_social_links(catalog, actor, edition_id, links, origin_url):
+    """Grava (ou apaga) os perfis de Instagram/Facebook do organizador e o post a exibir, numa nova versao da
+    corrida. `links` so traz as chaves que mudam; valor vazio/None apaga. So link: nada e consultado na Meta."""
+    from .social_links import check_post, check_profile
+
+    body = catalog._edition(edition_id)
+    head = catalog.store.get(("catalog", "EDITION#" + edition_id, "HEAD"))
+    if body is None or head is None:
+        raise Problem(404, "EDITION_NOT_FOUND")
+    payload = {k: v for k, v in body.items() if k in ImportEdition.model_fields}
+    payload["archived"] = body.get("status") == "archived"
+    checkers = {
+        "instagramUrl": lambda v: check_profile("instagram", v),
+        "facebookUrl": lambda v: check_profile("facebook", v),
+        "organizerPostUrl": check_post,
+    }
+    for key, check in checkers.items():
+        if key in links:
+            value = check(links[key])  # ValueError se o endereco nao for do tipo certo
+            if value is None:
+                payload.pop(key, None)
+            else:
+                payload[key] = value
+    updated = CatalogImporter(catalog).put(
+        payload, expected_version=int(head["version"]), origin=origin_url, actor=actor
+    )
+    return {"version": updated["version"], **{k: payload.get(k) for k in checkers}}
+
+
 def normalize_image(data, content_type):
     """JPEG e PNG seguem como estao; WebP vira JPEG (o app e a limpeza usam JPEG/PNG). Outro tipo, erro."""
     if content_type in ("image/jpeg", "image/png"):

@@ -264,3 +264,27 @@ test('acesso ao portal: mensagens de conta sem acesso', async () => {
   assert.match(mensagem('ACCESS_ALREADY_EXISTS'), /reative/);
   assert.match(situacaoOperador({ enabled: true, access: null }), /Sem acesso ao portal/);
 });
+
+test('dimensoesEnvio reduz só o que passa do limite e mantém a proporção', async () => {
+  const { dimensoesEnvio } = await import('./lib.js');
+  assert.deepEqual(dimensoesEnvio(4000, 2000), { largura: 1920, altura: 960 });
+  assert.deepEqual(dimensoesEnvio(1000, 3000), { largura: 640, altura: 1920 });
+  assert.deepEqual(dimensoesEnvio(800, 600), { largura: 800, altura: 600 }); // nunca amplia
+  assert.throws(() => dimensoesEnvio(0, 10), /tamanho/);
+});
+
+test('montarBannerArquivo exige corrida, arquivo válido, crédito, base e confirmação', async () => {
+  const { montarBannerArquivo } = await import('./lib.js');
+  const ok = { editionId: 'e1', base64: 'QUJD', tipo: 'image/jpeg', credito: 'Divulgação: Org', nota: 'Enviado pela organização, por escrito', confirmou: true };
+  assert.deepEqual(montarBannerArquivo(ok), {
+    editionId: 'e1', imageBase64: 'QUJD', contentType: 'image/jpeg',
+    credit: 'Divulgação: Org', rightsNote: 'Enviado pela organização, por escrito', confirmRights: true,
+  });
+  assert.throws(() => montarBannerArquivo({ ...ok, editionId: '' }), /corrida/);
+  assert.throws(() => montarBannerArquivo({ ...ok, base64: '' }), /arquivo/);
+  assert.throws(() => montarBannerArquivo({ ...ok, tipo: 'image/gif' }), /JPEG, PNG ou WebP/);
+  assert.throws(() => montarBannerArquivo({ ...ok, base64: 'A'.repeat(5_800_001) }), /grande demais/);
+  assert.throws(() => montarBannerArquivo({ ...ok, credito: ' ' }), /crédito/);
+  assert.throws(() => montarBannerArquivo({ ...ok, nota: 'curta' }), /base de autorização/);
+  assert.throws(() => montarBannerArquivo({ ...ok, confirmou: false }), /Confirme/);
+});

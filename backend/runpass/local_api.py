@@ -82,7 +82,7 @@ def create_runtime():
             participations,
             uploads,
             SocialService(identity),
-            edition_requests=EditionRequestService(identity, Fernet.generate_key()),
+            edition_requests=EditionRequestService(identity, Fernet.generate_key(), catalog),
         ),
         tokens,
         (now + timedelta(hours=1)).isoformat(),

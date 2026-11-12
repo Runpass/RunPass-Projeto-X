@@ -38,6 +38,9 @@ OPTIONAL = (
     "latitude",
     "longitude",
     "last_verified_at",
+    "instagram_url",
+    "facebook_url",
+    "organizer_post_url",
 )
 KNOWN_LABELS = {Decimal("21.0975"): "Meia Maratona", Decimal("42.195"): "Maratona"}
 DATE_INDEX = "CAT#GLOBAL#ANY#DATE"
@@ -106,6 +109,13 @@ def row_to_payload(row, source_code):
     for column, field in (("official_url", "officialUrl"), ("registration_url", "registrationUrl")):
         if (row.get(column) or "").strip():
             payload[field] = _url(row[column].strip())
+    for column, field in (
+        ("instagram_url", "instagramUrl"),
+        ("facebook_url", "facebookUrl"),
+        ("organizer_post_url", "organizerPostUrl"),
+    ):
+        if (row.get(column) or "").strip():
+            payload[field] = row[column].strip()  # ImportEdition valida e normaliza o endereco
     for column in ("latitude", "longitude"):
         if (row.get(column) or "").strip():
             payload[column] = row[column].strip().replace(",", ".")

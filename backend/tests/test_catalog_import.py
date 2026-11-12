@@ -161,6 +161,31 @@ class CatalogImportTests(unittest.TestCase):
         self.assertEqual(saved["counts"]["created"], 2)
         self.assertNotIn("payload", saved)
 
+    def test_csv_aceita_perfis_sociais_validos_e_recusa_o_resto_da_linha(self):
+        from runpass.catalog_import import row_to_payload
+
+        linha = {
+            "source_external_id": "social-1",
+            "name": "Corrida Social Exemplo",
+            "event_date": "2027-06-06",
+            "city": "São Paulo",
+            "state": "SP",
+            "distances_km": "10",
+            "instagram_url": "https://instagram.com/corrida_exemplo",
+            "facebook_url": "https://www.facebook.com/corridaexemplo",
+            "organizer_post_url": "https://www.instagram.com/p/AbC123xyz/",
+        }
+        payload = row_to_payload(linha, "csv-sp")
+        self.assertEqual(payload["instagramUrl"], "https://instagram.com/corrida_exemplo")
+        # A normalizacao acontece no modelo da corrida (o que e gravado no catalogo).
+        from runpass.catalog import ImportEdition
+
+        edicao = ImportEdition(**payload)
+        self.assertEqual(edicao.instagramUrl, "https://www.instagram.com/corrida_exemplo/")
+        self.assertEqual(edicao.organizerPostUrl, "https://www.instagram.com/p/AbC123xyz/")
+        with self.assertRaises(ValueError):
+            row_to_payload({**linha, "instagram_url": "https://exemplo.org/x"}, "csv-sp")
+
     def test_audience_filter_kids_by_name_and_adult_is_the_rest(self):
         for slug, name in (
             ("adulta", "Corrida de Rua Adulta"),

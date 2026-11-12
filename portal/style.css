@@ -90,3 +90,5 @@ main:has(#painel:not([hidden])) { max-width: 1240px; }
 #painel > .abas .rodape { margin-top: 18px; border-top: 1px solid var(--linha); border-radius: 0 0 10px 10px; padding-top: 14px; }
 #painel > .abas .sair { background: transparent; color: var(--erro); border: 1px solid var(--linha); margin-top: 6px; }
 #painel > .abas .sair:hover { background: color-mix(in srgb, var(--erro) 12%, transparent); }
+
+h3 { margin: 18px 0 4px; font-size: 16px; }
