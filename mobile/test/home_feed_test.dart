@@ -89,6 +89,87 @@ void main() {
   );
 
   testWidgets(
+    'tocar no nome da corrida na publicação abre as informações dela',
+    (tester) async {
+      final paths = <String>[];
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          paths.add(uri.path);
+          if (uri.path == '/me') {
+            return const JsonReply(200, {
+              'id': 'me',
+              'displayName': 'Eu',
+              'username': 'eu',
+              'version': 2,
+            });
+          }
+          if (uri.path == '/feed') {
+            return const JsonReply(200, {
+              'items': [
+                {
+                  'id': 'p1',
+                  'author': {
+                    'id': 'amiga',
+                    'displayName': 'Amiga',
+                    'username': 'amiga',
+                    'version': 1,
+                  },
+                  'participation': {
+                    'id': 'p1',
+                    'editionId': 'E1',
+                    'distanceId': '10k',
+                    'state': 'completed',
+                  },
+                  'publishedAt': '2026-11-05T10:00:00Z',
+                  'commentCount': 0,
+                  'likeCount': 0,
+                  'likedByMe': false,
+                },
+              ],
+            });
+          }
+          if (uri.path == '/editions/E1') {
+            return const JsonReply(200, {
+              'id': 'E1',
+              'name': '[FICTICIA] Corrida E1',
+              'date': '2026-09-01',
+              'city': 'São Paulo',
+              'state': 'SP',
+              'status': 'past',
+              'version': 1,
+              'distances': [
+                {'id': '10k', 'kilometers': 10},
+              ],
+            });
+          }
+          return const JsonReply(200, {'items': []});
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('post-race-p1')));
+      await tester.pumpAndSettle();
+      expect(paths, contains('/editions/E1'));
+      expect(
+        find.text('Avaliações'),
+        findsOneWidget,
+      ); // abas da tela da corrida
+      expect(find.text('Participantes'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     '"Minha Cidade" sem estado/cidade cadastrados pede uma vez e depois filtra',
     (tester) async {
       final patches = <Map<String, dynamic>?>[];

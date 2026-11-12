@@ -614,7 +614,7 @@ void participantsTests() {
     (tester) async {
       await openTab(tester, {'total': 0, 'items': []});
       expect(
-        find.textContaining('Ninguém concluiu esta prova'),
+        find.textContaining('Ninguém concluiu nem se inscreveu'),
         findsOneWidget,
       );
     },

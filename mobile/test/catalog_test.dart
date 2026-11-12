@@ -271,6 +271,8 @@ void main() {
         '/editions/A',
         '/editions/A/reviews',
         '/editions/A/participants',
+        '/editions/A/registrants',
+        '/editions/A/photos',
         '/me/race-plans/A',
         '/editions/A/reviews',
       ]);
@@ -397,6 +399,8 @@ void main() {
         'GET /editions/A',
         'GET /editions/A/reviews',
         'GET /editions/A/participants',
+        'GET /editions/A/registrants',
+        'GET /editions/A/photos',
         'GET /me/race-plans/A',
         'GET /editions/A/reviews',
         'POST /participations',
@@ -1020,6 +1024,10 @@ void main() {
   testWidgets('the reviews tab shows the review I already registered', (
     tester,
   ) async {
+    // A minha avaliação fica abaixo do resumo geral: janela alta para ela ser construída.
+    tester.view.physicalSize = const Size(800, 3200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     final gateway = await signed((uri, method, headers, body) async {
       if (uri.path == '/me/participations') {
         return const JsonReply(200, {
@@ -2026,6 +2034,39 @@ void ratingTests() {
       expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
     },
   );
+
+  testWidgets('o filtro de público envia kids/adult e "Todas" o remove', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final calls = <Map<String, String>>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions') calls.add(uri.queryParameters);
+      return JsonReply(200, {
+        'items': [rated('A', '2026-05-01', score: 4, reviews: 3)],
+      });
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    expect(calls.last.containsKey('audience'), isFalse);
+    await tester.tap(find.text('Kids'));
+    await tester.pumpAndSettle();
+    expect(calls.last['audience'], 'kids');
+    await tester.tap(find.text('Adultos'));
+    await tester.pumpAndSettle();
+    expect(calls.last['audience'], 'adult');
+    await tester.tap(find.text('Todas'));
+    await tester.pumpAndSettle();
+    expect(calls.last.containsKey('audience'), isFalse);
+    // Combina com o ano.
+    await tester.tap(find.text('Kids'));
+    await tester.pumpAndSettle();
+    await choose(tester, 'filter-year-0', '2026');
+    expect(calls.last['audience'], 'kids');
+    expect(calls.last['dateFrom'], '2026-01-01');
+  });
 
   testWidgets('o filtro de ano envia só o ano e "Qualquer ano" o remove', (
     tester,

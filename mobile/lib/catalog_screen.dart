@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'agenda.dart';
 import 'friends.dart';
+import 'grid_columns.dart';
 import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
@@ -45,6 +46,28 @@ String registrationText(String? status) => switch (status) {
 String displayDate(String value) {
   final parts = value.split('-');
   return parts.length == 3 ? '${parts[2]}/${parts[1]}/${parts[0]}' : value;
+}
+
+/// "22 de setembro de 2024", como na aba de avaliações.
+String longDate(String value) {
+  const months = [
+    'janeiro',
+    'fevereiro',
+    'março',
+    'abril',
+    'maio',
+    'junho',
+    'julho',
+    'agosto',
+    'setembro',
+    'outubro',
+    'novembro',
+    'dezembro',
+  ];
+  final parts = value.split('-');
+  final month = parts.length == 3 ? int.tryParse(parts[1]) : null;
+  if (month == null || month < 1 || month > 12) return displayDate(value);
+  return '${int.parse(parts[2])} de ${months[month - 1]} de ${parts[0]}';
 }
 
 /// Motivo curto pelo qual uma edição saiu de circulação (campo `archivedReason` da API).
@@ -375,7 +398,14 @@ class CatalogScreen extends StatefulWidget {
 
 class _CatalogScreenState extends State<CatalogScreen> {
   final fields = {
-    for (final key in ['namePrefix', 'city', 'state', 'distanceKm', 'year'])
+    for (final key in [
+      'namePrefix',
+      'city',
+      'state',
+      'distanceKm',
+      'year',
+      'audience',
+    ])
       key: TextEditingController(),
   };
   final form = GlobalKey<FormState>();
@@ -938,6 +968,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   bool get hasOtherFilter =>
       fields['distanceKm']!.text.trim().isNotEmpty ||
       fields['year']!.text.trim().isNotEmpty ||
+      fields['audience']!.text.trim().isNotEmpty ||
       fields['state']!.text.trim().isNotEmpty ||
       fields['city']!.text.trim().isNotEmpty ||
       registration != null;
@@ -1286,6 +1317,36 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
+          // Público: todas, só adultas ou só kids (kids = nome com Kids/Infantil/Mirim).
+          SegmentedButton<String>(
+            key: ValueKey('filter-audience-$registrationEpoch'),
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(
+                value: '',
+                label: Text('Todas'),
+                icon: Icon(Icons.groups_rounded, size: 18),
+              ),
+              ButtonSegment(
+                value: 'adult',
+                label: Text('Adultos'),
+                icon: Icon(Icons.directions_run_rounded, size: 18),
+              ),
+              ButtonSegment(
+                value: 'kids',
+                label: Text('Kids'),
+                icon: Icon(Icons.child_care_rounded, size: 18),
+              ),
+            ],
+            selected: {fields['audience']!.text},
+            onSelectionChanged: loading
+                ? null
+                : (value) {
+                    setState(() => fields['audience']!.text = value.first);
+                    load();
+                  },
+          ),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
@@ -1402,7 +1463,19 @@ class _EditionScreenState extends State<EditionScreen> {
   List<Map<String, dynamic>>? participants;
   int participantTotal = 0;
   bool loadingParticipants = false;
+  // Quem marcou "inscrito" nesta corrida (`/editions/{id}/registrants`).
+  List<Map<String, dynamic>>? registrants;
+  int registrantTotal = 0;
+  bool loadingRegistrants = false;
+  // Fotos que os corredores publicaram para esta corrida (`/editions/{id}/photos`).
+  List<Map<String, dynamic>>? photos;
+  int photoTotal = 0;
+  static const _photoColumnsKey = 'grid-columns-photos';
+  int photoColumns = GridColumns.standard;
+  bool loadingPhotos = false;
   bool showAllReviews = false;
+  // Detalhes (itens avaliados) da avaliação geral e da minha: recolher e expandir.
+  bool showSummaryDetails = true, showMyDetails = true;
   Map<String, dynamic>? mine;
   Map<String, dynamic>? plan;
   bool savingPlan = false;
@@ -1447,6 +1520,15 @@ class _EditionScreenState extends State<EditionScreen> {
       loadReviews();
       loadBanner();
       loadParticipants();
+      loadRegistrants();
+      loadPhotos();
+      GridColumns.read(_photoColumnsKey).then((n) {
+        if (mounted) {
+          setState(() {
+            photoColumns = n;
+          });
+        }
+      });
       loadMyParticipation();
       loadPlan();
     }
@@ -1489,6 +1571,47 @@ class _EditionScreenState extends State<EditionScreen> {
       if (mounted) participants = null;
     } finally {
       if (mounted) setState(() => loadingParticipants = false);
+    }
+  }
+
+  /// Inscritos (plano `registered`): só perfis que a pessoa pode ver; `total` conta todos.
+  Future<void> loadRegistrants() async {
+    setState(() => loadingRegistrants = true);
+    try {
+      final page = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/registrants',
+        query: {'limit': '50'},
+      );
+      if (mounted) {
+        registrants = (page['items'] as List? ?? const [])
+            .cast<Map<String, dynamic>>();
+        registrantTotal = (page['total'] as num?)?.toInt() ?? 0;
+      }
+    } on Exception {
+      if (mounted) registrants = null;
+    } finally {
+      if (mounted) setState(() => loadingRegistrants = false);
+    }
+  }
+
+  /// Fotos de medalha publicadas por quem concluiu a corrida (só as fotos próprias das
+  /// publicações públicas; nunca a arte padrão do catálogo).
+  Future<void> loadPhotos() async {
+    setState(() => loadingPhotos = true);
+    try {
+      final page = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/photos',
+        query: {'limit': '60'},
+      );
+      if (mounted) {
+        photos = (page['items'] as List? ?? const [])
+            .cast<Map<String, dynamic>>();
+        photoTotal = (page['total'] as num?)?.toInt() ?? 0;
+      }
+    } on Exception {
+      if (mounted) photos = null;
+    } finally {
+      if (mounted) setState(() => loadingPhotos = false);
     }
   }
 
@@ -1645,6 +1768,42 @@ class _EditionScreenState extends State<EditionScreen> {
     }
   }
 
+  /// Linha "Itens ... ▾" que recolhe/expande os detalhes de uma avaliação.
+  Widget _detailsToggle({
+    required Key key,
+    required String label,
+    required bool expanded,
+    required VoidCallback onTap,
+  }) => InkWell(
+    key: key,
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(10),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          Text(
+            expanded ? 'Recolher' : 'Expandir',
+            style: const TextStyle(
+              color: runPassOrange,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          Icon(
+            expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+            color: runPassOrange,
+          ),
+        ],
+      ),
+    ),
+  );
+
   Widget myReviewCard() {
     final participation = mine;
     if (participation == null) return const SizedBox.shrink();
@@ -1661,6 +1820,8 @@ class _EditionScreenState extends State<EditionScreen> {
     }
     return MyReviewView(
       review: review,
+      expanded: showMyDetails,
+      onToggle: () => setState(() => showMyDetails = !showMyDetails),
       onEdit: () async {
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
@@ -1889,18 +2050,44 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
-  Widget header(Map<String, dynamic> body) => Column(
+  Widget header(Map<String, dynamic> body, {bool title = false}) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
+      if (title) ...[
+        Text(
+          body['name'] as String? ?? '',
+          key: const Key('reviews-title'),
+          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 24),
+        ),
+        const SizedBox(height: 10),
+      ],
       Row(
         children: [
           const Icon(Icons.calendar_today_outlined, size: 16),
           const SizedBox(width: 6),
-          Text(displayDate(body['date'] as String)),
-          const SizedBox(width: 16),
+          Text(
+            title
+                ? longDate(body['date'] as String)
+                : displayDate(body['date'] as String),
+          ),
+          if (title) ...[
+            const SizedBox(width: 12),
+            SizedBox(
+              height: 16,
+              child: VerticalDivider(width: 1, color: context.muted),
+            ),
+            const SizedBox(width: 12),
+          ] else
+            const SizedBox(width: 16),
           const Icon(Icons.place_outlined, size: 16),
           const SizedBox(width: 4),
-          Expanded(child: Text('${body['city']}/${body['state']}')),
+          Expanded(
+            child: Text(
+              title
+                  ? '${body['city']} - ${body['state']}'
+                  : '${body['city']}/${body['state']}',
+            ),
+          ),
         ],
       ),
       const SizedBox(height: 14),
@@ -2115,21 +2302,32 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
-  /// Item avaliado: estrelas douradas; sem avaliações ficam vazias (só o contorno).
+  /// Média de um item da prova: barra laranja proporcional à nota (0 a 5) e a nota à direita.
   Widget bar(String label, IconData icon, double? value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 7),
+    padding: const EdgeInsets.symmetric(vertical: 8),
     child: Row(
       children: [
         Icon(icon, size: 20),
-        const SizedBox(width: 10),
+        const SizedBox(width: 12),
         SizedBox(width: 118, child: Text(label)),
-        Expanded(child: Stars(value ?? 0, size: 20)),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              key: Key('bar-$label'),
+              value: ((value ?? 0) / 5).clamp(0.0, 1.0),
+              minHeight: 8,
+              color: runPassOrange,
+              backgroundColor: context.panel,
+            ),
+          ),
+        ),
         SizedBox(
           width: 42,
           child: Text(
             value == null ? '-' : decimalPt(value),
             textAlign: TextAlign.right,
-            style: const TextStyle(fontWeight: FontWeight.w700),
+            style: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
       ],
@@ -2150,14 +2348,34 @@ class _EditionScreenState extends State<EditionScreen> {
             : loaded.map(reviewAverage).reduce((a, b) => a + b) /
                   loaded.length);
     if (value == null) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            'Esta prova ainda não tem avaliações.',
-            key: const Key('reviews-none'),
-            style: TextStyle(color: context.muted),
-          ),
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: context.panel,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          children: [
+            const Text(
+              '-',
+              style: TextStyle(fontSize: 44, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Stars(0, size: 20),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Esta prova ainda não tem avaliações.',
+                    key: const Key('reviews-none'),
+                    style: TextStyle(color: context.muted),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -2173,32 +2391,39 @@ class _EditionScreenState extends State<EditionScreen> {
                       loaded.where((r) => reviewAverage(r) >= 4).length /
                       loaded.length)
                   .round());
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          flex: 6,
-          child: Card(
-            child: Padding(
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            flex: 6,
+            child: Container(
+              key: const Key('score-card'),
               padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: context.panel,
+                borderRadius: BorderRadius.circular(20),
+              ),
               child: Row(
                 children: [
                   Text(
                     decimalPt(value),
                     style: const TextStyle(
-                      fontSize: 38,
+                      fontSize: 44,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Stars(value, size: 17),
+                        Stars(value, size: 19),
+                        const SizedBox(height: 2),
                         Text(
                           '${thousands(count)} avaliações',
-                          style: const TextStyle(fontSize: 12),
+                          key: const Key('score-count'),
+                          style: TextStyle(fontSize: 13, color: context.muted),
                         ),
                       ],
                     ),
@@ -2207,47 +2432,47 @@ class _EditionScreenState extends State<EditionScreen> {
               ),
             ),
           ),
-        ),
-        if (recommend != null) ...[
-          const SizedBox(width: 10),
-          Expanded(
-            flex: 4,
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: context.greenFill,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.check_circle,
-                        color: Color(0xff2f9e5e),
-                        size: 20,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '$recommend%',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 18,
+          if (recommend != null) ...[
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 4,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: context.greenFill,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.check_circle,
+                          color: Color(0xff2f9e5e),
+                          size: 20,
                         ),
-                      ),
-                    ],
-                  ),
-                  const Text(
-                    'recomendariam\nesta prova',
-                    style: TextStyle(fontSize: 11),
-                  ),
-                ],
+                        const SizedBox(width: 4),
+                        Text(
+                          '$recommend%',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Text(
+                      'recomendariam\nesta prova',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
@@ -2314,12 +2539,24 @@ class _EditionScreenState extends State<EditionScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        header(body),
-        myReviewCard(),
+        header(body, title: true),
         scoreCard(body),
+        _detailsToggle(
+          key: const Key('summary-details-toggle'),
+          label: 'Itens da avaliação geral',
+          expanded: showSummaryDetails,
+          onTap: () => setState(() => showSummaryDetails = !showSummaryDetails),
+        ),
+        if (showSummaryDetails)
+          Column(
+            key: const Key('summary-details'),
+            children: [
+              for (final (key, label, icon) in criteria)
+                bar(label, icon, criterion(key)),
+            ],
+          ),
         const SizedBox(height: 14),
-        for (final (key, label, icon) in criteria)
-          bar(label, icon, criterion(key)),
+        myReviewCard(),
         const SizedBox(height: 18),
         if (loadingReviews)
           const Center(child: CircularProgressIndicator())
@@ -2368,52 +2605,251 @@ class _EditionScreenState extends State<EditionScreen> {
     ),
   );
 
-  Widget participantsTab(Map<String, dynamic> body) {
-    final list = participants;
-    if (loadingParticipants && list == null) {
+  /// Fotos postadas para a corrida, em grade de 3 por linha. Tocar abre a foto maior.
+  /// Minha foto desta corrida (participação concluída com foto), para aparecer mesmo antes da
+  /// lista pública carregar ou quando eu não a publiquei no feed.
+  Map<String, dynamic>? get _ownPhoto {
+    final m = mine;
+    if (m == null ||
+        m['state'] != 'completed' ||
+        m['medalImageReference'] == null) {
+      return null;
+    }
+    return {
+      'participationId': m['id'],
+      'own': true,
+      'author': {'displayName': 'Você', 'username': ''},
+    };
+  }
+
+  Widget photosTab() {
+    final list = photos;
+    final own = _ownPhoto;
+    if (loadingPhotos && list == null && own == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (list == null) {
+    final others = list ?? const <Map<String, dynamic>>[];
+    final shown = [
+      if (own != null &&
+          !others.any((p) => p['participationId'] == own['participationId']))
+        own,
+      ...others,
+    ];
+    if (shown.isEmpty) {
+      return emptyTab(
+        Icons.photo_library_outlined,
+        list == null
+            ? 'Não foi possível carregar as fotos agora.'
+            : 'As fotos desta prova aparecerão aqui.',
+      );
+    }
+    final total = shown.length - others.length + photoTotal;
+    return ListView(
+      key: const Key('photos-list'),
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                total == 1
+                    ? '1 foto desta prova'
+                    : '${thousands(total)} fotos desta prova',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+            GridColumnsButton(
+              key: const Key('grid-columns-photos'),
+              value: photoColumns,
+              onChanged: (n) {
+                setState(() {
+                  photoColumns = n;
+                });
+                GridColumns.write(_photoColumnsKey, n);
+              },
+            ),
+          ],
+        ),
+        if (list == null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              'Não foi possível carregar as fotos de outros corredores agora.',
+              key: const Key('photos-partial'),
+              style: TextStyle(color: context.muted, fontSize: 12),
+            ),
+          ),
+        const SizedBox(height: 6),
+        GridView.count(
+          key: const Key('photos-grid'),
+          padding: EdgeInsets.zero,
+          crossAxisCount: photoColumns,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 4,
+          crossAxisSpacing: 4,
+          children: [for (final item in shown) _photoTile(item)],
+        ),
+      ],
+    );
+  }
+
+  Widget _photoTile(Map<String, dynamic> item) {
+    final id = item['participationId'] as String;
+    final author = Map<String, dynamic>.from(
+      item['author'] as Map? ?? const {},
+    );
+    Widget image({BoxFit fit = BoxFit.cover}) => SignedPhoto(
+      gateway: widget.gateway,
+      endpoint: '/participations/${Uri.encodeComponent(id)}/image',
+      fallback: ColoredBox(
+        color: context.panel,
+        child: Icon(Icons.image_outlined, color: context.muted),
+      ),
+      fit: fit,
+    );
+    return InkWell(
+      key: Key('photo-$id'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (context) => Dialog(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: InteractiveViewer(child: image(fit: BoxFit.contain)),
+              ),
+              ListTile(
+                title: Text(
+                  (author['displayName'] as String?) ?? 'Corredor MeuPódio',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                subtitle: (author['username'] as String? ?? '').isEmpty
+                    ? null
+                    : Text('@${author['username']}'),
+                trailing: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Fechar'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      child: ClipRRect(borderRadius: BorderRadius.circular(8), child: image()),
+    );
+  }
+
+  Widget participantsTab(Map<String, dynamic> body) {
+    final done = participants;
+    final signed = registrants;
+    if ((loadingParticipants && done == null) ||
+        (loadingRegistrants && signed == null)) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (done == null && signed == null) {
       return emptyTab(
         Icons.groups_outlined,
         'Não foi possível carregar os participantes agora.',
       );
     }
-    if (participantTotal == 0) {
+    if (participantTotal == 0 && registrantTotal == 0) {
       return emptyTab(
         Icons.groups_outlined,
-        'Ninguém concluiu esta prova no MeuPódio ainda.\nSeja a primeira pessoa a registrar.',
+        'Ninguém concluiu nem se inscreveu nesta prova no MeuPódio ainda.\n'
+        'Seja a primeira pessoa a registrar.',
       );
     }
     final kmById = {
       for (final d in (body['distances'] as List))
         (d as Map)['id'] as String: (d['kilometers'] as num).toDouble(),
     };
-    final hidden = participantTotal - list.length;
+    Widget heading(String text) => Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 8),
+      child: Text(
+        text,
+        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+      ),
+    );
+    Widget hiddenNote(Key key, int hidden, String one, String many) =>
+        hidden <= 0
+        ? const SizedBox.shrink()
+        : Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              hidden == 1 ? one : '$hidden $many',
+              key: key,
+              style: TextStyle(color: context.muted),
+            ),
+          );
     return ListView(
       key: const Key('participants-list'),
       padding: const EdgeInsets.all(20),
       children: [
-        Text(
-          participantTotal == 1
-              ? '1 corredor concluiu esta prova'
-              : '${thousands(participantTotal)} corredores concluíram esta prova',
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        if (registrantTotal > 0) ...[
+          heading(
+            registrantTotal == 1
+                ? '1 inscrito nesta prova'
+                : '${thousands(registrantTotal)} inscritos nesta prova',
+          ),
+          for (final item in signed ?? const <Map<String, dynamic>>[])
+            _registrantTile(item, kmById),
+          hiddenNote(
+            const Key('registrants-hidden'),
+            registrantTotal - (signed?.length ?? 0),
+            '1 inscrito não aparece porque o perfil é privado.',
+            'inscritos não aparecem porque os perfis são privados.',
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (participantTotal > 0) ...[
+          heading(
+            participantTotal == 1
+                ? '1 corredor concluiu esta prova'
+                : '${thousands(participantTotal)} corredores concluíram esta prova',
+          ),
+          for (final item in done ?? const <Map<String, dynamic>>[])
+            _participantTile(item, kmById),
+          hiddenNote(
+            const Key('participants-hidden'),
+            participantTotal - (done?.length ?? 0),
+            '1 participante não aparece porque o perfil é privado.',
+            'participantes não aparecem porque os perfis são privados.',
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _registrantTile(
+    Map<String, dynamic> item,
+    Map<String, double> kmById,
+  ) {
+    final author = Map<String, dynamic>.from(item['author'] as Map);
+    final name = (author['displayName'] as String?) ?? 'Corredor MeuPódio';
+    final km = kmById[item['distanceId']];
+    return Card(
+      key: Key('registrant-${author['id']}'),
+      child: ListTile(
+        leading: ProfileAvatar(gateway: widget.gateway, profile: author),
+        title: Text(name, style: const TextStyle(fontWeight: FontWeight.w800)),
+        subtitle: Text(
+          '@${author['username'] ?? ''}${km == null ? '' : '\n${distanceLabel(km)}'}',
         ),
-        const SizedBox(height: 8),
-        for (final item in list) _participantTile(item, kmById),
-        if (hidden > 0)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              hidden == 1
-                  ? '1 participante não aparece porque o perfil é privado.'
-                  : '$hidden participantes não aparecem porque os perfis são privados.',
-              key: const Key('participants-hidden'),
-              style: TextStyle(color: context.muted),
+        isThreeLine: km != null,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => PublicProfileScreen(
+              gateway: widget.gateway,
+              profileId: author['id'] as String,
             ),
           ),
-      ],
+        ),
+      ),
     );
   }
 
@@ -2434,16 +2870,7 @@ class _EditionScreenState extends State<EditionScreen> {
     return Card(
       key: Key('participant-${item['participationId']}'),
       child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: context.softFill,
-          child: Text(
-            name.isEmpty ? '?' : name.characters.first.toUpperCase(),
-            style: const TextStyle(
-              color: runPassOrange,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
+        leading: ProfileAvatar(gateway: widget.gateway, profile: author),
         title: Text(name, style: const TextStyle(fontWeight: FontWeight.w800)),
         subtitle: Text(
           '@${author['username'] ?? ''}${details.isEmpty ? '' : '\n$details'}',
@@ -2523,10 +2950,7 @@ class _EditionScreenState extends State<EditionScreen> {
                       children: [
                         aboutTab(body),
                         reviewsTab(body),
-                        emptyTab(
-                          Icons.photo_library_outlined,
-                          'As fotos desta prova aparecerão aqui.',
-                        ),
+                        photosTab(),
                         participantsTab(body),
                       ],
                     ),
@@ -2542,7 +2966,17 @@ class _EditionScreenState extends State<EditionScreen> {
 class MyReviewView extends StatelessWidget {
   final Map<String, dynamic> review;
   final VoidCallback? onEdit;
-  const MyReviewView({super.key, required this.review, this.onEdit});
+
+  /// Itens e comentário aparecem quando `expanded`; sem `onToggle` fica sempre aberto.
+  final bool expanded;
+  final VoidCallback? onToggle;
+  const MyReviewView({
+    super.key,
+    required this.review,
+    this.onEdit,
+    this.expanded = true,
+    this.onToggle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2556,33 +2990,62 @@ class MyReviewView extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Minha avaliação',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            InkWell(
+              key: const Key('my-details-toggle'),
+              onTap: onToggle,
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Minha avaliação',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  if (onToggle != null) ...[
+                    Text(
+                      expanded ? 'Recolher' : 'Expandir',
+                      style: const TextStyle(
+                        color: runPassOrange,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Icon(
+                      expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: runPassOrange,
+                    ),
+                  ],
+                ],
+              ),
             ),
             const SizedBox(height: 6),
-            for (final (key, label, icon) in _EditionScreenState.criteria)
-              if (ratings[key] is num)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    children: [
-                      Icon(icon, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(label)),
-                      Stars(ratings[key] as num, size: 18),
-                      SizedBox(
-                        width: 28,
-                        child: Text(
-                          '${ratings[key]}',
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+            if (expanded)
+              for (final (key, label, icon) in _EditionScreenState.criteria)
+                if (ratings[key] is num)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(
+                      children: [
+                        Icon(icon, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(label)),
+                        Stars(ratings[key] as num, size: 18),
+                        SizedBox(
+                          width: 28,
+                          child: Text(
+                            '${ratings[key]}',
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-            if (comment != null && comment.isNotEmpty) ...[
+            if (expanded && comment != null && comment.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text('“$comment”'),
             ],
