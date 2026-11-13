@@ -315,7 +315,7 @@ export const TIPOS_AGENDAMENTO = {
   imagens: 'Coleta de imagens candidatas (revisão)',
 };
 
-export const MAX_PROVAS_POR_EXECUCAO = 25;
+export const MAX_PROVAS_POR_EXECUCAO = 50;
 
 /** "Seg, Qui às 06:00" (dias MON...) ou "20/11/2026 às 06:00" (execução única, `data` AAAA-MM-DD); vazio se não for nenhum. */
 export function quandoTexto(dias, horario, data = null) {

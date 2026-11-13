@@ -165,12 +165,12 @@ test('agendamento: validação do formulário e texto de quando roda', async () 
   assert.match(validarAgendamento({ ...ok, dias: [] }), /dia da semana/);
   assert.match(validarAgendamento({ ...ok, horario: '' }), /dia da semana/);
   assert.match(validarAgendamento({ ...ok, horario: '25:00' }), /inválido/);
-  assert.match(validarAgendamento({ ...ok, max: 26 }), /1 a 25/);
-  assert.match(validarAgendamento({ ...ok, max: 0 }), /1 a 25/);
+  assert.match(validarAgendamento({ ...ok, max: 51 }), /1 a 50/);
+  assert.match(validarAgendamento({ ...ok, max: 0 }), /1 a 50/);
   assert.match(validarAgendamento({ ...ok, rodada: 4 }), /rodada/);
   assert.match(validarAgendamento({ ...ok, tipo: 'calendario', meses: 7 }), /meses/);
   // editar: dias e horário opcionais, mas sempre juntos
-  const edit = { novo: false, tipo: 'enriquecer', dias: [], horario: '', rodada: 1, max: 25 };
+  const edit = { novo: false, tipo: 'enriquecer', dias: [], horario: '', rodada: 1, max: 50 };
   assert.equal(validarAgendamento(edit), '');
   assert.match(validarAgendamento({ ...edit, dias: ['MON'] }), /juntos/);
   assert.equal(quandoTexto(['THU', 'MON'], '06:00'), 'Seg, Qui às 06:00');

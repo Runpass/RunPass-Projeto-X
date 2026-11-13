@@ -14,7 +14,7 @@ Travas (a corrida so entra se passar em todas):
 - sem corrida parecida no mesmo dia (semelhanca de nome, mais rigida que a do importador: pega "Int'l" x
   "Internacional");
 - so CRIA corrida nova: corrida que ja existe (mesma origem) ou veio de outra origem vai para a revisao.
-No maximo 25 corridas novas por execucao; o resto fica para a proxima (a execucao e repetivel).
+No maximo 50 corridas novas por execucao; o resto fica para a proxima (a execucao e repetivel).
 """
 
 import hashlib
@@ -30,7 +30,7 @@ from .store import Conflict, Unavailable
 
 SOURCE_CODE = "catalogo-auto"
 REPORT_KEY = re.compile(r"^semanal/(\d{4}-\d{2}-\d{2})/(?:([a-z0-9-]+)/)?candidatos\.csv$")
-MAX_NEW_PER_RUN = 25
+MAX_NEW_PER_RUN = 50
 MAX_FILES_PER_RUN = 6
 MAX_CSV_BYTES = 2_000_000
 HORIZON_DAYS = 548  # ~18 meses

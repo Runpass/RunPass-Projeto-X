@@ -454,7 +454,7 @@ def create_admin_app(
         time: str | None = Field(default=None, max_length=5)
         enabled: bool | None = None
         rodada: int | None = Field(default=None, ge=1, le=3)
-        max: int | None = Field(default=None, ge=1, le=25)
+        max: int | None = Field(default=None, ge=1, le=50)
         meses: int | None = Field(default=None, ge=1, le=6)
 
     @app.get("/admin/users/runners")
@@ -721,7 +721,7 @@ def create_admin_app(
             payload.time,
             True if payload.enabled is None else payload.enabled,
             payload.rodada or 1,
-            payload.max or 25,
+            payload.max or 50,
             payload.meses or 3,
             payload.date,
         )
