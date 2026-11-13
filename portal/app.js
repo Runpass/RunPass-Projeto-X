@@ -538,8 +538,8 @@ function painelUltimaExecucao(vivo) {
 }
 
 async function carregarQualidade() {
-  const alvo = $('qualidade');
-  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  const alvos = ['qualidade-ultima', 'qualidade-extracao', 'qualidade-enriquecimento'].map($);
+  for (const a of alvos) a.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
   try {
     const [r, vivo] = await Promise.all([api('/admin/quality'), api('/admin/quality/live').catch(() => null)]);
     const x = r.extraction;
@@ -547,8 +547,8 @@ async function carregarQualidade() {
     const f = e.filled;
     const contagem = r.spotCheck.reduce((a, c) => ({ ...a, [c.result]: (a[c.result] || 0) + 1 }), {});
     const decidir = x.notExtracted.filter((i) => i.decision === 'decidir').length;
-    alvo.replaceChildren(
-      painelUltimaExecucao(vivo),
+    alvos[0].replaceChildren(painelUltimaExecucao(vivo));
+    alvos[1].replaceChildren(
       el('h2', {}, `Medição manual de ${dataBr(r.date)} (conferida por uma pessoa)`),
       el('p', { class: 'meta' }, r.scope),
       el('h2', {}, 'Extração do calendário da prefeitura'),
@@ -560,6 +560,8 @@ async function carregarQualidade() {
         cartaoNumero('Itens na página oficial', String(x.inPage), `${x.notExtracted.length} não extraídos`),
       ),
       el('div', { class: 'cartao' }, el('div', { class: 'rot' }, 'Não extraídos'), tabela(['Item', 'Data', 'Motivo', 'Situação'], x.notExtracted.map((i) => [i.name, dataBr(i.date), i.reason, i.decision === 'decidir' ? 'Decidir' : 'Correto excluir']))),
+    );
+    alvos[2].replaceChildren(
       el('h2', {}, 'Enriquecimento (distância, local e inscrição)'),
       el(
         'div',
@@ -579,7 +581,7 @@ async function carregarQualidade() {
     );
   } catch (erro) {
     if (token) {
-      alvo.replaceChildren();
+      for (const a of alvos) a.replaceChildren();
       aviso(mensagem(erro.codigo), 'erro');
     }
   }
@@ -638,11 +640,13 @@ function tabela(cabecalho, linhas, direita = []) {
 }
 
 async function carregarCustos() {
-  const alvo = $('custos');
-  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  const alvoAws = $('custos-aws');
+  const alvoIa = $('custos-ia');
+  for (const a of [alvoAws, alvoIa]) a.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
   try {
     const r = await api('/admin/costs');
     const partes = [];
+    const partesIa = [];
     const a = r.aws;
     partes.push(el('h2', {}, 'AWS (conta inteira)'));
     if (!a) {
@@ -662,17 +666,19 @@ async function carregarCustos() {
       );
     }
     if (r.openaiOrg) {
-      partes.push(...secaoOpenAiReal(r.openaiOrg));
+      partesIa.push(...secaoOpenAiReal(r.openaiOrg));
     } else {
       if (r.openaiOrgStatus === 'error') {
-        partes.push(el('p', { class: 'aviso erro' }, `Não foi possível ler os dados reais da OpenAI. ${motivoOpenAi(r.openaiOrgReason)} Mostrando a estimativa.`));
+        partesIa.push(el('p', { class: 'aviso erro' }, `Não foi possível ler os dados reais da OpenAI. ${motivoOpenAi(r.openaiOrgReason)} Mostrando a estimativa.`));
       }
-      partes.push(...secaoOpenAiEstimativa(r.openai, r.openaiOrgStatus === 'not_configured'));
+      partesIa.push(...secaoOpenAiEstimativa(r.openai, r.openaiOrgStatus === 'not_configured'));
     }
-    alvo.replaceChildren(...partes);
+    alvoAws.replaceChildren(...partes);
+    alvoIa.replaceChildren(...partesIa);
   } catch (erro) {
     if (token) {
-      alvo.replaceChildren();
+      alvoAws.replaceChildren();
+      alvoIa.replaceChildren();
       aviso(mensagem(erro.codigo), 'erro');
     }
   }
@@ -1660,3 +1666,14 @@ $('verificar-vinculos').addEventListener('click', verificarVinculos);
 $('atualizar-divergencias').addEventListener('click', carregarDivergencias);
 $('baixar-aceitas').addEventListener('click', baixarAceitas);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);
+
+// Abas horizontais dentro de uma aba (telas com mais de um assunto).
+for (const barra of document.querySelectorAll('[data-subabas]')) {
+  const secao = barra.closest('[data-sec]');
+  barra.addEventListener('click', (evento) => {
+    const botao = evento.target.closest('[data-sub-alvo]');
+    if (!botao) return;
+    for (const b of barra.querySelectorAll('[data-sub-alvo]')) b.setAttribute('aria-selected', String(b === botao));
+    for (const bloco of secao.querySelectorAll('[data-sub]')) bloco.hidden = bloco.dataset.sub !== botao.dataset.subAlvo;
+  });
+}

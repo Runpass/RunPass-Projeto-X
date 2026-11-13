@@ -92,3 +92,7 @@ main:has(#painel:not([hidden])) { max-width: 1240px; }
 #painel > .abas .sair:hover { background: color-mix(in srgb, var(--erro) 12%, transparent); }
 
 h3 { margin: 18px 0 4px; font-size: 16px; }
+.subabas { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--linha); margin: 8px 0 16px; }
+.subabas button { background: transparent; color: var(--suave); border: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 8px 12px; }
+.subabas button[aria-selected="true"] { color: var(--texto); font-weight: 700; border-bottom-color: var(--laranja); }
+.subabas button:hover { color: var(--texto); }
