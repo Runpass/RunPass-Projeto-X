@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'catalog_screen.dart';
 import 'catalog_views.dart';
@@ -60,6 +61,10 @@ class _AgendaScreenState extends State<AgendaScreen> {
   CatalogViewMode viewMode = CatalogViewMode.list;
   int gridColumns = 2;
 
+  /// Agenda com calendário (padrão) ou só a lista das corridas, da mais antiga para a mais nova.
+  static const _calendarKey = 'agenda-show-calendar';
+  bool showCalendar = true;
+
   @override
   void initState() {
     super.initState();
@@ -70,11 +75,31 @@ class _AgendaScreenState extends State<AgendaScreen> {
   Future<void> loadViewPreferences() async {
     final mode = await CatalogViewMode.read(_modeKey);
     final columns = await GridColumns.read(_columnsKey, fallback: 2);
+    var calendar = true;
+    try {
+      calendar =
+          (await SharedPreferences.getInstance()).getBool(_calendarKey) ?? true;
+    } on Object {
+      calendar = true;
+    }
     if (mounted) {
       setState(() {
         viewMode = mode;
         gridColumns = columns;
+        showCalendar = calendar;
       });
+    }
+  }
+
+  Future<void> setShowCalendar(bool value) async {
+    setState(() => showCalendar = value);
+    try {
+      await (await SharedPreferences.getInstance()).setBool(
+        _calendarKey,
+        value,
+      );
+    } on Object {
+      // Sem armazenamento: vale até fechar a tela.
     }
   }
 
@@ -455,13 +480,17 @@ class _AgendaScreenState extends State<AgendaScreen> {
     final monthPrefix =
         '${month.year.toString().padLeft(4, '0')}-${month.month.toString().padLeft(2, '0')}';
     // Embaixo do calendário ficam só as corridas da agenda: as do dia escolhido ou, sem dia, as do mês.
-    final items = [
-      for (final p in all)
-        if (chosen == null
-            ? dateOf(p).startsWith(monthPrefix)
-            : dateOf(p) == chosen)
-          p,
-    ];
+    final items = showCalendar
+        ? [
+            for (final p in all)
+              if (chosen == null
+                  ? dateOf(p).startsWith(monthPrefix)
+                  : dateOf(p) == chosen)
+                p,
+          ]
+        // Só a lista: todas as corridas da aba, da data mais antiga para a mais nova.
+        : (List<Map<String, dynamic>>.of(all)
+            ..sort((a, b) => dateOf(a).compareTo(dateOf(b))));
     return RefreshIndicator(
       onRefresh: load,
       child: ListView(
@@ -472,7 +501,7 @@ class _AgendaScreenState extends State<AgendaScreen> {
             TextButton(onPressed: load, child: const Text('Tentar novamente')),
           ],
           if (loading) const Center(child: CircularProgressIndicator()),
-          if (!loading) calendar(status, all),
+          if (!loading && showCalendar) calendar(status, all),
           if (!loading && all.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 12, bottom: 8),
@@ -480,14 +509,16 @@ class _AgendaScreenState extends State<AgendaScreen> {
                 children: [
                   Expanded(
                     child: Text(
-                      chosen != null
+                      !showCalendar
+                          ? 'Da sua agenda, da mais antiga para a mais nova'
+                          : chosen != null
                           ? 'Corridas em ${displayDate(chosen)}'
                           : 'Da sua agenda em ${monthNamesPt[month.month - 1]} de ${month.year}',
                       key: Key('agenda-day-title-$status'),
                       style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                   ),
-                  if (chosen != null)
+                  if (showCalendar && chosen != null)
                     TextButton(
                       key: Key('agenda-clear-day-$status'),
                       onPressed: () =>
@@ -509,7 +540,11 @@ class _AgendaScreenState extends State<AgendaScreen> {
                 ],
               ),
             ),
-          if (!loading && error == null && all.isNotEmpty && items.isEmpty)
+          if (!loading &&
+              error == null &&
+              showCalendar &&
+              all.isNotEmpty &&
+              items.isEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: Text(
@@ -551,6 +586,21 @@ class _AgendaScreenState extends State<AgendaScreen> {
     child: Scaffold(
       appBar: AppBar(
         title: const Text('Minha agenda'),
+        actions: [
+          IconButton(
+            key: const Key('agenda-layout-toggle'),
+            tooltip: showCalendar
+                ? 'Ver só a lista, sem o calendário'
+                : 'Ver o calendário',
+            icon: Icon(
+              showCalendar
+                  ? Icons.format_list_numbered_rounded
+                  : Icons.calendar_month_rounded,
+            ),
+            onPressed: () => setShowCalendar(!showCalendar),
+          ),
+          const SizedBox(width: 4),
+        ],
         bottom: const TabBar(
           labelColor: runPassOrange,
           indicatorColor: runPassOrange,

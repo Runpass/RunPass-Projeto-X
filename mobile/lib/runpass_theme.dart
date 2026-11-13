@@ -155,7 +155,7 @@ class RunPassWordmark extends StatelessWidget {
       context.isDark
           ? 'assets/brand/logo-dark.png'
           : 'assets/brand/logo-light.png',
-      height: compact ? 30 : 44,
+      height: compact ? 38 : 54,
       fit: BoxFit.contain,
       excludeFromSemantics: true,
     ),

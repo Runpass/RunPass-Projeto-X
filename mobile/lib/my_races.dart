@@ -6,7 +6,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-import 'agenda.dart';
 import 'catalog_screen.dart';
 import 'catalog_views.dart';
 import 'edition_cards.dart';
@@ -888,77 +887,94 @@ List<Seal> sealsOf(RaceStats stats) {
   ];
 }
 
-/// Selo (conquistado ou bloqueado) com o ícone e a legenda curta. É o mesmo no perfil e em
-/// Medalhas > Conquistas.
-class SealBadge extends StatelessWidget {
+/// Círculo do selo: colorido quando conquistado; cinza, com o ícone apagado e um cadeado, quando bloqueado.
+/// É o mesmo no perfil, em Medalhas > Conquistas e na folha de detalhes.
+class SealAvatar extends StatelessWidget {
   final Seal seal;
-  final VoidCallback onTap;
-  const SealBadge({super.key, required this.seal, required this.onTap});
+  final double radius;
+  const SealAvatar({super.key, required this.seal, this.radius = 17});
 
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return Tooltip(
-      message: seal.earned
-          ? '${seal.item.title} ${seal.item.caption}'
-          : 'Bloqueado: ${seal.hint}',
-      child: InkWell(
-        key: Key('seal-${seal.label}'),
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                CircleAvatar(
-                  radius: 17,
-                  backgroundColor: seal.earned
-                      ? seal.item.color
-                      : (dark ? Colors.white12 : Colors.black12),
-                  child: Icon(
-                    seal.item.icon,
-                    size: 18,
-                    color: seal.earned
-                        ? Colors.white
-                        : (dark ? Colors.white38 : Colors.black38),
-                  ),
-                ),
-                if (!seal.earned)
-                  Positioned(
-                    right: -3,
-                    bottom: -3,
-                    child: Container(
-                      key: Key('seal-locked-${seal.label}'),
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: dark ? Colors.black54 : Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.lock,
-                        size: 10,
-                        color: dark ? Colors.white54 : Colors.black54,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 3),
-            Text(
-              seal.label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: seal.earned ? null : context.muted,
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        CircleAvatar(
+          radius: radius,
+          backgroundColor: seal.earned
+              ? seal.item.color
+              : (dark ? Colors.white12 : Colors.black12),
+          child: Icon(
+            seal.item.icon,
+            size: radius * 1.05,
+            color: seal.earned
+                ? Colors.white
+                : (dark ? Colors.white38 : Colors.black38),
+          ),
+        ),
+        if (!seal.earned)
+          Positioned(
+            right: -radius * 0.18,
+            bottom: -radius * 0.18,
+            child: Container(
+              key: Key('seal-locked-${seal.label}'),
+              padding: EdgeInsets.all(radius * 0.12),
+              decoration: BoxDecoration(
+                color: dark ? Colors.black54 : Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.lock,
+                size: radius * 0.6,
+                color: dark ? Colors.white54 : Colors.black54,
               ),
             ),
-          ],
-        ),
-      ),
+          ),
+      ],
     );
   }
+}
+
+/// Selo (conquistado ou bloqueado) com o ícone e a legenda curta. É o mesmo no perfil e em
+/// Medalhas > Conquistas (lá, maior).
+class SealBadge extends StatelessWidget {
+  final Seal seal;
+  final VoidCallback onTap;
+  final double radius;
+  const SealBadge({
+    super.key,
+    required this.seal,
+    required this.onTap,
+    this.radius = 17,
+  });
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: seal.earned
+        ? '${seal.item.title} ${seal.item.caption}'
+        : 'Bloqueado: ${seal.hint}',
+    child: InkWell(
+      key: Key('seal-${seal.label}'),
+      customBorder: const CircleBorder(),
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SealAvatar(seal: seal, radius: radius),
+          SizedBox(height: radius * 0.2),
+          Text(
+            seal.label,
+            style: TextStyle(
+              fontSize: radius >= 26 ? 13 : 10,
+              fontWeight: FontWeight.w700,
+              color: seal.earned ? null : context.muted,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 /// Folha com todos os selos e como desbloquear cada um.
@@ -976,15 +992,7 @@ Future<void> showSealsSheet(BuildContext context, List<Seal> seals) =>
               for (final seal in seals)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(
-                    backgroundColor: seal.earned
-                        ? seal.item.color
-                        : Colors.grey,
-                    child: Icon(
-                      seal.earned ? seal.item.icon : Icons.lock_outline,
-                      color: Colors.white,
-                    ),
-                  ),
+                  leading: SealAvatar(seal: seal, radius: 20),
                   title: Text('${seal.item.title} ${seal.item.caption}'),
                   subtitle: Text(
                     seal.earned ? 'Conquistado' : 'Bloqueado. ${seal.hint}',
@@ -1657,13 +1665,17 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       return [
         Wrap(
           key: const Key('achievement-seals'),
-          spacing: 14,
-          runSpacing: 14,
+          spacing: 12,
+          runSpacing: 18,
           children: [
             for (final seal in seals)
-              SealBadge(
-                seal: seal,
-                onTap: () => showSealsSheet(context, seals),
+              SizedBox(
+                width: 84,
+                child: SealBadge(
+                  seal: seal,
+                  radius: 32,
+                  onTap: () => showSealsSheet(context, seals),
+                ),
               ),
           ],
         ),
@@ -2835,21 +2847,6 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       },
                       onColumnsChanged: _setGridColumns,
                     ),
-                    action: 'Ver agenda',
-                    onAction: () => Navigator.of(context)
-                        .push(
-                          MaterialPageRoute<void>(
-                            builder: (_) =>
-                                AgendaScreen(gateway: widget.gateway),
-                          ),
-                        )
-                        .then((_) {
-                          if (mounted) {
-                            setState(() {
-                              data = load();
-                            });
-                          }
-                        }),
                   ),
                   if (result.plans.isEmpty)
                     const Text(

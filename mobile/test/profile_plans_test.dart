@@ -78,7 +78,7 @@ void main() {
         find.byKey(const Key('plan-r'), skipOffstage: false),
         findsOneWidget,
       );
-      expect(find.text('Ver agenda'), findsOneWidget);
+      expect(find.text('Ver agenda'), findsNothing);
       // Mesmo degradê dos cards de corrida do catálogo.
       expect(
         find.byKey(const Key('race-art'), skipOffstage: false),

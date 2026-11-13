@@ -250,9 +250,12 @@ void main() {
     expect(top('a'), top('d')); // 4 por linha: as quatro lado a lado
     await tester.tap(find.byKey(const Key('grid-columns-photos')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('grid-columns-1')));
+    // A grade começa em 2 colunas: 1 coluna seria igual à lista.
+    expect(find.byKey(const Key('grid-columns-1')), findsNothing);
+    await tester.tap(find.byKey(const Key('grid-columns-2')));
     await tester.pumpAndSettle();
-    expect(top('b'), greaterThan(top('a'))); // 1 coluna: uma por linha
+    expect(top('a'), top('b'));
+    expect(top('c'), greaterThan(top('a'))); // 2 por linha
   });
 
   testWidgets('a avaliação geral fica acima da minha, com os mesmos itens, e '

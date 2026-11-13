@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:runpass/agenda.dart';
 import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/identity_gateway.dart';
@@ -409,6 +410,36 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('grid-columns-2')), findsOneWidget);
   });
+
+  testWidgets(
+    'a agenda pode ficar só em lista, sem o calendário, com as corridas '
+    'da mais antiga para a mais nova',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await openCalendar(tester, calendarPlans());
+      expect(find.byKey(const Key('agenda-calendar-wanted')), findsOneWidget);
+      expect(find.byKey(const Key('agenda-ED')), findsNothing); // só o mês
+      await tester.tap(find.byKey(const Key('agenda-layout-toggle')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('agenda-calendar-wanted')), findsNothing);
+      expect(
+        find.text('Da sua agenda, da mais antiga para a mais nova'),
+        findsOneWidget,
+      );
+      double top(String id) =>
+          tester.getTopLeft(find.byKey(Key('agenda-$id'))).dy;
+      expect(top('EA'), lessThan(top('EC')));
+      expect(
+        top('EC'),
+        lessThan(top('ED')),
+      ); // todas, em ordem crescente de data
+      // Voltar ao calendário.
+      await tester.tap(find.byKey(const Key('agenda-layout-toggle')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('agenda-calendar-wanted')), findsOneWidget);
+      expect(find.byKey(const Key('agenda-ED')), findsNothing);
+    },
+  );
 
   testWidgets('sem corridas a agenda mostra o calendário do mês atual e o '
       'aviso', (tester) async {

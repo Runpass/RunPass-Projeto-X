@@ -116,9 +116,21 @@ void main() {
       expect(find.byKey(const Key('seal-locked-Desbravador')), findsNothing);
       expect(find.byKey(const Key('seal-locked-5K')), findsNothing);
       expect(find.byKey(const Key('seal-locked-42K')), findsOneWidget);
+      // Aqui as insígnias são maiores que as do perfil (raio 17).
+      final size = tester.getSize(
+        find.descendant(
+          of: find.byKey(const Key('seal-5K')),
+          matching: find.byType(CircleAvatar),
+        ),
+      );
+      expect(size.width, greaterThan(40));
       await tester.tap(find.byKey(const Key('seal-42K')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('achievements-sheet')), findsOneWidget);
+      // Na legenda, o bloqueado tem o mesmo cadeado dos outros bloqueados (aqui e na folha).
+      expect(find.byKey(const Key('seal-locked-42K')), findsNWidgets(2));
+      expect(find.byKey(const Key('seal-locked-21K')), findsNWidgets(2));
+      expect(find.byKey(const Key('seal-locked-5K')), findsNothing);
       expect(find.textContaining('Conclua uma maratona (42K)'), findsOneWidget);
       // Fora de Conquistas o título volta.
       await tester.tapAt(const Offset(10, 10));
