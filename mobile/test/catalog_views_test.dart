@@ -86,7 +86,7 @@ void main() {
     expect(find.byKey(const Key('grid-card-A')), findsOneWidget);
     expect(find.byKey(const Key('grid-card-B')), findsOneWidget);
     final two = tester.getSize(find.byKey(const Key('grid-card-A'))).width;
-    await tester.tap(find.byKey(const Key('grid-columns')));
+    await tester.tap(find.byKey(const Key('catalog-view-mode')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('grid-columns-3')));
     await tester.pumpAndSettle();

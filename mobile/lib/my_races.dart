@@ -16,7 +16,7 @@ import 'grid_columns.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
 import 'notifications.dart';
-import 'post_card.dart' show FeedEntry, PostThumb, entryFromPost;
+import 'post_card.dart' show FeedEntry, PostCard, PostThumb, entryFromPost;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 import 'settings.dart';
@@ -888,6 +888,114 @@ List<Seal> sealsOf(RaceStats stats) {
   ];
 }
 
+/// Selo (conquistado ou bloqueado) com o ícone e a legenda curta. É o mesmo no perfil e em
+/// Medalhas > Conquistas.
+class SealBadge extends StatelessWidget {
+  final Seal seal;
+  final VoidCallback onTap;
+  const SealBadge({super.key, required this.seal, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Tooltip(
+      message: seal.earned
+          ? '${seal.item.title} ${seal.item.caption}'
+          : 'Bloqueado: ${seal.hint}',
+      child: InkWell(
+        key: Key('seal-${seal.label}'),
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                CircleAvatar(
+                  radius: 17,
+                  backgroundColor: seal.earned
+                      ? seal.item.color
+                      : (dark ? Colors.white12 : Colors.black12),
+                  child: Icon(
+                    seal.item.icon,
+                    size: 18,
+                    color: seal.earned
+                        ? Colors.white
+                        : (dark ? Colors.white38 : Colors.black38),
+                  ),
+                ),
+                if (!seal.earned)
+                  Positioned(
+                    right: -3,
+                    bottom: -3,
+                    child: Container(
+                      key: Key('seal-locked-${seal.label}'),
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: dark ? Colors.black54 : Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.lock,
+                        size: 10,
+                        color: dark ? Colors.white54 : Colors.black54,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              seal.label,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: seal.earned ? null : context.muted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Folha com todos os selos e como desbloquear cada um.
+Future<void> showSealsSheet(BuildContext context, List<Seal> seals) =>
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Padding(
+          key: const Key('achievements-sheet'),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final seal in seals)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: seal.earned
+                        ? seal.item.color
+                        : Colors.grey,
+                    child: Icon(
+                      seal.earned ? seal.item.icon : Icons.lock_outline,
+                      color: Colors.white,
+                    ),
+                  ),
+                  title: Text('${seal.item.title} ${seal.item.caption}'),
+                  subtitle: Text(
+                    seal.earned ? 'Conquistado' : 'Bloqueado. ${seal.hint}',
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+
 Widget achievementBadge(Achievement item) => SizedBox(
   width: 78,
   child: Column(
@@ -1545,12 +1653,19 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   List<Widget> sections(List<RaceRecord> races) {
     final ordered = newestFirst ? races : races.reversed.toList();
     if (grouping == MedalGrouping.achievements) {
-      final items = achievementsOf(RaceStats.of(races));
+      final seals = sealsOf(RaceStats.of(races));
       return [
         Wrap(
+          key: const Key('achievement-seals'),
           spacing: 14,
-          runSpacing: 18,
-          children: [for (final item in items) achievementBadge(item)],
+          runSpacing: 14,
+          children: [
+            for (final seal in seals)
+              SealBadge(
+                seal: seal,
+                onTap: () => showSealsSheet(context, seals),
+              ),
+          ],
         ),
       ];
     }
@@ -1708,10 +1823,13 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                 const SizedBox(height: 16),
                 Row(
                   children: [
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        'Minhas medalhas',
-                        style: TextStyle(
+                        grouping == MedalGrouping.achievements
+                            ? 'Minhas Insígnias'
+                            : 'Minhas medalhas',
+                        key: const Key('medals-title'),
+                        style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 17,
                         ),
@@ -2096,12 +2214,19 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
   static const _viewKey = 'profile-view-mode';
   CatalogViewMode planView = CatalogViewMode.grid;
 
+  /// Minhas publicações: grade de miniaturas (padrão) ou lista com as publicações inteiras, como no início.
+  static const _postViewKey = 'profile-posts-view-mode';
+  CatalogViewMode postView = CatalogViewMode.grid;
+
   @override
   void initState() {
     super.initState();
     _loadGridColumns();
     CatalogViewMode.read(_viewKey, CatalogViewMode.grid).then((mode) {
       if (mounted) setState(() => planView = mode);
+    });
+    CatalogViewMode.read(_postViewKey, CatalogViewMode.grid).then((mode) {
+      if (mounted) setState(() => postView = mode);
     });
   }
 
@@ -2453,109 +2578,20 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
 
   /// Todos os selos entre o nome e o @usuario: os conquistados coloridos e os que faltam
   /// bloqueados (cinza, com cadeado). Tocar mostra o detalhe e como desbloquear.
-  Widget _sealRow(List<Seal> seals) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return SingleChildScrollView(
-      key: const Key('seal-row'),
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final seal in seals)
-            Padding(
-              padding: const EdgeInsets.only(right: 12, top: 4, bottom: 2),
-              child: Tooltip(
-                message: seal.earned
-                    ? '${seal.item.title} ${seal.item.caption}'
-                    : 'Bloqueado: ${seal.hint}',
-                child: InkWell(
-                  key: Key('seal-${seal.label}'),
-                  customBorder: const CircleBorder(),
-                  onTap: () => _showSeals(seals),
-                  child: Column(
-                    children: [
-                      Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          CircleAvatar(
-                            radius: 17,
-                            backgroundColor: seal.earned
-                                ? seal.item.color
-                                : (dark ? Colors.white12 : Colors.black12),
-                            child: Icon(
-                              seal.item.icon,
-                              size: 18,
-                              color: seal.earned
-                                  ? Colors.white
-                                  : (dark ? Colors.white38 : Colors.black38),
-                            ),
-                          ),
-                          if (!seal.earned)
-                            Positioned(
-                              right: -3,
-                              bottom: -3,
-                              child: Container(
-                                key: Key('seal-locked-${seal.label}'),
-                                padding: const EdgeInsets.all(2),
-                                decoration: BoxDecoration(
-                                  color: dark ? Colors.black54 : Colors.white,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.lock,
-                                  size: 10,
-                                  color: dark ? Colors.white54 : Colors.black54,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        seal.label,
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: seal.earned ? null : context.muted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+  Widget _sealRow(List<Seal> seals) => SingleChildScrollView(
+    key: const Key('seal-row'),
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: [
+        for (final seal in seals)
+          Padding(
+            padding: const EdgeInsets.only(right: 12, top: 4, bottom: 2),
+            child: SealBadge(
+              seal: seal,
+              onTap: () => showSealsSheet(context, seals),
             ),
-        ],
-      ),
-    );
-  }
-
-  void _showSeals(List<Seal> seals) => showModalBottomSheet<void>(
-    context: context,
-    builder: (_) => SafeArea(
-      child: Padding(
-        key: const Key('achievements-sheet'),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (final seal in seals)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: CircleAvatar(
-                  backgroundColor: seal.earned ? seal.item.color : Colors.grey,
-                  child: Icon(
-                    seal.earned ? seal.item.icon : Icons.lock_outline,
-                    color: Colors.white,
-                  ),
-                ),
-                title: Text('${seal.item.title} ${seal.item.caption}'),
-                subtitle: Text(
-                  seal.earned ? 'Conquistado' : 'Bloqueado. ${seal.hint}',
-                ),
-              ),
-          ],
-        ),
-      ),
+          ),
+      ],
     ),
   );
 
@@ -2789,23 +2825,15 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                   ),
                   sectionTitle(
                     'Quero correr',
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CatalogViewMenu(
-                          value: planView,
-                          onChanged: (mode) {
-                            setState(() => planView = mode);
-                            mode.write(_viewKey);
-                          },
-                        ),
-                        if (planView == CatalogViewMode.grid)
-                          GridColumnsButton(
-                            key: const Key('grid-columns-plans'),
-                            value: gridColumns,
-                            onChanged: _setGridColumns,
-                          ),
-                      ],
+                    trailing: CatalogViewMenu(
+                      key: const Key('view-menu-plans'),
+                      value: planView,
+                      columns: gridColumns,
+                      onChanged: (mode) {
+                        setState(() => planView = mode);
+                        mode.write(_viewKey);
+                      },
+                      onColumnsChanged: _setGridColumns,
                     ),
                     action: 'Ver agenda',
                     onAction: () => Navigator.of(context)
@@ -2834,16 +2862,40 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                   ],
                   sectionTitle(
                     'Minhas publicações',
-                    trailing: GridColumnsButton(
-                      key: const Key('grid-columns-posts'),
-                      value: gridColumns,
-                      onChanged: _setGridColumns,
+                    trailing: CatalogViewMenu(
+                      key: const Key('view-menu-posts'),
+                      value: postView,
+                      columns: gridColumns,
+                      onChanged: (mode) {
+                        setState(() => postView = mode);
+                        mode.write(_postViewKey);
+                      },
+                      onColumnsChanged: _setGridColumns,
                     ),
                   ),
                   if (myPosts.isEmpty)
                     const Text(
                       'Suas corridas publicadas aparecerão aqui.',
                       key: Key('no-my-posts'),
+                    )
+                  else if (postView == CatalogViewMode.list)
+                    Column(
+                      key: const Key('my-posts-list'),
+                      children: [
+                        for (final entry in myPosts)
+                          PostCard(
+                            key: Key('my-post-card-${entry.postId}'),
+                            gateway: widget.gateway,
+                            entry: entry,
+                            onChanged: () {
+                              if (mounted) {
+                                setState(() {
+                                  data = load();
+                                });
+                              }
+                            },
+                          ),
+                      ],
                     )
                   else
                     // Miniaturas, 3 por linha; tocar abre a publicação inteira.

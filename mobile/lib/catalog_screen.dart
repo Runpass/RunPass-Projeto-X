@@ -1434,12 +1434,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
                 onPressed: loading ? null : sortByDate,
               ),
-              CatalogViewMenu(value: viewMode, onChanged: chooseViewMode),
-              if (viewMode == CatalogViewMode.grid)
-                GridColumnsButton(
-                  value: gridColumns,
-                  onChanged: chooseGridColumns,
-                ),
+              CatalogViewMenu(
+                value: viewMode,
+                onChanged: chooseViewMode,
+                columns: gridColumns,
+                onColumnsChanged: chooseGridColumns,
+              ),
               IconButton(
                 key: const Key('catalog-sort-rating'),
                 tooltip: sortBy != 'rating'

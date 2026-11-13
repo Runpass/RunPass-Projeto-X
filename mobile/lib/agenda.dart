@@ -496,19 +496,16 @@ class _AgendaScreenState extends State<AgendaScreen> {
                     ),
                   CatalogViewMenu(
                     value: viewMode,
+                    columns: gridColumns,
                     onChanged: (mode) {
                       setState(() => viewMode = mode);
                       mode.write(_modeKey);
                     },
+                    onColumnsChanged: (n) {
+                      setState(() => gridColumns = n);
+                      GridColumns.write(_columnsKey, n);
+                    },
                   ),
-                  if (viewMode == CatalogViewMode.grid)
-                    GridColumnsButton(
-                      value: gridColumns,
-                      onChanged: (n) {
-                        setState(() => gridColumns = n);
-                        GridColumns.write(_columnsKey, n);
-                      },
-                    ),
                 ],
               ),
             ),
@@ -560,8 +557,8 @@ class _AgendaScreenState extends State<AgendaScreen> {
           labelStyle: TextStyle(fontWeight: FontWeight.w900),
           unselectedLabelStyle: TextStyle(fontWeight: FontWeight.w800),
           tabs: [
-            Tab(key: Key('agenda-tab-wanted'), text: 'Desejadas'),
             Tab(key: Key('agenda-tab-registered'), text: 'Inscritas'),
+            Tab(key: Key('agenda-tab-wanted'), text: 'Desejadas'),
           ],
         ),
       ),
@@ -569,12 +566,12 @@ class _AgendaScreenState extends State<AgendaScreen> {
         child: TabBarView(
           children: [
             tab(
-              'wanted',
-              'Você ainda não marcou nenhuma corrida como "Quero correr".\nToque no coração dentro da corrida para guardá-la aqui.',
-            ),
-            tab(
               'registered',
               'Você ainda não marcou nenhuma corrida como inscrito.\nDentro da corrida, toque em "Inscrito" para vê-la aqui.',
+            ),
+            tab(
+              'wanted',
+              'Você ainda não marcou nenhuma corrida como "Quero correr".\nToque no coração dentro da corrida para guardá-la aqui.',
             ),
           ],
         ),

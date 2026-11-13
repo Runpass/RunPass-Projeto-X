@@ -5,7 +5,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'catalog_screen.dart' show EditionScreen;
+import 'catalog_screen.dart'
+    show EditionScreen, ParticipationDraftScreen, catalogError;
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
@@ -239,6 +240,66 @@ class _PostCardState extends State<PostCard> {
     widget.onChanged?.call();
   }
 
+  bool removed = false;
+
+  /// Editar a minha publicação: abre a participação concluída (tempo, foto, avaliação e comentário).
+  Future<void> editMine() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: Map<String, dynamic>.from(entry.race.participation),
+        ),
+      ),
+    );
+    widget.onChanged?.call();
+  }
+
+  /// Remover a minha publicação: a publicação nasce da participação concluída, então remover exclui a
+  /// participação (e a medalha dela), depois de confirmar.
+  Future<void> removeMine() async {
+    final participation = entry.race.participation;
+    final id = participation['id'] as String?;
+    if (id == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remover publicação?'),
+        content: const Text(
+          'A publicação e a participação nesta corrida serão excluídas, e a medalha dela sai das suas medalhas. Não dá para desfazer.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('post-remove-cancel'),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('post-remove-confirm'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remover'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}',
+        method: 'DELETE',
+        query: {'expectedVersion': '${participation['version']}'},
+      );
+      if (!mounted) return;
+      setState(() => removed = true);
+      soon('Publicação removida.');
+      widget.onChanged?.call();
+    } on IdentityIssue catch (issue) {
+      soon(catalogError(issue));
+    } on Exception {
+      soon('Não foi possível remover agora. Nada foi alterado.');
+    }
+  }
+
   /// Foto do autor: abre o perfil (de outra pessoa, com o botao de seguir).
   Future<void> openProfile() async {
     final id = entry.authorProfile?['id'] as String?;
@@ -435,6 +496,7 @@ class _PostCardState extends State<PostCard> {
 
   @override
   Widget build(BuildContext context) {
+    if (removed) return const SizedBox.shrink();
     final race = entry.race;
     final km = race.kilometers;
     final dark = Theme.of(context).brightness == Brightness.dark;
@@ -482,7 +544,28 @@ class _PostCardState extends State<PostCard> {
                     ),
                   ),
                 ),
-                const Icon(Icons.more_horiz),
+                if (entry.mine)
+                  PopupMenuButton<String>(
+                    key: Key('post-menu-${entry.postId}'),
+                    tooltip: 'Opções da publicação',
+                    icon: const Icon(Icons.more_horiz),
+                    onSelected: (value) =>
+                        value == 'edit' ? editMine() : removeMine(),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        key: Key('post-menu-edit'),
+                        value: 'edit',
+                        child: Text('Editar'),
+                      ),
+                      PopupMenuItem(
+                        key: Key('post-menu-remove'),
+                        value: 'remove',
+                        child: Text('Remover'),
+                      ),
+                    ],
+                  )
+                else
+                  const Icon(Icons.more_horiz),
               ],
             ),
             const SizedBox(height: 12),

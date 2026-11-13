@@ -93,6 +93,43 @@ Future<IdentityGateway> runner({bool noRaces = false}) async {
 
 void main() {
   testWidgets(
+    'Conquistas usa os mesmos selos do perfil, com cadeado nos que faltam, e '
+    'o título vira Minhas Insígnias só nessa aba',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Minhas medalhas'), findsOneWidget);
+      expect(find.text('Minhas Insígnias'), findsNothing);
+      await tester.tap(find.text('Conquistas'));
+      await tester.pumpAndSettle();
+      expect(find.text('Minhas Insígnias'), findsOneWidget);
+      expect(find.text('Minhas medalhas'), findsNothing);
+      // Os cinco selos do perfil, com as mesmas legendas; 5K e Desbravador conquistados.
+      for (final label in ['Desbravador', '5K', '10K', '21K', '42K']) {
+        expect(find.byKey(Key('seal-$label')), findsOneWidget);
+      }
+      expect(find.byKey(const Key('seal-locked-Desbravador')), findsNothing);
+      expect(find.byKey(const Key('seal-locked-5K')), findsNothing);
+      expect(find.byKey(const Key('seal-locked-42K')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('seal-42K')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('achievements-sheet')), findsOneWidget);
+      expect(find.textContaining('Conclua uma maratona (42K)'), findsOneWidget);
+      // Fora de Conquistas o título volta.
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Por ano'));
+      await tester.pumpAndSettle();
+      expect(find.text('Minhas medalhas'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'medal collection shows counts and regroups by year and distance',
     (tester) async {
       await tester.pumpWidget(

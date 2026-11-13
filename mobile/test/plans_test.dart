@@ -177,13 +177,13 @@ void main() {
     });
     await tester.pumpWidget(MaterialApp(home: AgendaScreen(gateway: gateway)));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
-    expect(find.byKey(const Key('agenda-EB')), findsNothing);
-    await tester.tap(find.byKey(const Key('agenda-tab-registered')));
-    await tester.pumpAndSettle();
+    // A agenda abre em Inscritas (a principal).
     expect(find.byKey(const Key('agenda-EB')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EA')), findsNothing);
     await tester.tap(find.byKey(const Key('agenda-tab-wanted')));
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EB')), findsNothing);
     await tester.tap(find.byKey(const Key('agenda-menu-EA')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Marcar como inscrito'));
@@ -220,6 +220,9 @@ void main() {
       return const JsonReply(200, {'items': []});
     });
     await tester.pumpWidget(MaterialApp(home: AgendaScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    // A agenda abre em Inscritas; os testes de calendário partem da aba Desejadas.
+    await tester.tap(find.byKey(const Key('agenda-tab-wanted')));
     await tester.pumpAndSettle();
   }
 
@@ -398,7 +401,13 @@ void main() {
       tester.getTopLeft(find.byKey(const Key('agenda-EA'))).dy,
       tester.getTopLeft(find.byKey(const Key('agenda-EC'))).dy,
     );
-    expect(find.byKey(const Key('grid-columns')), findsOneWidget);
+    expect(
+      find.byKey(const Key('grid-columns-2')),
+      findsNothing,
+    ); // só no menu aberto
+    await tester.tap(find.byKey(const Key('catalog-view-mode')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('grid-columns-2')), findsOneWidget);
   });
 
   testWidgets('sem corridas a agenda mostra o calendário do mês atual e o '

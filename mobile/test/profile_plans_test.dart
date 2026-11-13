@@ -201,7 +201,12 @@ void main() {
     expect(top('a'), top('c')); // padrão: 3 por linha
     expect(top('d'), greaterThan(top('a')));
 
-    await tester.tap(find.byKey(const Key('grid-columns-plans')));
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('view-menu-plans')),
+        matching: find.byKey(const Key('catalog-view-mode')),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('grid-columns-2')));
     await tester.pumpAndSettle();
@@ -244,12 +249,33 @@ void main() {
     Offset at(String id) =>
         tester.getTopLeft(find.byKey(Key('plan-$id'), skipOffstage: false));
     expect(at('a').dy, at('b').dy); // padrão: grade
-    await tester.tap(find.byKey(const Key('catalog-view-mode')));
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('view-menu-plans')),
+        matching: find.byKey(const Key('catalog-view-mode')),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('catalog-view-list')));
     await tester.pumpAndSettle();
     expect(at('b').dy, greaterThan(at('a').dy)); // um por linha
     expect(at('a').dx, at('b').dx);
-    expect(find.byKey(const Key('grid-columns-plans')), findsNothing);
+  });
+
+  testWidgets('perfil: Quero correr e Minhas publicações têm um só menu de '
+      'lista/grade cada, sem botão de grade duplicado', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await gatewayWith([plan('a', 'wanted', '2027-01-10')]);
+    await tester.pumpWidget(
+      MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('view-menu-plans')), findsOneWidget);
+    expect(find.byKey(const Key('view-menu-posts')), findsOneWidget);
+    expect(find.byKey(const Key('grid-columns')), findsNothing);
+    expect(find.byIcon(Icons.grid_view_rounded), findsNWidgets(2));
   });
 }
