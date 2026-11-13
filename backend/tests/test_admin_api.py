@@ -836,8 +836,12 @@ class AdminApiTests(unittest.TestCase):
         home = self.client.get("/")
         self.assertEqual(home.status_code, 200)
         self.assertIn("text/html", home.headers["content-type"])
-        self.assertIn("MeuPódio", home.text)
-        self.assertIn('class="logo"', home.text)  # logo do pódio no cabeçalho
+        self.assertIn("+1Pódio", home.text)
+        for arquivo in ("/logo-claro.png", "/logo-escuro.png", "/icone.png"):
+            imagem = self.client.get(arquivo)  # logo +1Pódio no cabeçalho e ícone da aba
+            self.assertEqual(imagem.status_code, 200)
+            self.assertEqual(imagem.headers["content-type"], "image/png")
+            self.assertTrue(imagem.content.startswith(b"\x89PNG"))
         csp = home.headers["content-security-policy"]
         self.assertIn("script-src 'self'", csp)
         self.assertIn("frame-ancestors 'none'", csp)

@@ -200,13 +200,13 @@ Widget runPassNavigation(
       if (index == selectedIndex && !subScreen) return;
       final screen = switch (index) {
         0 => RunPassHomeScreen(gateway: gateway),
-        1 => CatalogScreen(gateway: gateway),
-        2 => MedalCollectionScreen(gateway: gateway),
+        1 => MedalCollectionScreen(gateway: gateway),
+        2 => CatalogScreen(gateway: gateway),
         _ => RunnerProfileScreen(gateway: gateway),
       };
       final route = MaterialPageRoute<void>(builder: (_) => screen);
       if (subScreen) {
-        Navigator.of(context).pushAndRemoveUntil(route, (r) => r.isFirst);
+        Navigator.of(context).pushAndRemoveUntil(route, (r) => false);
       } else {
         Navigator.of(context).pushReplacement(route);
       }
@@ -1088,7 +1088,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         const SizedBox(width: 8),
       ],
     ),
-    bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+    bottomNavigationBar: runPassNavigation(context, widget.gateway, 2),
     body: SafeArea(
       child: ListView(
         padding: const EdgeInsets.all(16),
@@ -1603,7 +1603,7 @@ class _EditionScreenState extends State<EditionScreen> {
     }
   }
 
-  /// Banner aprovado pela equipe (cópia guardada pelo MeuPódio, com crédito). Sem banner ou com
+  /// Banner aprovado pela equipe (cópia guardada pelo +1Pódio, com crédito). Sem banner ou com
   /// falha, o degradê de sempre continua: a imagem nunca bloqueia a tela.
   Future<void> loadBanner() async {
     if (edition?['imageReference'] == null) return;
@@ -2119,44 +2119,18 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
-  Widget header(Map<String, dynamic> body, {bool title = false}) => Column(
+  Widget header(Map<String, dynamic> body) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      if (title) ...[
-        Text(
-          body['name'] as String? ?? '',
-          key: const Key('reviews-title'),
-          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 24),
-        ),
-        const SizedBox(height: 10),
-      ],
       Row(
         children: [
           const Icon(Icons.calendar_today_outlined, size: 16),
           const SizedBox(width: 6),
-          Text(
-            title
-                ? longDate(body['date'] as String)
-                : displayDate(body['date'] as String),
-          ),
-          if (title) ...[
-            const SizedBox(width: 12),
-            SizedBox(
-              height: 16,
-              child: VerticalDivider(width: 1, color: context.muted),
-            ),
-            const SizedBox(width: 12),
-          ] else
-            const SizedBox(width: 16),
+          Text(displayDate(body['date'] as String)),
+          const SizedBox(width: 16),
           const Icon(Icons.place_outlined, size: 16),
           const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              title
-                  ? '${body['city']} - ${body['state']}'
-                  : '${body['city']}/${body['state']}',
-            ),
-          ),
+          Expanded(child: Text('${body['city']}/${body['state']}')),
         ],
       ),
       const SizedBox(height: 14),
@@ -2253,6 +2227,16 @@ class _EditionScreenState extends State<EditionScreen> {
     padding: const EdgeInsets.all(20),
     children: [
       header(body),
+      // Nota média e quantidade de avaliações; tocar leva à aba Avaliações.
+      Builder(
+        builder: (tabContext) => InkWell(
+          key: const Key('about-rating'),
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => DefaultTabController.of(tabContext).animateTo(1),
+          child: scoreCard(body),
+        ),
+      ),
+      const SizedBox(height: 16),
       if (body['description'] != null) Text(body['description'] as String),
       if (body['organizerName'] != null)
         Padding(
@@ -2644,7 +2628,7 @@ class _EditionScreenState extends State<EditionScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        review['authorName'] as String? ?? 'Corredor MeuPódio',
+                        review['authorName'] as String? ?? 'Corredor +1Pódio',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                       Row(
@@ -2686,7 +2670,6 @@ class _EditionScreenState extends State<EditionScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        header(body, title: true),
         scoreCard(body),
         _detailsToggle(
           key: const Key('summary-details-toggle'),
@@ -2890,7 +2873,7 @@ class _EditionScreenState extends State<EditionScreen> {
               ),
               ListTile(
                 title: Text(
-                  (author['displayName'] as String?) ?? 'Corredor MeuPódio',
+                  (author['displayName'] as String?) ?? 'Corredor +1Pódio',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 subtitle: (author['username'] as String? ?? '').isEmpty
@@ -2925,7 +2908,7 @@ class _EditionScreenState extends State<EditionScreen> {
     if (participantTotal == 0 && registrantTotal == 0) {
       return emptyTab(
         Icons.groups_outlined,
-        'Ninguém concluiu nem se inscreveu nesta prova no MeuPódio ainda.\n'
+        'Ninguém concluiu nem se inscreveu nesta prova no +1Pódio ainda.\n'
         'Seja a primeira pessoa a registrar.',
       );
     }
@@ -2995,7 +2978,7 @@ class _EditionScreenState extends State<EditionScreen> {
     Map<String, double> kmById,
   ) {
     final author = Map<String, dynamic>.from(item['author'] as Map);
-    final name = (author['displayName'] as String?) ?? 'Corredor MeuPódio';
+    final name = (author['displayName'] as String?) ?? 'Corredor +1Pódio';
     final km = kmById[item['distanceId']];
     return Card(
       key: Key('registrant-${author['id']}'),
@@ -3023,7 +3006,7 @@ class _EditionScreenState extends State<EditionScreen> {
     Map<String, double> kmById,
   ) {
     final author = Map<String, dynamic>.from(item['author'] as Map);
-    final name = (author['displayName'] as String?) ?? 'Corredor MeuPódio';
+    final name = (author['displayName'] as String?) ?? 'Corredor +1Pódio';
     final km = kmById[item['distanceId']];
     final time = item['timeSeconds'] as num?;
     final place = item['placement'] as num?;
@@ -3063,7 +3046,7 @@ class _EditionScreenState extends State<EditionScreen> {
       bottomNavigationBar: runPassNavigation(
         context,
         widget.gateway,
-        1,
+        2,
         subScreen: true,
       ),
       body: loading
@@ -3774,7 +3757,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         bottomNavigationBar: runPassNavigation(
           context,
           widget.gateway,
-          2,
+          1,
           subScreen: true,
         ),
         body: ListView(
@@ -3871,7 +3854,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       bottomNavigationBar: runPassNavigation(
         context,
         widget.gateway,
-        1,
+        2,
         subScreen: true,
       ),
       body: ListView(
@@ -4064,7 +4047,7 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
     bottomNavigationBar: runPassNavigation(
       context,
       widget.gateway,
-      1,
+      2,
       subScreen: true,
     ),
     body: loading

@@ -225,7 +225,7 @@ class _OrganizerPostCardState extends State<OrganizerPostCard> {
             ),
           ),
           Text(
-            'Conteúdo do organizador, exibido pelo $networkName. O MeuPódio não copia nem guarda este post.',
+            'Conteúdo do organizador, exibido pelo $networkName. O +1Pódio não copia nem guarda este post.',
             style: TextStyle(fontSize: 12, color: context.muted),
           ),
         ],

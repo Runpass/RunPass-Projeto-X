@@ -4,12 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>MeuPódio Admin</title>
+  <title>+1Pódio Admin</title>
+  <link rel="icon" type="image/png" href="icone.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topo">
-    <strong class="marca"><svg class="logo" viewBox="0 0 100 100" width="26" height="26" role="img" aria-label="MeuPódio"><path d="M12 84V57.5Q12 54 15.5 54H34.5Q38 54 38 57.5V84Z" fill="#ff8a5c"/><path d="M38 84V41.5Q38 38 41.5 38H58.5Q62 38 62 41.5V84Z" fill="#fc5426"/><path d="M62 84V67.5Q62 64 65.5 64H84.5Q88 64 88 67.5V84Z" fill="#e8431a"/><polygon points="50.0,9.0 53.1,17.3 61.9,17.6 54.9,23.1 57.3,31.6 50.0,26.7 42.7,31.6 45.1,23.1 38.1,17.6 46.9,17.3" fill="#ffc144"/></svg>Meu<span>Pódio</span> <small>Admin</small></strong>
+    <strong class="marca"><img class="logo-claro" src="logo-claro.png" alt="+1Pódio" height="30"><img class="logo-escuro" src="logo-escuro.png" alt="+1Pódio" height="30"> <small>Admin</small></strong>
     <div id="sessao" class="sessao" hidden>
       <span id="quem"></span>
       <span id="expira"></span>
@@ -73,27 +74,36 @@
       <section id="sec-catalogo" data-sec="catalogo" hidden>
         <div class="barra"><h1>Atualizar o catálogo</h1></div>
         <p class="ajuda">Dispara a rotina do catálogo agora. Ela usa a cota da OpenAI e roda em segundo plano (alguns minutos). Só um disparo a cada 10 minutos. Com o importe automático desligado nada é publicado: o resultado vai para revisão.</p>
+        <nav class="subabas" role="tablist" data-subabas="catalogo"><button type="button" role="tab" data-sub-alvo="importe" aria-selected="true">Importe automático</button><button type="button" role="tab" data-sub-alvo="rodar" aria-selected="false">Rodar agora</button><button type="button" role="tab" data-sub-alvo="agenda" aria-selected="false">Agendamentos</button><button type="button" role="tab" data-sub-alvo="execucoes" aria-selected="false">Execuções</button></nav>
+        <div data-sub="importe">
         <article class="cartao" id="importe-automatico">
           <h2>Importe automático</h2>
           <p class="ajuda">Depois de cada busca ou enriquecimento, o portal importa e <strong>publica sozinho</strong> as corridas do relatório que passam em todas as travas. O que não passa fica para a sua revisão. Desligado por padrão.</p>
           <div id="importe-automatico-corpo"></div>
         </article>
+        </div>
+        <div data-sub="rodar" hidden>
         <article class="cartao">
           <label>O que rodar <select id="modo-catalogo"></select></label>
           <button id="rodar" type="button">Disparar</button>
           <p id="ultimo-disparo" class="meta"></p>
         </article>
+        </div>
+        <div data-sub="agenda" hidden>
         <div class="barra">
           <h2>Próximos agendamentos</h2>
         </div>
         <p class="ajuda">O que está programado para rodar sozinho (horário de São Paulo). Você pode criar, editar, pausar e apagar. Cada execução ativa gasta a cota da OpenAI: no máximo 1 vez por dia, 25 provas por execução e 20 agendamentos criados pelo portal.</p>
         <div id="agendamentos"></div>
+        </div>
+        <div data-sub="execucoes" hidden>
         <div class="barra">
           <h2>Execuções recentes</h2>
           <button id="atualizar-execucoes" type="button" class="sec">Atualizar</button>
         </div>
         <p class="ajuda">Disparos feitos aqui e execuções agendadas dos últimos 7 dias. A situação vem dos registros da própria rotina e atualiza sozinha enquanto houver uma em andamento.</p>
         <div id="execucoes"></div>
+        </div>
       </section>
       <section id="sec-cadastros" data-sec="cadastros" hidden>
         <div class="barra">
@@ -110,18 +120,26 @@
           <button id="atualizar-banners" type="button" class="sec">Atualizar</button>
         </div>
         <p class="ajuda">Aprovar publica a imagem no app, com o crédito escolhido. Nada é publicado sem você ver a imagem, informar o crédito e a base de autorização e confirmar que ela é verdadeira.</p>
+        <nav class="subabas" role="tablist" data-subabas="banners"><button type="button" role="tab" data-sub-alvo="candidatas" aria-selected="true">Candidatas</button><button type="button" role="tab" data-sub-alvo="manual" aria-selected="false">Imagem manual</button><button type="button" role="tab" data-sub-alvo="redes" aria-selected="false">Redes do organizador</button><button type="button" role="tab" data-sub-alvo="publicados" aria-selected="false">Publicados</button></nav><div data-sub="candidatas">
         <div id="banners-candidatas"></div>
+        </div>
+        <div data-sub="manual" hidden>
         <article class="cartao">
           <h2>Outra imagem (endereço manual)</h2>
           <div id="banner-manual"></div>
         </article>
+        </div>
+        <div data-sub="redes" hidden>
         <article class="cartao">
           <h2>Redes do organizador</h2>
           <p class="ajuda">Guarde o Instagram e o Facebook do organizador da corrida. No app aparece "Ver no Instagram/Facebook". O post escolhido é só mostrado pelo embed oficial da Meta na aba Fotos: a imagem e o texto dele nunca são copiados nem guardados.</p>
           <div id="redes-organizador"></div>
         </article>
+        </div>
+        <div data-sub="publicados" hidden>
         <div class="barra"><h2>Banners publicados</h2></div>
         <div id="banners-publicados"></div>
+        </div>
       </section>
       <section id="sec-divergencias" data-sec="divergencias" hidden>
         <div class="barra">
@@ -139,14 +157,19 @@
           <h1>Qualidade da busca do catálogo</h1>
           <button id="atualizar-qualidade" type="button" class="sec">Atualizar</button>
         </div>
-        <div id="qualidade"></div>
+        <nav class="subabas" role="tablist" data-subabas="qualidade"><button type="button" role="tab" data-sub-alvo="ultima" aria-selected="true">Última execução</button><button type="button" role="tab" data-sub-alvo="extracao" aria-selected="false">Extração do calendário</button><button type="button" role="tab" data-sub-alvo="enriquecimento" aria-selected="false">Enriquecimento e conferência</button></nav>
+        <div data-sub="ultima"><div id="qualidade-ultima"></div></div>
+        <div data-sub="extracao" hidden><div id="qualidade-extracao"></div></div>
+        <div data-sub="enriquecimento" hidden><div id="qualidade-enriquecimento"></div></div>
       </section>
       <section id="sec-custos" data-sec="custos" hidden>
         <div class="barra">
           <h1>Custos</h1>
           <button id="atualizar-custos" type="button" class="sec">Atualizar</button>
         </div>
-        <div id="custos"></div>
+        <nav class="subabas" role="tablist" data-subabas="custos"><button type="button" role="tab" data-sub-alvo="aws" aria-selected="true">AWS</button><button type="button" role="tab" data-sub-alvo="ia" aria-selected="false">IA (OpenAI)</button></nav>
+        <div data-sub="aws"><div id="custos-aws"></div></div>
+        <div data-sub="ia" hidden><div id="custos-ia"></div></div>
       </section>
       <section id="sec-preferencias" data-sec="preferencias" hidden>
         <div class="barra"><h1>Preferências</h1></div>
@@ -164,7 +187,10 @@
           <button id="atualizar-operadores" type="button" class="sec">Atualizar</button>
         </div>
         <p class="ajuda">Quem entra neste portal. Alterações valem na hora: retirar o acesso derruba a sessão do operador. Você não altera o seu próprio acesso, e a conta sempre mantém um administrador de usuários ativo.</p>
+        <nav class="subabas" role="tablist" data-subabas="operadores"><button type="button" role="tab" data-sub-alvo="lista" aria-selected="true">Operadores</button><button type="button" role="tab" data-sub-alvo="criar" aria-selected="false">Criar operador</button></nav><div data-sub="lista">
         <div id="operadores"></div>
+        </div>
+        <div data-sub="criar" hidden>
         <div class="barra"><h2>Criar operador</h2></div>
         <p class="ajuda">O operador recebe um e-mail com senha temporária e, no primeiro acesso, define a senha e cadastra o autenticador (MFA obrigatório).</p>
         <form id="form-operador" class="cartao" autocomplete="off">
@@ -172,6 +198,7 @@
           <fieldset id="op-permissoes"><legend>Permissões</legend></fieldset>
           <button type="submit">Criar e conceder acesso</button>
         </form>
+        </div>
       </section>
     </section>
   </main>

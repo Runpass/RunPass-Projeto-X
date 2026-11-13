@@ -42,6 +42,17 @@ Future<IdentityGateway> signed(
   return gateway;
 }
 
+Future<void> revealInEdition(WidgetTester tester, Finder target) async {
+  final scroll = find
+      .descendant(
+        of: find.byType(EditionScreen),
+        matching: find.byType(Scrollable),
+      )
+      .last;
+  await tester.scrollUntilVisible(target, 200, scrollable: scroll);
+  await tester.pumpAndSettle();
+}
+
 Future<void> reveal(
   WidgetTester tester,
   Finder target, {
@@ -317,6 +328,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('10K'));
     await tester.pumpAndSettle();
+    await revealInEdition(tester, find.text('Já corri'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Já corri'));
     await tester.pumpAndSettle();
     expect(find.text('Rascunho da participação'), findsOneWidget);
@@ -379,6 +392,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('10K'));
+    await tester.pumpAndSettle();
+    await revealInEdition(tester, find.text('Já corri'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Já corri'));
     await tester.pumpAndSettle();
@@ -855,6 +870,7 @@ void main() {
     // Tocar abre a página da corrida (informações e avaliações), não uma pergunta.
     expect(find.text('Corrida já cadastrada'), findsNothing);
     expect(find.byType(EditionScreen), findsOneWidget);
+    await revealInEdition(tester, find.byKey(const Key('already-mine')));
     expect(find.byKey(const Key('already-mine')), findsOneWidget);
     expect(find.text('Já corri'), findsNothing);
     await tester.scrollUntilVisible(

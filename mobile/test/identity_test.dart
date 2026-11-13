@@ -298,14 +298,14 @@ void main() {
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
       expect(operations, ['ForgotPassword', 'ConfirmForgotPassword']);
-      expect(find.text('Entre no MeuPódio'), findsOneWidget);
+      expect(find.text('Entre no +1Pódio'), findsOneWidget);
     },
   );
 
   testWidgets('unconfigured environment fails closed', (tester) async {
     await tester.pumpWidget(const MainApp());
     expect(
-      find.text('O MeuPódio ainda não está disponível neste ambiente.'),
+      find.text('O +1Pódio ainda não está disponível neste ambiente.'),
       findsOneWidget,
     );
     expect(find.byType(TextFormField), findsNothing);
