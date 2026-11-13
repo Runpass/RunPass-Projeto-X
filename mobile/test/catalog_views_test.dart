@@ -62,24 +62,16 @@ Future<void> chooseMode(WidgetTester tester, CatalogViewMode mode) async {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('editionDay só aceita datas de calendário válidas', () {
-    expect(editionDay({'date': '2026-11-15'}), DateTime(2026, 11, 15));
-    expect(editionDay({'date': '2026-02-31'}), isNull);
-    expect(editionDay({'date': '15/11/2026'}), isNull);
-    expect(editionDay({}), isNull);
-  });
-
-  testWidgets('a lista é o padrão e o menu oferece lista, grade e calendário', (
+  testWidgets('a lista é o padrão e o menu oferece só lista e grade', (
     tester,
   ) async {
     await openCatalog(tester, [race('A', '2026-11-15')]);
     expect(find.byKey(const Key('catalog-grid')), findsNothing);
-    expect(find.byKey(const Key('catalog-calendar')), findsNothing);
     await tester.tap(find.byKey(const Key('catalog-view-mode')));
     await tester.pumpAndSettle();
     expect(find.text('Lista'), findsOneWidget);
     expect(find.text('Grade'), findsOneWidget);
-    expect(find.text('Calendário'), findsOneWidget);
+    expect(find.text('Calendário'), findsNothing);
   });
 
   testWidgets('grade: cartões em colunas e botão para escolher as colunas', (
@@ -104,46 +96,17 @@ void main() {
     expect(saved, CatalogViewMode.grid);
   });
 
-  testWidgets('calendário: cada corrida só aparece no dia da sua data', (
+  testWidgets('a escolha da grade fica guardada; valor antigo vira lista', (
     tester,
   ) async {
-    await openCatalog(tester, [
-      race('A', '2026-11-15'),
-      race('B', '2026-11-22'),
-      race('C', '2026-12-06'),
-    ]);
-    await chooseMode(tester, CatalogViewMode.calendar);
-    expect(find.byKey(const Key('catalog-calendar')), findsOneWidget);
-    // Hoje não tem corrida: abre no mês da corrida mais próxima (novembro de 2026).
-    expect(find.text('novembro de 2026'), findsOneWidget);
-    expect(find.text('Corridas de novembro'), findsOneWidget);
-    expect(find.text('[FICTICIA] Corrida A'), findsOneWidget);
-    expect(find.text('[FICTICIA] Corrida B'), findsOneWidget);
-    expect(find.text('[FICTICIA] Corrida C'), findsNothing);
-    // Tocar no dia 15 mostra só a corrida desse dia.
-    await tester.tap(find.byKey(const Key('catalog-day-2026-11-15')));
-    await tester.pumpAndSettle();
-    expect(find.text('15 de novembro'), findsOneWidget);
-    expect(find.text('[FICTICIA] Corrida A'), findsOneWidget);
-    expect(find.text('[FICTICIA] Corrida B'), findsNothing);
-    // Dia sem corrida não é tocável.
-    final empty = tester.widget<InkWell>(
-      find.byKey(const Key('catalog-day-2026-11-16')),
-    );
-    expect(empty.onTap, isNull);
-    // Mês seguinte: só a corrida de dezembro.
-    await tester.tap(find.byKey(const Key('catalog-cal-next')));
-    await tester.pumpAndSettle();
-    expect(find.text('dezembro de 2026'), findsOneWidget);
-    expect(find.text('[FICTICIA] Corrida C'), findsOneWidget);
-    expect(find.text('[FICTICIA] Corrida A'), findsNothing);
-  });
-
-  testWidgets('a escolha da visualização fica guardada', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      CatalogViewMode.storageKey: 'grid',
+    });
+    await openCatalog(tester, [race('A', '2026-11-15')]);
+    expect(find.byKey(const Key('catalog-grid')), findsOneWidget);
     SharedPreferences.setMockInitialValues({
       CatalogViewMode.storageKey: 'calendar',
     });
-    await openCatalog(tester, [race('A', '2026-11-15')]);
-    expect(find.byKey(const Key('catalog-calendar')), findsOneWidget);
+    expect(await CatalogViewMode.read(), CatalogViewMode.list);
   });
 }

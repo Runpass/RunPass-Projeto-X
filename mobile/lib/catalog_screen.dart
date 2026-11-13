@@ -493,7 +493,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// Direção: em data, mais recentes primeiro; em avaliação, melhores primeiro.
   bool descending = true;
 
-  /// Visualização escolhida (lista, grade ou calendário) e colunas da grade; ficam neste aparelho.
+  /// Visualização escolhida (lista ou grade) e colunas da grade; ficam neste aparelho.
   CatalogViewMode viewMode = CatalogViewMode.list;
   int gridColumns = 2;
 
@@ -640,9 +640,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
           ),
           const SizedBox(height: 12),
         ];
-      case CatalogViewMode.calendar:
-        if (shown.isEmpty) return const [];
-        return [CatalogCalendar(editions: shown, cardBuilder: editionCard)];
     }
   }
 

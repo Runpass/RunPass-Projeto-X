@@ -143,6 +143,42 @@ class _AgendaScreenState extends State<AgendaScreen> {
     });
   }
 
+  /// Primeira corrida que ainda vai acontecer (hoje ou depois) nesta aba; nulo se não houver.
+  String? nextRaceDate(String status) {
+    final today = _iso(DateTime.now());
+    for (final p in forStatus(status)) {
+      if (dateOf(p).compareTo(today) >= 0) return dateOf(p);
+    }
+    return null;
+  }
+
+  /// Leva o calendário ao próximo mês que tem corrida (depois do que está na tela); no último, volta
+  /// para a primeira que ainda vai acontecer.
+  void goToNextRace(String status) {
+    final first = nextRaceDate(status);
+    if (first == null) return;
+    final shown = monthFor(status);
+    final today = _iso(DateTime.now());
+    final shownKey = shown.year * 12 + shown.month;
+    final upcoming = [
+      for (final p in forStatus(status))
+        if (dateOf(p).compareTo(today) >= 0) dateOf(p),
+    ]..sort();
+    final target = upcoming.firstWhere(
+      (d) =>
+          int.parse(d.substring(0, 4)) * 12 + int.parse(d.substring(5, 7)) >
+          shownKey,
+      orElse: () => first,
+    );
+    setState(() {
+      months[status] = DateTime(
+        int.parse(target.substring(0, 4)),
+        int.parse(target.substring(5, 7)),
+      );
+      selectedDay[status] = null;
+    });
+  }
+
   void pickDay(String status, String iso) => setState(() {
     selectedDay[status] = selectedDay[status] == iso ? null : iso;
   });
@@ -200,12 +236,23 @@ class _AgendaScreenState extends State<AgendaScreen> {
                     children: [
                       for (var i = 0; i < (count > 3 ? 3 : count); i++)
                         Container(
-                          width: 5,
-                          height: 5,
+                          width: 6,
+                          height: 6,
                           margin: const EdgeInsets.symmetric(horizontal: 1),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: isChosen ? Colors.white : runPassOrange,
+                            // Inscrita: ponto cheio. Desejada: só o contorno.
+                            color: status == 'registered'
+                                ? (isChosen ? Colors.white : runPassOrange)
+                                : null,
+                            border: status == 'registered'
+                                ? null
+                                : Border.all(
+                                    color: isChosen
+                                        ? Colors.white
+                                        : runPassOrange,
+                                    width: 1.4,
+                                  ),
                           ),
                         ),
                     ],
@@ -273,6 +320,40 @@ class _AgendaScreenState extends State<AgendaScreen> {
                     Expanded(child: cell(day)),
                 ],
               ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Container(
+                  key: Key('agenda-legend-$status'),
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: status == 'registered' ? runPassOrange : null,
+                    border: status == 'registered'
+                        ? null
+                        : Border.all(color: runPassOrange, width: 1.5),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    status == 'registered'
+                        ? 'Inscrita (ponto cheio)'
+                        : 'Desejada (só o contorno)',
+                    style: TextStyle(fontSize: 12, color: context.muted),
+                  ),
+                ),
+                TextButton.icon(
+                  key: Key('agenda-next-race-$status'),
+                  onPressed: nextRaceDate(status) == null
+                      ? null
+                      : () => goToNextRace(status),
+                  icon: const Icon(Icons.skip_next_rounded, size: 18),
+                  label: const Text('Próxima corrida'),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -340,12 +421,17 @@ class _AgendaScreenState extends State<AgendaScreen> {
   Widget tab(String status, String empty) {
     final all = forStatus(status);
     final chosen = selectedDay[status];
-    final items = chosen == null
-        ? all
-        : [
-            for (final p in all)
-              if (dateOf(p) == chosen) p,
-          ];
+    final month = monthFor(status);
+    final monthPrefix =
+        '${month.year.toString().padLeft(4, '0')}-${month.month.toString().padLeft(2, '0')}';
+    // Embaixo do calendário ficam só as corridas da agenda: as do dia escolhido ou, sem dia, as do mês.
+    final items = [
+      for (final p in all)
+        if (chosen == null
+            ? dateOf(p).startsWith(monthPrefix)
+            : dateOf(p) == chosen)
+          p,
+    ];
     return RefreshIndicator(
       onRefresh: load,
       child: ListView(
@@ -357,24 +443,37 @@ class _AgendaScreenState extends State<AgendaScreen> {
           ],
           if (loading) const Center(child: CircularProgressIndicator()),
           if (!loading) calendar(status, all),
-          if (!loading && chosen != null)
+          if (!loading && all.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(top: 12, bottom: 8),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
-                      'Corridas em ${displayDate(chosen)}',
+                      chosen != null
+                          ? 'Corridas em ${displayDate(chosen)}'
+                          : 'Da sua agenda em ${monthNamesPt[month.month - 1]} de ${month.year}',
                       key: Key('agenda-day-title-$status'),
                       style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                   ),
-                  TextButton(
-                    key: Key('agenda-clear-day-$status'),
-                    onPressed: () => setState(() => selectedDay[status] = null),
-                    child: const Text('Ver todas'),
-                  ),
+                  if (chosen != null)
+                    TextButton(
+                      key: Key('agenda-clear-day-$status'),
+                      onPressed: () =>
+                          setState(() => selectedDay[status] = null),
+                      child: const Text('Ver o mês'),
+                    ),
                 ],
+              ),
+            ),
+          if (!loading && error == null && all.isNotEmpty && items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                'Nenhuma corrida da sua agenda neste mês. Use as setas ou "Próxima corrida".',
+                key: Key('agenda-month-empty-$status'),
+                style: TextStyle(color: context.muted),
               ),
             ),
           if (!loading && error == null && all.isEmpty)
