@@ -1613,25 +1613,23 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ],
   );
 
-  Widget grid(List<RaceRecord> list, {bool showAddTile = false}) =>
-      GridView.count(
-        padding: EdgeInsets.zero,
-        crossAxisCount: 3,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 4,
-        // Baixo o suficiente para o modelo de medalha mais alto (os
-        // hexagonais) caber usando a largura inteira do card, sem cortar.
-        childAspectRatio: 0.46,
-        children: [
-          for (final race in list) tile(race),
-          if (showAddTile) _addTile(),
-        ],
-      );
+  Widget grid(List<RaceRecord> list) => GridView.count(
+    padding: EdgeInsets.zero,
+    crossAxisCount: 3,
+    shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    mainAxisSpacing: 8,
+    crossAxisSpacing: 4,
+    // Baixo o suficiente para o modelo de medalha mais alto (os
+    // hexagonais) caber usando a largura inteira do card, sem cortar.
+    childAspectRatio: 0.46,
+    children: [for (final race in list) tile(race)],
+  );
 
-  /// Ultimo card da prateleira: leva para o cadastro de uma nova corrida, o
-  /// mesmo fluxo ja usado no resto do app (CatalogScreen).
+  /// Linha propria logo abaixo de "Minhas medalhas" (fora do grid de 3
+  /// colunas, para as medalhas sempre preencherem 3 por linha): leva para o
+  /// cadastro de uma nova corrida, o mesmo fluxo ja usado no resto do app
+  /// (CatalogScreen).
   Widget _addTile() => InkWell(
     key: const Key('medal-add-tile'),
     borderRadius: BorderRadius.circular(14),
@@ -1640,22 +1638,23 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
         builder: (_) => CatalogScreen(gateway: widget.gateway),
       ),
     ),
-    child: Center(
+    child: Padding(
+      padding: const EdgeInsets.all(4),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
             width: 36,
             height: 36,
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: runPassOrange, width: 2),
+              color: runPassOrange,
             ),
-            child: const Icon(Icons.add, color: runPassOrange, size: 22),
+            child: const Icon(Icons.add, color: Colors.white, size: 22),
           ),
           const SizedBox(height: 8),
           Text(
-            'Adicionar\nmedalha',
+            'Adicionar',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 11,
@@ -1671,7 +1670,11 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   List<Widget> sections(List<RaceRecord> races) {
     final ordered = newestFirst ? races : races.reversed.toList();
     if (grouping == MedalGrouping.all) {
-      return [grid(ordered, showAddTile: true)];
+      return [
+        Align(alignment: Alignment.centerLeft, child: _addTile()),
+        const SizedBox(height: 4),
+        grid(ordered),
+      ];
     }
     final groups = <String, List<RaceRecord>>{};
     for (final race in ordered) {
@@ -1713,37 +1716,39 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ];
   }
 
-  Widget bigStat(IconData icon, Color color, String value, String label) =>
-      Expanded(
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: color, size: 26),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    value,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 20,
-                    ),
-                  ),
-                  Text(
-                    label,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: context.muted),
-                  ),
-                ],
+  Widget bigStat(Widget icon, String value, String label) => Expanded(
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(width: 34, height: 34, child: Center(child: icon)),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                value,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                ),
               ),
-            ),
-          ],
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: TextStyle(fontSize: 11, color: context.muted),
+                ),
+              ),
+            ],
+          ),
         ),
-      );
+      ],
+    ),
+  );
 
   Widget chip(String label, MedalGrouping value) => Padding(
     padding: const EdgeInsets.only(right: 8),
@@ -1806,27 +1811,40 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                       vertical: 16,
                       horizontal: 12,
                     ),
-                    child: Row(
-                      children: [
-                        bigStat(
-                          Icons.directions_run_rounded,
-                          const Color(0xff4cc38a),
-                          '${stats.completed}',
-                          'provas\nconcluídas',
-                        ),
-                        bigStat(
-                          Icons.military_tech_rounded,
-                          const Color(0xffe8b23a),
-                          '${stats.completed}',
-                          'medalhas\nna coleção',
-                        ),
-                        bigStat(
-                          Icons.location_on_rounded,
-                          const Color(0xff4cc38a),
-                          '${stats.cities}',
-                          'cidades\nvisitadas',
-                        ),
-                      ],
+                    child: IntrinsicHeight(
+                      child: Row(
+                        children: [
+                          bigStat(
+                            const Icon(
+                              Icons.directions_run_rounded,
+                              color: Color(0xff4cc38a),
+                              size: 34,
+                            ),
+                            '${stats.kilometers.round()}',
+                            'kmnômetro',
+                          ),
+                          VerticalDivider(
+                            width: 24,
+                            thickness: 1,
+                            color: context.panelStrong,
+                          ),
+                          bigStat(
+                            Image.asset('assets/icons/gold-medal.png'),
+                            '${stats.completed}',
+                            'medalhas',
+                          ),
+                          VerticalDivider(
+                            width: 24,
+                            thickness: 1,
+                            color: context.panelStrong,
+                          ),
+                          bigStat(
+                            Image.asset('assets/icons/location.png'),
+                            '${stats.cities}',
+                            'cidades',
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

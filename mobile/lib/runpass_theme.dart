@@ -203,7 +203,7 @@ class RunPassBottomNav extends StatelessWidget {
         label: 'Início',
       ),
       const NavigationDestination(
-        icon: Icon(Icons.emoji_events_outlined),
+        icon: Icon(Icons.military_tech_outlined),
         label: 'Medalhas',
       ),
       const NavigationDestination(
