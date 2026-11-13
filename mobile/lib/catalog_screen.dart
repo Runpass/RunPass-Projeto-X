@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'agenda.dart';
 import 'catalog_views.dart';
+import 'edition_cards.dart';
 import 'friends.dart';
 import 'grid_columns.dart';
 import 'home_screen.dart';
@@ -526,91 +527,21 @@ class _CatalogScreenState extends State<CatalogScreen> {
     GridColumns.write('catalog-grid-columns', columns);
   }
 
-  /// Cartão da grade: capa da corrida com nome, data e cidade por cima (tamanho do texto acompanha as colunas).
+  /// Cartão da grade (compartilhado com a agenda e o perfil).
   Widget gridCard(Map<String, dynamic> edition) {
-    final archived = edition['status'] == 'archived';
-    final compact = gridColumns >= 4;
-    const shadow = [Shadow(blurRadius: 6, color: Colors.black54)];
     final score = scoreOf(edition);
-    return Card(
+    return EditionGridCard(
       key: Key('grid-card-${edition['id']}'),
-      clipBehavior: Clip.antiAlias,
-      margin: EdgeInsets.zero,
-      child: InkWell(
-        onTap: loading ? null : () => openEdition(edition['id'] as String),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            EditionCover(gateway: widget.gateway, edition: edition),
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0x1A000000), Color(0xD9000000)],
-                ),
-              ),
-            ),
-            Positioned(
-              left: compact ? 6 : 10,
-              right: compact ? 6 : 10,
-              bottom: compact ? 6 : 10,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    edition['name'] as String,
-                    maxLines: compact ? 2 : 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: archived ? context.archivedText : Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: switch (gridColumns) {
-                        1 => 17.0,
-                        2 => 14.0,
-                        3 => 12.0,
-                        _ => 10.0,
-                      },
-                      shadows: shadow,
-                    ),
-                  ),
-                  if (gridColumns <= 3) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: gridColumns == 3 ? 10.5 : 12,
-                        shadows: shadow,
-                      ),
-                    ),
-                    if (score != null && gridColumns <= 2)
-                      Text(
-                        '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          shadows: shadow,
-                        ),
-                      ),
-                  ] else
-                    Text(
-                      displayDate(edition['date'] as String).substring(0, 5),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9.5,
-                        shadows: shadow,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+      gateway: widget.gateway,
+      edition: edition,
+      columns: gridColumns,
+      subtitle:
+          '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
+      shortDate: displayDate(edition['date'] as String).substring(0, 5),
+      rating: score == null
+          ? null
+          : '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
+      onTap: loading ? null : () => openEdition(edition['id'] as String),
     );
   }
 
@@ -628,12 +559,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
             crossAxisCount: gridColumns,
             mainAxisSpacing: 8,
             crossAxisSpacing: 8,
-            childAspectRatio: switch (gridColumns) {
-              1 => 1.9,
-              2 => 0.95,
-              3 => 0.8,
-              _ => 0.7,
-            },
+            childAspectRatio: gridCardAspectRatio(gridColumns),
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             children: [for (final edition in shown) gridCard(edition)],
@@ -756,64 +682,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
         '★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações',
       if (mine.containsKey(edition['id'])) 'Já está na sua lista',
     ];
-    const shadow = [Shadow(blurRadius: 6, color: Colors.black54)];
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      margin: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        onTap: loading ? null : () => openEdition(edition['id'] as String),
-        child: SizedBox(
-          height: 200,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              EditionCover(gateway: widget.gateway, edition: edition),
-              const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x33000000), Color(0xD9000000)],
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: 12,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      edition['name'] as String,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: archived ? context.archivedText : Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17,
-                        shadows: shadow,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      lines.join('\n'),
-                      style: TextStyle(
-                        color: archived ? context.archivedText : Colors.white,
-                        fontSize: 12.5,
-                        height: 1.3,
-                        shadows: shadow,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Positioned(top: 6, right: 6, child: quickActions(edition)),
-            ],
-          ),
-        ),
-      ),
+    return EditionListCard(
+      gateway: widget.gateway,
+      edition: edition,
+      lines: lines,
+      onTap: loading ? null : () => openEdition(edition['id'] as String),
+      overlay: quickActions(edition),
     );
   }
 

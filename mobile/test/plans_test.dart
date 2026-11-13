@@ -374,14 +374,31 @@ void main() {
     expect(find.text('janeiro de 2099'), findsOneWidget);
   });
 
-  testWidgets('a legenda diferencia inscrita (ponto cheio) de desejada', (
-    tester,
-  ) async {
+  testWidgets(
+    'a legenda diferencia inscrita (círculo cheio) de desejada (círculo vazado)',
+    (tester) async {
+      await openCalendar(tester, calendarPlans());
+      expect(find.text('Desejada (círculo vazado)'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('agenda-tab-registered')));
+      await tester.pumpAndSettle();
+      expect(find.text('Inscrita (círculo cheio)'), findsOneWidget);
+    },
+  );
+
+  testWidgets('na agenda, Grade põe as corridas lado a lado e a escolha vale '
+      'depois', (tester) async {
     await openCalendar(tester, calendarPlans());
-    expect(find.text('Desejada (só o contorno)'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('agenda-tab-registered')));
+    expect(find.byKey(const Key('agenda-grid-wanted')), findsNothing);
+    await tester.tap(find.byKey(const Key('catalog-view-mode')));
     await tester.pumpAndSettle();
-    expect(find.text('Inscrita (ponto cheio)'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('catalog-view-grid')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-grid-wanted')), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('agenda-EA'))).dy,
+      tester.getTopLeft(find.byKey(const Key('agenda-EC'))).dy,
+    );
+    expect(find.byKey(const Key('grid-columns')), findsOneWidget);
   });
 
   testWidgets('sem corridas a agenda mostra o calendário do mês atual e o '

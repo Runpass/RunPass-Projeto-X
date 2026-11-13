@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
+import 'catalog_views.dart';
+import 'edition_cards.dart';
+import 'grid_columns.dart';
 import 'identity_gateway.dart';
 import 'runpass_theme.dart';
 
@@ -51,10 +54,28 @@ class _AgendaScreenState extends State<AgendaScreen> {
   bool loading = true;
   String? error;
 
+  /// Visualização das corridas (lista ou grade) e colunas da grade; ficam neste aparelho.
+  static const _modeKey = 'agenda-view-mode';
+  static const _columnsKey = 'agenda-grid-columns';
+  CatalogViewMode viewMode = CatalogViewMode.list;
+  int gridColumns = 2;
+
   @override
   void initState() {
     super.initState();
     load();
+    loadViewPreferences();
+  }
+
+  Future<void> loadViewPreferences() async {
+    final mode = await CatalogViewMode.read(_modeKey);
+    final columns = await GridColumns.read(_columnsKey, fallback: 2);
+    if (mounted) {
+      setState(() {
+        viewMode = mode;
+        gridColumns = columns;
+      });
+    }
   }
 
   Future<void> load() async {
@@ -201,6 +222,22 @@ class _AgendaScreenState extends State<AgendaScreen> {
       final count = perDay[iso] ?? 0;
       final isToday = iso == today;
       final isChosen = iso == chosen;
+      final registered = status == 'registered';
+      // Círculo em volta do número: cheio = inscrita, só o contorno = desejada.
+      final BoxDecoration circle = count > 0
+          ? BoxDecoration(
+              shape: BoxShape.circle,
+              color: registered ? runPassOrange : null,
+              border: registered
+                  ? null
+                  : Border.all(color: runPassOrange, width: 2.2),
+            )
+          : BoxDecoration(
+              shape: BoxShape.circle,
+              border: isToday
+                  ? Border.all(color: context.muted, width: 1.2)
+                  : null,
+            );
       return Semantics(
         label: count == 0
             ? '${day.day} de ${monthNamesPt[day.month - 1]}'
@@ -212,54 +249,25 @@ class _AgendaScreenState extends State<AgendaScreen> {
           onTap: count == 0 ? null : () => pickDay(status, iso),
           child: Container(
             height: 44,
+            alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: isChosen ? runPassOrange : null,
+              color: isChosen ? context.softFill : null,
               borderRadius: BorderRadius.circular(10),
-              border: isToday && !isChosen
-                  ? Border.all(color: runPassOrange, width: 1.5)
-                  : null,
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  '${day.day}',
-                  style: TextStyle(
-                    fontWeight: count > 0 ? FontWeight.w900 : FontWeight.w500,
-                    color: isChosen ? Colors.white : null,
-                  ),
+            child: Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: circle,
+              child: Text(
+                '${day.day}',
+                style: TextStyle(
+                  fontWeight: count > 0 ? FontWeight.w900 : FontWeight.w400,
+                  color: count > 0 && registered
+                      ? Colors.white
+                      : (count == 0 ? context.muted : null),
                 ),
-                const SizedBox(height: 2),
-                if (count > 0)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      for (var i = 0; i < (count > 3 ? 3 : count); i++)
-                        Container(
-                          width: 6,
-                          height: 6,
-                          margin: const EdgeInsets.symmetric(horizontal: 1),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            // Inscrita: ponto cheio. Desejada: só o contorno.
-                            color: status == 'registered'
-                                ? (isChosen ? Colors.white : runPassOrange)
-                                : null,
-                            border: status == 'registered'
-                                ? null
-                                : Border.all(
-                                    color: isChosen
-                                        ? Colors.white
-                                        : runPassOrange,
-                                    width: 1.4,
-                                  ),
-                          ),
-                        ),
-                    ],
-                  )
-                else
-                  const SizedBox(height: 5),
-              ],
+              ),
             ),
           ),
         ),
@@ -325,8 +333,8 @@ class _AgendaScreenState extends State<AgendaScreen> {
               children: [
                 Container(
                   key: Key('agenda-legend-$status'),
-                  width: 8,
-                  height: 8,
+                  width: 14,
+                  height: 14,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: status == 'registered' ? runPassOrange : null,
@@ -339,8 +347,8 @@ class _AgendaScreenState extends State<AgendaScreen> {
                 Expanded(
                   child: Text(
                     status == 'registered'
-                        ? 'Inscrita (ponto cheio)'
-                        : 'Desejada (só o contorno)',
+                        ? 'Inscrita (círculo cheio)'
+                        : 'Desejada (círculo vazado)',
                     style: TextStyle(fontSize: 12, color: context.muted),
                   ),
                 ),
@@ -360,61 +368,83 @@ class _AgendaScreenState extends State<AgendaScreen> {
     );
   }
 
+  Future<void> openPlan(Map<String, dynamic> plan) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EditionScreen(
+          gateway: widget.gateway,
+          editionId: plan['editionId'] as String,
+        ),
+      ),
+    );
+    load();
+  }
+
+  /// Menu da corrida (inscrito/desejada/tirar), sobre a capa do cartão.
+  Widget planMenu(Map<String, dynamic> plan, String status) => Material(
+    color: Colors.black54,
+    shape: const CircleBorder(),
+    child: PopupMenuButton<String>(
+      key: Key('agenda-menu-${plan['editionId']}'),
+      tooltip: 'Opções',
+      iconSize: 20,
+      padding: EdgeInsets.zero,
+      icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+      onSelected: (value) => change(plan, value == 'remove' ? null : value),
+      itemBuilder: (_) => [
+        if (status == 'wanted')
+          const PopupMenuItem(
+            value: 'registered',
+            child: Text('Marcar como inscrito'),
+          ),
+        if (status == 'registered')
+          const PopupMenuItem(
+            value: 'wanted',
+            child: Text('Voltar para desejadas'),
+          ),
+        const PopupMenuItem(value: 'remove', child: Text('Tirar da agenda')),
+      ],
+    ),
+  );
+
+  /// Mesmo cartão da tela Corridas: em lista (largura toda) ou em grade.
   Widget tile(Map<String, dynamic> plan, String status) {
-    final edition = Map<String, dynamic>.from(plan['edition'] as Map);
+    final edition = {
+      ...Map<String, dynamic>.from(plan['edition'] as Map),
+      'id': plan['editionId'],
+    };
     final today = DateTime.now().toIso8601String().substring(0, 10);
-    final passed = (edition['date'] as String).compareTo(today) < 0;
+    final date = edition['date'] as String;
+    final passed = date.compareTo(today) < 0;
     final distances = [
       for (final d in (edition['distances'] as List? ?? const []))
         '${(d as Map)['kilometers']} km',
     ].join(' · ');
-    return Card(
-      key: Key('agenda-${plan['editionId']}'),
-      child: ListTile(
-        contentPadding: const EdgeInsets.all(16),
-        leading: Icon(
-          status == 'wanted' ? Icons.favorite : Icons.how_to_reg_outlined,
-          color: runPassOrange,
-        ),
-        title: Text(edition['name'] as String),
-        subtitle: Text(
-          '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}\n'
-          '$distances${passed ? '\nJá aconteceu' : ''}',
-        ),
-        isThreeLine: true,
-        trailing: PopupMenuButton<String>(
-          key: Key('agenda-menu-${plan['editionId']}'),
-          tooltip: 'Opções',
-          onSelected: (value) => change(plan, value == 'remove' ? null : value),
-          itemBuilder: (_) => [
-            if (status == 'wanted')
-              const PopupMenuItem(
-                value: 'registered',
-                child: Text('Marcar como inscrito'),
-              ),
-            if (status == 'registered')
-              const PopupMenuItem(
-                value: 'wanted',
-                child: Text('Voltar para desejadas'),
-              ),
-            const PopupMenuItem(
-              value: 'remove',
-              child: Text('Tirar da agenda'),
-            ),
-          ],
-        ),
-        onTap: () async {
-          await Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => EditionScreen(
-                gateway: widget.gateway,
-                editionId: plan['editionId'] as String,
-              ),
-            ),
-          );
-          load();
-        },
-      ),
+    final key = Key('agenda-${plan['editionId']}');
+    if (viewMode == CatalogViewMode.grid) {
+      return EditionGridCard(
+        key: key,
+        gateway: widget.gateway,
+        edition: edition,
+        columns: gridColumns,
+        subtitle:
+            '${displayDate(date)} · ${edition['city']}/${edition['state']}',
+        shortDate: displayDate(date).substring(0, 5),
+        onTap: () => openPlan(plan),
+        overlay: planMenu(plan, status),
+      );
+    }
+    return EditionListCard(
+      key: key,
+      gateway: widget.gateway,
+      edition: edition,
+      lines: [
+        '${displayDate(date)} · ${edition['city']}/${edition['state']}',
+        if (distances.isNotEmpty) distances,
+        if (passed) 'Já aconteceu',
+      ],
+      onTap: () => openPlan(plan),
+      overlay: planMenu(plan, status),
     );
   }
 
@@ -464,6 +494,21 @@ class _AgendaScreenState extends State<AgendaScreen> {
                           setState(() => selectedDay[status] = null),
                       child: const Text('Ver o mês'),
                     ),
+                  CatalogViewMenu(
+                    value: viewMode,
+                    onChanged: (mode) {
+                      setState(() => viewMode = mode);
+                      mode.write(_modeKey);
+                    },
+                  ),
+                  if (viewMode == CatalogViewMode.grid)
+                    GridColumnsButton(
+                      value: gridColumns,
+                      onChanged: (n) {
+                        setState(() => gridColumns = n);
+                        GridColumns.write(_columnsKey, n);
+                      },
+                    ),
                 ],
               ),
             ),
@@ -485,7 +530,19 @@ class _AgendaScreenState extends State<AgendaScreen> {
                 key: Key('agenda-empty-$status'),
               ),
             ),
-          for (final plan in items) tile(plan, status),
+          if (viewMode == CatalogViewMode.grid && items.isNotEmpty)
+            GridView.count(
+              key: Key('agenda-grid-$status'),
+              crossAxisCount: gridColumns,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: gridCardAspectRatio(gridColumns),
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              children: [for (final plan in items) tile(plan, status)],
+            )
+          else
+            for (final plan in items) tile(plan, status),
         ],
       ),
     );

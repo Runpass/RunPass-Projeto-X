@@ -226,4 +226,30 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('no-plans')), findsOneWidget);
   });
+
+  testWidgets('no perfil, Lista mostra os mesmos cartões da tela Corridas, um '
+      'por linha', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await gatewayWith([
+      plan('a', 'wanted', '2027-01-10'),
+      plan('b', 'wanted', '2027-02-10'),
+    ]);
+    await tester.pumpWidget(
+      MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    Offset at(String id) =>
+        tester.getTopLeft(find.byKey(Key('plan-$id'), skipOffstage: false));
+    expect(at('a').dy, at('b').dy); // padrão: grade
+    await tester.tap(find.byKey(const Key('catalog-view-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('catalog-view-list')));
+    await tester.pumpAndSettle();
+    expect(at('b').dy, greaterThan(at('a').dy)); // um por linha
+    expect(at('a').dx, at('b').dx);
+    expect(find.byKey(const Key('grid-columns-plans')), findsNothing);
+  });
 }

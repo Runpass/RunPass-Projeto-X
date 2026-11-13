@@ -12,20 +12,21 @@ enum CatalogViewMode {
 
   static const storageKey = 'catalog-view-mode';
 
-  static Future<CatalogViewMode> read() async {
+  static Future<CatalogViewMode> read([
+    String key = storageKey,
+    CatalogViewMode fallback = list,
+  ]) async {
     try {
-      final saved = (await SharedPreferences.getInstance()).getString(
-        storageKey,
-      );
-      return values.firstWhere((m) => m.name == saved, orElse: () => list);
+      final saved = (await SharedPreferences.getInstance()).getString(key);
+      return values.firstWhere((m) => m.name == saved, orElse: () => fallback);
     } on Object {
-      return list;
+      return fallback;
     }
   }
 
-  Future<void> write() async {
+  Future<void> write([String key = storageKey]) async {
     try {
-      await (await SharedPreferences.getInstance()).setString(storageKey, name);
+      await (await SharedPreferences.getInstance()).setString(key, name);
     } on Object {
       // Sem armazenamento: vale até fechar a tela.
     }
