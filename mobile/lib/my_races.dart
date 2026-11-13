@@ -673,8 +673,12 @@ class _SignedPhotoState extends State<SignedPhoto> {
       link,
       fit: widget.fit,
       errorBuilder: (_, _, _) => widget.fallback,
-      loadingBuilder: (_, child, progress) =>
-          progress == null ? child : widget.fallback,
+      // frameBuilder (nao loadingBuilder): quando a imagem ja esta no cache
+      // (por exemplo ao voltar para uma aba), o frame chega de forma
+      // sincrona (wasSynchronouslyLoaded) e evita o lampejo do fallback por
+      // um quadro a cada tela nova, mesmo com o link ja resolvido.
+      frameBuilder: (_, child, frame, wasSynchronouslyLoaded) =>
+          wasSynchronouslyLoaded || frame != null ? child : widget.fallback,
     );
   }
 }
@@ -1516,24 +1520,58 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     }
   }
 
-  Widget _woodShelf() => Container(
-    height: 10,
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(3),
-      gradient: const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0xffa8703f), Color(0xff7a4c27)],
-      ),
-      boxShadow: const [
-        BoxShadow(
-          color: Color(0x33000000),
-          blurRadius: 4,
-          offset: Offset(0, 2),
+  /// Nicho de nogueira com prateleira flutuante: fundo individual de cada
+  /// medalha (um nicho por medalha, nao uma prateleira compartilhada).
+  /// Cantos arredondados + sombra para ler como um "cartao" por medalha,
+  /// como no template; a medalha fica encostada no topo da prateleira.
+  Widget _medalNiche({required MedalFrame frame, required Widget photo}) =>
+      DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x40000000),
+              blurRadius: 6,
+              offset: Offset(0, 3),
+            ),
+          ],
         ),
-      ],
-    ),
-  );
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: AspectRatio(
+            aspectRatio: 1086 / 1448,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final w = constraints.maxWidth;
+                final h = constraints.maxHeight;
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.asset(
+                      'assets/medal_shelf/nicho_nogueira.png',
+                      fit: BoxFit.fill,
+                    ),
+                    Positioned(
+                      // O PNG de cada modelo tem uma margem transparente
+                      // embutida (a medalha ocupa so ~86% da altura e ~66%
+                      // da largura do arquivo); e a prateleira da imagem de
+                      // fundo comeca em ~76% da altura do nicho. Esta caixa
+                      // foi calculada para que a medalha DESENHADA (nao o
+                      // retangulo do PNG) encoste exatamente no topo da
+                      // prateleira, do tamanho maximo que cabe ali.
+                      left: w * 0.06,
+                      right: w * 0.06,
+                      top: h * 0.01,
+                      height: h * 0.87,
+                      child: medalFrameWidget(frame: frame, photo: photo),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      );
 
   Widget tile(RaceRecord race) => Stack(
     children: [
@@ -1551,7 +1589,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             // um deles quebra em 2 linhas e a do vizinho cabe em 1.
             mainAxisAlignment: MainAxisAlignment.start,
             children: [
-              medalFrameWidget(
+              _medalNiche(
                 frame: medalFrameFor(race.medalFrameId),
                 photo: MedalPhoto(
                   gateway: widget.gateway,
@@ -1560,8 +1598,6 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   fit: BoxFit.cover,
                 ),
               ),
-              const SizedBox(height: 4),
-              _woodShelf(),
               const SizedBox(height: 4),
               SizedBox(
                 height: 32,
@@ -1620,61 +1656,42 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     physics: const NeverScrollableScrollPhysics(),
     mainAxisSpacing: 8,
     crossAxisSpacing: 4,
-    // Baixo o suficiente para o modelo de medalha mais alto (os
-    // hexagonais) caber usando a largura inteira do card, sem cortar.
-    childAspectRatio: 0.46,
+    // Baixo o suficiente para o nicho de nogueira (proporcao fixa 1086:1448)
+    // mais o texto caberem usando a largura inteira do card, sem cortar.
+    childAspectRatio: 0.5,
     children: [for (final race in list) tile(race)],
   );
 
-  /// Linha propria logo abaixo de "Minhas medalhas" (fora do grid de 3
-  /// colunas, para as medalhas sempre preencherem 3 por linha): leva para o
-  /// cadastro de uma nova corrida, o mesmo fluxo ja usado no resto do app
-  /// (CatalogScreen).
+  /// Botao compacto ao lado de "Minhas medalhas": leva para o cadastro de
+  /// uma nova corrida, o mesmo fluxo ja usado no resto do app (CatalogScreen).
   Widget _addTile() => InkWell(
     key: const Key('medal-add-tile'),
-    borderRadius: BorderRadius.circular(14),
+    borderRadius: BorderRadius.circular(16),
     onTap: () => Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => CatalogScreen(gateway: widget.gateway),
       ),
     ),
-    child: Padding(
-      padding: const EdgeInsets.all(4),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: runPassOrange,
-            ),
-            child: const Icon(Icons.add, color: Colors.white, size: 22),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Adicionar',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: context.muted,
-            ),
-          ),
-        ],
+    child: Container(
+      width: 24,
+      height: 24,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white,
+        // No claro, o branco nao contrasta com o fundo: uma borda fina
+        // laranja marca o circulo. No escuro ele ja se destaca sozinho.
+        border: context.isDark
+            ? null
+            : Border.all(color: runPassOrange, width: 1),
       ),
+      child: const Icon(Icons.add, color: runPassOrange, size: 16),
     ),
   );
 
   List<Widget> sections(List<RaceRecord> races) {
     final ordered = newestFirst ? races : races.reversed.toList();
     if (grouping == MedalGrouping.all) {
-      return [
-        Align(alignment: Alignment.centerLeft, child: _addTile()),
-        const SizedBox(height: 4),
-        grid(ordered),
-      ];
+      return [grid(ordered)];
     }
     final groups = <String, List<RaceRecord>>{};
     for (final race in ordered) {
@@ -1716,35 +1733,29 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ];
   }
 
-  Widget bigStat(Widget icon, String value, String label) => Expanded(
-    child: Row(
+  // Icone em cima, numero e legenda embaixo. A legenda sempre quebra nas
+  // 2 palavras (quebra manual, nao automatica): assim as 3 legendas ficam
+  // com a mesma altura/duas linhas sempre, em vez de uma quebrar e outra
+  // nao conforme o texto coube ou nao na largura.
+  Widget bigStat(
+    Widget icon,
+    String value,
+    String firstWord,
+    String secondWord,
+  ) => Expanded(
+    child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(width: 34, height: 34, child: Center(child: icon)),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                value,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 20,
-                ),
-              ),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  style: TextStyle(fontSize: 11, color: context.muted),
-                ),
-              ),
-            ],
-          ),
+        SizedBox(width: 28, height: 28, child: Center(child: icon)),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20),
+        ),
+        Text(
+          '$firstWord\n$secondWord',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13, color: context.muted),
         ),
       ],
     ),
@@ -1818,10 +1829,11 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                             const Icon(
                               Icons.directions_run_rounded,
                               color: Color(0xff4cc38a),
-                              size: 34,
+                              size: 28,
                             ),
                             '${stats.kilometers.round()}',
-                            'kmnômetro',
+                            "km's",
+                            'percorridos',
                           ),
                           VerticalDivider(
                             width: 24,
@@ -1829,9 +1841,14 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                             color: context.panelStrong,
                           ),
                           bigStat(
-                            Image.asset('assets/icons/gold-medal.png'),
+                            Image.asset(
+                              'assets/icons/gold-medal.png',
+                              width: 28,
+                              height: 28,
+                            ),
                             '${stats.completed}',
                             'medalhas',
+                            'conquistadas',
                           ),
                           VerticalDivider(
                             width: 24,
@@ -1839,9 +1856,14 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                             color: context.panelStrong,
                           ),
                           bigStat(
-                            Image.asset('assets/icons/location.png'),
+                            Image.asset(
+                              'assets/icons/location.png',
+                              width: 28,
+                              height: 28,
+                            ),
                             '${stats.cities}',
                             'cidades',
+                            'visitadas',
                           ),
                         ],
                       ),
@@ -1852,13 +1874,20 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        'Minhas medalhas',
-                        key: const Key('medals-title'),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 17,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Minhas medalhas',
+                            key: const Key('medals-title'),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 17,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          _addTile(),
+                        ],
                       ),
                     ),
                     TextButton.icon(
@@ -1906,11 +1935,6 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
   late final description = TextEditingController(
     text: widget.race.medalDescription,
   );
-  late final city = TextEditingController(text: widget.race.medalCity);
-  late final state = TextEditingController(text: widget.race.medalState);
-  late final year = TextEditingController(
-    text: widget.race.medalYear?.toString() ?? '',
-  );
   // Recorte da foto so para a prateleira; so entra no PATCH se a pessoa
   // realmente tocar em "Reposicionar foto" (senao nao mexe no que ja existe).
   late String? displayImageReference = widget.race.medalDisplayImageReference;
@@ -1920,9 +1944,6 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
   @override
   void dispose() {
     description.dispose();
-    city.dispose();
-    state.dispose();
-    year.dispose();
     super.dispose();
   }
 
@@ -1976,14 +1997,15 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
   });
 
   void save() {
-    final parsedYear = int.tryParse(year.text.trim());
-    final uf = state.text.trim().toUpperCase();
     Navigator.pop<Map<String, dynamic>>(context, {
       'medalFrameId': frameId,
       'medalDescription': _blankToNull(description.text),
-      'medalCity': _blankToNull(city.text),
-      'medalState': uf.length == 2 ? uf : null,
-      'medalYear': parsedYear,
+      // Cidade, UF e ano nao sao mais personalizaveis aqui: sempre vem do
+      // catalogo da corrida (RaceRecord.medalCity/medalState/medalYear ja
+      // caem para o catalogo quando a participacao nao tem valor proprio).
+      'medalCity': null,
+      'medalState': null,
+      'medalYear': null,
       if (displayImageTouched)
         'medalDisplayImageReference': displayImageReference,
     });
@@ -2098,44 +2120,7 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
             TextField(
               controller: description,
               decoration: const InputDecoration(
-                labelText: 'Descrição',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: TextField(
-                    controller: city,
-                    decoration: const InputDecoration(
-                      labelText: 'Cidade',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: state,
-                    maxLength: 2,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(
-                      labelText: 'UF',
-                      border: OutlineInputBorder(),
-                      counterText: '',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: year,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Ano',
+                labelText: 'Nome da Corrida',
                 border: OutlineInputBorder(),
               ),
             ),

@@ -133,9 +133,9 @@ void main() {
       expect(find.text('Corrida A'), findsOneWidget);
       expect(find.text('Corrida B'), findsOneWidget);
       // Two completed races (5km + 10km) in two cities; the draft is not a medal.
-      expect(find.text('kmnômetro'), findsOneWidget);
-      expect(find.text('medalhas'), findsOneWidget);
-      expect(find.text('cidades'), findsOneWidget);
+      expect(find.text("km's\npercorridos"), findsOneWidget);
+      expect(find.text('medalhas\nconquistadas'), findsOneWidget);
+      expect(find.text('cidades\nvisitadas'), findsOneWidget);
       expect(find.text('15'), findsOneWidget);
       // Medalhas e cidades valem 2.
       expect(find.text('2'), findsNWidgets(2));
@@ -257,24 +257,25 @@ void main() {
     await tester.tap(
       find.byKey(const Key('medal-frame-hexagonal_bronze_verde')),
     );
-    await tester.enterText(find.widgetWithText(TextField, 'Descrição'), '');
     await tester.enterText(
-      find.widgetWithText(TextField, 'Descrição'),
+      find.widgetWithText(TextField, 'Nome da Corrida'),
+      '',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Nome da Corrida'),
       'Minha prova especial',
     );
-    await tester.enterText(find.widgetWithText(TextField, 'Cidade'), '');
-    await tester.enterText(find.widgetWithText(TextField, 'Cidade'), 'Santos');
-    await tester.enterText(find.widgetWithText(TextField, 'UF'), 'sp');
-    await tester.enterText(find.widgetWithText(TextField, 'Ano'), '2023');
     await tester.tap(find.byKey(const Key('medal-edit-save')));
     await tester.pumpAndSettle();
 
     expect(patchBody['expectedVersion'], 2);
     expect(patchBody['medalFrameId'], 'hexagonal_bronze_verde');
     expect(patchBody['medalDescription'], 'Minha prova especial');
-    expect(patchBody['medalCity'], 'Santos');
-    expect(patchBody['medalState'], 'SP');
-    expect(patchBody['medalYear'], 2023);
+    // Cidade, UF e ano nao sao mais editaveis aqui: sempre voltam ao
+    // catalogo da corrida.
+    expect(patchBody['medalCity'], null);
+    expect(patchBody['medalState'], null);
+    expect(patchBody['medalYear'], null);
     expect(calls.where((c) => c == 'PATCH /participations/p1').length, 1);
     expect(find.text('Personalizar medalha'), findsNothing);
   });

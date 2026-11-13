@@ -179,22 +179,7 @@ class RunPassBottomNav extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final bar = _bar();
-    // Na aba Perfil a foto (com borda branca) já marca a seleção: sem o realce atrás dela.
-    if (selectedIndex != 3) return bar;
-    final theme = Theme.of(context);
-    return Theme(
-      data: theme.copyWith(
-        navigationBarTheme: theme.navigationBarTheme.copyWith(
-          indicatorColor: Colors.transparent,
-        ),
-      ),
-      child: bar,
-    );
-  }
-
-  Widget _bar() => NavigationBar(
+  Widget build(BuildContext context) => NavigationBar(
     selectedIndex: selectedIndex,
     onDestinationSelected: onDestinationSelected,
     destinations: [
@@ -202,10 +187,7 @@ class RunPassBottomNav extends StatelessWidget {
         icon: Icon(Icons.home_outlined),
         label: 'Início',
       ),
-      const NavigationDestination(
-        icon: Icon(Icons.military_tech_outlined),
-        label: 'Medalhas',
-      ),
+      const NavigationDestination(icon: _MedalIcon(), label: 'Medalhas'),
       const NavigationDestination(
         icon: Icon(Icons.directions_run),
         label: 'Corridas',
@@ -217,6 +199,56 @@ class RunPassBottomNav extends StatelessWidget {
       ),
     ],
   );
+}
+
+/// Medalha da aba "Medalhas", seguindo o contorno de assets/icons/gold-medal.png
+/// (fita em V + disco) - sem cor propria como os demais icones do menu, mas
+/// com o disco preenchido (em vez de so contorno) para ler como medalha, nao
+/// como mira/alvo, no tamanho pequeno do menu.
+class _MedalIcon extends StatelessWidget {
+  const _MedalIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    final size = IconTheme.of(context).size ?? 24.0;
+    final color = IconTheme.of(context).color ?? Colors.black;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(painter: _MedalIconPainter(color)),
+    );
+  }
+}
+
+class _MedalIconPainter extends CustomPainter {
+  final Color color;
+  const _MedalIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scale = size.width / 24;
+    Offset p(double x, double y) => Offset(x * scale, y * scale);
+    final linePaint = Paint()
+      ..color = color
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 2 * scale
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawLine(p(3, 1), p(12, 9), linePaint); // fita esquerda
+    canvas.drawLine(p(21, 1), p(12, 9), linePaint); // fita direita
+
+    canvas.drawCircle(
+      p(12, 16),
+      6.5 * scale,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.fill,
+    ); // disco preenchido
+  }
+
+  @override
+  bool shouldRepaint(covariant _MedalIconPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 /// Cores que mudam entre o tema claro e o escuro. Cores fixas de "fundo claro" nao podem ser
