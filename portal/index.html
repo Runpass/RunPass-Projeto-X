@@ -51,6 +51,7 @@
       <nav class="abas" role="tablist">
         <button role="tab" id="aba-pedidos" data-aba="pedidos" aria-selected="true">Pedidos de corrida</button>
         <button role="tab" id="aba-catalogo" data-aba="catalogo" aria-selected="false">Atualizar catálogo</button>
+        <button role="tab" id="aba-fontes" data-aba="fontes" aria-selected="false">Fontes de coleta</button>
         <button role="tab" id="aba-cadastros" data-aba="cadastros" aria-selected="false">Cadastros no app</button>
         <button role="tab" id="aba-banners" data-aba="banners" aria-selected="false">Banners</button>
         <button role="tab" id="aba-divergencias" data-aba="divergencias" aria-selected="false">Divergências</button>
@@ -140,6 +141,18 @@
         <div class="barra"><h2>Banners publicados</h2></div>
         <div id="banners-publicados"></div>
         </div>
+      </section>
+      <section id="sec-fontes" data-sec="fontes" hidden>
+        <div class="barra">
+          <h1>Fontes de coleta</h1>
+          <div class="acoes">
+            <button id="carregar-candidatas" type="button" class="sec">Carregar fontes candidatas</button>
+            <button id="atualizar-fontes" type="button" class="sec">Atualizar</button>
+          </div>
+        </div>
+        <p class="ajuda">Organizadores, plataformas e calendários de onde a rotina pode ler corridas. Toda fonte nasce <strong>pendente e desativada</strong> e só coleta depois de verificada (site oficial, robots.txt, termos e API ou feed conferidos) e ativada. Mudar o site de uma fonte derruba a verificação. Esta tela só cadastra; ela não acessa os sites.</p>
+        <div id="fontes"></div>
+        <div id="fonte-nova"></div>
       </section>
       <section id="sec-divergencias" data-sec="divergencias" hidden>
         <div class="barra">

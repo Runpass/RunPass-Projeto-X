@@ -46,6 +46,9 @@ export const MENSAGENS = {
   SCHEDULE_NOT_FOUND: 'Agendamento não encontrado. Atualize a lista.',
   ALREADY_DECIDED: 'Esta divergência já foi decidida. Atualize a lista.',
   DIVERGENCE_NOT_FOUND: 'Divergência não encontrada na coleta mais recente. Atualize a lista.',
+  SOURCE_NOT_FOUND: 'Fonte não encontrada. Atualize a lista.',
+  SOURCE_NOT_VERIFIED: 'Só dá para ativar uma fonte depois de verificada.',
+  SOURCE_DUPLICATE: 'Já existe uma fonte com esse site ou esse identificador.',
   BANNER_ALREADY_DECIDED: 'Este banner já foi decidido. Atualize a lista.',
   REQUEST_NOT_LINKED: 'O pedido ainda não está vinculado a uma corrida do catálogo.',
   IMAGE_NOT_AVAILABLE: 'A imagem enviada não está mais disponível.',
@@ -393,6 +396,7 @@ export function textoRevocacao(n) {
 export const ABAS = {
   pedidos: ['Pedidos de corrida', 'catalog_admin'],
   catalogo: ['Atualizar catálogo', 'catalog_admin'],
+  fontes: ['Fontes de coleta', 'catalog_admin'],
   cadastros: ['Cadastros no app', 'user_admin'],
   banners: ['Banners', 'catalog_admin'],
   divergencias: ['Divergências', 'catalog_admin'],
@@ -509,4 +513,30 @@ export function resumoImporte(detalhe) {
   if (soma.later) partes.push(`${soma.later} ficaram para a próxima rodada`);
   const detalhes = Object.entries(motivos).map(([m, n]) => `${n} ${MOTIVOS_IMPORTE[m] || m}`);
   return { texto: partes.join(' · '), detalhes };
+}
+
+export const TIPOS_FONTE = { organizer: 'Organizador', platform: 'Plataforma de inscrição', calendar: 'Calendário' };
+export const NIVEIS_FONTE = { 1: 'Nível 1 (site do organizador)', 2: 'Nível 2 (plataforma de inscrição)', 3: 'Nível 3 (calendário)' };
+export const VERIFICACAO_FONTE = { pending: 'Pendente', verified: 'Verificada', rejected: 'Rejeitada' };
+
+// Identificador da fonte a partir do nome: minúsculas, sem acento, só letras, números e "_" (2 a 40).
+export function idFonte(nome) {
+  return String(nome || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+}
+
+// Confere o formulário de fonte antes de enviar; o servidor repete as mesmas regras.
+export function validarFonte(f) {
+  if (!f.nome || f.nome.trim().length > 80) return 'Informe o nome da fonte (até 80 caracteres).';
+  if (idFonte(f.nome).length < 2) return 'O nome precisa ter ao menos 2 letras ou números.';
+  if (!linkSeguro(f.site) || f.site.length > 300) return 'O site precisa ser um link https válido.';
+  if (f.tipo === 'organizer' && Number(f.nivel) !== 1) return 'Organizador é sempre nível 1.';
+  if (f.tipo !== 'organizer' && Number(f.nivel) === 1) return 'Só organizador é nível 1.';
+  if (!Number.isInteger(f.frequencia) || f.frequencia < 1 || f.frequencia > 2160) return 'A frequência vai de 1 a 2160 horas.';
+  return '';
 }

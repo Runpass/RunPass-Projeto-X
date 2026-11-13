@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro, montarBannerArquivo, dimensoesEnvio, resumoImporte,
 } from './lib.js';
 
@@ -68,6 +68,8 @@ function sair(motivo) {
   $('cadastros').replaceChildren();
   $('custos').replaceChildren();
   $('divergencias').replaceChildren();
+  $('fontes').replaceChildren();
+  $('fonte-nova').replaceChildren();
   $('operadores').replaceChildren();
   $('banners-candidatas').replaceChildren();
   $('banner-manual').replaceChildren();
@@ -461,6 +463,126 @@ function cartaoDivergencia(d) {
     erro,
     el('div', { class: 'acoes' }, aceitar, reprovar),
   );
+}
+
+function cartaoFonte(f) {
+  const nota = el('input', { type: 'text', placeholder: 'O que foi conferido (site oficial, robots.txt, termos, API ou feed)', maxlength: '300', autocomplete: 'off', value: f.verificationNote || '' });
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const botoes = [];
+  const enviar = async (caminho, corpo, ok) => {
+    for (const b of botoes) b.disabled = true;
+    try {
+      await api(`/admin/sources/${f.id}/${caminho}`, { method: 'POST', body: JSON.stringify({ version: f.version, ...corpo }) });
+      aviso(ok, 'ok');
+      await carregarFontes();
+    } catch (falha) {
+      for (const b of botoes) b.disabled = false;
+      if (!token) return;
+      erro.hidden = false;
+      erro.textContent = falha.codigo === 'INVALID_INPUT' ? 'Descreva o que foi conferido (até 300 caracteres).' : mensagem(falha.codigo);
+    }
+  };
+  const verificar = (status, ok) => () => {
+    if (status !== 'pending' && !nota.value.trim()) {
+      erro.hidden = false;
+      erro.textContent = 'Descreva o que foi conferido antes de verificar ou rejeitar.';
+      return;
+    }
+    enviar('verification', { status, note: nota.value.trim() }, ok);
+  };
+  const acao = (rotulo, classe, fn) => {
+    const b = el('button', { type: 'button', class: classe }, rotulo);
+    b.addEventListener('click', fn);
+    botoes.push(b);
+    return b;
+  };
+  const acoes = [acao('Marcar como verificada', 'ok', verificar('verified', 'Fonte verificada.')), acao('Rejeitar', 'perigo', verificar('rejected', 'Fonte rejeitada.'))];
+  if (f.verification !== 'pending') acoes.push(acao('Voltar a pendente', 'sec', verificar('pending', 'Fonte voltou a pendente.')));
+  if (f.verification === 'verified') acoes.push(acao(f.active ? 'Desativar' : 'Ativar', f.active ? 'sec' : 'ok', () => enviar('active', { active: !f.active }, f.active ? 'Fonte desativada.' : 'Fonte ativada.')));
+  const site = linkSeguro(f.websiteUrl);
+  return el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, f.name),
+    el('div', { class: 'linha' }, `${TIPOS_FONTE[f.type] || f.type} · ${NIVEIS_FONTE[f.trustLevel] || ''} · ${f.region} · a cada ${f.frequencyHours} h`),
+    site ? el('div', { class: 'meta' }, el('a', { href: site, target: '_blank', rel: 'noopener noreferrer' }, f.websiteUrl)) : '',
+    el('div', { class: 'aviso' }, `${VERIFICACAO_FONTE[f.verification] || f.verification} · ${f.active ? 'ativa' : 'desativada'} · ${f.collectable ? 'pode coletar' : 'não coleta'}`),
+    f.verifiedAt ? el('div', { class: 'meta' }, `Verificada em ${dataHoraBr(f.verifiedAt)}`) : '',
+    f.lastSuccessAt ? el('div', { class: 'meta' }, `Última coleta com sucesso: ${dataHoraBr(f.lastSuccessAt)}`) : '',
+    f.lastError ? el('div', { class: 'aviso erro' }, `Último erro: ${f.lastError}`) : '',
+    el('label', {}, 'Nota da verificação', nota),
+    erro,
+    el('div', { class: 'acoes' }, acoes),
+  );
+}
+
+function formularioFonte() {
+  const nome = el('input', { type: 'text', maxlength: '80', autocomplete: 'off', placeholder: 'ex.: Nome da organizadora' });
+  const site = el('input', { type: 'url', maxlength: '300', autocomplete: 'off', placeholder: 'https://...' });
+  const tipo = el('select', {}, Object.entries(TIPOS_FONTE).map(([v, t]) => el('option', { value: v }, t)));
+  const nivel = el('select', {}, Object.entries(NIVEIS_FONTE).map(([v, t]) => el('option', { value: v }, t)));
+  const freq = el('input', { type: 'number', min: '1', max: '2160', value: '24' });
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const salvar = el('button', { type: 'button', class: 'ok' }, 'Cadastrar (fica pendente e desativada)');
+  tipo.addEventListener('change', () => {
+    nivel.value = tipo.value === 'organizer' ? '1' : tipo.value === 'platform' ? '2' : '3';
+  });
+  salvar.addEventListener('click', async () => {
+    const dados = { nome: nome.value, site: site.value.trim(), tipo: tipo.value, nivel: Number(nivel.value), frequencia: Number(freq.value) };
+    const problema = validarFonte(dados);
+    erro.hidden = !problema;
+    erro.textContent = problema;
+    if (problema) return;
+    salvar.disabled = true;
+    try {
+      await api('/admin/sources', { method: 'POST', body: JSON.stringify({ id: idFonte(dados.nome), name: dados.nome.trim(), type: dados.tipo, trustLevel: dados.nivel, websiteUrl: dados.site, region: 'SP', method: 'website', frequencyHours: dados.frequencia }) });
+      aviso('Fonte cadastrada como pendente.', 'ok');
+      await carregarFontes();
+    } catch (falha) {
+      salvar.disabled = false;
+      if (!token) return;
+      erro.hidden = false;
+      erro.textContent = mensagem(falha.codigo);
+    }
+  });
+  return el('article', { class: 'cartao' }, el('h2', {}, 'Nova fonte'), el('label', {}, 'Nome', nome), el('label', {}, 'Site oficial', site), el('label', {}, 'Tipo', tipo), el('label', {}, 'Nível de confiança', nivel), el('label', {}, 'Frequência da coleta (horas)', freq), erro, el('div', { class: 'acoes' }, salvar));
+}
+
+async function carregarFontes() {
+  const alvo = $('fontes');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/sources');
+    const m = r.summary;
+    alvo.replaceChildren(
+      el(
+        'div',
+        { class: 'grade' },
+        cartaoNumero('Fontes', String(m.total)),
+        cartaoNumero('Verificadas', String(m.verified)),
+        cartaoNumero('Pendentes', String(m.pending)),
+        cartaoNumero('Podem coletar', String(m.collectable), 'ativas e verificadas'),
+        cartaoNumero('Com erro', String(m.withError)),
+      ),
+      ...(r.items.length ? r.items.map(cartaoFonte) : [el('p', { class: 'vazio' }, 'Nenhuma fonte cadastrada. Use "Carregar fontes candidatas" ou cadastre uma abaixo.')]),
+    );
+    $('fonte-nova').replaceChildren(formularioFonte());
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+async function carregarCandidatas() {
+  try {
+    const r = await api('/admin/sources/candidates', { method: 'POST', body: '{}' });
+    aviso(r.created.length ? `${r.created.length} fontes candidatas carregadas (todas pendentes e desativadas).` : 'As candidatas já estavam carregadas.', 'ok');
+    await carregarFontes();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
 }
 
 async function carregarDivergencias() {
@@ -1154,6 +1276,7 @@ function mostrarAba(nome) {
   aviso('');
   if (nome === 'pedidos') carregarPedidos();
   if (nome === 'catalogo') carregarUltimoDisparo();
+  if (nome === 'fontes') carregarFontes();
   if (nome === 'cadastros') carregarCadastros();
   if (nome === 'divergencias') carregarDivergencias();
   if (nome === 'qualidade') carregarQualidade();
@@ -1664,6 +1787,8 @@ $('atualizar-custos').addEventListener('click', carregarCustos);
 $('atualizar-qualidade').addEventListener('click', carregarQualidade);
 $('verificar-vinculos').addEventListener('click', verificarVinculos);
 $('atualizar-divergencias').addEventListener('click', carregarDivergencias);
+$('atualizar-fontes').addEventListener('click', carregarFontes);
+$('carregar-candidatas').addEventListener('click', carregarCandidatas);
 $('baixar-aceitas').addEventListener('click', baixarAceitas);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);
 
