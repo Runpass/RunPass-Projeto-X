@@ -13,7 +13,7 @@ class AgendaScreen extends StatefulWidget {
   State<AgendaScreen> createState() => _AgendaScreenState();
 }
 
-const _monthNames = [
+const monthNamesPt = [
   'janeiro',
   'fevereiro',
   'março',
@@ -27,7 +27,7 @@ const _monthNames = [
   'novembro',
   'dezembro',
 ];
-const _weekdayLetters = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
+const weekdayLettersPt = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
 String _iso(DateTime d) =>
     '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -167,8 +167,8 @@ class _AgendaScreenState extends State<AgendaScreen> {
       final isChosen = iso == chosen;
       return Semantics(
         label: count == 0
-            ? '${day.day} de ${_monthNames[day.month - 1]}'
-            : '${day.day} de ${_monthNames[day.month - 1]}, $count corrida${count > 1 ? 's' : ''}',
+            ? '${day.day} de ${monthNamesPt[day.month - 1]}'
+            : '${day.day} de ${monthNamesPt[day.month - 1]}, $count corrida${count > 1 ? 's' : ''}',
         button: count > 0,
         child: InkWell(
           key: Key('agenda-day-$status-$iso'),
@@ -235,7 +235,7 @@ class _AgendaScreenState extends State<AgendaScreen> {
                 ),
                 Expanded(
                   child: Text(
-                    '${_monthNames[month.month - 1]} de ${month.year}',
+                    '${monthNamesPt[month.month - 1]} de ${month.year}',
                     key: Key('agenda-month-$status'),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
@@ -254,7 +254,7 @@ class _AgendaScreenState extends State<AgendaScreen> {
             ),
             Row(
               children: [
-                for (final letter in _weekdayLetters)
+                for (final letter in weekdayLettersPt)
                   Expanded(
                     child: Center(
                       child: Text(

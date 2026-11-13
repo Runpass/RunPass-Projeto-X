@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'agenda.dart';
+import 'catalog_views.dart';
 import 'friends.dart';
 import 'grid_columns.dart';
 import 'home_screen.dart';
@@ -492,11 +493,157 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// Direção: em data, mais recentes primeiro; em avaliação, melhores primeiro.
   bool descending = true;
 
+  /// Visualização escolhida (lista, grade ou calendário) e colunas da grade; ficam neste aparelho.
+  CatalogViewMode viewMode = CatalogViewMode.list;
+  int gridColumns = 2;
+
   @override
   void initState() {
     super.initState();
     load();
     loadMine();
+    loadViewPreferences();
+  }
+
+  Future<void> loadViewPreferences() async {
+    final mode = await CatalogViewMode.read();
+    final columns = await GridColumns.read('catalog-grid-columns', fallback: 2);
+    if (mounted) {
+      setState(() {
+        viewMode = mode;
+        gridColumns = columns;
+      });
+    }
+  }
+
+  void chooseViewMode(CatalogViewMode mode) {
+    setState(() => viewMode = mode);
+    mode.write();
+  }
+
+  void chooseGridColumns(int columns) {
+    setState(() => gridColumns = columns);
+    GridColumns.write('catalog-grid-columns', columns);
+  }
+
+  /// Cartão da grade: capa da corrida com nome, data e cidade por cima (tamanho do texto acompanha as colunas).
+  Widget gridCard(Map<String, dynamic> edition) {
+    final archived = edition['status'] == 'archived';
+    final compact = gridColumns >= 4;
+    const shadow = [Shadow(blurRadius: 6, color: Colors.black54)];
+    final score = scoreOf(edition);
+    return Card(
+      key: Key('grid-card-${edition['id']}'),
+      clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: loading ? null : () => openEdition(edition['id'] as String),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            EditionCover(gateway: widget.gateway, edition: edition),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0x1A000000), Color(0xD9000000)],
+                ),
+              ),
+            ),
+            Positioned(
+              left: compact ? 6 : 10,
+              right: compact ? 6 : 10,
+              bottom: compact ? 6 : 10,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    edition['name'] as String,
+                    maxLines: compact ? 2 : 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: archived ? context.archivedText : Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: switch (gridColumns) {
+                        1 => 17.0,
+                        2 => 14.0,
+                        3 => 12.0,
+                        _ => 10.0,
+                      },
+                      shadows: shadow,
+                    ),
+                  ),
+                  if (gridColumns <= 3) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: gridColumns == 3 ? 10.5 : 12,
+                        shadows: shadow,
+                      ),
+                    ),
+                    if (score != null && gridColumns <= 2)
+                      Text(
+                        '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          shadows: shadow,
+                        ),
+                      ),
+                  ] else
+                    Text(
+                      displayDate(edition['date'] as String).substring(0, 5),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9.5,
+                        shadows: shadow,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Corpo da lista conforme a visualização escolhida.
+  List<Widget> editionViews() {
+    final shown = view;
+    switch (viewMode) {
+      case CatalogViewMode.list:
+        return [for (final edition in shown) editionCard(edition)];
+      case CatalogViewMode.grid:
+        if (shown.isEmpty) return const [];
+        return [
+          GridView.count(
+            key: const Key('catalog-grid'),
+            crossAxisCount: gridColumns,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: switch (gridColumns) {
+              1 => 1.9,
+              2 => 0.95,
+              3 => 0.8,
+              _ => 0.7,
+            },
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            children: [for (final edition in shown) gridCard(edition)],
+          ),
+          const SizedBox(height: 12),
+        ];
+      case CatalogViewMode.calendar:
+        if (shown.isEmpty) return const [];
+        return [CatalogCalendar(editions: shown, cardBuilder: editionCard)];
+    }
   }
 
   Future<void> loadMine() async {
@@ -1416,6 +1563,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
                 onPressed: loading ? null : sortByDate,
               ),
+              CatalogViewMenu(value: viewMode, onChanged: chooseViewMode),
+              if (viewMode == CatalogViewMode.grid)
+                GridColumnsButton(
+                  value: gridColumns,
+                  onChanged: chooseGridColumns,
+                ),
               IconButton(
                 key: const Key('catalog-sort-rating'),
                 tooltip: sortBy != 'rating'
@@ -1488,7 +1641,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 child: const Text('Não encontrou? Pedir cadastro da corrida'),
               ),
             ),
-          for (final edition in view) editionCard(edition),
+          ...editionViews(),
           if (nextCursor != null)
             TextButton(
               onPressed: loading ? null : () => load(more: true),
