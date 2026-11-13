@@ -303,6 +303,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
     String? Function(String)? validate,
     int? maxLength,
     String? helper,
+    int helperMaxLines = 1,
     TextInputType? keyboard,
     List<TextInputFormatter>? formatters,
   }) => Padding(
@@ -313,7 +314,11 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       maxLength: maxLength,
       keyboardType: keyboard,
       inputFormatters: formatters,
-      decoration: InputDecoration(labelText: label, helperText: helper),
+      decoration: InputDecoration(
+        labelText: label,
+        helperText: helper,
+        helperMaxLines: helperMaxLines,
+      ),
       validator: (value) {
         final v = (value ?? '').trim();
         if (v.isEmpty) return required ? 'Preencha este campo.' : null;
@@ -336,23 +341,55 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
     });
   }
 
-  Widget locationField(String key, String label, {required bool required}) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: TextFormField(
-          key: Key('request-$key'),
-          controller: fields[key],
-          readOnly: true,
-          onTap: saving ? null : chooseLocation,
+  /// Mesmo padrão do filtro de corridas: um campo "Estado e cidade" que abre a roda de rolagem.
+  Widget locationField() => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: FormField<String>(
+      key: const Key('request-location'),
+      initialValue: '',
+      validator: (_) =>
+          text('city').isEmpty ? 'Escolha o estado e a cidade.' : null,
+      builder: (state) => InkWell(
+        onTap: saving ? null : chooseLocation,
+        child: InputDecorator(
           decoration: InputDecoration(
-            labelText: label,
-            suffixIcon: const Icon(Icons.unfold_more_rounded),
+            labelText: 'Estado e cidade',
+            suffixIcon: const Icon(Icons.expand_more),
+            errorText: state.errorText,
           ),
-          validator: (value) => required && (value ?? '').trim().isEmpty
-              ? 'Escolha o estado e a cidade.'
-              : null,
+          child: Text(
+            text('city').isEmpty
+                ? 'Escolha o estado e a cidade'
+                : text('state').isEmpty
+                ? text('city')
+                : '${text('state').toUpperCase()} - ${text('city')}',
+          ),
         ),
-      );
+      ),
+    ),
+  );
+
+  /// Atalhos de distância (5, 10, 21 e 42 km), como no filtro de corridas.
+  Widget distanceChips() => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: ListenableBuilder(
+      listenable: fields['distanceKm']!,
+      builder: (context, _) => Wrap(
+        spacing: 8,
+        children: [
+          for (final km in const ['5', '10', '21', '42'])
+            ChoiceChip(
+              key: Key('km-chip-$km'),
+              label: Text('$km km'),
+              selected: text('distanceKm') == km,
+              onSelected: saving
+                  ? null
+                  : (picked) => fields['distanceKm']!.text = picked ? km : '',
+            ),
+        ],
+      ),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -395,8 +432,8 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
                   keyboard: TextInputType.number,
                   formatters: const [DateMaskFormatter()],
                 ),
-                locationField('city', 'Cidade', required: true),
-                locationField('state', 'Estado (UF)', required: false),
+                locationField(),
+                distanceChips(),
                 field(
                   'distanceKm',
                   'Distância em km',
@@ -405,7 +442,8 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
                   keyboard: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
-                  helper: 'Uma distância por pedido. Para outra, faça outro pedido.',
+                  helper: 'Ex.: 5, 10, 21 ou 42. Uma distância por pedido; para outra, faça outro pedido.',
+                  helperMaxLines: 2,
                 ),
                 field(
                   'officialUrl',

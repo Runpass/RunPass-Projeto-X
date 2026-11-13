@@ -59,7 +59,27 @@ void main() {
     expect(find.text('Data (DD/MM/AAAA)'), findsOneWidget);
   });
 
-  testWidgets('estado e cidade são escolhidos na roda de rolagem', (
+  testWidgets(
+    'estado e cidade: um campo com a roda de rolagem, como no filtro',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(home: EditionRequestFormScreen(gateway: await gateway())),
+      );
+      expect(find.text('Estado e cidade'), findsOneWidget);
+      expect(find.text('SP - São Paulo'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('request-location')));
+      await tester.pumpAndSettle();
+      expect(find.text('Estado e cidade'), findsWidgets);
+      await tester.tap(find.byKey(const Key('location-done')));
+      await tester.pumpAndSettle();
+      expect(find.text('SP - São Paulo'), findsOneWidget);
+    },
+  );
+
+  testWidgets('distância: atalhos de 5, 10, 21 e 42 km preenchem o campo', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 3000);
@@ -68,20 +88,17 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: EditionRequestFormScreen(gateway: await gateway())),
     );
-    final city = tester.widget<TextFormField>(
-      find.byKey(const Key('request-city')),
-    );
-    expect(city.enabled, isTrue);
-    await tester.tap(find.byKey(const Key('request-city')));
-    await tester.pumpAndSettle();
-    expect(find.text('Estado e cidade'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('location-done')));
-    await tester.pumpAndSettle();
-    expect(find.text('São Paulo'), findsOneWidget);
-    expect(find.text('SP'), findsOneWidget);
-    // Sem teclado: o campo é só de leitura, então digitar não altera o valor.
-    await tester.tap(find.byKey(const Key('request-state')));
-    await tester.pumpAndSettle();
-    expect(find.text('Estado e cidade'), findsOneWidget);
+    String distance() => tester
+        .widget<TextFormField>(find.byKey(const Key('request-distanceKm')))
+        .controller!
+        .text;
+    expect(distance(), '');
+    await tester.tap(find.byKey(const Key('km-chip-21')));
+    await tester.pump();
+    expect(distance(), '21');
+    await tester.tap(find.byKey(const Key('km-chip-21')));
+    await tester.pump();
+    expect(distance(), '');
+    expect(find.textContaining('Ex.: 5, 10, 21 ou 42'), findsOneWidget);
   });
 }
