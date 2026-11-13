@@ -1497,13 +1497,14 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
         // hexagonais) caber usando a largura inteira do card, sem cortar.
         childAspectRatio: 0.46,
         children: [
-          for (final race in list) tile(race),
           if (showAddTile) _addTile(),
+          for (final race in list) tile(race),
         ],
       );
 
-  /// Ultimo card da prateleira: leva para o cadastro de uma nova corrida, o
-  /// mesmo fluxo ja usado no resto do app (CatalogScreen).
+  /// Primeiro card da prateleira, logo abaixo de "Minhas medalhas": leva para
+  /// o cadastro de uma nova corrida, o mesmo fluxo ja usado no resto do app
+  /// (CatalogScreen).
   Widget _addTile() => InkWell(
     key: const Key('medal-add-tile'),
     borderRadius: BorderRadius.circular(14),
@@ -1519,15 +1520,15 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
           Container(
             width: 36,
             height: 36,
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: runPassOrange, width: 2),
+              color: runPassOrange,
             ),
-            child: const Icon(Icons.add, color: runPassOrange, size: 22),
+            child: const Icon(Icons.add, color: Colors.white, size: 22),
           ),
           const SizedBox(height: 8),
           Text(
-            'Adicionar\nmedalha',
+            'Adicionar',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 11,
@@ -1679,27 +1680,39 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                       vertical: 16,
                       horizontal: 12,
                     ),
-                    child: Row(
-                      children: [
-                        bigStat(
-                          Icons.directions_run_rounded,
-                          const Color(0xff4cc38a),
-                          '${stats.completed}',
-                          'provas\nconcluídas',
-                        ),
-                        bigStat(
-                          Icons.military_tech_rounded,
-                          const Color(0xffe8b23a),
-                          '${stats.completed}',
-                          'medalhas\nna coleção',
-                        ),
-                        bigStat(
-                          Icons.location_on_rounded,
-                          const Color(0xff4cc38a),
-                          '${stats.cities}',
-                          'cidades\nvisitadas',
-                        ),
-                      ],
+                    child: IntrinsicHeight(
+                      child: Row(
+                        children: [
+                          bigStat(
+                            Icons.directions_run_rounded,
+                            const Color(0xff4cc38a),
+                            '${stats.kilometers.round()}',
+                            'km\npercorridos',
+                          ),
+                          VerticalDivider(
+                            width: 24,
+                            thickness: 1,
+                            color: context.panelStrong,
+                          ),
+                          bigStat(
+                            Icons.workspace_premium_rounded,
+                            const Color(0xffe8b23a),
+                            '${stats.completed}',
+                            'medalhas\nna coleção',
+                          ),
+                          VerticalDivider(
+                            width: 24,
+                            thickness: 1,
+                            color: context.panelStrong,
+                          ),
+                          bigStat(
+                            Icons.flag_rounded,
+                            const Color(0xff4cc38a),
+                            '${stats.cities}',
+                            'cidades\nvisitadas',
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

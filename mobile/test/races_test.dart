@@ -102,12 +102,13 @@ void main() {
       expect(find.byType(MedalCollectionScreen), findsOneWidget);
       expect(find.text('Corrida A'), findsOneWidget);
       expect(find.text('Corrida B'), findsOneWidget);
-      // Two completed races in two cities; the draft is not a medal.
-      expect(find.text('provas\nconcluídas'), findsOneWidget);
+      // Two completed races (5km + 10km) in two cities; the draft is not a medal.
+      expect(find.text('km\npercorridos'), findsOneWidget);
       expect(find.text('medalhas\nna coleção'), findsOneWidget);
       expect(find.text('cidades\nvisitadas'), findsOneWidget);
-      // Provas, medalhas e cidades valem 2.
-      expect(find.text('2'), findsNWidgets(3));
+      expect(find.text('15'), findsOneWidget);
+      // Medalhas e cidades valem 2.
+      expect(find.text('2'), findsNWidgets(2));
       await tester.tap(find.text('Por ano'));
       await tester.pumpAndSettle();
       expect(find.text('2026'), findsOneWidget);
@@ -163,10 +164,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(CatalogScreen), findsNothing);
-    await tester.drag(
-      find.byKey(const Key('medals-list')),
-      const Offset(0, -400),
-    );
+    await tester.ensureVisible(find.byKey(const Key('medal-add-tile')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('medal-add-tile')));
     await tester.pumpAndSettle();
