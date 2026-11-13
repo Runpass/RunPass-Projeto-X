@@ -80,7 +80,7 @@ Future<void> fill(WidgetTester tester) async {
   }
 
   await type('name', 'Corrida do Banner');
-  await type('date', '2027-03-14');
+  await type('date', '14/03/2027');
   await type('distanceKm', '10');
 }
 

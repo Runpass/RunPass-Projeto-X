@@ -1495,7 +1495,7 @@ void main() {
       );
       await tester.enterText(
         find.byKey(const Key('request-date')),
-        '2027-03-14',
+        '14/03/2027',
       );
       await tester.enterText(
         find.byKey(const Key('request-distanceKm')),
@@ -1562,7 +1562,7 @@ void main() {
       await tester.enterText(find.byKey(const Key('request-name')), 'X');
       await tester.enterText(
         find.byKey(const Key('request-date')),
-        '14/03/2027',
+        '31/02/2027',
       );
       await tester.enterText(find.byKey(const Key('request-distanceKm')), '-3');
       await tester.enterText(
@@ -1572,7 +1572,7 @@ void main() {
       await tester.tap(find.byKey(const Key('request-submit')));
       await tester.pumpAndSettle();
       expect(
-        find.text('Use uma data válida no formato AAAA-MM-DD.'),
+        find.text('Use uma data válida no formato DD/MM/AAAA.'),
         findsOneWidget,
       );
       expect(find.textContaining('Informe a distância em km'), findsOneWidget);
@@ -1655,7 +1655,7 @@ void main() {
         expect(find.byKey(const Key('request-reason')), findsOneWidget);
         await tester.enterText(
           find.byKey(const Key('request-date')),
-          '2027-03-21',
+          '21/03/2027',
         );
         await tester.tap(find.byKey(const Key('request-submit')));
         await tester.pumpAndSettle();
