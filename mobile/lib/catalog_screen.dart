@@ -200,8 +200,8 @@ Widget runPassNavigation(
       if (index == selectedIndex && !subScreen) return;
       final screen = switch (index) {
         0 => RunPassHomeScreen(gateway: gateway),
-        1 => CatalogScreen(gateway: gateway),
-        2 => MedalCollectionScreen(gateway: gateway),
+        1 => MedalCollectionScreen(gateway: gateway),
+        2 => CatalogScreen(gateway: gateway),
         _ => RunnerProfileScreen(gateway: gateway),
       };
       final route = MaterialPageRoute<void>(builder: (_) => screen);
@@ -1088,7 +1088,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         const SizedBox(width: 8),
       ],
     ),
-    bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+    bottomNavigationBar: runPassNavigation(context, widget.gateway, 2),
     body: SafeArea(
       child: ListView(
         padding: const EdgeInsets.all(16),
@@ -3063,7 +3063,7 @@ class _EditionScreenState extends State<EditionScreen> {
       bottomNavigationBar: runPassNavigation(
         context,
         widget.gateway,
-        1,
+        2,
         subScreen: true,
       ),
       body: loading
@@ -3774,7 +3774,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         bottomNavigationBar: runPassNavigation(
           context,
           widget.gateway,
-          2,
+          1,
           subScreen: true,
         ),
         body: ListView(
@@ -3871,7 +3871,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       bottomNavigationBar: runPassNavigation(
         context,
         widget.gateway,
-        1,
+        2,
         subScreen: true,
       ),
       body: ListView(
@@ -4064,7 +4064,7 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
     bottomNavigationBar: runPassNavigation(
       context,
       widget.gateway,
-      1,
+      2,
       subScreen: true,
     ),
     body: loading

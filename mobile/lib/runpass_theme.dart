@@ -200,12 +200,12 @@ class RunPassBottomNav extends StatelessWidget {
         label: 'Início',
       ),
       const NavigationDestination(
-        icon: Icon(Icons.directions_run),
-        label: 'Corridas',
-      ),
-      const NavigationDestination(
         icon: Icon(Icons.emoji_events_outlined),
         label: 'Medalhas',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.directions_run),
+        label: 'Corridas',
       ),
       NavigationDestination(
         icon: profileIcon ?? const Icon(Icons.person_outline),

@@ -1640,7 +1640,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             const SizedBox(width: 8),
           ],
         ),
-        bottomNavigationBar: runPassNavigation(context, widget.gateway, 2),
+        bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
         body: FutureBuilder<List<RaceRecord>>(
           future: races,
           builder: (context, snapshot) {
