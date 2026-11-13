@@ -179,7 +179,22 @@ class RunPassBottomNav extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => NavigationBar(
+  Widget build(BuildContext context) {
+    final bar = _bar();
+    // Na aba Perfil a foto (com borda branca) já marca a seleção: sem o realce atrás dela.
+    if (selectedIndex != 3) return bar;
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(
+        navigationBarTheme: theme.navigationBarTheme.copyWith(
+          indicatorColor: Colors.transparent,
+        ),
+      ),
+      child: bar,
+    );
+  }
+
+  Widget _bar() => NavigationBar(
     selectedIndex: selectedIndex,
     onDestinationSelected: onDestinationSelected,
     destinations: [

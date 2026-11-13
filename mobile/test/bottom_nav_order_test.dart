@@ -20,4 +20,22 @@ void main() {
       expect(labels, ['Início', 'Medalhas', 'Corridas', 'Perfil']);
     },
   );
+
+  testWidgets('na aba Perfil não há realce atrás da foto', (tester) async {
+    Future<Color?> indicatorAt(int index) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(brightness: Brightness.dark),
+          home: Scaffold(
+            bottomNavigationBar: RunPassBottomNav(selectedIndex: index),
+          ),
+        ),
+      );
+      return NavigationBarTheme.of(tester.element(find.byType(NavigationBar)))
+          .indicatorColor;
+    }
+
+    expect(await indicatorAt(3), Colors.transparent);
+    expect(await indicatorAt(0), isNot(Colors.transparent));
+  });
 }
