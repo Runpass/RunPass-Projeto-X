@@ -128,7 +128,7 @@ Future<void> open(
 }
 
 void main() {
-  testWidgets('Avaliações: título, data por extenso, média, quantidade e as '
+  testWidgets('Avaliações: média, quantidade e as '
       'barras dos itens', (tester) async {
     final gateway = await gatewayWith(
       reviews: {
@@ -151,9 +151,9 @@ void main() {
       },
     );
     await open(tester, gateway, 'Avaliações');
-    expect(find.byKey(const Key('reviews-title')), findsOneWidget);
-    expect(find.text('22 de setembro de 2024'), findsOneWidget);
-    expect(find.text('São Paulo - SP'), findsOneWidget);
+    // O nome da corrida já está no banner: a aba não o repete, nem data e local.
+    expect(find.text('22 de setembro de 2024'), findsNothing);
+    expect(find.text('São Paulo - SP'), findsNothing);
     expect(find.text('4,7'), findsOneWidget);
     expect(find.text('1.284 avaliações'), findsOneWidget);
     expect(find.text('97%'), findsOneWidget);
@@ -547,5 +547,46 @@ void main() {
       find.text('Não foi possível carregar as fotos agora.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+    'Sobre mostra a nota média e a quantidade; tocar leva a Avaliações',
+    (tester) async {
+      final gateway = await gatewayWith(
+        reviews: {
+          'items': [],
+          'summary': {'reviewCount': 1284, 'average': 4.7},
+        },
+      );
+      await open(tester, gateway, 'Sobre');
+      expect(find.byKey(const Key('about-rating')), findsOneWidget);
+      expect(find.text('4,7'), findsOneWidget);
+      expect(find.text('1.284 avaliações'), findsOneWidget);
+      expect(find.byKey(const Key('summary-details-toggle')), findsNothing);
+      await tester.tap(find.byKey(const Key('about-rating')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('summary-details-toggle')), findsOneWidget);
+    },
+  );
+
+  testWidgets('trocar de aba a partir da corrida não deixa seta de voltar', (
+    tester,
+  ) async {
+    final gateway = await gatewayWith();
+    tester.view.physicalSize = const Size(800, 3200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'E1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Medalhas'));
+    await tester.pumpAndSettle();
+    expect(find.byType(EditionScreen), findsNothing);
+    expect(find.byType(BackButton), findsNothing);
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    expect(navigator.canPop(), isFalse);
   });
 }
