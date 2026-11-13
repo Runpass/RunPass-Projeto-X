@@ -2136,15 +2136,20 @@ void ratingTests() {
       // Ícones de ordem na mesma linha do seletor de público, à direita dele.
       expect(sortDate.center.dy, closeTo(aud.center.dy, 1));
       expect(sortStar.center.dy, closeTo(aud.center.dy, 1));
-      expect(sortDate.left, greaterThan(aud.right));
-      expect(sortStar.left, greaterThan(sortDate.left));
+      // Ordem dos ícones: grade/lista, depois avaliações, depois data.
+      final viewMenu = tester.getRect(
+        find.byKey(const Key('catalog-view-mode')),
+      );
+      expect(viewMenu.left, greaterThan(aud.right));
+      expect(sortStar.left, greaterThan(viewMenu.left));
+      expect(sortDate.left, greaterThan(sortStar.left));
       // O ano ocupa a largura toda, sem os ícones ao lado.
       final yearArea = tester.getRect(
         find
             .ancestor(of: year(), matching: find.byType(SingleChildScrollView))
             .first,
       );
-      expect(yearArea.right, greaterThan(sortStar.right - 1));
+      expect(yearArea.right, greaterThan(sortDate.right - 1));
       // Espaços iguais: Minhas solicitações -> linha do público -> ano.
       final rowTop = sortDate.top < aud.top ? sortDate.top : aud.top;
       final rowBottom = sortDate.bottom > aud.bottom

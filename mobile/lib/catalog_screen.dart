@@ -1420,20 +1420,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   ),
                 ),
               ),
-              IconButton(
-                key: const Key('catalog-sort'),
-                tooltip: sortBy != 'date'
-                    ? 'Ordenar por data'
-                    : (descending
-                          ? 'Mais recentes primeiro (toque para inverter)'
-                          : 'Mais antigas primeiro (toque para inverter)'),
-                isSelected: sortBy == 'date',
-                icon: sortGlyph(
-                  Icons.calendar_today_rounded,
-                  active: sortBy == 'date',
-                ),
-                onPressed: loading ? null : sortByDate,
-              ),
               CatalogViewMenu(
                 value: viewMode,
                 onChanged: chooseViewMode,
@@ -1455,6 +1441,20 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   active: sortBy == 'rating',
                 ),
                 onPressed: loading ? null : sortByRating,
+              ),
+              IconButton(
+                key: const Key('catalog-sort'),
+                tooltip: sortBy != 'date'
+                    ? 'Ordenar por data'
+                    : (descending
+                          ? 'Mais recentes primeiro (toque para inverter)'
+                          : 'Mais antigas primeiro (toque para inverter)'),
+                isSelected: sortBy == 'date',
+                icon: sortGlyph(
+                  Icons.calendar_today_rounded,
+                  active: sortBy == 'date',
+                ),
+                onPressed: loading ? null : sortByDate,
               ),
             ],
           ),

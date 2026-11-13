@@ -46,6 +46,16 @@ class RaceRecord {
       edition?['name'] as String? ?? 'Corrida ${participation['editionId']}';
   String? get date => edition?['date'] as String?;
   int? get year => date == null ? null : int.tryParse(date!.substring(0, 4));
+  static const noCity = 'Sem cidade';
+
+  /// "São Paulo/SP", para agrupar as medalhas por cidade visitada.
+  String get cityLabel {
+    final city = edition?['city'] as String?;
+    if (city == null || city.isEmpty) return noCity;
+    final state = edition?['state'] as String?;
+    return state == null || state.isEmpty ? city : '$city/$state';
+  }
+
   String get place {
     final city = edition?['city'] as String?;
     final state = edition?['state'] as String?;
@@ -1132,7 +1142,7 @@ void openMedal(
   ),
 );
 
-enum MedalGrouping { all, year, distance, achievements }
+enum MedalGrouping { all, year, distance, city }
 
 /// Baixa os bytes de uma foto, dada a URL assinada; injetavel para testes.
 typedef ImageBytesFetcher = Future<List<int>> Function(String url);
@@ -1660,40 +1670,28 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
 
   List<Widget> sections(List<RaceRecord> races) {
     final ordered = newestFirst ? races : races.reversed.toList();
-    if (grouping == MedalGrouping.achievements) {
-      final seals = sealsOf(RaceStats.of(races));
-      return [
-        Wrap(
-          key: const Key('achievement-seals'),
-          spacing: 12,
-          runSpacing: 18,
-          children: [
-            for (final seal in seals)
-              SizedBox(
-                width: 84,
-                child: SealBadge(
-                  seal: seal,
-                  radius: 32,
-                  onTap: () => showSealsSheet(context, seals),
-                ),
-              ),
-          ],
-        ),
-      ];
-    }
     if (grouping == MedalGrouping.all) {
       return [grid(ordered, showAddTile: true)];
     }
     final groups = <String, List<RaceRecord>>{};
     for (final race in ordered) {
-      final key = grouping == MedalGrouping.year
-          ? '${race.year ?? 'Sem data'}'
-          : race.kilometers == null
-          ? 'Outras'
-          : distanceLabel(race.kilometers!);
+      final key = switch (grouping) {
+        MedalGrouping.year => '${race.year ?? 'Sem data'}',
+        MedalGrouping.city => race.cityLabel,
+        _ =>
+          race.kilometers == null ? 'Outras' : distanceLabel(race.kilometers!),
+      };
       groups.putIfAbsent(key, () => []).add(race);
     }
     final keys = groups.keys.toList();
+    if (grouping == MedalGrouping.city) {
+      // Cidades visitadas em ordem alfabética; as medalhas sem cidade ficam por último.
+      keys.sort((a, b) {
+        if (a == RaceRecord.noCity) return 1;
+        if (b == RaceRecord.noCity) return -1;
+        return a.toLowerCase().compareTo(b.toLowerCase());
+      });
+    }
     if (grouping == MedalGrouping.distance) {
       keys.sort(
         (a, b) => (int.tryParse(a.replaceAll('K', '')) ?? 1 << 20).compareTo(
@@ -1797,7 +1795,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                       chip('Todas', MedalGrouping.all),
                       chip('Por ano', MedalGrouping.year),
                       chip('Por distância', MedalGrouping.distance),
-                      chip('Conquistas', MedalGrouping.achievements),
+                      chip('Por cidade', MedalGrouping.city),
                     ],
                   ),
                 ),
@@ -1837,9 +1835,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        grouping == MedalGrouping.achievements
-                            ? 'Minhas Insígnias'
-                            : 'Minhas medalhas',
+                        'Minhas medalhas',
                         key: const Key('medals-title'),
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,

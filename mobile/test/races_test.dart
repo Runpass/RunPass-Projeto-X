@@ -93,8 +93,7 @@ Future<IdentityGateway> runner({bool noRaces = false}) async {
 
 void main() {
   testWidgets(
-    'Conquistas usa os mesmos selos do perfil, com cadeado nos que faltam, e '
-    'o título vira Minhas Insígnias só nessa aba',
+    'Medalhas troca Conquistas por Por cidade, agrupando por cidade visitada',
     (tester) async {
       tester.view.physicalSize = const Size(900, 2400);
       tester.view.devicePixelRatio = 1;
@@ -103,41 +102,23 @@ void main() {
         MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
       );
       await tester.pumpAndSettle();
+      expect(find.text('Conquistas'), findsNothing);
       expect(find.text('Minhas medalhas'), findsOneWidget);
-      expect(find.text('Minhas Insígnias'), findsNothing);
-      await tester.tap(find.text('Conquistas'));
+      await tester.tap(find.text('Por cidade'));
       await tester.pumpAndSettle();
-      expect(find.text('Minhas Insígnias'), findsOneWidget);
-      expect(find.text('Minhas medalhas'), findsNothing);
-      // Os cinco selos do perfil, com as mesmas legendas; 5K e Desbravador conquistados.
-      for (final label in ['Desbravador', '5K', '10K', '21K', '42K']) {
-        expect(find.byKey(Key('seal-$label')), findsOneWidget);
-      }
-      expect(find.byKey(const Key('seal-locked-Desbravador')), findsNothing);
-      expect(find.byKey(const Key('seal-locked-5K')), findsNothing);
-      expect(find.byKey(const Key('seal-locked-42K')), findsOneWidget);
-      // Aqui as insígnias são maiores que as do perfil (raio 17).
-      final size = tester.getSize(
-        find.descendant(
-          of: find.byKey(const Key('seal-5K')),
-          matching: find.byType(CircleAvatar),
-        ),
+      expect(find.text('Rio de Janeiro/RJ'), findsOneWidget);
+      expect(find.text('São Paulo/SP'), findsOneWidget);
+      // Ordem alfabética: Rio antes de São Paulo; cada medalha no grupo da sua cidade.
+      expect(
+        tester.getTopLeft(find.text('Rio de Janeiro/RJ')).dy,
+        lessThan(tester.getTopLeft(find.text('São Paulo/SP')).dy),
       );
-      expect(size.width, greaterThan(40));
-      await tester.tap(find.byKey(const Key('seal-42K')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('achievements-sheet')), findsOneWidget);
-      // Na legenda, o bloqueado tem o mesmo cadeado dos outros bloqueados (aqui e na folha).
-      expect(find.byKey(const Key('seal-locked-42K')), findsNWidgets(2));
-      expect(find.byKey(const Key('seal-locked-21K')), findsNWidgets(2));
-      expect(find.byKey(const Key('seal-locked-5K')), findsNothing);
-      expect(find.textContaining('Conclua uma maratona (42K)'), findsOneWidget);
-      // Fora de Conquistas o título volta.
-      await tester.tapAt(const Offset(10, 10));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Por ano'));
-      await tester.pumpAndSettle();
-      expect(find.text('Minhas medalhas'), findsOneWidget);
+      expect(find.text('Corrida A'), findsOneWidget);
+      expect(find.text('Corrida B'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Corrida B')).dy,
+        lessThan(tester.getTopLeft(find.text('Corrida A')).dy),
+      );
     },
   );
 
