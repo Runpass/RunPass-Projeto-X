@@ -5,6 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'agenda.dart';
+import 'catalog_views.dart';
+import 'edition_cards.dart';
 import 'friends.dart';
 import 'grid_columns.dart';
 import 'home_screen.dart';
@@ -492,11 +494,79 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// Direção: em data, mais recentes primeiro; em avaliação, melhores primeiro.
   bool descending = true;
 
+  /// Visualização escolhida (lista ou grade) e colunas da grade; ficam neste aparelho.
+  CatalogViewMode viewMode = CatalogViewMode.list;
+  int gridColumns = 2;
+
   @override
   void initState() {
     super.initState();
     load();
     loadMine();
+    loadViewPreferences();
+  }
+
+  Future<void> loadViewPreferences() async {
+    final mode = await CatalogViewMode.read();
+    final columns = await GridColumns.read('catalog-grid-columns', fallback: 2);
+    if (mounted) {
+      setState(() {
+        viewMode = mode;
+        gridColumns = columns;
+      });
+    }
+  }
+
+  void chooseViewMode(CatalogViewMode mode) {
+    setState(() => viewMode = mode);
+    mode.write();
+  }
+
+  void chooseGridColumns(int columns) {
+    setState(() => gridColumns = columns);
+    GridColumns.write('catalog-grid-columns', columns);
+  }
+
+  /// Cartão da grade (compartilhado com a agenda e o perfil).
+  Widget gridCard(Map<String, dynamic> edition) {
+    final score = scoreOf(edition);
+    return EditionGridCard(
+      key: Key('grid-card-${edition['id']}'),
+      gateway: widget.gateway,
+      edition: edition,
+      columns: gridColumns,
+      subtitle:
+          '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
+      shortDate: displayDate(edition['date'] as String).substring(0, 5),
+      rating: score == null
+          ? null
+          : '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
+      onTap: loading ? null : () => openEdition(edition['id'] as String),
+    );
+  }
+
+  /// Corpo da lista conforme a visualização escolhida.
+  List<Widget> editionViews() {
+    final shown = view;
+    switch (viewMode) {
+      case CatalogViewMode.list:
+        return [for (final edition in shown) editionCard(edition)];
+      case CatalogViewMode.grid:
+        if (shown.isEmpty) return const [];
+        return [
+          GridView.count(
+            key: const Key('catalog-grid'),
+            crossAxisCount: gridColumns,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: gridCardAspectRatio(gridColumns),
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            children: [for (final edition in shown) gridCard(edition)],
+          ),
+          const SizedBox(height: 12),
+        ];
+    }
   }
 
   Future<void> loadMine() async {
@@ -612,64 +682,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
         '★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações',
       if (mine.containsKey(edition['id'])) 'Já está na sua lista',
     ];
-    const shadow = [Shadow(blurRadius: 6, color: Colors.black54)];
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      margin: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        onTap: loading ? null : () => openEdition(edition['id'] as String),
-        child: SizedBox(
-          height: 200,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              EditionCover(gateway: widget.gateway, edition: edition),
-              const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x33000000), Color(0xD9000000)],
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: 12,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      edition['name'] as String,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: archived ? context.archivedText : Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17,
-                        shadows: shadow,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      lines.join('\n'),
-                      style: TextStyle(
-                        color: archived ? context.archivedText : Colors.white,
-                        fontSize: 12.5,
-                        height: 1.3,
-                        shadows: shadow,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Positioned(top: 6, right: 6, child: quickActions(edition)),
-            ],
-          ),
-        ),
-      ),
+    return EditionListCard(
+      gateway: widget.gateway,
+      edition: edition,
+      lines: lines,
+      onTap: loading ? null : () => openEdition(edition['id'] as String),
+      overlay: quickActions(edition),
     );
   }
 
@@ -1403,20 +1421,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
               ),
               IconButton(
-                key: const Key('catalog-sort'),
-                tooltip: sortBy != 'date'
-                    ? 'Ordenar por data'
-                    : (descending
-                          ? 'Mais recentes primeiro (toque para inverter)'
-                          : 'Mais antigas primeiro (toque para inverter)'),
-                isSelected: sortBy == 'date',
-                icon: sortGlyph(
-                  Icons.calendar_today_rounded,
-                  active: sortBy == 'date',
-                ),
-                onPressed: loading ? null : sortByDate,
-              ),
-              IconButton(
                 key: const Key('catalog-sort-rating'),
                 tooltip: sortBy != 'rating'
                     ? 'Ordenar por avaliação'
@@ -1431,6 +1435,26 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   active: sortBy == 'rating',
                 ),
                 onPressed: loading ? null : sortByRating,
+              ),
+              IconButton(
+                key: const Key('catalog-sort'),
+                tooltip: sortBy != 'date'
+                    ? 'Ordenar por data'
+                    : (descending
+                          ? 'Mais recentes primeiro (toque para inverter)'
+                          : 'Mais antigas primeiro (toque para inverter)'),
+                isSelected: sortBy == 'date',
+                icon: sortGlyph(
+                  Icons.calendar_today_rounded,
+                  active: sortBy == 'date',
+                ),
+                onPressed: loading ? null : sortByDate,
+              ),
+              CatalogViewMenu(
+                value: viewMode,
+                onChanged: chooseViewMode,
+                columns: gridColumns,
+                onColumnsChanged: chooseGridColumns,
               ),
             ],
           ),
@@ -1488,7 +1512,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 child: const Text('Não encontrou? Pedir cadastro da corrida'),
               ),
             ),
-          for (final edition in view) editionCard(edition),
+          ...editionViews(),
           if (nextCursor != null)
             TextButton(
               onPressed: loading ? null : () => load(more: true),

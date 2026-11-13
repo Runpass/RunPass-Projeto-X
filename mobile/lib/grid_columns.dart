@@ -5,14 +5,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// uma por tela (perfil e fotos da corrida); sem armazenamento vale o padrão (3).
 class GridColumns {
   static const standard = 3;
-  static const options = [1, 2, 3, 4, 5];
 
-  static Future<int> read(String key) async {
+  /// A partir de 2: com 1 coluna a grade seria igual à lista.
+  static const options = [2, 3, 4, 5];
+
+  static Future<int> read(String key, {int fallback = standard}) async {
     try {
       final saved = (await SharedPreferences.getInstance()).getInt(key);
-      return saved != null && options.contains(saved) ? saved : standard;
+      return saved != null && options.contains(saved) ? saved : fallback;
     } on Object {
-      return standard;
+      return fallback;
     }
   }
 
@@ -25,7 +27,7 @@ class GridColumns {
   }
 }
 
-/// Botão compacto para escolher as colunas da grade (1 a 5).
+/// Botão compacto para escolher as colunas da grade (2 a 5).
 class GridColumnsButton extends StatelessWidget {
   final int value;
   final ValueChanged<int> onChanged;

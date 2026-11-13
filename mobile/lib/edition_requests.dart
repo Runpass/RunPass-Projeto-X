@@ -1,9 +1,9 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'catalog_screen.dart';
 import 'identity_gateway.dart';
+import 'location_picker.dart';
 import 'profile_photo.dart';
 
 /// Pedido de prova ausente: o corredor informa nome, data, cidade e distância; a equipe confere a
@@ -32,14 +32,49 @@ String requestStatusLabel(String? status) => switch (status) {
   _ => 'Situação desconhecida',
 };
 
-String? requestDateError(String value) {
-  final parsed = DateTime.tryParse(value);
-  if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value) ||
-      parsed == null ||
-      parsed.toIso8601String().substring(0, 10) != value) {
-    return 'Use uma data válida no formato AAAA-MM-DD.';
+/// "2027-03-14" -> "14/03/2027" (o que a pessoa vê e digita). Texto fora desse formato passa como veio.
+String requestDateToDisplay(String iso) {
+  final m = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(iso);
+  return m == null ? iso : '${m[3]}/${m[2]}/${m[1]}';
+}
+
+/// "14/03/2027" -> "2027-03-14" (o que o servidor recebe); nulo se não for uma data de calendário válida.
+String? requestDateToIso(String display) {
+  final m = RegExp(r'^(\d{2})/(\d{2})/(\d{4})$').firstMatch(display);
+  if (m == null) return null;
+  final iso = '${m[3]}-${m[2]}-${m[1]}';
+  final parsed = DateTime.tryParse(iso);
+  return parsed != null && parsed.toIso8601String().substring(0, 10) == iso
+      ? iso
+      : null;
+}
+
+String? requestDateError(String value) => requestDateToIso(value) == null
+    ? 'Use uma data válida no formato DD/MM/AAAA.'
+    : null;
+
+/// Máscara DD/MM/AAAA: só dígitos, com as barras inseridas enquanto a pessoa digita.
+class DateMaskFormatter extends TextInputFormatter {
+  const DateMaskFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final cut = digits.length > 8 ? digits.substring(0, 8) : digits;
+    final out = StringBuffer();
+    for (var i = 0; i < cut.length; i++) {
+      if (i == 2 || i == 4) out.write('/');
+      out.write(cut[i]);
+    }
+    final text = out.toString();
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
   }
-  return null;
 }
 
 String? requestDistanceError(String value) {
@@ -94,7 +129,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
         '${details[key] ?? widget.prefill[key] ?? fallback}';
     fields = {
       'name': TextEditingController(text: start('name')),
-      'date': TextEditingController(text: start('date')),
+      'date': TextEditingController(text: requestDateToDisplay(start('date'))),
       'city': TextEditingController(text: start('city', 'São Paulo')),
       'state': TextEditingController(text: start('state', 'SP')),
       'distanceKm': TextEditingController(text: start('distanceKm')),
@@ -145,7 +180,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
     if (saving || !(form.currentState?.validate() ?? false)) return;
     final body = <String, dynamic>{
       'name': text('name'),
-      'date': text('date'),
+      'date': requestDateToIso(text('date')) ?? text('date'),
       'city': text('city'),
       if (text('state').isNotEmpty) 'state': text('state').toUpperCase(),
       'distanceKm': double.parse(text('distanceKm').replaceAll(',', '.')),
@@ -268,7 +303,9 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
     String? Function(String)? validate,
     int? maxLength,
     String? helper,
+    int helperMaxLines = 1,
     TextInputType? keyboard,
+    List<TextInputFormatter>? formatters,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: TextFormField(
@@ -276,12 +313,81 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       controller: fields[key],
       maxLength: maxLength,
       keyboardType: keyboard,
-      decoration: InputDecoration(labelText: label, helperText: helper),
+      inputFormatters: formatters,
+      decoration: InputDecoration(
+        labelText: label,
+        helperText: helper,
+        helperMaxLines: helperMaxLines,
+      ),
       validator: (value) {
         final v = (value ?? '').trim();
         if (v.isEmpty) return required ? 'Preencha este campo.' : null;
         return validate?.call(v);
       },
+    ),
+  );
+
+  /// Estado e cidade escolhidos na roda de rolagem (lista fechada), sem digitação.
+  Future<void> chooseLocation() async {
+    final picked = await pickBrLocation(
+      context,
+      initialUf: text('state').isEmpty ? null : text('state').toUpperCase(),
+      initialCity: text('city').isEmpty ? null : text('city'),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      fields['state']!.text = picked.$1;
+      fields['city']!.text = picked.$2;
+    });
+  }
+
+  /// Mesmo padrão do filtro de corridas: um campo "Estado e cidade" que abre a roda de rolagem.
+  Widget locationField() => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: FormField<String>(
+      key: const Key('request-location'),
+      initialValue: '',
+      validator: (_) =>
+          text('city').isEmpty ? 'Escolha o estado e a cidade.' : null,
+      builder: (state) => InkWell(
+        onTap: saving ? null : chooseLocation,
+        child: InputDecorator(
+          decoration: InputDecoration(
+            labelText: 'Estado e cidade',
+            suffixIcon: const Icon(Icons.expand_more),
+            errorText: state.errorText,
+          ),
+          child: Text(
+            text('city').isEmpty
+                ? 'Escolha o estado e a cidade'
+                : text('state').isEmpty
+                ? text('city')
+                : '${text('state').toUpperCase()} - ${text('city')}',
+          ),
+        ),
+      ),
+    ),
+  );
+
+  /// Atalhos de distância (5, 10, 21 e 42 km), como no filtro de corridas.
+  Widget distanceChips() => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: ListenableBuilder(
+      listenable: fields['distanceKm']!,
+      builder: (context, _) => Wrap(
+        spacing: 8,
+        children: [
+          for (final km in const ['5', '10', '21', '42'])
+            ChoiceChip(
+              key: Key('km-chip-$km'),
+              label: Text('$km km'),
+              selected: text('distanceKm') == km,
+              onSelected: saving
+                  ? null
+                  : (picked) => fields['distanceKm']!.text = picked ? km : '',
+            ),
+        ],
+      ),
     ),
   );
 
@@ -320,20 +426,14 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
                 ),
                 field(
                   'date',
-                  'Data (AAAA-MM-DD)',
+                  'Data (DD/MM/AAAA)',
                   required: true,
                   validate: requestDateError,
+                  keyboard: TextInputType.number,
+                  formatters: const [DateMaskFormatter()],
                 ),
-                field('city', 'Cidade', required: true, maxLength: 100),
-                field(
-                  'state',
-                  'Estado (UF)',
-                  required: false,
-                  maxLength: 2,
-                  validate: (v) => RegExp(r'^[A-Za-z]{2}$').hasMatch(v)
-                      ? null
-                      : 'Informe a UF com 2 letras.',
-                ),
+                locationField(),
+                distanceChips(),
                 field(
                   'distanceKm',
                   'Distância em km',
@@ -342,7 +442,8 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
                   keyboard: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
-                  helper: 'Uma distância por pedido. Para outra, faça outro pedido.',
+                  helper: 'Ex.: 5, 10, 21 ou 42. Uma distância por pedido; para outra, faça outro pedido.',
+                  helperMaxLines: 2,
                 ),
                 field(
                   'officialUrl',

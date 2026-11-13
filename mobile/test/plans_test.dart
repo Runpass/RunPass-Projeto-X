@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:runpass/agenda.dart';
 import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/identity_gateway.dart';
@@ -177,13 +178,13 @@ void main() {
     });
     await tester.pumpWidget(MaterialApp(home: AgendaScreen(gateway: gateway)));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
-    expect(find.byKey(const Key('agenda-EB')), findsNothing);
-    await tester.tap(find.byKey(const Key('agenda-tab-registered')));
-    await tester.pumpAndSettle();
+    // A agenda abre em Inscritas (a principal).
     expect(find.byKey(const Key('agenda-EB')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EA')), findsNothing);
     await tester.tap(find.byKey(const Key('agenda-tab-wanted')));
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EB')), findsNothing);
     await tester.tap(find.byKey(const Key('agenda-menu-EA')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Marcar como inscrito'));
@@ -192,7 +193,14 @@ void main() {
     expect(find.byKey(const Key('agenda-empty-wanted')), findsOneWidget);
     await tester.tap(find.byKey(const Key('agenda-tab-registered')));
     await tester.pumpAndSettle();
+    // Embaixo do calendário só o mês mostrado: abre em março (EB); "Próxima corrida" leva a maio (EA).
+    expect(find.byKey(const Key('agenda-EB')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EA')), findsNothing);
+    await tester.tap(find.byKey(const Key('agenda-next-race-registered')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('agenda-next-race-registered')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('agenda-menu-EB')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Tirar da agenda'));
@@ -213,6 +221,9 @@ void main() {
       return const JsonReply(200, {'items': []});
     });
     await tester.pumpWidget(MaterialApp(home: AgendaScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    // A agenda abre em Inscritas; os testes de calendário partem da aba Desejadas.
+    await tester.tap(find.byKey(const Key('agenda-tab-wanted')));
     await tester.pumpAndSettle();
   }
 
@@ -277,14 +288,16 @@ void main() {
       find.byKey(const Key('agenda-day-wanted-2099-01-11')),
     );
     expect(semCorrida.onTap, isNull);
-    // a lista abaixo mostra todas as corridas da aba, de qualquer mês
-    for (final id in ['EA', 'EC', 'ED']) {
+    // a lista abaixo mostra só as corridas da agenda do mês mostrado
+    for (final id in ['EA', 'EC']) {
       expect(find.byKey(Key('agenda-$id')), findsOneWidget);
     }
+    expect(find.byKey(const Key('agenda-ED')), findsNothing); // é de março
+    expect(find.text('Da sua agenda em janeiro de 2099'), findsOneWidget);
     expect(find.byKey(const Key('agenda-EB')), findsNothing); // é de Inscritas
   });
 
-  testWidgets('tocar num dia mostra só as corridas dele e "Ver todas" volta', (
+  testWidgets('tocar num dia mostra só as corridas dele e "Ver o mês" volta', (
     tester,
   ) async {
     await openCalendar(tester, calendarPlans());
@@ -306,7 +319,8 @@ void main() {
     await tester.tap(find.byKey(const Key('agenda-clear-day-wanted')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
-    expect(find.byKey(const Key('agenda-ED')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EC')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-ED')), findsNothing); // só o mês
   });
 
   testWidgets('as setas trocam o mês e limpam o dia escolhido', (tester) async {
@@ -347,6 +361,85 @@ void main() {
     );
     expect(find.byKey(const Key('agenda-EB')), findsOneWidget);
   });
+
+  testWidgets('"Próxima corrida" salta de mês com corrida em mês com corrida', (
+    tester,
+  ) async {
+    await openCalendar(tester, calendarPlans());
+    expect(find.text('janeiro de 2099'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('agenda-next-race-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.text('março de 2099'), findsOneWidget);
+    expect(find.byKey(const Key('agenda-ED')), findsOneWidget);
+    expect(find.byKey(const Key('agenda-EA')), findsNothing);
+    // no último mês com corrida, volta para a primeira
+    await tester.tap(find.byKey(const Key('agenda-next-race-wanted')));
+    await tester.pumpAndSettle();
+    expect(find.text('janeiro de 2099'), findsOneWidget);
+  });
+
+  testWidgets(
+    'a legenda diferencia inscrita (círculo cheio) de desejada (círculo vazado)',
+    (tester) async {
+      await openCalendar(tester, calendarPlans());
+      expect(find.text('Desejada (círculo vazado)'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('agenda-tab-registered')));
+      await tester.pumpAndSettle();
+      expect(find.text('Inscrita (círculo cheio)'), findsOneWidget);
+    },
+  );
+
+  testWidgets('na agenda, Grade põe as corridas lado a lado e a escolha vale '
+      'depois', (tester) async {
+    await openCalendar(tester, calendarPlans());
+    expect(find.byKey(const Key('agenda-grid-wanted')), findsNothing);
+    await tester.tap(find.byKey(const Key('catalog-view-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('catalog-view-grid')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agenda-grid-wanted')), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('agenda-EA'))).dy,
+      tester.getTopLeft(find.byKey(const Key('agenda-EC'))).dy,
+    );
+    expect(
+      find.byKey(const Key('grid-columns-2')),
+      findsNothing,
+    ); // só no menu aberto
+    await tester.tap(find.byKey(const Key('catalog-view-mode')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('grid-columns-2')), findsOneWidget);
+  });
+
+  testWidgets(
+    'a agenda pode ficar só em lista, sem o calendário, com as corridas '
+    'da mais antiga para a mais nova',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await openCalendar(tester, calendarPlans());
+      expect(find.byKey(const Key('agenda-calendar-wanted')), findsOneWidget);
+      expect(find.byKey(const Key('agenda-ED')), findsNothing); // só o mês
+      await tester.tap(find.byKey(const Key('agenda-layout-toggle')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('agenda-calendar-wanted')), findsNothing);
+      expect(
+        find.text('Da sua agenda, da mais antiga para a mais nova'),
+        findsOneWidget,
+      );
+      double top(String id) =>
+          tester.getTopLeft(find.byKey(Key('agenda-$id'))).dy;
+      expect(top('EA'), lessThan(top('EC')));
+      expect(
+        top('EC'),
+        lessThan(top('ED')),
+      ); // todas, em ordem crescente de data
+      // Voltar ao calendário.
+      await tester.tap(find.byKey(const Key('agenda-layout-toggle')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('agenda-calendar-wanted')), findsOneWidget);
+      expect(find.byKey(const Key('agenda-ED')), findsNothing);
+    },
+  );
 
   testWidgets('sem corridas a agenda mostra o calendário do mês atual e o '
       'aviso', (tester) async {

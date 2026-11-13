@@ -554,57 +554,8 @@ class _OsAlertsSwitchState extends State<OsAlertsSwitch> {
           ),
         ),
       ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
-        child: Wrap(
-          spacing: 8,
-          children: [
-            OutlinedButton(
-              key: const Key('os-alerts-test-now'),
-              onPressed: () async {
-                await LocalAlerts.requestPermission();
-                await LocalAlerts.test();
-                await refreshStatus();
-                if (context.mounted) showResult(context);
-              },
-              child: const Text('Testar agora'),
-            ),
-            OutlinedButton(
-              key: const Key('os-alerts-test-later'),
-              onPressed: () async {
-                await LocalAlerts.requestPermission();
-                await LocalAlerts.test(after: const Duration(seconds: 10));
-                await refreshStatus();
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Aviso agendado para daqui a 10 segundos. Feche o app agora para testar com ele fechado.',
-                      ),
-                    ),
-                  );
-                }
-              },
-              child: const Text('Testar em 10 s (feche o app)'),
-            ),
-          ],
-        ),
-      ),
     ],
   );
-
-  void showResult(BuildContext context) {
-    final error = LocalAlerts.lastError;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          error == null
-              ? 'Aviso enviado. Se não apareceu, confira a permissão acima.'
-              : 'Falha ao avisar: $error',
-        ),
-      ),
-    );
-  }
 }
 
 class NotificationsScreen extends StatefulWidget {
