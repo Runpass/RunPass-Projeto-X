@@ -46,6 +46,9 @@ SITE_FILES = {
     "/lib.js": ("lib.js", "text/javascript; charset=utf-8"),
     "/cognito.js": ("cognito.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/logo-claro.png": ("logo-claro.png", "image/png"),
+    "/logo-escuro.png": ("logo-escuro.png", "image/png"),
+    "/icone.png": ("icone.png", "image/png"),
 }
 
 

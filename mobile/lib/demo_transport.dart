@@ -29,7 +29,7 @@ class DemoTransport {
         'state': i % 3 == 0 ? 'RJ' : 'SP',
         'status': i == 24 ? 'archived' : 'past',
         'version': 1,
-        'description': 'Dados fictícios para experimentar o MeuPódio. Esta prova não é um evento real.',
+        'description': 'Dados fictícios para experimentar o +1Pódio. Esta prova não é um evento real.',
         'distances': [
           {'id': '5k', 'kilometers': 5},
           {'id': '10k', 'kilometers': 10},

@@ -52,7 +52,7 @@ class MainApp extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<bool>(
     valueListenable: ThemeController.dark,
     builder: (context, dark, _) => MaterialApp(
-      title: 'MeuPódio',
+      title: '+1Pódio',
       navigatorKey: runPassNavigatorKey,
       navigatorObservers: [runPassRouteObserver],
       // Toque fora de um campo fecha o teclado; o teclado numerico do iOS nao tem tecla de fim.
@@ -216,7 +216,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
         // Trava ligada: a biometria vem antes de renovar o acesso. Falhou ou cancelou:
         // cai na tela de entrada (senha) com o botao para tentar de novo.
         final ok = await biometricGate.authenticate(
-          'Entrar no MeuPódio com a biometria',
+          'Entrar no +1Pódio com a biometria',
         );
         if (!ok) {
           if (mounted) {
@@ -765,7 +765,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.reset,
     ].contains(step);
     final title = switch (step) {
-      Step.signIn => 'Entre no MeuPódio',
+      Step.signIn => 'Entre no +1Pódio',
       Step.signUp => 'Crie sua conta',
       Step.confirm => 'Confirme seu e-mail',
       Step.setPassword => 'Crie sua senha',
@@ -789,7 +789,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
               padding: const EdgeInsets.all(24),
               child: gateway == null
                   ? const Text(
-                      'O MeuPódio ainda não está disponível neste ambiente.',
+                      'O +1Pódio ainda não está disponível neste ambiente.',
                     )
                   : restoring
                   ? const Padding(

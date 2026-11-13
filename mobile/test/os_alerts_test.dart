@@ -83,8 +83,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('os-alerts-status')), findsOneWidget);
-    expect(find.byKey(const Key('os-alerts-test-now')), findsOneWidget);
-    expect(find.byKey(const Key('os-alerts-test-later')), findsOneWidget);
+    // Sem os botões de teste ("Testar agora" e "Testar em 10 s"): só o interruptor e a situação.
+    expect(find.byKey(const Key('os-alerts-test-now')), findsNothing);
+    expect(find.byKey(const Key('os-alerts-test-later')), findsNothing);
+    expect(find.text('Testar agora'), findsNothing);
   });
 
   test(

@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>MeuPódio</string>
+	<string>+1Pódio</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -27,9 +27,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Entrar no MeuPódio com o rosto, sem digitar a senha.</string>
+	<string>Entrar no +1Pódio com o rosto, sem digitar a senha.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Tirar uma foto de perfil ou da medalha para usar no MeuPódio.</string>
+	<string>Tirar uma foto de perfil ou da medalha para usar no +1Pódio.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Selecionar uma foto da corrida para validar e associar à participação.</string>
 	<key>UIApplicationSceneManifest</key>

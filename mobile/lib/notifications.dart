@@ -181,14 +181,14 @@ class LocalAlerts {
       if (after == Duration.zero) {
         await _plugin.show(
           id: 7001,
-          title: 'MeuPódio',
+          title: '+1Pódio',
           body: 'Teste: os avisos estão funcionando neste celular.',
           notificationDetails: _details,
         );
       } else {
         await _plugin.zonedSchedule(
           id: 7002,
-          title: 'MeuPódio',
+          title: '+1Pódio',
           body: 'Teste agendado: o aviso chegou com o app fechado.',
           scheduledDate: tz.TZDateTime.now(tz.UTC).add(after),
           notificationDetails: _details,
@@ -242,7 +242,7 @@ class LocalAlerts {
     try {
       await _plugin.show(
         id: id,
-        title: 'MeuPódio',
+        title: '+1Pódio',
         body: body,
         payload: payload,
         notificationDetails: request ? _requestDetails : _details,
@@ -522,7 +522,7 @@ class _OsAlertsSwitchState extends State<OsAlertsSwitch> {
 
   String get statusText => switch (granted) {
     true => 'Permissão do sistema: liberada.',
-    false => 'Permissão do sistema: NEGADA. Abra Ajustes > MeuPódio > Notificações e libere.',
+    false => 'Permissão do sistema: NEGADA. Abra Ajustes > +1Pódio > Notificações e libere.',
     null => 'Permissão do sistema: não foi possível conferir.',
   };
 
@@ -554,57 +554,8 @@ class _OsAlertsSwitchState extends State<OsAlertsSwitch> {
           ),
         ),
       ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
-        child: Wrap(
-          spacing: 8,
-          children: [
-            OutlinedButton(
-              key: const Key('os-alerts-test-now'),
-              onPressed: () async {
-                await LocalAlerts.requestPermission();
-                await LocalAlerts.test();
-                await refreshStatus();
-                if (context.mounted) showResult(context);
-              },
-              child: const Text('Testar agora'),
-            ),
-            OutlinedButton(
-              key: const Key('os-alerts-test-later'),
-              onPressed: () async {
-                await LocalAlerts.requestPermission();
-                await LocalAlerts.test(after: const Duration(seconds: 10));
-                await refreshStatus();
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Aviso agendado para daqui a 10 segundos. Feche o app agora para testar com ele fechado.',
-                      ),
-                    ),
-                  );
-                }
-              },
-              child: const Text('Testar em 10 s (feche o app)'),
-            ),
-          ],
-        ),
-      ),
     ],
   );
-
-  void showResult(BuildContext context) {
-    final error = LocalAlerts.lastError;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          error == null
-              ? 'Aviso enviado. Se não apareceu, confira a permissão acima.'
-              : 'Falha ao avisar: $error',
-        ),
-      ),
-    );
-  }
 }
 
 class NotificationsScreen extends StatefulWidget {

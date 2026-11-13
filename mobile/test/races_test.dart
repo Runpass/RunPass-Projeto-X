@@ -93,6 +93,36 @@ Future<IdentityGateway> runner({bool noRaces = false}) async {
 
 void main() {
   testWidgets(
+    'Medalhas troca Conquistas por Por cidade, agrupando por cidade visitada',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Conquistas'), findsNothing);
+      expect(find.text('Minhas medalhas'), findsOneWidget);
+      await tester.tap(find.text('Por cidade'));
+      await tester.pumpAndSettle();
+      expect(find.text('Rio de Janeiro/RJ'), findsOneWidget);
+      expect(find.text('São Paulo/SP'), findsOneWidget);
+      // Ordem alfabética: Rio antes de São Paulo; cada medalha no grupo da sua cidade.
+      expect(
+        tester.getTopLeft(find.text('Rio de Janeiro/RJ')).dy,
+        lessThan(tester.getTopLeft(find.text('São Paulo/SP')).dy),
+      );
+      expect(find.text('Corrida A'), findsOneWidget);
+      expect(find.text('Corrida B'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Corrida B')).dy,
+        lessThan(tester.getTopLeft(find.text('Corrida A')).dy),
+      );
+    },
+  );
+
+  testWidgets(
     'medal collection shows counts and regroups by year and distance',
     (tester) async {
       await tester.pumpWidget(

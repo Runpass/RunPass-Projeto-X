@@ -5,6 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'agenda.dart';
+import 'catalog_views.dart';
+import 'edition_cards.dart';
 import 'friends.dart';
 import 'grid_columns.dart';
 import 'home_screen.dart';
@@ -200,13 +202,13 @@ Widget runPassNavigation(
       if (index == selectedIndex && !subScreen) return;
       final screen = switch (index) {
         0 => RunPassHomeScreen(gateway: gateway),
-        1 => CatalogScreen(gateway: gateway),
-        2 => MedalCollectionScreen(gateway: gateway),
+        1 => MedalCollectionScreen(gateway: gateway),
+        2 => CatalogScreen(gateway: gateway),
         _ => RunnerProfileScreen(gateway: gateway),
       };
       final route = MaterialPageRoute<void>(builder: (_) => screen);
       if (subScreen) {
-        Navigator.of(context).pushAndRemoveUntil(route, (r) => r.isFirst);
+        Navigator.of(context).pushAndRemoveUntil(route, (r) => false);
       } else {
         Navigator.of(context).pushReplacement(route);
       }
@@ -492,11 +494,79 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// Direção: em data, mais recentes primeiro; em avaliação, melhores primeiro.
   bool descending = true;
 
+  /// Visualização escolhida (lista ou grade) e colunas da grade; ficam neste aparelho.
+  CatalogViewMode viewMode = CatalogViewMode.list;
+  int gridColumns = 2;
+
   @override
   void initState() {
     super.initState();
     load();
     loadMine();
+    loadViewPreferences();
+  }
+
+  Future<void> loadViewPreferences() async {
+    final mode = await CatalogViewMode.read();
+    final columns = await GridColumns.read('catalog-grid-columns', fallback: 2);
+    if (mounted) {
+      setState(() {
+        viewMode = mode;
+        gridColumns = columns;
+      });
+    }
+  }
+
+  void chooseViewMode(CatalogViewMode mode) {
+    setState(() => viewMode = mode);
+    mode.write();
+  }
+
+  void chooseGridColumns(int columns) {
+    setState(() => gridColumns = columns);
+    GridColumns.write('catalog-grid-columns', columns);
+  }
+
+  /// Cartão da grade (compartilhado com a agenda e o perfil).
+  Widget gridCard(Map<String, dynamic> edition) {
+    final score = scoreOf(edition);
+    return EditionGridCard(
+      key: Key('grid-card-${edition['id']}'),
+      gateway: widget.gateway,
+      edition: edition,
+      columns: gridColumns,
+      subtitle:
+          '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
+      shortDate: displayDate(edition['date'] as String).substring(0, 5),
+      rating: score == null
+          ? null
+          : '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
+      onTap: loading ? null : () => openEdition(edition['id'] as String),
+    );
+  }
+
+  /// Corpo da lista conforme a visualização escolhida.
+  List<Widget> editionViews() {
+    final shown = view;
+    switch (viewMode) {
+      case CatalogViewMode.list:
+        return [for (final edition in shown) editionCard(edition)];
+      case CatalogViewMode.grid:
+        if (shown.isEmpty) return const [];
+        return [
+          GridView.count(
+            key: const Key('catalog-grid'),
+            crossAxisCount: gridColumns,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: gridCardAspectRatio(gridColumns),
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            children: [for (final edition in shown) gridCard(edition)],
+          ),
+          const SizedBox(height: 12),
+        ];
+    }
   }
 
   Future<void> loadMine() async {
@@ -612,64 +682,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
         '★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações',
       if (mine.containsKey(edition['id'])) 'Já está na sua lista',
     ];
-    const shadow = [Shadow(blurRadius: 6, color: Colors.black54)];
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      margin: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        onTap: loading ? null : () => openEdition(edition['id'] as String),
-        child: SizedBox(
-          height: 200,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              EditionCover(gateway: widget.gateway, edition: edition),
-              const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x33000000), Color(0xD9000000)],
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: 12,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      edition['name'] as String,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: archived ? context.archivedText : Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17,
-                        shadows: shadow,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      lines.join('\n'),
-                      style: TextStyle(
-                        color: archived ? context.archivedText : Colors.white,
-                        fontSize: 12.5,
-                        height: 1.3,
-                        shadows: shadow,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Positioned(top: 6, right: 6, child: quickActions(edition)),
-            ],
-          ),
-        ),
-      ),
+    return EditionListCard(
+      gateway: widget.gateway,
+      edition: edition,
+      lines: lines,
+      onTap: loading ? null : () => openEdition(edition['id'] as String),
+      overlay: quickActions(edition),
     );
   }
 
@@ -1088,7 +1106,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         const SizedBox(width: 8),
       ],
     ),
-    bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+    bottomNavigationBar: runPassNavigation(context, widget.gateway, 2),
     body: SafeArea(
       child: ListView(
         padding: const EdgeInsets.all(16),
@@ -1403,20 +1421,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
               ),
               IconButton(
-                key: const Key('catalog-sort'),
-                tooltip: sortBy != 'date'
-                    ? 'Ordenar por data'
-                    : (descending
-                          ? 'Mais recentes primeiro (toque para inverter)'
-                          : 'Mais antigas primeiro (toque para inverter)'),
-                isSelected: sortBy == 'date',
-                icon: sortGlyph(
-                  Icons.calendar_today_rounded,
-                  active: sortBy == 'date',
-                ),
-                onPressed: loading ? null : sortByDate,
-              ),
-              IconButton(
                 key: const Key('catalog-sort-rating'),
                 tooltip: sortBy != 'rating'
                     ? 'Ordenar por avaliação'
@@ -1431,6 +1435,26 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   active: sortBy == 'rating',
                 ),
                 onPressed: loading ? null : sortByRating,
+              ),
+              IconButton(
+                key: const Key('catalog-sort'),
+                tooltip: sortBy != 'date'
+                    ? 'Ordenar por data'
+                    : (descending
+                          ? 'Mais recentes primeiro (toque para inverter)'
+                          : 'Mais antigas primeiro (toque para inverter)'),
+                isSelected: sortBy == 'date',
+                icon: sortGlyph(
+                  Icons.calendar_today_rounded,
+                  active: sortBy == 'date',
+                ),
+                onPressed: loading ? null : sortByDate,
+              ),
+              CatalogViewMenu(
+                value: viewMode,
+                onChanged: chooseViewMode,
+                columns: gridColumns,
+                onColumnsChanged: chooseGridColumns,
               ),
             ],
           ),
@@ -1488,7 +1512,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 child: const Text('Não encontrou? Pedir cadastro da corrida'),
               ),
             ),
-          for (final edition in view) editionCard(edition),
+          ...editionViews(),
           if (nextCursor != null)
             TextButton(
               onPressed: loading ? null : () => load(more: true),
@@ -1603,7 +1627,7 @@ class _EditionScreenState extends State<EditionScreen> {
     }
   }
 
-  /// Banner aprovado pela equipe (cópia guardada pelo MeuPódio, com crédito). Sem banner ou com
+  /// Banner aprovado pela equipe (cópia guardada pelo +1Pódio, com crédito). Sem banner ou com
   /// falha, o degradê de sempre continua: a imagem nunca bloqueia a tela.
   Future<void> loadBanner() async {
     if (edition?['imageReference'] == null) return;
@@ -2119,44 +2143,18 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
-  Widget header(Map<String, dynamic> body, {bool title = false}) => Column(
+  Widget header(Map<String, dynamic> body) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      if (title) ...[
-        Text(
-          body['name'] as String? ?? '',
-          key: const Key('reviews-title'),
-          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 24),
-        ),
-        const SizedBox(height: 10),
-      ],
       Row(
         children: [
           const Icon(Icons.calendar_today_outlined, size: 16),
           const SizedBox(width: 6),
-          Text(
-            title
-                ? longDate(body['date'] as String)
-                : displayDate(body['date'] as String),
-          ),
-          if (title) ...[
-            const SizedBox(width: 12),
-            SizedBox(
-              height: 16,
-              child: VerticalDivider(width: 1, color: context.muted),
-            ),
-            const SizedBox(width: 12),
-          ] else
-            const SizedBox(width: 16),
+          Text(displayDate(body['date'] as String)),
+          const SizedBox(width: 16),
           const Icon(Icons.place_outlined, size: 16),
           const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              title
-                  ? '${body['city']} - ${body['state']}'
-                  : '${body['city']}/${body['state']}',
-            ),
-          ),
+          Expanded(child: Text('${body['city']}/${body['state']}')),
         ],
       ),
       const SizedBox(height: 14),
@@ -2253,6 +2251,16 @@ class _EditionScreenState extends State<EditionScreen> {
     padding: const EdgeInsets.all(20),
     children: [
       header(body),
+      // Nota média e quantidade de avaliações; tocar leva à aba Avaliações.
+      Builder(
+        builder: (tabContext) => InkWell(
+          key: const Key('about-rating'),
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => DefaultTabController.of(tabContext).animateTo(1),
+          child: scoreCard(body),
+        ),
+      ),
+      const SizedBox(height: 16),
       if (body['description'] != null) Text(body['description'] as String),
       if (body['organizerName'] != null)
         Padding(
@@ -2644,7 +2652,7 @@ class _EditionScreenState extends State<EditionScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        review['authorName'] as String? ?? 'Corredor MeuPódio',
+                        review['authorName'] as String? ?? 'Corredor +1Pódio',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                       Row(
@@ -2686,7 +2694,6 @@ class _EditionScreenState extends State<EditionScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        header(body, title: true),
         scoreCard(body),
         _detailsToggle(
           key: const Key('summary-details-toggle'),
@@ -2890,7 +2897,7 @@ class _EditionScreenState extends State<EditionScreen> {
               ),
               ListTile(
                 title: Text(
-                  (author['displayName'] as String?) ?? 'Corredor MeuPódio',
+                  (author['displayName'] as String?) ?? 'Corredor +1Pódio',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 subtitle: (author['username'] as String? ?? '').isEmpty
@@ -2925,7 +2932,7 @@ class _EditionScreenState extends State<EditionScreen> {
     if (participantTotal == 0 && registrantTotal == 0) {
       return emptyTab(
         Icons.groups_outlined,
-        'Ninguém concluiu nem se inscreveu nesta prova no MeuPódio ainda.\n'
+        'Ninguém concluiu nem se inscreveu nesta prova no +1Pódio ainda.\n'
         'Seja a primeira pessoa a registrar.',
       );
     }
@@ -2995,7 +3002,7 @@ class _EditionScreenState extends State<EditionScreen> {
     Map<String, double> kmById,
   ) {
     final author = Map<String, dynamic>.from(item['author'] as Map);
-    final name = (author['displayName'] as String?) ?? 'Corredor MeuPódio';
+    final name = (author['displayName'] as String?) ?? 'Corredor +1Pódio';
     final km = kmById[item['distanceId']];
     return Card(
       key: Key('registrant-${author['id']}'),
@@ -3023,7 +3030,7 @@ class _EditionScreenState extends State<EditionScreen> {
     Map<String, double> kmById,
   ) {
     final author = Map<String, dynamic>.from(item['author'] as Map);
-    final name = (author['displayName'] as String?) ?? 'Corredor MeuPódio';
+    final name = (author['displayName'] as String?) ?? 'Corredor +1Pódio';
     final km = kmById[item['distanceId']];
     final time = item['timeSeconds'] as num?;
     final place = item['placement'] as num?;
@@ -3063,7 +3070,7 @@ class _EditionScreenState extends State<EditionScreen> {
       bottomNavigationBar: runPassNavigation(
         context,
         widget.gateway,
-        1,
+        2,
         subScreen: true,
       ),
       body: loading
@@ -3774,7 +3781,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         bottomNavigationBar: runPassNavigation(
           context,
           widget.gateway,
-          2,
+          1,
           subScreen: true,
         ),
         body: ListView(
@@ -3871,7 +3878,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       bottomNavigationBar: runPassNavigation(
         context,
         widget.gateway,
-        1,
+        2,
         subScreen: true,
       ),
       body: ListView(
@@ -4064,7 +4071,7 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
     bottomNavigationBar: runPassNavigation(
       context,
       widget.gateway,
-      1,
+      2,
       subScreen: true,
     ),
     body: loading

@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'podium_logo.dart';
-
 const runPassOrange = Color(0xfffc5426);
 const runPassGold = Color(0xffe8b23a);
 const runPassNavy = Color(0xff101b2b);
@@ -143,34 +141,24 @@ ThemeData runPassDarkTheme() {
   );
 }
 
+/// Logotipo "+1Pódio" (imagem). Texto preto no tema claro e branco no escuro.
 class RunPassWordmark extends StatelessWidget {
   final bool compact;
   const RunPassWordmark({super.key, this.compact = false});
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      PodiumLogo(size: compact ? 28 : 38),
-      const SizedBox(width: 5),
-      RichText(
-        text: TextSpan(
-          style: TextStyle(
-            fontWeight: FontWeight.w900,
-            fontSize: compact ? 25 : 34,
-            letterSpacing: -1.4,
-            color: context.isDark ? Colors.white : runPassNavy,
-          ),
-          children: const [
-            TextSpan(text: 'Meu'),
-            TextSpan(
-              text: 'Pódio',
-              style: TextStyle(color: runPassOrange),
-            ),
-          ],
-        ),
-      ),
-    ],
+  Widget build(BuildContext context) => Semantics(
+    label: '+1Pódio',
+    image: true,
+    child: Image.asset(
+      key: const Key('podium-logo'),
+      context.isDark
+          ? 'assets/brand/logo-dark.png'
+          : 'assets/brand/logo-light.png',
+      height: compact ? 38 : 54,
+      fit: BoxFit.contain,
+      excludeFromSemantics: true,
+    ),
   );
 }
 
@@ -191,7 +179,22 @@ class RunPassBottomNav extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => NavigationBar(
+  Widget build(BuildContext context) {
+    final bar = _bar();
+    // Na aba Perfil a foto (com borda branca) já marca a seleção: sem o realce atrás dela.
+    if (selectedIndex != 3) return bar;
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(
+        navigationBarTheme: theme.navigationBarTheme.copyWith(
+          indicatorColor: Colors.transparent,
+        ),
+      ),
+      child: bar,
+    );
+  }
+
+  Widget _bar() => NavigationBar(
     selectedIndex: selectedIndex,
     onDestinationSelected: onDestinationSelected,
     destinations: [
@@ -200,12 +203,12 @@ class RunPassBottomNav extends StatelessWidget {
         label: 'Início',
       ),
       const NavigationDestination(
-        icon: Icon(Icons.directions_run),
-        label: 'Corridas',
-      ),
-      const NavigationDestination(
         icon: Icon(Icons.military_tech_outlined),
         label: 'Medalhas',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.directions_run),
+        label: 'Corridas',
       ),
       NavigationDestination(
         icon: profileIcon ?? const Icon(Icons.person_outline),

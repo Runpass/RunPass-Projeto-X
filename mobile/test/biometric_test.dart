@@ -212,7 +212,7 @@ void main() {
     expect(store.value, 'r1'); // token segue no Keychain
     expect(await BiometricPrefs.enabled(), isTrue);
     expect(g.signedIn, isFalse);
-    expect(find.text('Entre no MeuPódio'), findsOneWidget);
+    expect(find.text('Entre no +1Pódio'), findsOneWidget);
     expect(find.byKey(const Key('biometric-retry')), findsOneWidget);
   });
 
