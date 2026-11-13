@@ -204,7 +204,7 @@ class RunPassBottomNav extends StatelessWidget {
         label: 'Corridas',
       ),
       const NavigationDestination(
-        icon: Icon(Icons.emoji_events_outlined),
+        icon: Icon(Icons.military_tech_outlined),
         label: 'Medalhas',
       ),
       NavigationDestination(

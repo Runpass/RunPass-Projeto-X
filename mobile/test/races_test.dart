@@ -103,9 +103,9 @@ void main() {
       expect(find.text('Corrida A'), findsOneWidget);
       expect(find.text('Corrida B'), findsOneWidget);
       // Two completed races (5km + 10km) in two cities; the draft is not a medal.
-      expect(find.text('km\npercorridos'), findsOneWidget);
-      expect(find.text('medalhas\nna coleção'), findsOneWidget);
-      expect(find.text('cidades\nvisitadas'), findsOneWidget);
+      expect(find.text('kmnômetro'), findsOneWidget);
+      expect(find.text('medalhas'), findsOneWidget);
+      expect(find.text('cidades'), findsOneWidget);
       expect(find.text('15'), findsOneWidget);
       // Medalhas e cidades valem 2.
       expect(find.text('2'), findsNWidgets(2));
