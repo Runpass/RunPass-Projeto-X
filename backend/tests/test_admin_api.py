@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from runpass.admin_api import MfaPolicy, admit_operator, create_admin_app
 from runpass.admin_banners import BannerAdmin
 from runpass.admin_divergences import DivergenceReview
+from runpass.admin_sources import CANDIDATES, SourceRegistry
 from runpass.admin_users import AdminUsers, CatalogRunner, CatalogSchedules, next_run
 from runpass.auto_import import AutoImport
 from runpass.catalog import CatalogService, seed_synthetic
@@ -321,6 +322,7 @@ class AdminApiTests(unittest.TestCase):
                     self.store,
                 ),
                 divergences=DivergenceReview(self.store, self.s3, "relatorios", lambda: self.now),
+                sources=SourceRegistry(self.store, lambda: self.now),
                 auto_import=AutoImport(
                     self.store,
                     self.catalog,
@@ -1703,6 +1705,158 @@ class AdminApiTests(unittest.TestCase):
         return (
             f"{nome};{data};;São Paulo;SP;{local};;;{sugeridas};;rua;;;{url};Org Sintética;;;;;;"
             f"{status};;https://lista.exemplo/p;{fonte};{obs};{resultado}\n"
+        )
+
+    # ---- cadastro de fontes (Fatia 1) ----------------------------------------------------------
+
+    def fonte(self, **extra):
+        corpo = {
+            "id": "org_ficticia",
+            "name": "Organizadora [FICTICIA]",
+            "type": "organizer",
+            "trustLevel": 1,
+            "websiteUrl": "https://organizadora.exemplo.invalid",
+            "instagramUrl": None,
+            "region": "SP",
+            "method": "website",
+            "frequencyHours": 24,
+        }
+        corpo.update(extra)
+        return corpo
+
+    def test_fontes_exigem_permissao_de_catalogo(self):
+        self.assertEqual(
+            self.client.get("/admin/sources", headers=self.auth(token("adm"))).status_code, 403
+        )
+        self.assertEqual(self.client.get("/admin/sources").status_code, 401)
+
+    def test_fonte_nasce_pendente_desativada_e_nao_coleta(self):
+        h = self.auth(token("op"))
+        r = self.client.post("/admin/sources", json=self.fonte(), headers=h)
+        self.assertEqual(r.status_code, 201)
+        dado = r.json()
+        self.assertEqual(
+            (dado["verification"], dado["active"], dado["collectable"]), ("pending", False, False)
+        )
+        lista = self.client.get("/admin/sources", headers=h).json()
+        self.assertEqual(lista["summary"]["total"], 1)
+        self.assertEqual(lista["summary"]["collectable"], 0)
+
+    def test_fonte_so_ativa_depois_de_verificada_com_nota(self):
+        h = self.auth(token("op"))
+        v = self.client.post("/admin/sources", json=self.fonte(), headers=h).json()["version"]
+        ativar = self.client.post(
+            "/admin/sources/org_ficticia/active", json={"version": v, "active": True}, headers=h
+        )
+        self.assertEqual((ativar.status_code, ativar.json()["code"]), (409, "SOURCE_NOT_VERIFIED"))
+        sem_nota = self.client.post(
+            "/admin/sources/org_ficticia/verification",
+            json={"version": v, "status": "verified"},
+            headers=h,
+        )
+        self.assertEqual(sem_nota.status_code, 422)  # verificar exige dizer o que foi conferido
+        ok = self.client.post(
+            "/admin/sources/org_ficticia/verification",
+            json={"version": v, "status": "verified", "note": "robots.txt e termos lidos"},
+            headers=h,
+        ).json()
+        self.assertEqual(ok["verification"], "verified")
+        ativa = self.client.post(
+            "/admin/sources/org_ficticia/active",
+            json={"version": ok["version"], "active": True},
+            headers=h,
+        ).json()
+        self.assertEqual((ativa["active"], ativa["collectable"]), (True, True))
+
+    def test_mudar_o_site_derruba_a_verificacao_e_desativa(self):
+        h = self.auth(token("op"))
+        v = self.client.post("/admin/sources", json=self.fonte(), headers=h).json()["version"]
+        v = self.client.post(
+            "/admin/sources/org_ficticia/verification",
+            json={"version": v, "status": "verified", "note": "conferida"},
+            headers=h,
+        ).json()["version"]
+        v = self.client.post(
+            "/admin/sources/org_ficticia/active", json={"version": v, "active": True}, headers=h
+        ).json()["version"]
+        mesmo_site = self.client.put(
+            "/admin/sources/org_ficticia",
+            json=self.fonte(version=v, name="Outro nome [FICTICIA]"),
+            headers=h,
+        ).json()
+        self.assertEqual((mesmo_site["verification"], mesmo_site["active"]), ("verified", True))
+        outro = self.client.put(
+            "/admin/sources/org_ficticia",
+            json=self.fonte(
+                version=mesmo_site["version"], websiteUrl="https://novo.exemplo.invalid"
+            ),
+            headers=h,
+        ).json()
+        self.assertEqual(
+            (outro["verification"], outro["active"], outro["collectable"]),
+            ("pending", False, False),
+        )
+
+    def test_fonte_rejeitada_nunca_fica_ativa_e_versao_antiga_conflita(self):
+        h = self.auth(token("op"))
+        v = self.client.post("/admin/sources", json=self.fonte(), headers=h).json()["version"]
+        rej = self.client.post(
+            "/admin/sources/org_ficticia/verification",
+            json={"version": v, "status": "rejected", "note": "termos proibem coleta"},
+            headers=h,
+        )
+        self.assertEqual((rej.json()["verification"], rej.json()["active"]), ("rejected", False))
+        velho = self.client.post(
+            "/admin/sources/org_ficticia/verification",
+            json={"version": v, "status": "pending"},
+            headers=h,
+        )
+        self.assertEqual((velho.status_code, velho.json()["code"]), (409, "VERSION_CONFLICT"))
+
+    def test_fonte_valida_entrada_e_nao_duplica_dominio(self):
+        h = self.auth(token("op"))
+        self.assertEqual(
+            self.client.post("/admin/sources", json=self.fonte(), headers=h).status_code, 201
+        )
+        for ruim in (
+            self.fonte(id="outra", websiteUrl="http://sem-https.exemplo.invalid"),
+            self.fonte(id="outra", websiteUrl="https://u:p@x.exemplo.invalid"),
+            self.fonte(id="outra", trustLevel=2),  # organizador e sempre nivel 1
+            self.fonte(id="outra", type="platform", trustLevel=1),
+            self.fonte(id="outra", type="magia"),
+            self.fonte(id="outra", frequencyHours=0),
+            self.fonte(id="Maiuscula Inválida"),
+        ):
+            with self.subTest(ruim=ruim):
+                self.assertEqual(
+                    self.client.post("/admin/sources", json=ruim, headers=h).status_code, 422
+                )
+        mesmo_dominio = self.client.post(
+            "/admin/sources",
+            json=self.fonte(id="outra", websiteUrl="https://www.organizadora.exemplo.invalid/x"),
+            headers=h,
+        )
+        self.assertEqual(
+            (mesmo_dominio.status_code, mesmo_dominio.json()["code"]), (409, "SOURCE_DUPLICATE")
+        )
+
+    def test_candidatas_entram_pendentes_e_a_carga_se_repete_sem_efeito(self):
+        h = self.auth(token("op"))
+        primeira = self.client.post("/admin/sources/candidates", headers=h).json()
+        self.assertEqual(len(primeira["created"]), len(CANDIDATES))
+        segunda = self.client.post("/admin/sources/candidates", headers=h).json()
+        self.assertEqual((segunda["created"], len(segunda["skipped"])), ([], len(CANDIDATES)))
+        lista = self.client.get("/admin/sources", headers=h).json()
+        self.assertEqual(
+            (lista["summary"]["total"], lista["summary"]["pending"], lista["summary"]["active"]),
+            (len(CANDIDATES), len(CANDIDATES), 0),
+        )
+        self.assertEqual(lista["summary"]["collectable"], 0)  # nenhuma candidata coleta
+        ids = [i["id"] for i in lista["items"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(
+            [i["trustLevel"] for i in lista["items"]],
+            sorted(i["trustLevel"] for i in lista["items"]),
         )
 
     def prepara_divergencias(self):

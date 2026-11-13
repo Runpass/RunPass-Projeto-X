@@ -299,3 +299,16 @@ test('resumoImporte soma as rodadas e traduz os motivos', async () => {
   assert.equal(r.texto, '3 importada(s) · 5 para revisão · 3 ficaram para a próxima rodada');
   assert.deepEqual(r.detalhes, ['2 fora da capital', '1 parecida com uma corrida que já existe no mesmo dia']);
 });
+
+test('idFonte e validarFonte seguem as regras do servidor', async () => {
+  const { idFonte, validarFonte } = await import('./lib.js');
+  assert.equal(idFonte('Organizadora Ficção [FICTICIA]!'), 'organizadora_ficcao_ficticia');
+  assert.equal(idFonte('  --  '), '');
+  const ok = { nome: 'Fonte [FICTICIA]', site: 'https://fonte.exemplo.invalid', tipo: 'organizer', nivel: 1, frequencia: 24 };
+  assert.equal(validarFonte(ok), '');
+  assert.match(validarFonte({ ...ok, site: 'http://fonte.exemplo.invalid' }), /https/);
+  assert.match(validarFonte({ ...ok, nivel: 2 }), /nível 1/);
+  assert.match(validarFonte({ ...ok, tipo: 'platform', nivel: 1 }), /Só organizador/);
+  assert.match(validarFonte({ ...ok, frequencia: 0 }), /1 a 2160/);
+  assert.match(validarFonte({ ...ok, nome: '' }), /nome/);
+});

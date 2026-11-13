@@ -7,6 +7,7 @@ from .admin_api import MfaPolicy, create_admin_app, find_portal_dir
 from .admin_banners import BannerAdmin
 from .admin_costs import AwsCosts, OpenAiOrg, OpenAiUsage
 from .admin_divergences import DivergenceReview
+from .admin_sources import SourceRegistry
 from .admin_users import AdminUsers, CatalogRunner, CatalogSchedules
 from .api import create_app
 from .auto_import import AutoImport
@@ -196,6 +197,7 @@ def create_admin_aws_app(
         runner=CatalogRunner(service.store, lambda_client, catalog_function, clock, logs_client),
         banners=_banner_admin(service, catalog, clock, media),
         divergences=_divergences(service, clock, media),
+        sources=SourceRegistry(service.store, clock),
         quality_live=_quality_live(service, clock, media),
         auto_import=_auto_import(service, catalog, media),
         openai_org=OpenAiOrg(

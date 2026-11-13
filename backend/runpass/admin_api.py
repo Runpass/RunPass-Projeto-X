@@ -193,6 +193,7 @@ def create_admin_app(
     openai_org=None,
     banners=None,
     divergences=None,
+    sources=None,
     quality_live=None,
     auto_import=None,
 ):
@@ -623,6 +624,92 @@ def create_admin_app(
                 "Content-Disposition": f'attachment; filename="divergencias-aceitas-{run}.csv"'
             },
         )
+
+    class SourceBody(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        version: int | None = Field(default=None, ge=1)
+        id: str | None = Field(default=None, max_length=40)
+        name: str = Field(max_length=80)
+        type: str = Field(max_length=12)
+        trustLevel: int = Field(ge=1, le=3)
+        websiteUrl: str = Field(max_length=300)
+        instagramUrl: str | None = Field(default=None, max_length=300)
+        region: str = Field(default="SP", max_length=2)
+        method: str = Field(default="website", max_length=10)
+        frequencyHours: int = Field(default=24, ge=1, le=2160)
+
+    class SourceVerify(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        version: int = Field(ge=1)
+        status: str = Field(max_length=10)
+        note: str | None = Field(default=None, max_length=300)
+
+    class SourceActive(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        version: int = Field(ge=1)
+        active: bool
+
+    SourceId = Annotated[str, PathParam(pattern=r"^[a-z0-9_]{2,40}$")]
+
+    def need_sources(op):
+        actor = need(op, "catalog_admin")
+        if sources is None:
+            raise Unavailable()
+        return actor
+
+    @app.get("/admin/sources")
+    def sources_list(op: Operator):
+        need_sources(op)
+        return sources.list()
+
+    @app.post("/admin/sources", status_code=201)
+    def sources_create(payload: SourceBody, op: Operator):
+        actor = need_sources(op)
+        return sources.create(
+            actor,
+            payload.id or "",
+            payload.name,
+            payload.type,
+            payload.trustLevel,
+            payload.websiteUrl,
+            payload.instagramUrl,
+            payload.region,
+            payload.method,
+            payload.frequencyHours,
+        )
+
+    @app.post("/admin/sources/candidates", status_code=201)
+    def sources_seed(op: Operator):
+        return sources.seed_candidates(need_sources(op))
+
+    @app.put("/admin/sources/{sid}")
+    def sources_update(sid: SourceId, payload: SourceBody, op: Operator):
+        actor = need_sources(op)
+        if payload.version is None:
+            raise Problem(422, "INVALID_INPUT")
+        return sources.update(
+            actor,
+            sid,
+            payload.version,
+            payload.name,
+            payload.type,
+            payload.trustLevel,
+            payload.websiteUrl,
+            payload.instagramUrl,
+            payload.region,
+            payload.method,
+            payload.frequencyHours,
+        )
+
+    @app.post("/admin/sources/{sid}/verification")
+    def sources_verify(sid: SourceId, payload: SourceVerify, op: Operator):
+        actor = need_sources(op)
+        return sources.verify(actor, sid, payload.version, payload.status, payload.note)
+
+    @app.post("/admin/sources/{sid}/active")
+    def sources_active(sid: SourceId, payload: SourceActive, op: Operator):
+        actor = need_sources(op)
+        return sources.set_active(actor, sid, payload.version, payload.active)
 
     @app.get("/admin/quality")
     def quality(op: Operator):
