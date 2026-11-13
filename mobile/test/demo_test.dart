@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/demo_transport.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/main.dart';
@@ -111,7 +112,7 @@ void main() {
       expect(find.text('Mariana Lopes'), findsOneWidget);
       await tester.tap(find.text('Medalhas'));
       await tester.pumpAndSettle();
-      expect(find.text('Minhas Medalhas'), findsOneWidget);
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
       await tester.tap(find.text('Perfil'));
       await tester.pumpAndSettle();
       expect(find.text('Corredor Demo'), findsOneWidget);
