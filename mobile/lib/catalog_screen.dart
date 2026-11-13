@@ -190,14 +190,10 @@ Widget runPassNavigation(
   );
   return RunPassBottomNav(
     selectedIndex: selectedIndex,
+    // Sem profileIconSelected proprio (sem borda): a selecao da aba Perfil
+    // e marcada so pelo mesmo fundo destacado das outras abas, como os
+    // demais icones do menu. RunPassBottomNav reaproveita profileIcon.
     profileIcon: avatar(),
-    profileIconSelected: Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2),
-      ),
-      child: avatar(),
-    ),
     onDestinationSelected: (index) {
       if (index == selectedIndex && !subScreen) return;
       final screen = switch (index) {

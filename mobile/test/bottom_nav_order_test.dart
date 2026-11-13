@@ -21,7 +21,9 @@ void main() {
     },
   );
 
-  testWidgets('na aba Perfil não há realce atrás da foto', (tester) async {
+  testWidgets('aba Perfil tem o mesmo realce de selecao que as demais', (
+    tester,
+  ) async {
     Future<Color?> indicatorAt(int index) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -35,7 +37,9 @@ void main() {
           .indicatorColor;
     }
 
-    expect(await indicatorAt(3), Colors.transparent);
-    expect(await indicatorAt(0), isNot(Colors.transparent));
+    final profile = await indicatorAt(3);
+    final home = await indicatorAt(0);
+    expect(profile, isNot(Colors.transparent));
+    expect(profile, home);
   });
 }
