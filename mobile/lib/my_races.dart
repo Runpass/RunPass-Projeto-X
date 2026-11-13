@@ -1737,26 +1737,27 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   // 2 palavras (quebra manual, nao automatica): assim as 3 legendas ficam
   // com a mesma altura/duas linhas sempre, em vez de uma quebrar e outra
   // nao conforme o texto coube ou nao na largura.
-  Widget bigStat(Widget icon, String value, String firstWord, String secondWord) =>
-      Expanded(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(width: 28, height: 28, child: Center(child: icon)),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              style: const TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 20,
-              ),
-            ),
-            Text(
-              '$firstWord\n$secondWord',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: context.muted),
-            ),
-          ],
+  Widget bigStat(
+    Widget icon,
+    String value,
+    String firstWord,
+    String secondWord,
+  ) => Expanded(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(width: 28, height: 28, child: Center(child: icon)),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20),
+        ),
+        Text(
+          '$firstWord\n$secondWord',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13, color: context.muted),
+        ),
+      ],
     ),
   );
 
