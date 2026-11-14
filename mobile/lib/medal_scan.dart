@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'catalog_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
+import 'location_picker.dart';
 import 'profile_photo.dart' show PhotoChoice, askPhotoChoice;
 import 'runpass_theme.dart';
 
@@ -271,6 +272,20 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     }
   }
 
+  Future<void> pickLocation() async {
+    final picked = await pickBrLocation(
+      context,
+      initialUf: state.text.isEmpty ? null : state.text,
+      initialCity: city.text.isEmpty ? null : city.text,
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        state.text = picked.$1;
+        city.text = picked.$2;
+      });
+    }
+  }
+
   Widget editField(
     String key,
     String label, {
@@ -335,8 +350,25 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             keyboard: const TextInputType.numberWithOptions(decimal: true),
             maxLength: 8,
           ),
-          editField('city', 'Cidade', hint: 'São Paulo', maxLength: 100),
-          editField('state', 'UF', hint: 'SP', maxLength: 2),
+          // Estado e cidade por rolagem (a mesma lista fechada do perfil), sem digitar.
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: InkWell(
+              key: const Key('medal-edit-location'),
+              onTap: pickLocation,
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Estado e cidade',
+                  suffixIcon: Icon(Icons.expand_more),
+                ),
+                child: Text(
+                  city.text.isEmpty
+                      ? 'Escolher na lista'
+                      : '${state.text} - ${city.text}',
+                ),
+              ),
+            ),
+          ),
           Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton.icon(

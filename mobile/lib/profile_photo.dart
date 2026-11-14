@@ -1,19 +1,22 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'identity_gateway.dart';
 import 'my_races.dart' show imageContentType;
 import 'runpass_theme.dart';
 
-enum PhotoChoice { camera, gallery, remove }
+enum PhotoChoice { camera, gallery, web, remove }
 
 /// Pergunta de onde vem a foto de perfil; "remover" so aparece quando ja existe uma foto.
 Future<PhotoChoice?> askPhotoChoice(
   BuildContext context, {
   bool canRemove = false,
+  bool allowWeb = false,
 }) => showModalBottomSheet<PhotoChoice>(
   context: context,
   showDragHandle: true,
@@ -33,6 +36,14 @@ Future<PhotoChoice?> askPhotoChoice(
           title: const Text('Escolher da galeria'),
           onTap: () => Navigator.pop(sheet, PhotoChoice.gallery),
         ),
+        if (allowWeb)
+          ListTile(
+            key: const Key('photo-web'),
+            leading: const Icon(Icons.public),
+            title: const Text('Buscar na internet'),
+            subtitle: const Text('Procure a imagem e cole o link dela'),
+            onTap: () => Navigator.pop(sheet, PhotoChoice.web),
+          ),
         if (canRemove)
           ListTile(
             key: const Key('photo-remove'),
@@ -87,6 +98,169 @@ Future<List<int>?> _pick(
   );
 }
 
+/// Baixa uma imagem pelo link (só https, até 8 MB, só JPEG ou PNG). Troque nos testes.
+typedef ImageLinkFetcher = Future<List<int>> Function(String url);
+
+const maxWebImageBytes = 8 * 1024 * 1024;
+
+Future<List<int>> fetchImageFromLink(String link) async {
+  final uri = Uri.tryParse(link.trim());
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+    throw const IdentityIssue('IMAGE_LINK_INVALID');
+  }
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final request = await client
+        .getUrl(uri)
+        .timeout(const Duration(seconds: 10));
+    final response = await request.close().timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      throw const IdentityIssue('IMAGE_NOT_VALID');
+    }
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+      if (bytes.length > maxWebImageBytes) {
+        throw const IdentityIssue('IMAGE_SIZE_INVALID');
+      }
+    }
+    if (imageContentType(bytes) == null) {
+      throw const IdentityIssue('IMAGE_TYPE_INVALID');
+    }
+    return bytes;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+/// Endereço de uma busca de imagens na internet para o nome da corrida (abre no navegador).
+Uri webImageSearchUri(String query) => Uri.https('www.google.com', '/search', {
+  'tbm': 'isch',
+  'q': '${query.trim()} banner corrida',
+});
+
+/// Banner da internet: a pessoa procura a imagem no navegador, cola o link e o app baixa e recorta.
+/// A equipe só publica depois de conferir o crédito e a autorização do organizador.
+Future<List<int>?> pickBannerFromWeb(
+  BuildContext context, {
+  String query = '',
+  ImageLinkFetcher fetcher = fetchImageFromLink,
+}) async {
+  final bytes = await showDialog<List<int>>(
+    context: context,
+    builder: (dialog) => _WebImageDialog(query: query, fetcher: fetcher),
+  );
+  if (bytes == null || !context.mounted) return null;
+  return Navigator.of(context).push<List<int>>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => ProfilePhotoCropScreen(
+        image: Uint8List.fromList(bytes),
+        banner: true,
+      ),
+    ),
+  );
+}
+
+class _WebImageDialog extends StatefulWidget {
+  final String query;
+  final ImageLinkFetcher fetcher;
+  const _WebImageDialog({required this.query, required this.fetcher});
+
+  @override
+  State<_WebImageDialog> createState() => _WebImageDialogState();
+}
+
+class _WebImageDialogState extends State<_WebImageDialog> {
+  final link = TextEditingController();
+  bool loading = false;
+  String? error;
+
+  @override
+  void dispose() {
+    link.dispose();
+    super.dispose();
+  }
+
+  Future<void> use() async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final bytes = await widget.fetcher(link.text.trim());
+      if (mounted) Navigator.pop(context, bytes);
+    } on Object catch (problem) {
+      if (mounted) {
+        setState(() {
+          loading = false;
+          error =
+              problem is IdentityIssue && problem.code == 'IMAGE_LINK_INVALID'
+              ? 'Cole o link da imagem, começando com https://'
+              : photoError(problem);
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Banner da internet'),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '1. Procure a imagem no navegador. 2. Copie o link da imagem (toque e segure nela). 3. Cole aqui.',
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('web-image-search'),
+            onPressed: () => launchUrl(
+              webImageSearchUri(widget.query),
+              mode: LaunchMode.externalApplication,
+            ),
+            icon: const Icon(Icons.search_rounded),
+            label: const Text('Procurar no navegador'),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('web-image-link'),
+            controller: link,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'Link da imagem (https://...)',
+            ),
+          ),
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(error!, key: const Key('web-image-error')),
+            ),
+          const SizedBox(height: 8),
+          const Text(
+            'A imagem só é publicada se a equipe aprovar, com o crédito e a autorização do organizador.',
+            style: TextStyle(fontSize: 12),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: loading ? null : () => Navigator.pop(context),
+        child: const Text('Cancelar'),
+      ),
+      FilledButton(
+        key: const Key('web-image-use'),
+        onPressed: loading ? null : use,
+        child: Text(loading ? 'Baixando...' : 'Usar esta imagem'),
+      ),
+    ],
+  );
+}
+
 /// Envia a foto e devolve a referencia aceita; falha se a imagem nao passar na validacao.
 Future<String> uploadProfilePhoto(
   IdentityGateway gateway,
@@ -107,6 +281,7 @@ String photoError(Object error) => error is IdentityIssue
         'IMAGE_TYPE_INVALID' => 'Escolha uma foto JPEG ou PNG.',
         'IMAGE_NOT_VALID' => 'A foto não foi aceita. Escolha outra imagem.',
         'IMAGE_SIZE_INVALID' => 'A foto é grande demais. Escolha outra.',
+        'IMAGE_LINK_INVALID' => 'Cole o link da imagem, começando com https://',
         _ => 'Não foi possível enviar a foto. Verifique a internet e tente de novo.',
       }
     : 'Não foi possível usar a câmera ou a galeria. Confira a permissão do app nos Ajustes do celular.';

@@ -396,6 +396,23 @@ def create_app(
             raise Unavailable()
         return edition_requests.medal_image(actor, id)
 
+    @app.get("/edition-requests/{id}/banner-image", operation_id="getEditionRequestBannerImage")
+    def edition_request_banner_image(id: str, actor: Actor):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.medal_image(actor, id, "imageReference")
+
+    @app.delete("/edition-requests/{id}", operation_id="deleteEditionRequest")
+    def delete_edition_request(
+        id: str,
+        actor: Actor,
+        idempotency_key: IdempotencyKey,
+        expectedVersion: int = Query(..., ge=1),
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.delete(actor, id, idempotency_key, expectedVersion)
+
     @app.get("/edition-requests/{id}", operation_id="getEditionRequest")
     def get_edition_request(id: str, actor: Actor):
         if edition_requests is None:

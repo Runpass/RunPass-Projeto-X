@@ -297,17 +297,22 @@ void main() {
       await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
       expect(find.text('Distância selecionada.'), findsOneWidget);
-      expect(paths.where((c) => c != '/me/participations'), [
-        '/editions',
-        '/me/race-plans', // marcas dos atalhos da lista
-        '/editions/A',
-        '/editions/A/reviews',
-        '/editions/A/participants',
-        '/editions/A/registrants',
-        '/editions/A/photos',
-        '/me/race-plans/A',
-        '/editions/A/reviews',
-      ]);
+      expect(
+        paths.where(
+          (c) => c != '/me/participations' && c != '/me/edition-requests',
+        ),
+        [
+          '/editions',
+          '/me/race-plans', // marcas dos atalhos da lista
+          '/editions/A',
+          '/editions/A/reviews',
+          '/editions/A/participants',
+          '/editions/A/registrants',
+          '/editions/A/photos',
+          '/me/race-plans/A',
+          '/editions/A/reviews',
+        ],
+      );
     },
   );
 
@@ -426,7 +431,10 @@ void main() {
     expect(find.text('Rascunho salvo. Nada foi publicado.'), findsOneWidget);
     expect(
       calls.where(
-        (c) => !c.contains('/me/participations') && !c.endsWith('/image'),
+        (c) =>
+            !c.contains('/me/participations') &&
+            !c.contains('/me/edition-requests') &&
+            !c.endsWith('/image'),
       ),
       [
         'GET /editions/A',

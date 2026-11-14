@@ -323,6 +323,12 @@ def create_admin_app(
         data, kind = review.image(actor, request_id)
         return Response(data, media_type=kind, headers={"Cache-Control": "no-store"})
 
+    @app.get("/admin/edition-requests/{request_id}/medal-image")
+    def request_medal_image(request_id: str, op: Operator):
+        actor = need(op, "catalog_admin")
+        data, kind = review.medal_photo(actor, request_id)
+        return Response(data, media_type=kind, headers={"Cache-Control": "no-store"})
+
     @app.post("/admin/edition-requests/{request_id}/banner", status_code=201)
     def request_banner_publish(request_id: str, payload: RequestBanner, op: Operator):
         actor = need(op, "catalog_admin")

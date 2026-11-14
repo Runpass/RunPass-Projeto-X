@@ -1717,6 +1717,30 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   /// Botao compacto ao lado de "Minhas medalhas": abre a foto da medalha para achar a corrida.
   /// "+": primeiro a foto da medalha (câmera ou galeria); o app lê o texto e tenta achar a corrida.
   /// Se não achar, a tela seguinte tem o botão que leva às corridas.
+  /// Sem nenhuma medalha: a tela segue a mesma (filtros, totais, prateleira); aqui entra o convite
+  /// para adicionar a primeira, começando pela foto da medalha, sem escolher a corrida antes.
+  Widget emptyShelf() => Card(
+    key: const Key('medals-empty'),
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          const Text(
+            'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            key: const Key('medal-add-first'),
+            onPressed: addMedal,
+            icon: const Icon(Icons.add_a_photo_outlined),
+            label: const Text('Adicionar medalha'),
+          ),
+        ],
+      ),
+    ),
+  );
+
   /// Medalhas provisórias (pedido de cadastro com a foto da medalha), até a equipe decidir.
   Widget pendingSection(List<RaceRecord> done) =>
       FutureBuilder<List<Map<String, dynamic>>>(
@@ -1881,31 +1905,6 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               return loadMessage(loadError(snapshot.error!));
             }
             final data = snapshot.data!;
-            if (data.isEmpty) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      pendingSection(data),
-                      const Text(
-                        'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 16),
-                      // Sem medalhas ainda: começa pela foto da medalha, sem escolher a corrida antes.
-                      FilledButton.icon(
-                        key: const Key('medal-add-first'),
-                        onPressed: addMedal,
-                        icon: const Icon(Icons.add_a_photo_outlined),
-                        label: const Text('Adicionar medalha'),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }
             final stats = RaceStats.of(data);
             return ListView(
               key: const Key('medals-list'),
@@ -2009,7 +2008,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                ...sections(data),
+                if (data.isEmpty) emptyShelf() else ...sections(data),
               ],
             );
           },

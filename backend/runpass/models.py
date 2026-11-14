@@ -256,14 +256,14 @@ class EditionRequestFields(Input):
     distanceKm: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
     officialUrl: Annotated[str, Field(max_length=500, pattern=r"^https://[^\s]+$")] | None = None
     imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
-    # A imagem e a FOTO DA MEDALHA da pessoa (medalha provisoria ate a equipe decidir o pedido): fica privada,
-    # nao entra na fila de banners e nunca vira banner nem fica publica.
-    medalPhoto: bool = False
+    # Foto da MEDALHA da pessoa (medalha provisoria ate a equipe decidir o pedido): privada, fora da fila de
+    # banners, nunca vira banner nem fica publica. Independe do banner sugerido em `imageReference`.
+    medalImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
 
     @model_validator(mode="after")
-    def medal_photo_needs_image(self):
-        if self.medalPhoto and not self.imageReference:
-            raise ValueError("A foto da medalha precisa da imagem enviada")
+    def distinct_images(self):
+        if self.medalImageReference and self.medalImageReference == self.imageReference:
+            raise ValueError("A foto da medalha e o banner precisam ser imagens diferentes")
         return self
 
     @field_validator("name", "city")

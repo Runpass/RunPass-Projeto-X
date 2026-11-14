@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/edition_requests.dart';
 import 'package:runpass/identity_gateway.dart';
+import 'package:runpass/profile_photo.dart';
 
 final onePixelPng = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -175,30 +176,158 @@ void main() {
     expect(s.requests.single!['name'], 'Corrida do Banner');
   });
 
-  testWidgets('com a foto da medalha: sem escolha de banner, envia a imagem e '
-      'marca medalPhoto no pedido', (tester) async {
-    final s = await setup();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: EditionRequestFormScreen(
-          gateway: s.gateway,
-          medalPhoto: onePixelPng,
+  testWidgets(
+    'com a foto da medalha: vai como imagem separada (medalImageReference) '
+    'e o banner continua opcional',
+    (tester) async {
+      final s = await setup();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditionRequestFormScreen(
+            gateway: s.gateway,
+            medalPhoto: onePixelPng,
+            bannerSelector: (context) async => onePixelPng,
+          ),
         ),
-      ),
+      );
+      await fill(tester);
+      expect(find.byKey(const Key('request-medal-photo')), findsOneWidget);
+      expect(
+        find.byKey(const Key('request-banner')),
+        findsOneWidget,
+      ); // banner segue opcional
+      expect(find.text('Concluir cadastro da medalha'), findsOneWidget);
+      await submit(tester);
+      expect(s.calls, [
+        'POST /uploads',
+        'POST /uploads/up1/finalize',
+        'POST /edition-requests',
+      ]);
+      expect(s.requests.single!['medalImageReference'], 'img_banner');
+      expect(s.requests.single!.containsKey('imageReference'), isFalse);
+      expect(s.requests.single!.containsKey('medalPhoto'), isFalse);
+    },
+  );
+
+  testWidgets(
+    'foto da medalha e banner juntos: duas imagens, cada uma no seu campo',
+    (tester) async {
+      final s = await setup();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditionRequestFormScreen(
+            gateway: s.gateway,
+            medalPhoto: onePixelPng,
+            bannerSelector: (context) async => onePixelPng,
+          ),
+        ),
+      );
+      await fill(tester);
+      final pick = find.byKey(const Key('request-banner-pick'));
+      await tester.ensureVisible(pick);
+      await tester.tap(pick);
+      await tester.pumpAndSettle();
+      await submit(tester);
+      expect(s.calls.where((c) => c == 'POST /uploads').length, 2);
+      final body = s.requests.single!;
+      expect(body['imageReference'], isNotNull);
+      expect(body['medalImageReference'], isNotNull);
+    },
+  );
+
+  testWidgets(
+    'banner da internet: link inválido ou imagem recusada mostram o motivo',
+    (tester) async {
+      final s = await setup();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                key: const Key('open-web'),
+                onPressed: () => pickBannerFromWeb(
+                  context,
+                  query: 'Corrida X',
+                  fetcher: (url) async {
+                    if (!url.startsWith('https://')) {
+                      throw const IdentityIssue('IMAGE_LINK_INVALID');
+                    }
+                    throw const IdentityIssue('IMAGE_TYPE_INVALID');
+                  },
+                ),
+                child: const Text('abrir'),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(s.calls, isEmpty);
+      await tester.tap(find.byKey(const Key('open-web')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('web-image-search')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('web-image-link')),
+        'http://x.test/a.png',
+      );
+      await tester.tap(find.byKey(const Key('web-image-use')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Cole o link da imagem, começando com https://'),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.byKey(const Key('web-image-link')),
+        'https://x.test/a.gif',
+      );
+      await tester.tap(find.byKey(const Key('web-image-use')));
+      await tester.pumpAndSettle();
+      expect(find.text('Escolha uma foto JPEG ou PNG.'), findsOneWidget);
+    },
+  );
+
+  test('o link da imagem só aceita https', () async {
+    await expectLater(
+      fetchImageFromLink('http://x.test/a.png'),
+      throwsA(isA<IdentityIssue>()),
     );
-    await fill(tester);
-    expect(find.byKey(const Key('request-banner')), findsNothing);
-    expect(find.byKey(const Key('request-medal-photo')), findsOneWidget);
-    expect(find.text('Concluir cadastro da medalha'), findsOneWidget);
-    await submit(tester);
-    expect(s.calls, [
-      'POST /uploads',
-      'POST /uploads/up1/finalize',
-      'POST /edition-requests',
-    ]);
-    expect(s.requests.single!['imageReference'], 'img_banner');
-    expect(s.requests.single!['medalPhoto'], isTrue);
+    await expectLater(
+      fetchImageFromLink('não é link'),
+      throwsA(isA<IdentityIssue>()),
+    );
+    expect(webImageSearchUri('Meia de SP').toString(), contains('tbm=isch'));
   });
+
+  testWidgets(
+    'excluir solicitação: confirma, envia DELETE com a versão e some da lista',
+    (tester) async {
+      final s = await setup(mine: [listed('pending'), listed('approved')]);
+      await tester.pumpWidget(
+        MaterialApp(home: MyEditionRequestsScreen(gateway: s.gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('request-r-pending')), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('request-delete-r-pending')),
+      );
+      await tester.tap(find.byKey(const Key('request-delete-r-pending')));
+      await tester.pumpAndSettle();
+      expect(find.text('Excluir solicitação?'), findsOneWidget);
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+      expect(s.calls.any((c) => c.startsWith('DELETE')), isFalse);
+      await tester.tap(find.byKey(const Key('request-delete-r-pending')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('request-delete-confirm')));
+      await tester.pumpAndSettle();
+      expect(
+        s.calls.where((c) => c == 'DELETE /edition-requests/r-pending').length,
+        1,
+      );
+      expect(find.byKey(const Key('request-r-pending')), findsNothing);
+      expect(find.byKey(const Key('request-r-approved')), findsOneWidget);
+      expect(find.text('Solicitação excluída.'), findsOneWidget);
+    },
+  );
 
   testWidgets('remover o banner volta a não enviar imagem', (tester) async {
     final s = await setup();
