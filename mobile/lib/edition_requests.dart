@@ -95,12 +95,17 @@ class EditionRequestFormScreen extends StatefulWidget {
 
   /// Escolhe e recorta a imagem do banner; nulo se a pessoa desistir. Troque nos testes.
   final Future<List<int>?> Function(BuildContext context)? bannerSelector;
+
+  /// Foto da medalha (medalha provisória): vai junto com o pedido, privada e fora da fila de banners.
+  /// Quando presente, não se escolhe banner.
+  final List<int>? medalPhoto;
   const EditionRequestFormScreen({
     super.key,
     required this.gateway,
     this.existing,
     this.prefill = const {},
     this.bannerSelector,
+    this.medalPhoto,
   });
   @override
   State<EditionRequestFormScreen> createState() =>
@@ -122,6 +127,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
   @override
   void initState() {
     super.initState();
+    banner = widget.medalPhoto;
     final details = Map<String, dynamic>.from(
       (widget.existing?['details'] as Map?) ?? const {},
     );
@@ -195,6 +201,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
         // Envia a imagem primeiro (a referência é só desta pessoa); o pedido leva só a referência.
         bannerRef ??= await uploadProfilePhoto(widget.gateway, banner!);
         body['imageReference'] = bannerRef;
+        if (widget.medalPhoto != null) body['medalPhoto'] = true;
       }
       Map<String, dynamic> result;
       if (correcting) {
@@ -242,6 +249,34 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       if (mounted) setState(() => saving = false);
     }
   }
+
+  /// Foto da medalha que segue com o pedido (medalha provisória): só a pessoa a vê até a equipe decidir.
+  Widget medalNote() => Card(
+    key: const Key('request-medal-photo'),
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.memory(
+              Uint8List.fromList(widget.medalPhoto!),
+              width: 64,
+              height: 64,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const SizedBox(width: 64, height: 64),
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'A foto da sua medalha vai junto e fica só com você. A medalha aparece em Medalhas como "Em análise" até a equipe confirmar a corrida.',
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget bannerPicker() => Card(
     key: const Key('request-banner'),
@@ -461,7 +496,8 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
               ],
             ),
           ),
-          if (!correcting) bannerPicker(),
+          if (!correcting && widget.medalPhoto == null) bannerPicker(),
+          if (!correcting && widget.medalPhoto != null) medalNote(),
           if (error != null) ...[
             const SizedBox(height: 8),
             Text(error!, key: const Key('request-error')),
@@ -470,7 +506,13 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
           FilledButton(
             key: const Key('request-submit'),
             onPressed: saving ? null : submit,
-            child: Text(correcting ? 'Corrigir e reenviar' : 'Enviar pedido'),
+            child: Text(
+              correcting
+                  ? 'Corrigir e reenviar'
+                  : (widget.medalPhoto != null
+                        ? 'Concluir cadastro da medalha'
+                        : 'Enviar pedido'),
+            ),
           ),
           if (saving) const Center(child: CircularProgressIndicator()),
         ],

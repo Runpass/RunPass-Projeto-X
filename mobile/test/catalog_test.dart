@@ -566,6 +566,7 @@ void main() {
         calls.where(
           (c) =>
               !c.contains('/me/participations') &&
+              !c.contains('/me/edition-requests') && // medalhas provisórias
               !c.endsWith('/image') &&
               c != 'GET /me',
         ),

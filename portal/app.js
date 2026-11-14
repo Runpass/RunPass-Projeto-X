@@ -233,9 +233,19 @@ function cartaoPedido(pedido, aguardando = false) {
     el('div', { class: 'meta' }, `Pedido ${pedido.id} · versão ${pedido.version}`),
     ...(((pedido.details || {}).imageReference)
       ? (() => {
-          const caixa = el('div', {}, el('p', { class: 'meta' }, 'Carregando o banner enviado...'));
+          const medalha = !!(pedido.details || {}).medalPhoto;
+          const caixa = el('div', {}, el('p', { class: 'meta' }, medalha ? 'Carregando a foto da medalha...' : 'Carregando o banner enviado...'));
           carregarImagemPedido(pedido.id, caixa);
-          return [el('div', { class: 'meta' }, 'Banner enviado pelo usuário (só entra na fila de publicação depois que o pedido for aprovado e vinculado):'), caixa];
+          return [
+            el(
+              'div',
+              { class: 'meta' },
+              medalha
+                ? 'Foto da MEDALHA do usuário (medalha provisória: é privada, não é banner e não será publicada; serve para conferir a corrida):'
+                : 'Banner enviado pelo usuário (só entra na fila de publicação depois que o pedido for aprovado e vinculado):',
+            ),
+            caixa,
+          ];
         })()
       : []),
     el(

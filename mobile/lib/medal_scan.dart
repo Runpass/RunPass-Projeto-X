@@ -218,18 +218,27 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
 
   /// Não achou: pede o cadastro da corrida, já com o nome lido da medalha no formulário.
   Future<void> requestRace() async {
+    // A foto segue junto: a medalha fica provisória em Medalhas até a equipe confirmar a corrida.
+    List<int>? photo;
+    try {
+      final file = File(widget.photoPath);
+      photo = file.existsSync() ? await file.readAsBytes() : null;
+    } on Exception {
+      photo = null; // sem a foto, vira um pedido de cadastro comum
+    }
+    if (!mounted) return;
     final sent = await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(
-        builder: (_) =>
-            EditionRequestFormScreen(gateway: widget.gateway, prefill: details),
+        builder: (_) => EditionRequestFormScreen(
+          gateway: widget.gateway,
+          prefill: details,
+          medalPhoto: photo,
+        ),
       ),
     );
     if (sent != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Pedido enviado. Acompanhe em "Minhas solicitações".'),
-        ),
-      );
+      // Volta às medalhas, onde a medalha provisória já aparece como "Em análise".
+      Navigator.of(context).pop(true);
     }
   }
 
@@ -335,7 +344,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
               key: const Key('medal-scan-request'),
               onPressed: requestRace,
               icon: const Icon(Icons.add_circle_outline),
-              label: const Text('Cadastrar esta corrida'),
+              label: const Text('Concluir cadastro da medalha'),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(

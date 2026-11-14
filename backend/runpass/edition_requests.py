@@ -93,6 +93,8 @@ def stored_details(model: EditionRequestFields):
         details["officialUrl"] = model.officialUrl
     if model.imageReference:
         details["imageReference"] = model.imageReference
+    if model.medalPhoto:
+        details["medalPhoto"] = True
     return details
 
 
@@ -100,10 +102,31 @@ MAX_BANNER_SUGGESTIONS = 5  # sugestoes de banner ainda sem decisao, por pessoa
 
 
 class EditionRequestService:
-    def __init__(self, identity, cursor_key, catalog=None):
+    def __init__(self, identity, cursor_key, catalog=None, blobs=None):
         self.identity, self.store = identity, identity.store
         self.cipher = Fernet(cursor_key)
         self.catalog = catalog
+        self.blobs = blobs
+
+    def medal_image(self, actor, request_id):
+        """Link curto da foto da medalha provisoria do PROPRIO pedido (a copia tratada, nunca o original)."""
+
+        def work(read, write, account, now, replay):
+            item = read(item_key(actor.subject, request_id))
+            details = (item or {}).get("details") or {}
+            if not item or not details.get("medalPhoto") or not details.get("imageReference"):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")  # de outra pessoa = mesma resposta
+            return {"reference": details["imageReference"], "now": now}, {}
+
+        found = self.identity.transact(actor, "getRequestMedalImage", None, {}, work, admitted=True)
+        if self.blobs is None:
+            raise Unavailable()
+        link = self.blobs.view_url(actor.subject, found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(minutes=5)),
+        }
 
     def _pending_count(self, actor):
         rows, _ = self.store.query("history", "USER#" + actor.subject, prefix="EREQ#", limit=100)
@@ -151,9 +174,12 @@ class EditionRequestService:
                 "sharedKeys": [list(owner), list(queue)],
             }
             if image_key is not None:
-                image_queue = image_queue_key(created, request_id)
-                item["sharedKeys"].append(list(image_queue))
-                write(image_queue, {"id": request_id, "createdAt": created})
+                if (
+                    not fields.medalPhoto
+                ):  # foto de medalha nao e sugestao de banner: sem fila de banners
+                    image_queue = image_queue_key(created, request_id)
+                    item["sharedKeys"].append(list(image_queue))
+                    write(image_queue, {"id": request_id, "createdAt": created})
                 write(image_key, {**image, "refs": image.get("refs", 0) + 1})
             write(item_key(actor.subject, request_id), item)
             write(owner, {"owner": actor.subject})

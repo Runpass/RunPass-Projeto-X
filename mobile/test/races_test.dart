@@ -52,6 +52,7 @@ Map<String, dynamic> done(
 Future<IdentityGateway> runner({
   bool noRaces = false,
   List<Map<String, dynamic>> found = const [],
+  List<Map<String, dynamic>> requests = const [],
 }) async {
   final editions = {
     'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
@@ -87,6 +88,9 @@ Future<IdentityGateway> runner({
         });
       }
       if (uri.path == '/editions') return JsonReply(200, {'items': found});
+      if (uri.path == '/me/edition-requests') {
+        return JsonReply(200, {'items': requests});
+      }
       final match = editions[uri.pathSegments.last];
       return match == null
           ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
@@ -476,6 +480,81 @@ void main() {
     ); // vai direto à foto, não às corridas
     expect(find.byType(CatalogScreen), findsNothing);
   });
+
+  Map<String, dynamic> medalRequest(
+    String id,
+    String status, {
+    String? linked,
+    String? reason,
+  }) => {
+    'id': id,
+    'status': status,
+    'version': 1,
+    'details': {
+      'name': 'Corrida $id',
+      'date': '2027-03-14',
+      'city': 'São Paulo',
+      'distanceKm': 10,
+      'imageReference': 'img_$id',
+      'medalPhoto': true,
+    },
+    'linkedEditionId': ?linked,
+    'reason': ?reason,
+  };
+
+  testWidgets(
+    'medalha provisória aparece cinza e com cadeado até a equipe aprovar',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              requests: [
+                medalRequest('r1', 'pending'),
+                medalRequest('r2', 'approved', linked: 'zz'),
+                medalRequest('r3', 'rejected', reason: 'Prova duplicada'),
+                medalRequest(
+                  'r4',
+                  'approved',
+                  linked: 'a',
+                ), // já concluída: some
+                {
+                  ...medalRequest('r5', 'pending'),
+                  'details': {'name': 'Só pedido', 'date': '2027-03-14'},
+                },
+              ],
+            ),
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pending-medals')), findsOneWidget);
+      // Em análise: bloqueada, com cadeado.
+      expect(find.byKey(const Key('pending-status-r1')), findsOneWidget);
+      expect(find.text('Em análise pela equipe'), findsOneWidget);
+      expect(find.byKey(const Key('pending-locked-r1-true')), findsOneWidget);
+      // Aprovada: sem cinza nem cadeado, e convida a concluir.
+      expect(find.byKey(const Key('pending-locked-r2-false')), findsOneWidget);
+      expect(
+        find.text('Corrida aprovada. Toque para concluir.'),
+        findsOneWidget,
+      );
+      // Recusada: continua bloqueada e diz o motivo.
+      expect(
+        find.text('Cadastro não aprovado: Prova duplicada'),
+        findsOneWidget,
+      );
+      // Aprovada e já concluída (corrida 'a'): a medalha de verdade já está na prateleira.
+      expect(find.byKey(const Key('pending-medal-r4')), findsNothing);
+      // Pedido comum, sem foto de medalha: não vira medalha provisória.
+      expect(find.byKey(const Key('pending-medal-r5')), findsNothing);
+      expect(
+        find.byKey(const Key('pending-lock')),
+        findsNWidgets(2),
+      ); // r1 e r3
+    },
+  );
 
   testWidgets('editar medalha: muda forma, cor e legenda e salva via PATCH', (
     tester,

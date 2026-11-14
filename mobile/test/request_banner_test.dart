@@ -175,6 +175,31 @@ void main() {
     expect(s.requests.single!['name'], 'Corrida do Banner');
   });
 
+  testWidgets('com a foto da medalha: sem escolha de banner, envia a imagem e '
+      'marca medalPhoto no pedido', (tester) async {
+    final s = await setup();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionRequestFormScreen(
+          gateway: s.gateway,
+          medalPhoto: onePixelPng,
+        ),
+      ),
+    );
+    await fill(tester);
+    expect(find.byKey(const Key('request-banner')), findsNothing);
+    expect(find.byKey(const Key('request-medal-photo')), findsOneWidget);
+    expect(find.text('Concluir cadastro da medalha'), findsOneWidget);
+    await submit(tester);
+    expect(s.calls, [
+      'POST /uploads',
+      'POST /uploads/up1/finalize',
+      'POST /edition-requests',
+    ]);
+    expect(s.requests.single!['imageReference'], 'img_banner');
+    expect(s.requests.single!['medalPhoto'], isTrue);
+  });
+
   testWidgets('remover o banner volta a não enviar imagem', (tester) async {
     final s = await setup();
     await tester.pumpWidget(

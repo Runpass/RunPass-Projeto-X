@@ -15,6 +15,7 @@ import 'grid_columns.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
 import 'medal_scan.dart';
+import 'pending_medals.dart';
 import 'notifications.dart';
 import 'post_card.dart' show FeedEntry, PostCard, PostThumb, entryFromPost;
 import 'profile_photo.dart';
@@ -1473,6 +1474,9 @@ class MedalCollectionScreen extends StatefulWidget {
   /// Foto da medalha para o "+" e o leitor de texto dela. Trocáveis nos testes (câmera e Vision não rodam lá).
   final MedalPhotoPicker medalPhotoPicker;
   final MedalTextReader medalTextReader;
+
+  /// Carrega a foto da medalha provisória. Trocável nos testes (o link assinado não roda lá).
+  final Future<List<int>?> Function(IdentityGateway, String) pendingPhotoLoader;
   const MedalCollectionScreen({
     super.key,
     required this.gateway,
@@ -1480,6 +1484,7 @@ class MedalCollectionScreen extends StatefulWidget {
     this.openCropScreen = openMedalCropScreen,
     this.medalPhotoPicker = pickMedalPhotoPath,
     this.medalTextReader = const PlatformMedalTextReader(),
+    this.pendingPhotoLoader = loadRequestMedalPhoto,
   });
 
   @override
@@ -1488,6 +1493,9 @@ class MedalCollectionScreen extends StatefulWidget {
 
 class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late Future<List<RaceRecord>> races = loadMyRaces(widget.gateway);
+  late Future<List<Map<String, dynamic>>> pendingMedals = loadPendingMedals(
+    widget.gateway,
+  );
   MedalGrouping grouping = MedalGrouping.all;
   bool newestFirst = true;
 
@@ -1709,11 +1717,24 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   /// Botao compacto ao lado de "Minhas medalhas": abre a foto da medalha para achar a corrida.
   /// "+": primeiro a foto da medalha (câmera ou galeria); o app lê o texto e tenta achar a corrida.
   /// Se não achar, a tela seguinte tem o botão que leva às corridas.
+  /// Medalhas provisórias (pedido de cadastro com a foto da medalha), até a equipe decidir.
+  Widget pendingSection(List<RaceRecord> done) =>
+      FutureBuilder<List<Map<String, dynamic>>>(
+        future: pendingMedals,
+        builder: (context, snapshot) => PendingMedalsSection(
+          gateway: widget.gateway,
+          requests: visiblePendingMedals(snapshot.data ?? const [], {
+            for (final race in done) '${race.participation['editionId']}',
+          }),
+          photoLoader: widget.pendingPhotoLoader,
+        ),
+      );
+
   Future<void> addMedal() async {
     final path = await widget.medalPhotoPicker(context);
     if (path == null || !mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+    final registered = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
         builder: (_) => MedalScanScreen(
           gateway: widget.gateway,
           photoPath: path,
@@ -1721,6 +1742,11 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
         ),
       ),
     );
+    if (registered == true && mounted) {
+      setState(() {
+        pendingMedals = loadPendingMedals(widget.gateway);
+      });
+    }
   }
 
   Widget _addTile() => InkWell(
@@ -1862,6 +1888,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      pendingSection(data),
                       const Text(
                         'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
                         textAlign: TextAlign.center,
@@ -1884,6 +1911,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               key: const Key('medals-list'),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
               children: [
+                pendingSection(data),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
