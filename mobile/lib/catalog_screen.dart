@@ -3625,6 +3625,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   final postText = TextEditingController();
   bool declaredCompleted = false, publishToFeed = false;
   DateTime? editionDate;
+  String? editionName; // nome da corrida, mostrado embaixo da foto
   Map<String, dynamic>? review;
   List<Map<String, dynamic>> distances = const [];
   String? distanceId;
@@ -3706,6 +3707,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         setState(() {
           if (parsed != null && draft['state'] == 'draft') editionDate = parsed;
           distances = list;
+          editionName = edition['name'] as String?;
         });
       }
     } on Exception {
@@ -4353,6 +4355,20 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 ),
               ),
             ),
+            // Nome da corrida logo abaixo da foto.
+            if (editionName != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  editionName!,
+                  key: const Key('race-name-under-photo'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
+              ),
             const SizedBox(height: 8),
             if (widget.fromPost) ...[
               // Editar a publicação: o tamanho da foto publicada (a medalha se edita em Medalhas).
@@ -4413,16 +4429,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                   uploading ? 'Enviando foto...' : 'Trocar foto da medalha',
                 ),
               ),
-            const SizedBox(height: 12),
-            const Text(
-              'Participação concluída · medalha e avaliação registradas.',
-            ),
-            const SizedBox(height: 8),
-            Text(
-              draft['publishToFeed'] == true
-                  ? 'Conquista publicada: quem pode ver seu perfil vê esta corrida.'
-                  : 'Conquista não publicada: só você vê esta corrida.',
-            ),
             const SizedBox(height: 12),
             if (review != null) MyReviewView(review: review!),
             // Sem botão "Salvar visibilidade": cada chave grava ao ser alterada.
