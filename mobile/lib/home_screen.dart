@@ -531,7 +531,9 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
                 ),
                 child: Icon(
                   icon,
-                  color: selected ? Colors.white : runPassOrange,
+                  color: selected
+                      ? Colors.white
+                      : (context.isDark ? Colors.white : runPassOrange),
                   size: circle * .48,
                 ),
               ),
@@ -647,12 +649,6 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
               builder: (_) => FriendSearchScreen(gateway: widget.gateway),
             ),
           ),
-        ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          tooltip: 'Buscar corridas',
-          icon: const Icon(Icons.search_rounded),
-          onPressed: () => go(CatalogScreen(gateway: widget.gateway)),
         ),
         NotificationBell(gateway: widget.gateway),
       ],

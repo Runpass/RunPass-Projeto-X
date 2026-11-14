@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:runpass/home_screen.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/main.dart';
@@ -10,6 +12,13 @@ import 'package:runpass/post_card.dart';
 import 'package:runpass/runpass_theme.dart';
 import 'package:runpass/settings.dart';
 import 'package:share_plus/share_plus.dart';
+
+/// Caminho temporario de verdade (sem plugin nativo) para o compartilhamento
+/// gravar o arquivo nos testes.
+class _FakePathProviderPlatform extends PathProviderPlatform {
+  @override
+  Future<String?> getTemporaryPath() async => Directory.systemTemp.path;
+}
 
 IdentityGateway gatewayWith(JsonTransport handler, {MemoryTokenStore? store}) =>
     IdentityGateway(
@@ -154,6 +163,10 @@ void main() {
   });
 
   group('compartilhar', () {
+    setUpAll(() {
+      PathProviderPlatform.instance = _FakePathProviderPlatform();
+    });
+
     FeedEntry entry() => FeedEntry(
       postId: 'p1',
       author: 'Ana',
@@ -208,15 +221,18 @@ void main() {
           ),
         );
         await tester.ensureVisible(find.byKey(const Key('share-p-race')));
-        await tester.tap(find.byKey(const Key('share-p-race')));
-        // A preparacao e assincrona (rede e imagem): espera o ciclo real de eventos.
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 300)),
-        );
+        // A preparacao e assincrona (rede, imagem e escrita em arquivo real):
+        // o toque e a espera precisam rodar no ciclo real de eventos, nao no
+        // relogio falso do teste, senao o await do arquivo nunca resolve.
+        await tester.runAsync(() async {
+          await tester.tap(find.byKey(const Key('share-p-race')));
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        });
         await tester.pumpAndSettle();
         expect(sent, isNotNull);
-        expect(sent!.text, contains('Ana concluiu Corrida A'));
-        expect(sent!.text, contains('Foi lindo'));
+        // Sem texto junto da imagem: apps da Meta (Instagram, Facebook) tratam
+        // mal o envio combinado e caem para o modo so-texto.
+        expect(sent!.text, isNull);
         expect(sent!.files, hasLength(1));
         expect(sent!.files!.single.mimeType, 'image/png');
       },
@@ -260,11 +276,12 @@ void main() {
         ),
       );
       await tester.ensureVisible(find.byKey(const Key('share-p-race')));
-      await tester.tap(find.byKey(const Key('share-p-race')));
-      // A preparacao e assincrona (rede e imagem): espera o ciclo real de eventos.
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 300)),
-      );
+      // A preparacao e assincrona (rede, imagem e escrita em arquivo real):
+      // o toque e a espera precisam rodar no ciclo real de eventos.
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('share-p-race')));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
       await tester.pumpAndSettle();
       expect(calls, hasLength(2));
       expect(calls.last.files, isNull);

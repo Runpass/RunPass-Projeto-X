@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'catalog_screen.dart'
@@ -338,6 +339,19 @@ class _PostCardState extends State<PostCard> {
     ].join('\n');
   }
 
+  /// Grava os bytes num arquivo real (cache do app) em vez de usar XFile.fromData: o share_plus
+  /// documenta que compartilhar bytes em memoria direto e menos confiavel no Android/iOS.
+  Future<XFile> _writeShareFile(
+    Uint8List bytes,
+    String mimeType,
+    String name,
+  ) async {
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/$name');
+    await file.writeAsBytes(bytes, flush: true);
+    return XFile(file.path, mimeType: mimeType, name: name);
+  }
+
   /// Foto da medalha pelo link assinado; sem foto, sem rede ou demora, usa o cartao desenhado.
   Future<XFile> shareImage() async {
     final id = entry.race.participation['id'] as String?;
@@ -363,10 +377,10 @@ class _PostCardState extends State<PostCard> {
             .fold<List<int>>([], (all, chunk) => all..addAll(chunk))
             .timeout(const Duration(seconds: 15));
         final type = reply['contentType'] as String? ?? 'image/jpeg';
-        return XFile.fromData(
+        return await _writeShareFile(
           Uint8List.fromList(bytes),
-          mimeType: type,
-          name: type == 'image/png' ? 'medalha.png' : 'medalha.jpg',
+          type,
+          type == 'image/png' ? 'medalha.png' : 'medalha.jpg',
         );
       } finally {
         client.close(force: true);
@@ -377,7 +391,7 @@ class _PostCardState extends State<PostCard> {
         line: shareLine(),
         author: entry.mine ? '' : entry.author,
       );
-      return XFile.fromData(card, mimeType: 'image/png', name: 'runpass.png');
+      return await _writeShareFile(card, 'image/png', 'runpass.png');
     }
   }
 
@@ -392,9 +406,11 @@ class _PostCardState extends State<PostCard> {
       final image = await shareImage();
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      // Sem texto junto da imagem: apps da Meta (Instagram, Facebook) nao
+      // tratam bem o envio combinado e caem para o modo so-texto, que so
+      // oferece "Mensagens"/Direct em vez de Stories/Feed.
       await shareFunction(
         ShareParams(
-          text: text,
           files: [image],
           fileNameOverrides: [image.name],
           sharePositionOrigin: origin,

@@ -1654,8 +1654,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     crossAxisCount: 3,
     shrinkWrap: true,
     physics: const NeverScrollableScrollPhysics(),
-    mainAxisSpacing: 8,
-    crossAxisSpacing: 4,
+    mainAxisSpacing: 3,
+    crossAxisSpacing: 2,
     // Baixo o suficiente para o nicho de nogueira (proporcao fixa 1086:1448)
     // mais o texto caberem usando a largura inteira do card, sem cortar.
     childAspectRatio: 0.5,
