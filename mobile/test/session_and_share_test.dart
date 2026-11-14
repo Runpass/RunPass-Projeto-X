@@ -1,7 +1,10 @@
+import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:runpass/home_screen.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/main.dart';
@@ -10,6 +13,13 @@ import 'package:runpass/post_card.dart';
 import 'package:runpass/runpass_theme.dart';
 import 'package:runpass/settings.dart';
 import 'package:share_plus/share_plus.dart';
+
+/// Caminho temporario de verdade (sem plugin nativo) para o compartilhamento
+/// gravar o arquivo nos testes.
+class _FakePathProviderPlatform extends PathProviderPlatform {
+  @override
+  Future<String?> getTemporaryPath() async => Directory.systemTemp.path;
+}
 
 IdentityGateway gatewayWith(JsonTransport handler, {MemoryTokenStore? store}) =>
     IdentityGateway(
@@ -154,6 +164,10 @@ void main() {
   });
 
   group('compartilhar', () {
+    setUpAll(() {
+      PathProviderPlatform.instance = _FakePathProviderPlatform();
+    });
+
     FeedEntry entry() => FeedEntry(
       postId: 'p1',
       author: 'Ana',
@@ -182,8 +196,10 @@ void main() {
         };
         shareCardBuilder = ({
           required title,
+          caption,
           required line,
           required author,
+          photoBytes,
         }) async => Uint8List.fromList([1, 2, 3]);
         addTearDown(() {
           shareFunction = (params) => SharePlus.instance.share(params);
@@ -208,15 +224,18 @@ void main() {
           ),
         );
         await tester.ensureVisible(find.byKey(const Key('share-p-race')));
-        await tester.tap(find.byKey(const Key('share-p-race')));
-        // A preparacao e assincrona (rede e imagem): espera o ciclo real de eventos.
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 300)),
-        );
+        // A preparacao e assincrona (rede, imagem e escrita em arquivo real):
+        // o toque e a espera precisam rodar no ciclo real de eventos, nao no
+        // relogio falso do teste, senao o await do arquivo nunca resolve.
+        await tester.runAsync(() async {
+          await tester.tap(find.byKey(const Key('share-p-race')));
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        });
         await tester.pumpAndSettle();
         expect(sent, isNotNull);
-        expect(sent!.text, contains('Ana concluiu Corrida A'));
-        expect(sent!.text, contains('Foi lindo'));
+        // Sem texto junto da imagem: apps da Meta (Instagram, Facebook) tratam
+        // mal o envio combinado e caem para o modo so-texto.
+        expect(sent!.text, isNull);
         expect(sent!.files, hasLength(1));
         expect(sent!.files!.single.mimeType, 'image/png');
       },
@@ -234,8 +253,10 @@ void main() {
       };
       shareCardBuilder = ({
         required title,
+        caption,
         required line,
         required author,
+        photoBytes,
       }) async => Uint8List.fromList([1]);
       addTearDown(() {
         shareFunction = (params) => SharePlus.instance.share(params);
@@ -260,16 +281,62 @@ void main() {
         ),
       );
       await tester.ensureVisible(find.byKey(const Key('share-p-race')));
-      await tester.tap(find.byKey(const Key('share-p-race')));
-      // A preparacao e assincrona (rede e imagem): espera o ciclo real de eventos.
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 300)),
-      );
+      // A preparacao e assincrona (rede, imagem e escrita em arquivo real):
+      // o toque e a espera precisam rodar no ciclo real de eventos.
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('share-p-race')));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
       await tester.pumpAndSettle();
       expect(calls, hasLength(2));
       expect(calls.last.files, isNull);
       expect(calls.last.text, contains('Corrida A'));
     });
+
+    testWidgets(
+      'buildShareCard (real) gera PNG valido com e sem foto, com titulo, texto e distancia/tempo',
+      (tester) async {
+        await tester.runAsync(() async {
+          // Um PNG minimo de verdade (nao mockado) para servir de "foto da medalha".
+          final recorder = ui.PictureRecorder();
+          final tinyCanvas = Canvas(recorder, const Rect.fromLTWH(0, 0, 4, 4));
+          tinyCanvas.drawRect(
+            const Rect.fromLTWH(0, 0, 4, 4),
+            Paint()..color = Colors.red,
+          );
+          final tinyImage = await recorder.endRecording().toImage(4, 4);
+          final tinyData = await tinyImage.toByteData(
+            format: ui.ImageByteFormat.png,
+          );
+          final photo = tinyData!.buffer.asUint8List();
+
+          final withPhoto = await buildShareCard(
+            title: 'Corrida A',
+            caption: 'Foi lindo',
+            line: '10,0 km · 58min',
+            author: '',
+            photoBytes: photo,
+          );
+          expect(withPhoto, isNotEmpty);
+          final decodedWithPhoto = await ui.instantiateImageCodec(withPhoto);
+          final frameWithPhoto = await decodedWithPhoto.getNextFrame();
+          expect(frameWithPhoto.image.width, 1080);
+
+          final withoutPhoto = await buildShareCard(
+            title: 'Corrida A',
+            caption: null,
+            line: '',
+            author: 'Ana',
+          );
+          expect(withoutPhoto, isNotEmpty);
+          final decodedWithoutPhoto = await ui.instantiateImageCodec(
+            withoutPhoto,
+          );
+          final frameWithoutPhoto = await decodedWithoutPhoto.getNextFrame();
+          expect(frameWithoutPhoto.image.width, 1080);
+        });
+      },
+    );
   });
 
   group('modo escuro', () {
