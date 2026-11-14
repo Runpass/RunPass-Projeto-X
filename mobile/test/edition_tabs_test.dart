@@ -350,10 +350,10 @@ void main() {
     await tester.tap(find.byKey(const Key('summary-details-toggle')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('summary-details')), findsOneWidget);
-    // recolher a minha: itens e comentário somem, o título fica
+    // recolher a minha: os itens somem, o título e o comentário ficam à vista
     await tester.tap(find.byKey(const Key('my-details-toggle')));
     await tester.pumpAndSettle();
-    expect(find.text('“Gostei muito”'), findsNothing);
+    expect(find.text('“Gostei muito”'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const Key('my-review')),

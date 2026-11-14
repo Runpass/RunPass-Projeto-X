@@ -9,7 +9,7 @@ final onePixelPng = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
 );
 
-Future<(IdentityGateway, List<String>)> setup() async {
+Future<(IdentityGateway, List<String>)> setup({String? officialUrl}) async {
   final calls = <String>[];
   final gateway = IdentityGateway(
     cognito: Uri.parse('https://cognito.example'),
@@ -38,8 +38,36 @@ Future<(IdentityGateway, List<String>)> setup() async {
           'imageReference': 'img_ok',
         });
       }
-      if (uri.path == '/editions/E1') {
+      if (uri.path == '/participations/d5/review') {
         return const JsonReply(200, {
+          'version': 1,
+          'ratings': {
+            'organization': 5,
+            'course': 4,
+            'kit': 4,
+            'medal': 5,
+            'hydration': 4,
+            'facilities': 3,
+            'safety': 4,
+            'valueForMoney': 4,
+          },
+          'comment': 'Percurso bonito e bem sinalizado',
+        });
+      }
+      if (uri.path == '/participations/d5' && method == 'PATCH') {
+        return JsonReply(200, {
+          'id': 'd5',
+          'editionId': 'E1',
+          'distanceId': '5k',
+          'state': 'completed',
+          'version': 3,
+          'showTime': (body! as Map)['showTime'] ?? true,
+          'showPlacement': (body as Map)['showPlacement'] ?? true,
+        });
+      }
+      if (uri.path == '/editions/E1') {
+        return JsonReply(200, {
+          'officialUrl': ?officialUrl,
           'id': 'E1',
           'name': '[FICTICIA] Corrida',
           'date': '2024-09-22',
@@ -199,6 +227,91 @@ void main() {
         findsNothing,
       );
       expect(find.text('Minha situação nesta corrida'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'medalha concluída: sem botão Salvar visibilidade (chaves gravam sozinhas) e com o meu comentário',
+    (tester) async {
+      final (gateway, calls) = await setup();
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: const {
+              'id': 'd5',
+              'editionId': 'E1',
+              'distanceId': '5k',
+              'state': 'completed',
+              'version': 2,
+              'showTime': true,
+              'showPlacement': true,
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Salvar visibilidade'), findsNothing);
+      // O comentário que escrevi aparece nesta tela.
+      expect(find.byKey(const Key('my-comment')), findsOneWidget);
+      expect(find.text('“Percurso bonito e bem sinalizado”'), findsOneWidget);
+      // Mudar a chave grava na hora.
+      await tester.ensureVisible(find.byKey(const Key('show-time-switch')));
+      await tester.tap(find.byKey(const Key('show-time-switch')));
+      await tester.pumpAndSettle();
+      expect(calls.where((c) => c == 'PATCH /participations/d5').length, 1);
+      expect(
+        tester
+            .widget<SwitchListTile>(find.byKey(const Key('show-time-switch')))
+            .value,
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets(
+    'toda corrida tem o ícone do site: o oficial, ou a busca na internet quando não há',
+    (tester) async {
+      final opened = <Uri>[];
+      final previous = linkOpener;
+      linkOpener = (uri) async {
+        opened.add(uri);
+        return true;
+      };
+      addTearDown(() => linkOpener = previous);
+      Future<void> pump(IdentityGateway gateway) async {
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpWidget(
+          MaterialApp(
+            home: EditionScreen(gateway: gateway, editionId: 'E1'),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      final (withSite, _) = await setup(
+        officialUrl: 'https://corrida.example/site',
+      );
+      await pump(withSite);
+      expect(find.byTooltip('Site da corrida'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('hero-site')));
+      await tester.pumpAndSettle();
+      expect(opened.single.toString(), 'https://corrida.example/site');
+
+      opened.clear();
+      final (noSite, _) = await setup();
+      await pump(noSite);
+      expect(find.byTooltip('Buscar o site da corrida'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('hero-site')));
+      await tester.pumpAndSettle();
+      expect(opened.single.host, 'www.google.com');
+      expect(
+        opened.single.queryParameters['q'],
+        contains('[FICTICIA] Corrida'),
+      );
     },
   );
 }

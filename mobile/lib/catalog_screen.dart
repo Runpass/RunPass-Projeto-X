@@ -1001,6 +1001,20 @@ class _CatalogScreenState extends State<CatalogScreen> {
       title: const RunPassWordmark(compact: true),
       actions: [
         IconButton(
+          key: const Key('catalog-request-new'),
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Pedir cadastro da corrida',
+          icon: const Icon(Icons.add_circle_outline),
+          onPressed: loading ? null : requestRace,
+        ),
+        IconButton(
+          key: const Key('catalog-request-mine'),
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Minhas solicitações',
+          icon: const Icon(Icons.assignment_outlined),
+          onPressed: openMyRequests,
+        ),
+        IconButton(
           key: const Key('catalog-agenda'),
           visualDensity: VisualDensity.compact,
           tooltip: 'Minha agenda',
@@ -1014,11 +1028,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
         IconButton(
           key: const Key('catalog-search-toggle'),
           visualDensity: VisualDensity.compact,
-          tooltip: showFilters ? 'Fechar filtros' : 'Filtrar corridas',
+          tooltip: showFilters ? 'Fechar a busca' : 'Buscar corridas',
           icon: Icon(showFilters ? Icons.close_rounded : Icons.search_rounded),
           onPressed: () {
-            if (showFilters && activeFilters.isNotEmpty) {
-              // Ao fechar os filtros, volta a lista completa (a frase digitada fica).
+            if (showFilters &&
+                (activeFilters.isNotEmpty || phrase.text.isNotEmpty)) {
+              // Ao fechar a busca, volta a lista completa (a frase e os filtros saem junto).
+              phrase.clear();
               for (final controller in fields.values) {
                 controller.clear();
               }
@@ -1038,65 +1054,45 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: TextField(
-              key: const Key('catalog-phrase'),
-              controller: phrase,
-              maxLength: 200,
-              buildCounter: (
-                _, {
-                required currentLength,
-                required isFocused,
-                maxLength,
-              }) => null,
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) {
-                load();
-              },
-              onChanged: onPhraseChanged,
-              decoration: InputDecoration(
-                labelText: 'Descreva a corrida',
-                hintText: 'Ex.: meia maratona em abril',
-                prefixIcon: const Icon(Icons.search_rounded),
-                suffixIcon: phrase.text.isEmpty
-                    ? null
-                    : IconButton(
-                        key: const Key('catalog-phrase-clear'),
-                        tooltip: 'Limpar a frase',
-                        icon: const Icon(Icons.close_rounded),
-                        onPressed: loading
-                            ? null
-                            : () {
-                                phrase.clear();
-                                load();
-                              },
-                      ),
+          // Descreva a corrida: só aparece ao tocar na lupa.
+          if (showFilters)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: TextField(
+                key: const Key('catalog-phrase'),
+                controller: phrase,
+                maxLength: 200,
+                buildCounter: (
+                  _, {
+                  required currentLength,
+                  required isFocused,
+                  maxLength,
+                }) => null,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) {
+                  load();
+                },
+                onChanged: onPhraseChanged,
+                decoration: InputDecoration(
+                  labelText: 'Descreva a corrida',
+                  hintText: 'Ex.: meia maratona em abril',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  suffixIcon: phrase.text.isEmpty
+                      ? null
+                      : IconButton(
+                          key: const Key('catalog-phrase-clear'),
+                          tooltip: 'Limpar a frase',
+                          icon: const Icon(Icons.close_rounded),
+                          onPressed: loading
+                              ? null
+                              : () {
+                                  phrase.clear();
+                                  load();
+                                },
+                        ),
+                ),
               ),
             ),
-          ),
-          // Sempre visíveis (não ficam escondidos atrás da lupa): pedir cadastro e acompanhar os pedidos.
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 12,
-              children: [
-                OutlinedButton.icon(
-                  key: const Key('catalog-request-new'),
-                  onPressed: loading ? null : requestRace,
-                  icon: const Icon(Icons.add_circle_outline),
-                  label: const Text('Pedir cadastro da corrida'),
-                ),
-                OutlinedButton.icon(
-                  key: const Key('catalog-request-mine'),
-                  onPressed: openMyRequests,
-                  icon: const Icon(Icons.assignment_outlined),
-                  label: const Text('Minhas solicitações'),
-                ),
-              ],
-            ),
-          ),
           if (showFilters)
             Card(
               child: Padding(
@@ -1980,6 +1976,22 @@ class _EditionScreenState extends State<EditionScreen> {
                         ),
                         onPressed: savingPlan ? null : () => setPlan('wanted'),
                       ),
+                      // Site da corrida em todas as corridas: o oficial, quando cadastrado; senão uma busca na internet.
+                      IconButton(
+                        key: const Key('hero-site'),
+                        tooltip: safeHttpsUri(body['officialUrl']) != null
+                            ? 'Site da corrida'
+                            : 'Buscar o site da corrida',
+                        color: Colors.white,
+                        icon: const Icon(Icons.public_rounded),
+                        onPressed: () => openLink(
+                          safeHttpsUri(body['officialUrl']) ??
+                              Uri.https('www.google.com', '/search', {
+                                'q':
+                                    '${body['name']} ${body['city'] ?? ''} site oficial',
+                              }),
+                        ),
+                      ),
                       IconButton(
                         tooltip: 'Compartilhar',
                         color: Colors.white,
@@ -2204,6 +2216,13 @@ class _EditionScreenState extends State<EditionScreen> {
     padding: const EdgeInsets.all(20),
     children: [
       header(body),
+      // Minha avaliação e meu comentário também aqui (resumo), para quem já concluiu esta corrida.
+      if (mine?['state'] == 'completed' && myReview != null)
+        MyReviewView(
+          key: const Key('about-my-review'),
+          review: myReview!,
+          showItems: false,
+        ),
       // Nota média e quantidade de avaliações; tocar leva à aba Avaliações.
       Builder(
         builder: (tabContext) => InkWell(
@@ -3138,12 +3157,16 @@ class MyReviewView extends StatelessWidget {
   /// Itens e comentário aparecem quando `expanded`; sem `onToggle` fica sempre aberto.
   final bool expanded;
   final VoidCallback? onToggle;
+
+  /// Sem os itens: só a nota média e o comentário (resumo, como na aba Sobre).
+  final bool showItems;
   const MyReviewView({
     super.key,
     required this.review,
     this.onEdit,
     this.expanded = true,
     this.onToggle,
+    this.showItems = true,
   });
 
   @override
@@ -3191,7 +3214,30 @@ class MyReviewView extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            if (expanded)
+            if (!showItems && ratings.values.whereType<num>().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    Stars(
+                      ratings.values.whereType<num>().reduce((a, b) => a + b) /
+                          ratings.values.whereType<num>().length,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      decimalPt(
+                        ratings.values.whereType<num>().reduce(
+                              (a, b) => a + b,
+                            ) /
+                            ratings.values.whereType<num>().length,
+                      ),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ),
+            if (expanded && showItems)
               for (final (key, label, icon) in _EditionScreenState.criteria)
                 if (ratings[key] is num)
                   Padding(
@@ -3213,9 +3259,10 @@ class MyReviewView extends StatelessWidget {
                       ],
                     ),
                   ),
-            if (expanded && comment != null && comment.isNotEmpty) ...[
+            // O comentário fica sempre à vista (mesmo com os itens recolhidos).
+            if (comment != null && comment.isNotEmpty) ...[
               const SizedBox(height: 8),
-              Text('“$comment”'),
+              Text('“$comment”', key: const Key('my-comment')),
             ],
             if (onEdit != null)
               Align(
@@ -3896,23 +3943,28 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             ),
             const SizedBox(height: 12),
             if (review != null) MyReviewView(review: review!),
+            // Sem botão "Salvar visibilidade": cada chave grava ao ser alterada.
             SwitchListTile(
+              key: const Key('show-time-switch'),
               value: draft['showTime'] != false,
               onChanged: saving
                   ? null
-                  : (value) => setState(() => draft['showTime'] = value),
+                  : (value) {
+                      setState(() => draft['showTime'] = value);
+                      saveVisibility();
+                    },
               title: const Text('Exibir meu tempo'),
             ),
             SwitchListTile(
+              key: const Key('show-placement-switch'),
               value: draft['showPlacement'] != false,
               onChanged: saving
                   ? null
-                  : (value) => setState(() => draft['showPlacement'] = value),
+                  : (value) {
+                      setState(() => draft['showPlacement'] = value);
+                      saveVisibility();
+                    },
               title: const Text('Exibir minha colocação'),
-            ),
-            FilledButton(
-              onPressed: saving ? null : saveVisibility,
-              child: const Text('Salvar visibilidade'),
             ),
             const Divider(height: 32),
             const Text(

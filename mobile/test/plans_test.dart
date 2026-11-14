@@ -520,6 +520,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       final before = calls.length;
+      // A frase só aparece ao tocar na lupa.
+      expect(find.byKey(const Key('catalog-phrase')), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const Key('catalog-phrase')),
         'circuito',
@@ -968,18 +972,35 @@ void searchTests() {
     expect(year.selected, {''}); // volta para "Todos"
   });
 
-  testWidgets('pedir cadastro e minhas solicitações ficam sempre visíveis', (
-    tester,
-  ) async {
-    await openForm(tester);
-    await tester.tap(
-      find.byKey(const Key('catalog-search-toggle')),
-    ); // fecha a lupa
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
-    expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
-    expect(find.text('Minhas solicitações'), findsOneWidget);
-  });
+  testWidgets(
+    'pedir cadastro e minhas solicitações são ícones na barra superior',
+    (tester) async {
+      await openForm(tester);
+      await tester.tap(
+        find.byKey(const Key('catalog-search-toggle')),
+      ); // fecha a lupa
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
+      expect(find.byTooltip('Pedir cadastro da corrida'), findsOneWidget);
+      expect(find.byTooltip('Minhas solicitações'), findsOneWidget);
+      // Ícones na barra, junto da agenda, da lupa e dos avisos (não são mais botões de texto no corpo).
+      final bar = tester.getRect(find.byType(AppBar));
+      for (final key in [
+        'catalog-request-new',
+        'catalog-request-mine',
+        'catalog-agenda',
+        'catalog-search-toggle',
+      ]) {
+        expect(
+          bar.contains(tester.getCenter(find.byKey(Key(key)))),
+          isTrue,
+          reason: key,
+        );
+      }
+      expect(find.text('Pedir cadastro da corrida'), findsNothing);
+    },
+  );
 
   testWidgets(
     'a lista mostra a imagem aprovada e só pede link de quem tem imagem',

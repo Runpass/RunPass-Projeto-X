@@ -1802,7 +1802,7 @@ void main() {
   });
 
   testWidgets(
-    'o campo de frase aparece sem abrir os filtros e busca pelo teclado',
+    'a lupa abre o campo de frase (Descreva a corrida) e busca pelo teclado',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -1825,13 +1825,13 @@ void main() {
         MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
       );
       await tester.pumpAndSettle();
-      // Sem tocar na lupa: o campo ja esta na tela, com o rotulo certo.
+      // Sem tocar na lupa, o campo não aparece; ao tocar, abre com o rótulo certo.
+      expect(find.byKey(const Key('catalog-phrase')), findsNothing);
+      expect(find.text('Descreva a corrida'), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('catalog-phrase')), findsOneWidget);
       expect(find.text('Descreva a corrida'), findsOneWidget);
-      expect(
-        find.text('Encontre sua próxima conquista'),
-        findsNothing,
-      ); // cartão de filtros fechado
       await tester.enterText(
         find.byKey(const Key('catalog-phrase')),
         'night run',
@@ -2258,9 +2258,6 @@ void ratingTests() {
             w is SegmentedButton<String> &&
             w.key.toString().contains('filter-year'),
       );
-      final mine = tester
-          .getBottomLeft(find.byKey(const Key('catalog-request-mine')))
-          .dy;
       final sortDate = tester.getRect(find.byKey(const Key('catalog-sort')));
       final sortStar = tester.getRect(
         find.byKey(const Key('catalog-sort-rating')),
@@ -2284,24 +2281,23 @@ void ratingTests() {
             .first,
       );
       expect(yearArea.right, greaterThan(viewMenu.right - 1));
-      // Espaços iguais: Minhas solicitações -> linha do público -> ano.
+      // Espaço entre a linha do público e o ano.
       final rowTop = sortDate.top < aud.top ? sortDate.top : aud.top;
       final rowBottom = sortDate.bottom > aud.bottom
           ? sortDate.bottom
           : aud.bottom;
-      final gap1 = rowTop - mine;
       final gap2 = yr.top - rowBottom;
-      expect(gap1, closeTo(12, 1.5));
+      expect(rowTop, greaterThan(0));
       expect(gap2, closeTo(12, 1.5));
       // Mais ar entre a linha do ano e o primeiro cartão da lista.
       final firstCard = tester.getTopLeft(find.byType(Card).first).dy;
       expect(firstCard - yr.bottom, greaterThan(15));
       expect(firstCard - yr.bottom, lessThan(30));
-      // O pedido de cadastro fica acima, sem encostar nos demais blocos.
+      // O pedido de cadastro agora é um ícone da barra superior, acima da lista.
       final request = tester.getRect(
         find.byKey(const Key('catalog-request-new')),
       );
-      expect(request.bottom, lessThanOrEqualTo(mine + 1));
+      expect(request.bottom, lessThanOrEqualTo(aud.top));
     },
   );
 
