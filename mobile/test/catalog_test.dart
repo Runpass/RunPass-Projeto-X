@@ -146,6 +146,8 @@ Future<void> pickTime(
 }
 
 void main() {
+  setUp(draftFormCache.clear);
+
   test('rótulos dos status do pedido, inclusive aguardando a carga', () {
     expect(requestStatusLabel('pending'), 'Em análise pela equipe');
     expect(

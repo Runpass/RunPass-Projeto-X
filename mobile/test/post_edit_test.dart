@@ -135,6 +135,8 @@ Future<void> open(
 }
 
 void main() {
+  setUp(draftFormCache.clear);
+
   testWidgets(
     'editar pela publicação ajusta a foto da publicação, não a da medalha',
     (tester) async {

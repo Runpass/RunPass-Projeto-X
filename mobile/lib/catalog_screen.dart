@@ -3564,6 +3564,10 @@ Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
       ),
     );
 
+/// Formulário do rascunho guardado ao sair da tela (por id do rascunho), para voltar de onde parou.
+/// Os testes limpam entre um e outro.
+final Map<String, Map<String, dynamic>> draftFormCache = {};
+
 class ParticipationDraftScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> initial;
@@ -3625,7 +3629,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   List<Map<String, dynamic>> distances = const [];
   String? distanceId;
   // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
-  static final Map<String, Map<String, dynamic>> formCache = {};
   int photoRevision = 0;
   // Comeca vazio (0): a pessoa precisa dar uma nota de 1 a 5 em cada criterio.
   final ratings = {
@@ -3655,11 +3658,13 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     );
     bib = TextEditingController(text: draft['bibNumber'] as String? ?? '');
     comment = TextEditingController();
-    final saved = formCache[draft['id']];
+    final saved = draftFormCache[draft['id']];
     if (saved != null && draft['state'] == 'draft') {
       imageReference = saved['imageReference'] as String?;
       declaredCompleted = saved['declaredCompleted'] == true;
       publishToFeed = saved['publishToFeed'] == true;
+      postImageReference = saved['postImageReference'] as String?;
+      postText.text = saved['postText'] as String? ?? '';
       comment.text = saved['comment'] as String? ?? '';
       ratings.addAll(Map<String, int>.from(saved['ratings'] as Map));
     }
@@ -3718,15 +3723,17 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   @override
   void dispose() {
     if (draft['state'] == 'draft') {
-      formCache[draft['id'] as String] = {
+      draftFormCache[draft['id'] as String] = {
         'imageReference': imageReference,
         'declaredCompleted': declaredCompleted,
         'publishToFeed': publishToFeed,
+        'postImageReference': postImageReference,
+        'postText': postText.text,
         'comment': comment.text,
         'ratings': Map<String, int>.from(ratings),
       };
     } else {
-      formCache.remove(draft['id']);
+      draftFormCache.remove(draft['id']);
     }
     time.dispose();
     placement.dispose();
