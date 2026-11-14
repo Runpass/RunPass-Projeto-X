@@ -25,6 +25,7 @@ from .models import (
     PatchEditionRequest,
     PatchParticipation,
     PatchProfile,
+    PublishParticipation,
     PutRacePlan,
     ReplaceReview,
     ResubmitEditionRequest,
@@ -462,6 +463,17 @@ def create_app(
             raise Unavailable()
         return participations.list(actor, state, limit, cursor)
 
+    @app.post("/participations/{id}/publish", operation_id="publishParticipation")
+    def publish_participation(
+        id: str,
+        body: PublishParticipation,
+        actor: Actor,
+        idempotency_key: IdempotencyKey,
+    ):
+        if participations is None:
+            raise Unavailable()
+        return participations.publish(actor, id, idempotency_key, body.model_dump())
+
     @app.post("/participations/{id}/complete", operation_id="completeParticipation")
     def complete_participation(
         id: str,
@@ -684,6 +696,12 @@ def create_app(
         if uploads is None:
             raise Unavailable()
         return uploads.medal_image(actor, id)
+
+    @app.get("/participations/{id}/post-image", operation_id="getParticipationPostImage")
+    def participation_post_image(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.post_image(actor, id)
 
     @app.get("/participations/{id}/display-image", operation_id="getParticipationDisplayImage")
     def participation_display_image(id: str, actor: Actor):

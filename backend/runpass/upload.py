@@ -157,6 +157,30 @@ class UploadService:
             "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
         }
 
+    def post_image(self, actor, participation_id):
+        """Link curto da foto da PUBLICACAO (outra foto, separada da medalha); so de quem pode ver a participacao."""
+
+        def work(read, write, account, now, replay):
+            owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
+            if not owner:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            subject = owner["owner"]
+            part = read(("history", "USER#" + subject, "P#" + participation_id + "#PART"))
+            if not part or not self.may_view(read, actor, subject, part):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            reference = part.get("postImageReference")
+            if part.get("state") != "completed" or not reference:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            return {"owner": subject, "reference": reference, "now": now}, {}
+
+        found = self.identity.transact(actor, "getPostImage", None, {}, work, admitted=True)
+        link = self.blobs.view_url(found["owner"], found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
+
     def medal_display_image(self, actor, participation_id):
         """Foto da prateleira: o recorte reposicionado pela pessoa quando existir, senao a
         mesma foto sanitizada de medal_image. A foto oficial nunca e alterada por isso."""

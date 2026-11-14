@@ -65,6 +65,23 @@ class SocialTests(unittest.TestCase):
             {"expectedVersion": profile["version"], "isPrivate": True},
         )
 
+    def test_post_view_flags_its_own_photo_and_prefers_the_text_written_when_publishing(self):
+        self.complete(self.ana, "pf1", "2026-11-05T10:00:00Z", comment="avaliacao da corrida")
+        part_key = ("history", "USER#ana", "P#pf1#PART")
+        post = self.social.post(self.bia, "pf1")
+        self.assertNotIn("hasPostImage", post)  # sem foto propria, vale a da medalha
+        self.assertEqual(post["comment"], "avaliacao da corrida")
+        part = self.store.get(part_key)
+        self.store.commit(
+            {part_key: part},
+            {part_key: {**part, "postImageReference": "img_" + "a" * 64, "postText": "Que dia!"}},
+        )
+        post = self.social.post(self.bia, "pf1")
+        self.assertTrue(post["hasPostImage"])
+        self.assertEqual(
+            post["comment"], "Que dia!"
+        )  # o texto do post vale mais que o da avaliacao
+
     # ---- suggestions ----
     def test_suggestions_without_query_exclude_self_and_people_already_followed(self):
         names = lambda a: sorted(p["username"] for p in self.social.suggestions(a)["items"])  # noqa: E731

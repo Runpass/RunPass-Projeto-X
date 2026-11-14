@@ -3554,6 +3554,9 @@ class ParticipationDraftScreen extends StatefulWidget {
   final Map<String, dynamic> initial;
   final PhotoSelector? photoSelector;
 
+  /// Seleção da foto da publicação no feed (outra foto, separada da medalha). Nos testes troca-se; sem ela, usa a galeria.
+  final PhotoSelector? postPhotoSelector;
+
   /// Foto já escolhida (ex.: a da medalha, vinda de "Adicionar medalha"): é enviada ao abrir o rascunho.
   final List<int>? initialPhoto;
 
@@ -3565,6 +3568,7 @@ class ParticipationDraftScreen extends StatefulWidget {
     required this.gateway,
     required this.initial,
     this.photoSelector,
+    this.postPhotoSelector,
     this.initialPhoto,
     this.initialPhotoCropper = cropRacePhoto,
   });
@@ -3581,6 +3585,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   String? message;
   bool saving = false, uploading = false;
   String? imageReference, pendingUploadId;
+  // Foto da publicação no feed: outra foto, separada da medalha.
+  String? postImageReference;
+  bool uploadingPost = false;
+  final postText = TextEditingController();
   bool declaredCompleted = false, publishToFeed = false;
   DateTime? editionDate;
   Map<String, dynamic>? review;
@@ -3693,6 +3701,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     placement.dispose();
     bib.dispose();
     comment.dispose();
+    postText.dispose();
     super.dispose();
   }
 
@@ -3857,6 +3866,73 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
+  /// Escolhe e envia a foto da PUBLICAÇÃO (outra foto qualquer; não pode ser a da medalha).
+  Future<void> selectPostPhoto() async {
+    setState(() {
+      uploadingPost = true;
+      message = null;
+    });
+    try {
+      List<int>? bytes;
+      final selector = widget.postPhotoSelector;
+      if (selector != null) {
+        bytes = await selector();
+      } else {
+        final file = await ImagePicker().pickImage(
+          source: ImageSource.gallery,
+          maxWidth: 2800,
+          maxHeight: 2800,
+          imageQuality: 88,
+          requestFullMetadata: false,
+        );
+        final original = await file?.readAsBytes();
+        if (original == null || !mounted) return;
+        bytes = await Navigator.of(context).push<List<int>>(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => RacePhotoCropScreen(image: original),
+          ),
+        );
+      }
+      if (bytes == null) return;
+      final isJpeg =
+          bytes.length >= 3 &&
+          bytes[0] == 0xff &&
+          bytes[1] == 0xd8 &&
+          bytes[2] == 0xff;
+      final isPng =
+          bytes.length >= 8 &&
+          bytes[0] == 0x89 &&
+          bytes[1] == 0x50 &&
+          bytes[2] == 0x4e &&
+          bytes[3] == 0x47;
+      if (!isJpeg && !isPng) throw const IdentityIssue('IMAGE_FORMAT_INVALID');
+      final result = await widget.gateway.uploadImage(
+        bytes,
+        isJpeg ? 'image/jpeg' : 'image/png',
+      );
+      if (result['state'] != 'valid') {
+        throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
+      }
+      final reference = result['imageReference'] as String;
+      if (reference == imageReference) {
+        message = 'Escolha uma foto diferente da medalha para a publicação.';
+        return;
+      }
+      postImageReference = reference;
+      message =
+          'Foto da publicação validada. Ela é separada da foto da medalha.';
+    } on IdentityIssue catch (issue) {
+      if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) {
+        message = 'O app não conseguiu abrir ou ler a foto escolhida. Tente de novo ou escolha outra.';
+      }
+    } finally {
+      if (mounted) setState(() => uploadingPost = false);
+    }
+  }
+
   Future<void> selectPhoto() async {
     setState(() {
       uploading = true;
@@ -3967,6 +4043,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   }
 
   Future<void> complete() async {
+    if (publishToFeed && postImageReference == null) {
+      setState(
+        () => message = 'Para publicar no feed, escolha a foto da publicação (outra foto, separada da medalha).',
+      );
+      return;
+    }
     if (imageReference == null || !declaredCompleted) {
       setState(
         () => message = 'Para concluir, anexe uma foto validada e marque "Declaro que concluí esta corrida".',
@@ -3991,6 +4073,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           'ratings': ratings,
           'medalImageReference': imageReference,
           'publishToFeed': publishToFeed,
+          if (publishToFeed) 'postImageReference': postImageReference,
+          if (publishToFeed && postText.text.trim().isNotEmpty)
+            'postText': postText.text.trim(),
           if (comment.text.isNotEmpty) 'comment': comment.text,
         },
       );
@@ -4310,13 +4395,47 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               title: const Text('Declaro que concluí esta corrida'),
             ),
             CheckboxListTile(
+              key: const Key('publish-to-feed'),
               value: publishToFeed,
               onChanged: (value) =>
                   setState(() => publishToFeed = value ?? false),
-              title: const Text(
-                'Publicar conquista quando o feed estiver disponível',
-              ),
+              title: const Text('Publicar esta conquista no feed'),
             ),
+            if (publishToFeed) ...[
+              // A publicação leva outra foto (qualquer uma), separada da foto da medalha.
+              OutlinedButton.icon(
+                key: const Key('select-post-photo'),
+                onPressed: saving || uploadingPost ? null : selectPostPhoto,
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: Text(
+                  uploadingPost
+                      ? 'Enviando foto da publicação...'
+                      : (postImageReference == null
+                            ? 'Escolher a foto da publicação'
+                            : 'Trocar a foto da publicação'),
+                ),
+              ),
+              if (postImageReference != null)
+                const Text(
+                  'Foto da publicação validada (separada da medalha).',
+                  key: Key('post-photo-ok'),
+                )
+              else
+                const Text(
+                  'Escolha outra foto para a publicação no feed; a da medalha não vai para o feed.',
+                  key: Key('post-photo-hint'),
+                ),
+              TextField(
+                key: const Key('post-text-field'),
+                controller: postText,
+                maxLength: 500,
+                minLines: 1,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Texto da publicação (opcional)',
+                ),
+              ),
+            ],
             if (imageReference == null)
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
@@ -4333,7 +4452,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 ),
               ),
             FilledButton(
-              onPressed: saving || !ratingsComplete || imageReference == null
+              onPressed:
+                  saving ||
+                      !ratingsComplete ||
+                      imageReference == null ||
+                      (publishToFeed && postImageReference == null)
                   ? null
                   : complete,
               child: Text(saving ? 'Concluindo...' : 'Concluir participação'),

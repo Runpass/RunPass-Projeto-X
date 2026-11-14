@@ -45,6 +45,11 @@ class RaceRecord {
   final Map<String, dynamic>? edition;
   const RaceRecord(this.participation, this.edition);
 
+  /// A publicação tem foto própria (separada da medalha): `/post-image`. Sem ela, vale a foto da medalha.
+  bool get hasPostImage =>
+      participation['hasPostImage'] == true ||
+      participation['postImageReference'] != null;
+
   String get name =>
       edition?['name'] as String? ?? 'Corrida ${participation['editionId']}';
   String? get date => edition?['date'] as String?;
@@ -706,6 +711,9 @@ class MedalPhoto extends StatelessWidget {
   final double size;
   final BoxFit fit;
   final bool useDisplayImage;
+
+  /// Foto da publicação no feed (separada da medalha); só use quando a participação tem uma.
+  final bool usePostImage;
   const MedalPhoto({
     super.key,
     required this.gateway,
@@ -713,16 +721,19 @@ class MedalPhoto extends StatelessWidget {
     this.size = 46,
     this.fit = BoxFit.cover,
     this.useDisplayImage = false,
+    this.usePostImage = false,
   });
 
   @override
   Widget build(BuildContext context) => SignedPhoto(
-    key: ValueKey('medal-photo-$participationId-$useDisplayImage'),
+    key: ValueKey(
+      'medal-photo-$participationId-$useDisplayImage-$usePostImage',
+    ),
     gateway: gateway,
     endpoint: participationId == null
         ? null
         : '/participations/${Uri.encodeComponent(participationId!)}/'
-              '${useDisplayImage ? 'display-image' : 'image'}',
+              '${usePostImage ? 'post-image' : (useDisplayImage ? 'display-image' : 'image')}',
     fallback: MedalArt(size: size),
     fit: fit,
   );

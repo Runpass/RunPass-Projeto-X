@@ -56,6 +56,7 @@ FeedEntry entryFromPost(
     post['participation'] as Map? ?? const {},
   );
   final author = Map<String, dynamic>.from(post['author'] as Map? ?? const {});
+  participation['hasPostImage'] = post['hasPostImage'] == true;
   final race = RaceRecord(participation, edition);
   return FeedEntry(
     postId: post['id'] as String?,
@@ -471,7 +472,9 @@ class _PostCardState extends State<PostCard> {
     if (id == null) return null;
     try {
       final reply = await widget.gateway
-          .request('/participations/${Uri.encodeComponent(id)}/image')
+          .request(
+            '/participations/${Uri.encodeComponent(id)}/${entry.race.hasPostImage ? 'post-image' : 'image'}',
+          )
           .timeout(const Duration(seconds: 6));
       final url = Uri.tryParse(reply['url'] as String? ?? '');
       if (url == null || url.scheme != 'https') return null;
@@ -747,6 +750,7 @@ class _PostCardState extends State<PostCard> {
                       participationId:
                           entry.race.participation['id'] as String?,
                       size: 72,
+                      usePostImage: entry.race.hasPostImage,
                     ),
                   ),
                 ),
@@ -884,6 +888,7 @@ class PostThumb extends StatelessWidget {
                   gateway: gateway,
                   participationId: entry.race.participation['id'] as String?,
                   size: 40,
+                  usePostImage: entry.race.hasPostImage,
                 ),
                 Positioned(
                   left: 0,
