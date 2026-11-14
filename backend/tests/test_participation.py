@@ -267,6 +267,53 @@ class ParticipationTests(unittest.TestCase):
         )
         self.assertNotIn("postText", cleared)
 
+    def test_replacing_the_medal_photo_drops_the_old_shelf_crop(self):
+        draft = self.service.create(self.actor, "c7", self.payload())
+        done = self.service.complete(self.actor, draft["id"], "d7", self.completion(draft))
+        crop_ref = "img_" + "d" * 64
+        new_ref = "img_" + "e" * 64
+        crop_key = self.runner_image(crop_ref)
+        new_key = self.runner_image(new_ref)
+        # a pessoa reposicionou a foto na prateleira (recorte da foto atual)
+        cropped = self.service.patch(
+            self.actor,
+            draft["id"],
+            "p9",
+            {"expectedVersion": done["version"], "medalDisplayImageReference": crop_ref},
+        )
+        self.assertEqual(cropped["medalDisplayImageReference"], crop_ref)
+        self.assertEqual(self.store.get(crop_key)["refs"], 1)
+        # trocar a foto da medalha: o recorte era da foto antiga e sai (senao a prateleira mostra a velha)
+        swapped = self.service.patch(
+            self.actor,
+            draft["id"],
+            "p10",
+            {"expectedVersion": cropped["version"], "medalImageReference": new_ref},
+        )
+        self.assertEqual(swapped["medalImageReference"], new_ref)
+        self.assertNotIn("medalDisplayImageReference", swapped)
+        self.assertEqual(self.store.get(crop_key)["refs"], 0)
+        self.assertEqual(self.store.get(new_key)["refs"], 1)
+
+    def test_replacing_the_medal_photo_keeps_a_crop_sent_in_the_same_request(self):
+        draft = self.service.create(self.actor, "c8", self.payload())
+        done = self.service.complete(self.actor, draft["id"], "d8", self.completion(draft))
+        new_ref = "img_" + "f" * 64
+        crop_ref = "img_" + "9" * 64
+        self.runner_image(new_ref)
+        self.runner_image(crop_ref)
+        swapped = self.service.patch(
+            self.actor,
+            draft["id"],
+            "p11",
+            {
+                "expectedVersion": done["version"],
+                "medalImageReference": new_ref,
+                "medalDisplayImageReference": crop_ref,
+            },
+        )
+        self.assertEqual(swapped["medalDisplayImageReference"], crop_ref)
+
     def test_patch_post_photo_needs_a_published_participation(self):
         draft = self.service.create(self.actor, "c6", self.payload())
         done = self.service.complete(self.actor, draft["id"], "d6", self.completion(draft))

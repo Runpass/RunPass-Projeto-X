@@ -428,4 +428,45 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'voltar da tela da medalha recarrega a foto da prateleira (foto trocada aparece)',
+    (tester) async {
+      tall(tester);
+      final (gateway, b) = await setup();
+      b.participations = [
+        {
+          'id': 'c1',
+          'editionId': 'E1',
+          'distanceId': '5k',
+          'state': 'completed',
+          'version': 4,
+          'publishToFeed': false,
+          'completedAt': '2026-11-01T10:00:00Z',
+          'medalImageReference': 'img_medalha',
+        },
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      int shelfPhotoRequests() => b.calls
+          .where((c) => c == 'GET /participations/c1/display-image')
+          .length;
+      final first = shelfPhotoRequests();
+      expect(first, greaterThanOrEqualTo(1));
+      await tester.tap(find.text('Corrida E1').first);
+      await tester.pumpAndSettle();
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      // Ao voltar a prateleira busca de novo a foto (antes ficava com a foto velha na tela).
+      expect(shelfPhotoRequests(), greaterThan(first));
+    },
+  );
 }
