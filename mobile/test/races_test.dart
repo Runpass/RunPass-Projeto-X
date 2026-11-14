@@ -689,6 +689,83 @@ void main() {
     },
   );
 
+  testWidgets(
+    'corrida não encontrada: botão para pesquisar o nome na internet',
+    (tester) async {
+      final opened = <Uri>[];
+      final previous = linkOpener;
+      linkOpener = (uri) async {
+        opened.add(uri);
+        return true;
+      };
+      addTearDown(() => linkOpener = previous);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['MARATONA PAI DE ACUCAR']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      final web = find.byKey(const Key('medal-scan-web-search'));
+      await tester.ensureVisible(web);
+      expect(web, findsOneWidget);
+      await tester.tap(web);
+      await tester.pumpAndSettle();
+      expect(opened.single.host, 'www.google.com');
+      expect(
+        opened.single.queryParameters['q'],
+        'MARATONA PAI DE ACUCAR corrida',
+      );
+      // O nome corrigido na tela é o que vai na pesquisa; sem nome, o botão desabilita.
+      final field = find.byKey(const Key('medal-edit-name'));
+      await tester.ensureVisible(field);
+      await tester.enterText(field, 'Maratona Pão de Açúcar');
+      await tester.pump();
+      await tester.ensureVisible(web);
+      await tester.tap(web);
+      await tester.pumpAndSettle();
+      expect(
+        opened.last.queryParameters['q'],
+        'Maratona Pão de Açúcar corrida',
+      );
+      await tester.enterText(field, '   ');
+      await tester.pump();
+      expect(tester.widget<OutlinedButton>(web).onPressed, isNull);
+    },
+  );
+
+  testWidgets('corrida encontrada: não oferece a pesquisa na internet', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: await runner(
+            found: [
+              {
+                'id': 'a',
+                'name': 'Corrida A',
+                'date': '2026-09-01',
+                'city': 'São Paulo',
+                'state': 'SP',
+              },
+            ],
+          ),
+          medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+          medalTextReader: _FakeReader(['Corrida A']),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tapAdd(tester);
+    expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
+    expect(find.byKey(const Key('medal-scan-web-search')), findsNothing);
+  });
+
   testWidgets('aparelho sem leitor de texto avisa e ainda leva às corridas', (
     tester,
   ) async {

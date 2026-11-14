@@ -435,6 +435,27 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     }
   }
 
+  /// Não achou a corrida no catálogo: pesquisa o nome (como está nos campos) na internet, no navegador.
+  Future<void> searchWeb() async {
+    final term = name.text.trim();
+    if (term.isEmpty) return;
+    var opened = false;
+    try {
+      opened = await linkOpener(
+        Uri.https('www.google.com', '/search', {'q': '$term corrida'}),
+      );
+    } on Exception {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível abrir o navegador. Tente de novo.'),
+        ),
+      );
+    }
+  }
+
   Future<void> pickDate() async {
     final current = DateTime.tryParse(requestDateToIso(date.text.trim()) ?? '');
     final picked = await showDatePicker(
@@ -734,6 +755,17 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
               onPressed: openCatalog,
               icon: const Icon(Icons.search_rounded),
               label: const Text('Procurar a corrida nas corridas'),
+            ),
+            const SizedBox(height: 8),
+            // Não está no catálogo: ajuda a achar o nome certo e o site da corrida na internet.
+            ListenableBuilder(
+              listenable: name,
+              builder: (context, _) => OutlinedButton.icon(
+                key: const Key('medal-scan-web-search'),
+                onPressed: name.text.trim().isEmpty ? null : searchWeb,
+                icon: const Icon(Icons.public_rounded),
+                label: const Text('Pesquisar a corrida na internet'),
+              ),
             ),
           ] else ...[
             OutlinedButton.icon(
