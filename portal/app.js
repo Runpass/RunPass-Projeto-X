@@ -98,44 +98,99 @@ function iniciarSessao(t, assunto) {
 
 // ---- pedidos de corrida -----------------------------------------------------------------------
 
-/** Corrige o nome de uma corrida que já está no catálogo (ex.: pedido de usuário escrito errado). */
+/** Corrige o nome de uma corrida que já está no catálogo (ex.: pedido de usuário escrito errado):
+ *  1) busca a corrida pelo nome errado (botão Buscar ou Enter); 2) escolhe na lista; 3) edita o nome e salva. */
 function formularioRenomear() {
+  const busca = el('input', { type: 'search', maxlength: '160', autocomplete: 'off', placeholder: 'Nome (mesmo errado) ou parte dele, ex.: pai de acucar' });
+  const buscar = el('button', { type: 'button', class: 'ok' }, 'Buscar corrida');
+  const estado = el('p', { class: 'meta', 'aria-live': 'polite' });
+  const lista = el('ul', { class: 'escolhas', role: 'listbox' });
+  const edicao = el('div', { hidden: true });
   let escolhida = null;
-  const novoNome = el('input', { type: 'text', maxlength: '160', autocomplete: 'off', placeholder: 'Nome correto da corrida' });
-  const salvar = el('button', { type: 'button', class: 'ok', disabled: true }, 'Salvar nome');
-  const erro = el('p', { class: 'aviso erro', hidden: true });
-  const seletor = seletorEdicao('', (e) => {
-    escolhida = e ? e.id : null;
-    salvar.disabled = !escolhida;
-    if (e) novoNome.value = e.name || '';
-  });
-  salvar.addEventListener('click', async () => {
-    if (!escolhida) return;
-    salvar.disabled = true;
-    erro.hidden = true;
-    try {
-      const corpo = montarRenomear(novoNome.value);
-      await api(`/admin/editions/${encodeURIComponent(escolhida)}`, { method: 'PATCH', body: JSON.stringify(corpo) });
-      aviso(`Nome salvo: ${corpo.name}.`, 'ok');
-      seletor.pesquisar();
-    } catch (falha) {
-      if (token || !falha.codigo) {
-        erro.hidden = false;
-        erro.textContent = falha.codigo ? mensagem(falha.codigo) : falha.message;
+  let itemAtual = null;
+
+  const mostrarEdicao = (e, li) => {
+    escolhida = e;
+    itemAtual = li;
+    for (const outro of lista.children) outro.setAttribute('aria-selected', 'false');
+    li.setAttribute('aria-selected', 'true');
+    const atual = el('p', { class: 'meta' }, `Corrida escolhida: ${e.name} · ${dataBr(e.date)} · ${e.city}/${e.state}`);
+    const novoNome = el('input', { type: 'text', maxlength: '160', autocomplete: 'off', value: e.name || '' });
+    const salvar = el('button', { type: 'button', class: 'ok' }, 'Salvar nome');
+    const erro = el('p', { class: 'aviso erro', hidden: true });
+    salvar.addEventListener('click', async () => {
+      salvar.disabled = true;
+      erro.hidden = true;
+      try {
+        const corpo = montarRenomear(novoNome.value);
+        await api(`/admin/editions/${encodeURIComponent(escolhida.id)}`, { method: 'PATCH', body: JSON.stringify(corpo) });
+        escolhida.name = corpo.name;
+        itemAtual.textContent = `${corpo.name} · ${dataBr(escolhida.date)} · ${escolhida.city}/${escolhida.state}`;
+        atual.textContent = `Corrida escolhida: ${corpo.name} · ${dataBr(escolhida.date)} · ${escolhida.city}/${escolhida.state}`;
+        aviso(`Nome salvo: ${corpo.name}.`, 'ok');
+      } catch (falha) {
+        if (token || !falha.codigo) {
+          erro.hidden = false;
+          erro.textContent = falha.codigo ? mensagem(falha.codigo) : falha.message;
+        }
+      } finally {
+        salvar.disabled = false;
       }
+    });
+    edicao.hidden = false;
+    edicao.replaceChildren(atual, el('label', {}, 'Nome correto', novoNome), erro, el('div', { class: 'acoes' }, salvar));
+    novoNome.focus();
+  };
+
+  const pesquisar = async () => {
+    const texto = busca.value.trim();
+    escolhida = null;
+    edicao.hidden = true;
+    edicao.replaceChildren();
+    lista.replaceChildren();
+    if (texto.length < 2) {
+      estado.textContent = 'Digite pelo menos 2 letras do nome.';
+      return;
+    }
+    buscar.disabled = true;
+    estado.textContent = 'Buscando...';
+    try {
+      const { items } = await api(`/admin/editions?q=${encodeURIComponent(texto)}&limit=20`);
+      estado.textContent = items.length
+        ? `${items.length} corrida(s) encontrada(s). Escolha a que você quer corrigir.`
+        : 'Nenhuma corrida encontrada. Tente menos palavras ou outra grafia.';
+      lista.replaceChildren(
+        ...items.map((e) => {
+          const li = el('li', { role: 'option', 'aria-selected': 'false', tabindex: '0', 'data-id': e.id }, `${e.name} · ${dataBr(e.date)} · ${e.city}/${e.state}`);
+          li.addEventListener('click', () => mostrarEdicao(e, li));
+          li.addEventListener('keydown', (ev) => ev.key === 'Enter' && mostrarEdicao(e, li));
+          return li;
+        }),
+      );
+    } catch (falha) {
+      estado.textContent = '';
+      if (token) aviso(mensagem(falha.codigo), 'erro');
     } finally {
-      salvar.disabled = !escolhida;
+      buscar.disabled = false;
+    }
+  };
+  buscar.addEventListener('click', pesquisar);
+  busca.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      pesquisar();
     }
   });
   return el(
     'article',
-    { class: 'cartao' },
+    { class: 'cartao', id: 'corrigir-nome' },
     el('h2', {}, 'Corrigir o nome de uma corrida do catálogo'),
-    el('p', { class: 'ajuda' }, 'Procure a corrida, escolha na lista e digite o nome certo. Só o nome muda; data, local e inscritos continuam iguais.'),
-    seletor.caixa,
-    el('label', {}, 'Nome correto', novoNome),
-    erro,
-    salvar,
+    el('p', { class: 'ajuda' }, 'Busque a corrida pelo nome que está errado, escolha na lista e edite. Só o nome muda; data, local e inscritos continuam iguais.'),
+    el('label', {}, 'Buscar corrida', busca),
+    el('div', { class: 'acoes' }, buscar),
+    estado,
+    lista,
+    edicao,
   );
 }
 
