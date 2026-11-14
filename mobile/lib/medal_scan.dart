@@ -119,6 +119,68 @@ Map<String, String> medalDetails(List<String> lines, List<String> queries) {
   return details;
 }
 
+/// Distância da participação: a única da corrida, a que bate com os km informados ou, na dúvida, pergunta
+/// ali mesmo (lista da corrida). Devolve nulo se a corrida não tem distâncias ou a pessoa desistir.
+Future<Map?> chooseDistance(
+  BuildContext context,
+  List<Map> options, {
+  double? km,
+}) async {
+  if (options.isEmpty) return null;
+  if (options.length == 1) return options.first;
+  if (km != null) {
+    for (final d in options) {
+      if (((d['kilometers'] as num) - km).abs() < 0.05) return d;
+    }
+  }
+  return showModalBottomSheet<Map>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheet) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Qual distância você correu?',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+          ),
+          for (final d in options)
+            ListTile(
+              key: Key('distance-option-${d['id']}'),
+              leading: const Icon(Icons.directions_run, color: runPassOrange),
+              title: Text(distanceLabel((d['kilometers'] as num).toDouble())),
+              onTap: () => Navigator.pop(sheet, d),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Distâncias de uma corrida; se a lista não trouxe (só um resumo), busca o detalhe.
+Future<List<Map>> editionDistances(
+  IdentityGateway gateway,
+  String editionId,
+  Map<String, dynamic>? known,
+) async {
+  List<Map> pick(Map? source) => [
+    for (final d in (source?['distances'] as List? ?? const []))
+      if (d is Map && d['kilometers'] is num) d,
+  ];
+  final fromList = pick(known);
+  if (fromList.isNotEmpty) return fromList;
+  try {
+    return pick(
+      await gateway.request('/editions/${Uri.encodeComponent(editionId)}'),
+    );
+  } on Exception {
+    return const [];
+  }
+}
+
 /// Foto da medalha: pergunta câmera ou galeria, lê o texto e procura a corrida no catálogo.
 /// Devolve o caminho da foto, ou nulo se a pessoa desistir.
 typedef MedalPhotoPicker = Future<String?> Function(BuildContext context);
@@ -290,27 +352,24 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     final id = chosenId;
     if (id == null || edition.isEmpty) return;
     final km = double.tryParse(distance.text.trim().replaceAll(',', '.'));
-    final options = [
-      for (final d in (edition['distances'] as List? ?? const []))
-        if (d is Map && d['kilometers'] is num) d,
-    ];
-    Map? picked;
-    if (options.length == 1) {
-      picked = options.first;
-    } else if (km != null) {
-      for (final d in options) {
-        if (((d['kilometers'] as num) - km).abs() < 0.05) picked = d;
-      }
-    }
     final navigator = Navigator.of(context);
+    setState(() => working = true);
+    final options = await editionDistances(widget.gateway, id, edition);
+    if (!mounted) return;
+    setState(() => working = false);
+    final picked = await chooseDistance(context, options, km: km);
+    if (!mounted) return;
     if (picked == null) {
-      // Não dá para saber a distância: a tela da corrida deixa escolher e marcar "Já corri".
-      await navigator.push(
-        MaterialPageRoute<void>(
-          builder: (_) => EditionScreen(gateway: widget.gateway, editionId: id),
-        ),
-      );
-      return;
+      if (options.isEmpty) {
+        // Corrida sem distâncias no cadastro: a tela da corrida é o caminho.
+        await navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                EditionScreen(gateway: widget.gateway, editionId: id),
+          ),
+        );
+      }
+      return; // desistiu de escolher a distância
     }
     setState(() => working = true);
     List<int>? photo;
@@ -342,13 +401,20 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
       if (!mounted) return;
       setState(() => working = false);
       if (issue.code == 'PARTICIPATION_EXISTS') {
-        // Já existe participação nesta corrida: abre a corrida, onde ela está.
+        // Já existe participação nesta corrida: abre a participação (rascunho ou concluída) para completar/editar.
+        final existing = (await loadMyEditions(widget.gateway))[id];
+        if (!mounted) return;
         await navigator.push(
           MaterialPageRoute<void>(
-            builder: (_) =>
-                EditionScreen(gateway: widget.gateway, editionId: id),
+            builder: (_) => existing == null
+                ? EditionScreen(gateway: widget.gateway, editionId: id)
+                : ParticipationDraftScreen(
+                    gateway: widget.gateway,
+                    initial: existing,
+                  ),
           ),
         );
+        if (mounted) navigator.pop(true);
       } else {
         setState(() => note = catalogError(issue));
       }
