@@ -1488,6 +1488,9 @@ class MedalCollectionScreen extends StatefulWidget {
   final MedalPhotoPicker medalPhotoPicker;
   final MedalTextReader medalTextReader;
 
+  /// Seleção de foto do rascunho da participação (só os testes trocam).
+  final PhotoSelector? draftPhotoSelector;
+
   /// Carrega a foto da medalha provisória. Trocável nos testes (o link assinado não roda lá).
   final Future<List<int>?> Function(IdentityGateway, String) pendingPhotoLoader;
   const MedalCollectionScreen({
@@ -1497,6 +1500,7 @@ class MedalCollectionScreen extends StatefulWidget {
     this.openCropScreen = openMedalCropScreen,
     this.medalPhotoPicker = pickMedalPhotoPath,
     this.medalTextReader = const PlatformMedalTextReader(),
+    this.draftPhotoSelector,
     this.pendingPhotoLoader = loadRequestMedalPhoto,
   });
 
@@ -2147,6 +2151,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
           gateway: widget.gateway,
           photoPath: path,
           reader: widget.medalTextReader,
+          draftPhotoSelector: widget.draftPhotoSelector,
         ),
       ),
     );

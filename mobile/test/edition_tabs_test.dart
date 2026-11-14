@@ -220,6 +220,33 @@ void main() {
     },
   );
 
+  testWidgets(
+    'Sobre: minha avaliação e comentário ficam logo abaixo da média geral',
+    (tester) async {
+      final gateway = await gatewayWith(
+        completedByMe: true,
+        reviews: {
+          'items': [],
+          'summary': {'reviewCount': 3, 'average': 4.5},
+        },
+      );
+      await open(tester, gateway, 'Sobre');
+      final rating = tester.getRect(find.byKey(const Key('about-rating')));
+      final mine = tester.getRect(find.byKey(const Key('about-my-review')));
+      expect(
+        mine.top,
+        greaterThanOrEqualTo(rating.bottom),
+      ); // embaixo da média geral, não em cima
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('about-my-review')),
+          matching: find.text('“Gostei muito”'),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('Avaliações sem notas ainda mostra o cartão da média, vazio', (
     tester,
   ) async {
