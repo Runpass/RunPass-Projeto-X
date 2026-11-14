@@ -113,6 +113,52 @@ void main() {
     },
   );
 
+  testWidgets(
+    'aviso da equipe (sem autor) mostra o motivo e leva a Minhas solicitações',
+    (tester) async {
+      const texto =
+          'Sua sugestão da corrida "Corrida X" não foi aprovada pela equipe: duplicada. '
+          'As informações enviadas deixam de aparecer para você.';
+      final gateway = await gatewayWith((uri, method, headers, body) async {
+        if (uri.path == '/me/notifications') {
+          return const JsonReply(200, {
+            'unreadCount': 1,
+            'items': [
+              {
+                'id': 'request_rejected:r1:2026-11-14T10:00:00Z',
+                'kind': 'request_rejected',
+                'createdAt': '2026-11-14T10:00:00Z',
+                'unread': true,
+                'text': texto,
+                'requestId': 'r1',
+              },
+            ],
+          });
+        }
+        if (uri.path == '/me/edition-requests') {
+          return const JsonReply(200, {'items': []});
+        }
+        return const JsonReply(200, {});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: NotificationsScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('team-notice-r1')), findsOneWidget);
+      expect(find.text(texto), findsOneWidget);
+      expect(
+        notificationText({
+          'kind': 'banner_dismissed',
+          'text': 'Banner não aprovado.',
+        }),
+        'Banner não aprovado.',
+      );
+      await tester.tap(find.byKey(const Key('team-notice-r1')));
+      await tester.pumpAndSettle();
+      expect(find.text('Minhas solicitações'), findsOneWidget);
+    },
+  );
+
   testWidgets('sem avisos a tela explica o que aparece ali', (tester) async {
     final gateway = await gatewayWith(
       (uri, method, headers, body) async =>

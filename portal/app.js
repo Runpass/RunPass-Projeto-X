@@ -240,12 +240,12 @@ async function verificarVinculos() {
 }
 
 /** Carrega a imagem enviada no pedido (rota protegida) e a mostra em `alvo`. */
-async function carregarImagemPedido(id, alvo) {
+async function carregarImagemPedido(id, alvo, tipo = 'image') {
   try {
-    const r = await fetch(`${cfg.apiUrl}/admin/edition-requests/${encodeURIComponent(id)}/image`, { headers: { Authorization: `Bearer ${token}` } });
+    const r = await fetch(`${cfg.apiUrl}/admin/edition-requests/${encodeURIComponent(id)}/${tipo === 'medal' ? 'medal-image' : 'image'}`, { headers: { Authorization: `Bearer ${token}` } });
     if (r.status === 401) return sair('INVALID_TOKEN');
     if (!r.ok) throw new Error('erro');
-    alvo.replaceChildren(el('img', { class: 'previa', src: URL.createObjectURL(await r.blob()), alt: 'Banner enviado pelo usuário' }));
+    alvo.replaceChildren(el('img', { class: 'previa', src: URL.createObjectURL(await r.blob()), alt: tipo === 'medal' ? 'Foto da medalha enviada pelo usuário' : 'Banner enviado pelo usuário' }));
   } catch (falha) {
     if (token) alvo.replaceChildren(el('p', { class: 'aviso erro' }, 'Não foi possível carregar a imagem enviada.'));
   }
@@ -330,19 +330,16 @@ function cartaoPedido(pedido, aguardando = false) {
     el('div', { class: 'meta' }, `Pedido ${pedido.id} · versão ${pedido.version}`),
     ...(((pedido.details || {}).imageReference)
       ? (() => {
-          const medalha = !!(pedido.details || {}).medalPhoto;
-          const caixa = el('div', {}, el('p', { class: 'meta' }, medalha ? 'Carregando a foto da medalha...' : 'Carregando o banner enviado...'));
+          const caixa = el('div', {}, el('p', { class: 'meta' }, 'Carregando o banner enviado...'));
           carregarImagemPedido(pedido.id, caixa);
-          return [
-            el(
-              'div',
-              { class: 'meta' },
-              medalha
-                ? 'Foto da MEDALHA do usuário (medalha provisória: é privada, não é banner e não será publicada; serve para conferir a corrida):'
-                : 'Banner enviado pelo usuário (só entra na fila de publicação depois que o pedido for aprovado e vinculado):',
-            ),
-            caixa,
-          ];
+          return [el('div', { class: 'meta' }, 'Banner enviado pelo usuário (só entra na fila de publicação depois que o pedido for aprovado e vinculado):'), caixa];
+        })()
+      : []),
+    ...(((pedido.details || {}).medalImageReference)
+      ? (() => {
+          const caixa = el('div', {}, el('p', { class: 'meta' }, 'Carregando a foto da medalha...'));
+          carregarImagemPedido(pedido.id, caixa, 'medal');
+          return [el('div', { class: 'meta' }, 'Foto da MEDALHA do usuário (medalha provisória: é privada, não é banner e não será publicada; serve para conferir a corrida):'), caixa];
         })()
       : []),
     el(

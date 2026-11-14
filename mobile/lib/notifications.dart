@@ -7,13 +7,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import 'catalog_screen.dart' show timeAgo;
+import 'edition_requests.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
 
+/// Avisos da equipe não têm autor: só texto.
+bool isTeamNotice(String? kind) =>
+    kind == 'request_rejected' || kind == 'banner_dismissed';
+
 /// Texto de um aviso, igual na tela e no aviso do celular.
 String notificationText(Map<String, dynamic> item) {
+  // Avisos da equipe (sugestão de corrida ou banner não aprovada): a mensagem já vem pronta, com o motivo.
+  if (isTeamNotice(item['kind'] as String?)) {
+    return item['text'] as String? ?? 'A equipe analisou a sua sugestão.';
+  }
   final actor = item['actor'] as Map? ?? const {};
   final name = actor['displayName'] as String? ?? 'Alguém';
   return switch (item['kind']) {
@@ -37,6 +46,7 @@ IconData notificationIcon(String? kind) => switch (kind) {
   'comment' => Icons.chat_bubble_rounded,
   'comment_like' => Icons.favorite_rounded,
   'reply' => Icons.reply_rounded,
+  'request_rejected' || 'banner_dismissed' => Icons.info_outline_rounded,
   _ => Icons.emoji_events_rounded,
 };
 
@@ -640,8 +650,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> open(Map<String, dynamic> item) async {
-    final actor = item['actor'] as Map;
     final kind = item['kind'] as String?;
+    if (isTeamNotice(kind)) {
+      // Aviso da equipe: leva a Minhas solicitações, onde dá para corrigir, reenviar ou excluir.
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+        ),
+      );
+      if (mounted) load();
+      return;
+    }
+    final actor = item['actor'] as Map;
     final postId = item['postId'] as String?;
     if (postId != null &&
         kind != 'follow' &&
@@ -666,7 +686,58 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (mounted) load();
   }
 
+  Widget teamRow(Map<String, dynamic> item) {
+    final created = DateTime.tryParse(item['createdAt'] as String? ?? '');
+    final unread = item['unread'] == true;
+    return Card(
+      key: Key('notification-${item['id']}'),
+      color: unread
+          ? (Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xff2a2018)
+                : const Color(0xffffeee6))
+          : null,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => open(item),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: context.softFill,
+                child: Icon(
+                  notificationIcon(item['kind'] as String?),
+                  color: runPassOrange,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      notificationText(item),
+                      key: Key('team-notice-${item['requestId']}'),
+                    ),
+                    if (created != null)
+                      Text(
+                        timeAgo(created),
+                        style: TextStyle(fontSize: 12, color: context.muted),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget row(Map<String, dynamic> item) {
+    if (isTeamNotice(item['kind'] as String?)) return teamRow(item);
     final actor = item['actor'] as Map;
     final created = DateTime.tryParse(item['createdAt'] as String? ?? '');
     final unread = item['unread'] == true;

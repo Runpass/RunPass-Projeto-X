@@ -2147,12 +2147,126 @@
           }
         },
         "x-requires-beta-admission": true
+      },
+      "delete": {
+        "operationId": "deleteEditionRequest",
+        "summary": "A pessoa exclui o proprio pedido de cadastro, em qualquer situacao. A corrida ja criada no catalogo continua; saem o registro do pedido, as filas da equipe e a reserva das imagens.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pedido excluido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "deleted"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
       }
     },
     "/edition-requests/{id}/medal-image": {
       "get": {
         "operationId": "getEditionRequestMedalImage",
         "summary": "Link temporario e assinado para a foto da medalha provisoria do proprio pedido de cadastro; so o dono. Nunca serve o original.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/edition-requests/{id}/banner-image": {
+      "get": {
+        "operationId": "getEditionRequestBannerImage",
+        "summary": "Link temporario e assinado para o banner que a pessoa sugeriu no proprio pedido, enquanto a equipe ainda nao decidiu (visivel so para ela). Depois da decisao, 404.",
         "parameters": [
           {
             "name": "id",
@@ -7518,10 +7632,9 @@
             "type": "string",
             "description": "Banner suggested by the runner: an image already uploaded and validated by the same runner. Never published automatically; the team approves it with credit and rights."
           },
-          "medalPhoto": {
-            "type": "boolean",
-            "default": false,
-            "description": "True quando a imagem e a foto da medalha da pessoa (medalha provisoria ate a equipe decidir o pedido). Fica privada, fora da fila de banners, e nunca vira banner nem fica publica. Exige imageReference."
+          "medalImageReference": {
+            "type": "string",
+            "description": "Foto da medalha da pessoa (medalha provisoria ate a equipe decidir o pedido): imagem ja enviada e tratada pela mesma pessoa. Fica privada, fora da fila de banners, e nunca vira banner nem fica publica. Diferente de imageReference."
           }
         }
       },
@@ -9570,7 +9683,9 @@
               "comment",
               "post",
               "comment_like",
-              "reply"
+              "reply",
+              "request_rejected",
+              "banner_dismissed"
             ]
           },
           "createdAt": {
@@ -9592,19 +9707,23 @@
           },
           "text": {
             "type": "string",
-            "description": "Trecho do comentario (ate 140 caracteres)."
+            "description": "Trecho do comentario (ate 140 caracteres). Nos avisos da equipe (request_rejected, banner_dismissed) e a mensagem completa, com o motivo."
           },
           "commentId": {
             "type": "string"
+          },
+          "requestId": {
+            "type": "string",
+            "description": "Pedido de cadastro ou sugestao de banner a que o aviso se refere (kinds request_rejected e banner_dismissed, que nao tem autor)."
           }
         },
         "required": [
           "id",
           "kind",
           "createdAt",
-          "unread",
-          "actor"
-        ]
+          "unread"
+        ],
+        "description": "`actor` so falta nos avisos da equipe (request_rejected e banner_dismissed): sugestao de corrida ou banner nao aprovada."
       },
       "NotificationPage": {
         "type": "object",

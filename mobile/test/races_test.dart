@@ -360,11 +360,13 @@ void main() {
         find.byKey(const Key('medal-edit-date')),
         '15/03/2026',
       );
-      await tester.enterText(
-        find.byKey(const Key('medal-edit-city')),
-        'Santos',
-      );
-      await tester.enterText(find.byKey(const Key('medal-edit-state')), 'sp');
+      // Estado e cidade na rolagem (sem digitar): confirma a primeira da lista.
+      await tester.ensureVisible(find.byKey(const Key('medal-edit-location')));
+      await tester.tap(find.byKey(const Key('medal-edit-location')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('location-done')));
+      await tester.pumpAndSettle();
+      expect(find.text('AC - Acrelândia'), findsOneWidget);
       final conclude = find.byKey(const Key('medal-scan-request'));
       await tester.ensureVisible(conclude);
       await tester.tap(conclude);
@@ -373,8 +375,8 @@ void main() {
       for (final text in ['Meia São Paulo 2026', '15/03/2026', '10']) {
         expect(find.text(text), findsWidgets, reason: text);
       }
-      // Cidade e UF aparecem juntas no seletor do formulário.
-      expect(find.textContaining('Santos'), findsWidgets);
+      // Cidade e UF escolhidas na rolagem seguem para o formulário.
+      expect(find.textContaining('Acrelândia'), findsWidgets);
     },
   );
 
@@ -556,6 +558,10 @@ void main() {
       find.textContaining('Sua primeira medalha aparecerá aqui'),
       findsOneWidget,
     );
+    // A tela do Rafael continua inteira: filtros e totais, com o convite no lugar da prateleira.
+    expect(find.byKey(const Key('medals-list')), findsOneWidget);
+    expect(find.text('Por ano'), findsOneWidget);
+    expect(find.byKey(const Key('medals-empty')), findsOneWidget);
     expect(find.byType(CatalogScreen), findsNothing);
     await tester.tap(find.byKey(const Key('medal-add-first')));
     await tester.pumpAndSettle();
@@ -581,7 +587,7 @@ void main() {
       'city': 'São Paulo',
       'distanceKm': 10,
       'imageReference': 'img_$id',
-      'medalPhoto': true,
+      'medalImageReference': 'img_med_$id',
     },
     'linkedEditionId': ?linked,
     'reason': ?reason,

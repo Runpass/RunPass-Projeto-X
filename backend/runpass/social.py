@@ -991,12 +991,47 @@ class SocialService:
         for part in self._authors_feed(actor, None, following)[: self.NOTIFICATION_POSTS]:
             if part["owner"] != me:
                 add("post", part.get("completedAt", ""), part["owner"], part)
+        self._request_result_notifications(me, since, items)
         # Pedidos de amizade sempre primeiro (e nunca saem por idade ou limite); o resto, novo primeiro.
         items = [i for i in items if i["id"] not in dismissed]
         items.sort(key=lambda i: i["createdAt"], reverse=True)
         requests = [i for i in items if i["kind"] == "friend_request"]
         others = [i for i in items if i["kind"] != "friend_request"]
         return requests + others[: self.NOTIFICATION_LIMIT]
+
+    def _request_result_notifications(self, me, since, items):
+        """Avisos de sugestao nao aprovada (corrida ou banner): dizem o que aconteceu e o motivo. Derivados dos
+        proprios pedidos da pessoa; nao tem autor (sao da equipe), so texto."""
+        for sk, row in self._list("history", "USER#" + me, "EREQ#", 100):
+            request_id = sk.split("#", 1)[1]
+            name = (row.get("details") or {}).get("name") or "sua sugestao"
+            at = row.get("updatedAt", "")
+            if at < since:
+                continue
+            if row.get("status") == "rejected":
+                reason = (row.get("reason") or "").strip()
+                kind, text = (
+                    "request_rejected",
+                    f'Sua sugestão da corrida "{name}" não foi aprovada pela equipe'
+                    + (f": {reason}" if reason else ".")
+                    + " As informações enviadas deixam de aparecer para você. Você pode corrigir e reenviar em Minhas solicitações.",
+                )
+            elif row.get("bannerState") == "dismissed":
+                kind, text = (
+                    "banner_dismissed",
+                    f'O banner que você sugeriu para "{name}" não foi aprovado pela equipe e não será publicado. A imagem deixa de aparecer para você.',
+                )
+            else:
+                continue
+            items.append(
+                {
+                    "id": f"{kind}:{request_id}:{at}",
+                    "kind": kind,
+                    "createdAt": at,
+                    "text": text,
+                    "requestId": request_id,
+                }
+            )
 
     def _comment_notifications(self, actor, add):
         """Curtidas e respostas nos meus comentarios (dos ultimos que fiz)."""

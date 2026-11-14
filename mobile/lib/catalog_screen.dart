@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -17,6 +18,7 @@ import 'location_picker.dart';
 import 'my_races.dart';
 import 'notifications.dart';
 import 'organizer_post.dart';
+import 'pending_requests.dart';
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 
@@ -464,6 +466,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
   final phrase = TextEditingController();
   Map<String, dynamic>? searchInfo;
+  List<Map<String, dynamic>> pendingRequests = const [];
   final items = <Map<String, dynamic>>[];
   Map<String, Map<String, dynamic>> mine = {};
   // Situação da pessoa em cada corrida (desejada ou inscrita): edição -> `wanted` | `registered`.
@@ -497,7 +500,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
     super.initState();
     load();
     loadMine();
+    loadPending();
     loadViewPreferences();
+  }
+
+  Future<void> loadPending() async {
+    final found = await loadPendingRequests(widget.gateway);
+    if (mounted) setState(() => pendingRequests = found);
   }
 
   Future<void> loadViewPreferences() async {
@@ -916,11 +925,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
     if (!more && error == null) await loadRest();
   }
 
-  void openMyRequests() => Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
-    ),
-  );
+  Future<void> openMyRequests() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+      ),
+    );
+    if (mounted) loadPending(); // pode ter excluído ou corrigido alguma
+  }
 
   Future<void> requestRace() async {
     final sent = await Navigator.of(context).push<Map<String, dynamic>>(
@@ -936,6 +948,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
       ),
     );
     if (sent != null && mounted) {
+      loadPending();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Pedido enviado. Acompanhe em "Minhas solicitações".'),
@@ -1094,6 +1107,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
               ],
             ),
+          ),
+          // Sugestões minhas que a equipe ainda não decidiu: visíveis só para mim, até a decisão.
+          PendingRequestsSection(
+            gateway: widget.gateway,
+            requests: pendingRequests,
           ),
           if (showFilters)
             Card(
@@ -1415,6 +1433,10 @@ class EditionScreen extends StatefulWidget {
   /// Busca e desenha o embed do post do organizador. Trocáveis nos testes (a WebView não roda lá).
   final OEmbedFetcher? oembedFetcher;
   final OEmbedViewBuilder? embedBuilder;
+
+  /// Carrega o meu banner sugerido ainda sem decisão. Trocável nos testes (o link assinado não roda lá).
+  final Future<List<int>?> Function(IdentityGateway gateway, String editionId)
+  provisionalBannerLoader;
   const EditionScreen({
     super.key,
     required this.gateway,
@@ -1422,6 +1444,7 @@ class EditionScreen extends StatefulWidget {
     this.bannerSelector,
     this.oembedFetcher,
     this.embedBuilder,
+    this.provisionalBannerLoader = loadProvisionalBanner,
   });
   @override
   State<EditionScreen> createState() => _EditionScreenState();
@@ -1455,6 +1478,7 @@ class _EditionScreenState extends State<EditionScreen> {
   Map<String, dynamic>? plan;
   bool savingPlan = false;
   String? bannerUrl, bannerCredit;
+  List<int>? provisionalBanner;
   Map<String, dynamic>? myReview;
 
   static const criteria = [
@@ -1494,6 +1518,7 @@ class _EditionScreenState extends State<EditionScreen> {
     if (mounted && edition != null) {
       loadReviews();
       loadBanner();
+      loadProvisional();
       loadParticipants();
       loadRegistrants();
       loadPhotos();
@@ -1511,6 +1536,15 @@ class _EditionScreenState extends State<EditionScreen> {
 
   /// Banner aprovado pela equipe (cópia guardada pelo +1Pódio, com crédito). Sem banner ou com
   /// falha, o degradê de sempre continua: a imagem nunca bloqueia a tela.
+  /// Meu banner sugerido, ainda sem decisão: provisório e só meu.
+  Future<void> loadProvisional() async {
+    final bytes = await widget.provisionalBannerLoader(
+      widget.gateway,
+      widget.editionId,
+    );
+    if (mounted && bytes != null) setState(() => provisionalBanner = bytes);
+  }
+
   Future<void> loadBanner() async {
     if (edition?['imageReference'] == null) return;
     try {
@@ -1902,7 +1936,22 @@ class _EditionScreenState extends State<EditionScreen> {
                 errorBuilder: (_, _, _) => const SizedBox.shrink(),
               ),
             ),
-          if (bannerUrl != null)
+          if (bannerUrl == null && provisionalBanner != null)
+            Positioned.fill(
+              child: ColorFiltered(
+                colorFilter: const ColorFilter.mode(
+                  Color(0x66000000),
+                  BlendMode.darken,
+                ),
+                child: Image.memory(
+                  Uint8List.fromList(provisionalBanner!),
+                  key: const Key('hero-provisional'),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          if (bannerUrl != null || provisionalBanner != null)
             const Positioned.fill(
               child: DecoratedBox(
                 decoration: BoxDecoration(
@@ -1964,6 +2013,30 @@ class _EditionScreenState extends State<EditionScreen> {
                     ),
                   ),
                 ),
+                if (bannerUrl == null && provisionalBanner != null)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.lock_outline_rounded,
+                          size: 14,
+                          color: Colors.white70,
+                        ),
+                        SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Seu banner · em análise pela equipe (só você vê)',
+                            key: Key('hero-provisional-note'),
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (bannerUrl != null && bannerCredit != null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),

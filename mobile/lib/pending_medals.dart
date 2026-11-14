@@ -18,7 +18,8 @@ Future<List<Map<String, dynamic>>> loadPendingMedals(
     );
     return [
       for (final item in (page['items'] as List? ?? const []))
-        if (((item as Map)['details'] as Map?)?['medalPhoto'] == true &&
+        if (((item as Map)['details'] as Map?)?['medalImageReference'] !=
+                null &&
             item['kind'] != 'banner')
           Map<String, dynamic>.from(item),
     ];
