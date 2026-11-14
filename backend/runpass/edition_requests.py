@@ -468,7 +468,9 @@ class EditionRequestReview:
                 found.append(body)
         return found
 
-    def approve_and_load(self, actor, request_id, expected_version, state=None, distances=None):
+    def approve_and_load(
+        self, actor, request_id, expected_version, state=None, distances=None, name=None
+    ):
         """Aprova o pedido: acha a corrida no catalogo e vincula; se nao existir, CRIA a partir dos dados do pedido
         (a pessoa da equipe confere UF e distancias antes) e vincula; se faltar dado essencial, fica aguardando.
 
@@ -495,10 +497,12 @@ class EditionRequestReview:
             if item["status"] == AWAITING:  # continua aguardando: nada muda
                 return "awaiting", projection(item)
             return "awaiting", self._await(actor, request_id, ikey, item)
-        edition_id = f"pedido-{slug(details['name'])[:60]}-{details['date']}-{request_id[-6:]}"
+        # A equipe pode corrigir o nome escrito errado antes de criar a corrida.
+        final_name = " ".join((name or details["name"]).split())
+        edition_id = f"pedido-{slug(final_name)[:60]}-{details['date']}-{request_id[-6:]}"
         payload = {
             "id": edition_id,
-            "name": details["name"],
+            "name": final_name,
             "date": details["date"],
             "city": details["city"],
             "state": uf,

@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, montarAprovacao, montarRenomear, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro, montarBannerArquivo, dimensoesEnvio, resumoImporte,
 } from './lib.js';
 
@@ -98,6 +98,47 @@ function iniciarSessao(t, assunto) {
 
 // ---- pedidos de corrida -----------------------------------------------------------------------
 
+/** Corrige o nome de uma corrida que já está no catálogo (ex.: pedido de usuário escrito errado). */
+function formularioRenomear() {
+  let escolhida = null;
+  const novoNome = el('input', { type: 'text', maxlength: '160', autocomplete: 'off', placeholder: 'Nome correto da corrida' });
+  const salvar = el('button', { type: 'button', class: 'ok', disabled: true }, 'Salvar nome');
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const seletor = seletorEdicao('', (e) => {
+    escolhida = e ? e.id : null;
+    salvar.disabled = !escolhida;
+    if (e) novoNome.value = e.name || '';
+  });
+  salvar.addEventListener('click', async () => {
+    if (!escolhida) return;
+    salvar.disabled = true;
+    erro.hidden = true;
+    try {
+      const corpo = montarRenomear(novoNome.value);
+      await api(`/admin/editions/${encodeURIComponent(escolhida)}`, { method: 'PATCH', body: JSON.stringify(corpo) });
+      aviso(`Nome salvo: ${corpo.name}.`, 'ok');
+      seletor.pesquisar();
+    } catch (falha) {
+      if (token || !falha.codigo) {
+        erro.hidden = false;
+        erro.textContent = falha.codigo ? mensagem(falha.codigo) : falha.message;
+      }
+    } finally {
+      salvar.disabled = !escolhida;
+    }
+  });
+  return el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, 'Corrigir o nome de uma corrida do catálogo'),
+    el('p', { class: 'ajuda' }, 'Procure a corrida, escolha na lista e digite o nome certo. Só o nome muda; data, local e inscritos continuam iguais.'),
+    seletor.caixa,
+    el('label', {}, 'Nome correto', novoNome),
+    erro,
+    salvar,
+  );
+}
+
 async function carregarPedidos() {
   const lista = $('pedidos');
   lista.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
@@ -123,6 +164,7 @@ async function carregarPedidos() {
             ...espera.map((p) => cartaoPedido(p, true)),
           ]
         : []),
+      formularioRenomear(),
     );
   } catch (erro) {
     if (token) {
@@ -279,6 +321,7 @@ async function decidir(pedido, corpo, botao) {
 /** Aprova: cria a corrida com os dados do pedido (a equipe confere estado e distâncias) e vincula o usuário. */
 function painelAprovacao(area, pedido, aguardando) {
   const d = pedido.details || {};
+  const nome = el('input', { type: 'text', maxlength: '160', autocomplete: 'off', value: d.name || '' });
   const estado = el('input', { type: 'text', maxlength: '2', placeholder: 'UF, ex.: SP', autocomplete: 'off', value: d.state || '' });
   const distancias = el('input', { type: 'text', maxlength: '80', placeholder: 'ex.: 5, 10', autocomplete: 'off', value: d.distanceKm ? String(d.distanceKm) : '' });
   const erro = el('p', { class: 'aviso erro', hidden: true });
@@ -304,7 +347,7 @@ function painelAprovacao(area, pedido, aguardando) {
     let corpo;
     let corpoBanner = null;
     try {
-      corpo = montarAprovacao({ versao: pedido.version, estado: estado.value, distancias: distancias.value });
+      corpo = montarAprovacao({ versao: pedido.version, estado: estado.value, distancias: distancias.value, nome: nome.value.trim() === (d.name || '') ? '' : nome.value });
       // Valida o banner ANTES de criar a corrida, para não criar e depois falhar.
       if (pronto) corpoBanner = montarBannerArquivo({ editionId: 'a-definir', base64: pronto.base64, tipo: pronto.tipo, credito: credito.value, nota: nota.value, confirmou: confirmaDireito.checked });
       erro.hidden = true;
@@ -338,6 +381,7 @@ function painelAprovacao(area, pedido, aguardando) {
   });
   area.replaceChildren(
     el('p', { class: 'meta' }, `A corrida será criada como "${d.name || ''}", ${dataBr(d.date)}, ${d.city || ''}. A distância veio do usuário, sem fonte: confira antes de aprovar.`),
+    el('label', {}, 'Nome da corrida (corrija se o usuário escreveu errado)', nome),
     el('label', {}, 'Estado (UF)', estado),
     el('label', {}, 'Distâncias em km (separe por vírgula)', distancias),
     el('p', { class: 'meta' }, 'Se a mesma corrida já estiver no catálogo (mesma data e nome parecido), o usuário é só vinculado a ela. Sem o estado, o pedido fica aguardando a carga.'),

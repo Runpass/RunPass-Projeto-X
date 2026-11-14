@@ -226,7 +226,11 @@ class CatalogImportTests(unittest.TestCase):
     def test_new_filters_name_contains_registration_and_radius(self):
         self.run_csv(dry_run=False)
         self.assertEqual([e["id"] for e in self.listed(q="parque")], ["csv-sp-example-002"])
-        self.assertEqual([e["id"] for e in self.listed(q="DESAFIO exemplo")], [])  # texto contiguo
+        # Palavras em qualquer ordem: todas precisam estar no nome (antes exigia texto contiguo).
+        self.assertEqual(
+            [e["id"] for e in self.listed(q="DESAFIO exemplo")], ["csv-sp-example-002"]
+        )
+        self.assertEqual([e["id"] for e in self.listed(q="DESAFIO inexistente")], [])
         self.assertEqual(
             [e["id"] for e in self.listed(registrationStatus="open")], ["csv-sp-example-002"]
         )
