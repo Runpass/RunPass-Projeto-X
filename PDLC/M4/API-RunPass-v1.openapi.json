@@ -7029,6 +7029,16 @@
             "maxLength": 200,
             "nullable": true,
             "description": "Identificador opaco de uma foto recortada pela pessoa so para a prateleira; null volta ao recorte automatico da foto oficial da medalha (medalImageReference), que nunca é alterada."
+          },
+          "postImageReference": {
+            "type": "string",
+            "description": "Nova foto da publicacao (ajustada/recortada); so participacao concluida e ja publicada. Diferente da foto da medalha."
+          },
+          "postText": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Texto da publicacao; nulo apaga."
           }
         }
       },

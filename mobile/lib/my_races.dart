@@ -633,6 +633,11 @@ void forgetMedalDisplayImage(String participationId) => _photoLinks.remove(
   '/participations/${Uri.encodeComponent(participationId)}/display-image',
 );
 
+/// Esquece o link da foto da publicação, depois de ajustar/trocar.
+void forgetPostPhoto(String participationId) => _photoLinks.remove(
+  '/participations/${Uri.encodeComponent(participationId)}/post-image',
+);
+
 void forgetBanner(String profileId) =>
     _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/banner');
 

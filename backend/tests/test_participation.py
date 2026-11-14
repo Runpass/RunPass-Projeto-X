@@ -222,6 +222,64 @@ class ParticipationTests(unittest.TestCase):
             self.service.publish(other, draft["id"], "q2", body)
         self.assertEqual(erro.exception.code, "PARTICIPATION_NOT_FOUND")
 
+    def test_patch_replaces_the_post_photo_and_text_of_a_published_participation(self):
+        draft = self.service.create(self.actor, "c5", self.payload())
+        self.runner_image(self.POST_REF)
+        self.runner_image(self.POST_REF2)
+        done = self.service.complete(
+            self.actor,
+            draft["id"],
+            "d5",
+            self.completion(
+                draft, publishToFeed=True, postImageReference=self.POST_REF, postText="antes"
+            ),
+        )
+        old_key = ("operations", "USER#owner", "IMAGE#" + self.POST_REF)
+        new_key = ("operations", "USER#owner", "IMAGE#" + self.POST_REF2)
+        changed = self.service.patch(
+            self.actor,
+            draft["id"],
+            "p5",
+            {
+                "expectedVersion": done["version"],
+                "postImageReference": self.POST_REF2,
+                "postText": "depois",
+            },
+        )
+        self.assertEqual(changed["postImageReference"], self.POST_REF2)
+        self.assertEqual(changed["postText"], "depois")
+        self.assertEqual(changed["medalImageReference"], "img-valid")  # a medalha nao mudou
+        self.assertEqual((self.store.get(old_key)["refs"], self.store.get(new_key)["refs"]), (0, 1))
+        # a foto da medalha nao serve; texto pode ser apagado; foto de outra pessoa e recusada
+        with self.assertRaises(Problem) as erro:
+            self.service.patch(
+                self.actor,
+                draft["id"],
+                "p6",
+                {"expectedVersion": changed["version"], "postImageReference": "img-valid"},
+            )
+        self.assertIn(erro.exception.code, {"POST_IMAGE_MUST_DIFFER", "INVALID_INPUT"})
+        cleared = self.service.patch(
+            self.actor,
+            draft["id"],
+            "p7",
+            {"expectedVersion": changed["version"], "postText": None},
+        )
+        self.assertNotIn("postText", cleared)
+
+    def test_patch_post_photo_needs_a_published_participation(self):
+        draft = self.service.create(self.actor, "c6", self.payload())
+        done = self.service.complete(self.actor, draft["id"], "d6", self.completion(draft))
+        self.runner_image(self.POST_REF)
+        with self.assertRaises(Problem) as erro:  # concluida, mas nao publicada
+            self.service.patch(
+                self.actor,
+                draft["id"],
+                "p8",
+                {"expectedVersion": done["version"], "postImageReference": self.POST_REF},
+            )
+        self.assertEqual(erro.exception.code, "NOT_PUBLISHED")
+
     def test_deleting_releases_the_post_photo_too(self):
         draft = self.service.create(self.actor, "c4", self.payload())
         self.runner_image(self.POST_REF)

@@ -852,6 +852,7 @@ class ParticipationService:
                 "medalCity",
                 "medalState",
                 "medalYear",
+                "postText",
             ):
                 if field not in payload:
                     continue
@@ -861,6 +862,21 @@ class ParticipationService:
                     item[field] = payload[field]
             if observed:
                 item["catalogVersion"] = observed["version"]
+            if payload.get("postImageReference") is not None:
+                new_ref = payload["postImageReference"]
+                if item.get("state") != "completed" or not item.get("publishToFeed"):
+                    raise Problem(409, "NOT_PUBLISHED")
+                old_ref = item.get("postImageReference")
+                if new_ref != old_ref:
+                    new_key, new_image = self._post_image(
+                        read, actor.subject, new_ref, item.get("medalImageReference")
+                    )
+                    old_key = ("operations", pk, "IMAGE#" + old_ref) if old_ref else None
+                    old_image = read(old_key) if old_key else None
+                    write(new_key, {**new_image, "refs": new_image.get("refs", 0) + 1})
+                    if old_image:
+                        write(old_key, {**old_image, "refs": max(0, old_image.get("refs", 0) - 1)})
+                    item["postImageReference"] = new_ref
             if "medalImageReference" in payload:
                 self._replace_medal_image(
                     read, write, pk, participation_id, item, payload["medalImageReference"]

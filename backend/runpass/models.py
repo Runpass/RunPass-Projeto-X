@@ -127,6 +127,9 @@ class PatchParticipation(Input):
     showTime: bool | None = None
     showPlacement: bool | None = None
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    # Foto e texto da publicacao no feed (so de participacao concluida e ja publicada).
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
     # Modelo de medalha (catalogo fixo de imagens); None volta ao padrao
     # (circular_prata_azul). Customizacao visual da legenda abaixo tambem opcional.
     medalFrameId: (
