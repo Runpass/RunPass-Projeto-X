@@ -300,21 +300,6 @@ void main() {
         reason: 'minha avaliação sem $label',
       );
     }
-    // a média geral e a quantidade de avaliações ficam junto dos itens
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('summary-overall')),
-        matching: find.text('Média geral'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('summary-overall')),
-        matching: find.textContaining('avaliaç'),
-      ),
-      findsOneWidget,
-    );
     // recolher a geral
     await tester.tap(find.byKey(const Key('summary-details-toggle')));
     await tester.pumpAndSettle();

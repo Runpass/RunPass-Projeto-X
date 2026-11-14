@@ -1829,10 +1829,19 @@ class _EditionScreenState extends State<EditionScreen> {
   Future<void> loadReviews() async {
     setState(() => loadingReviews = true);
     try {
-      final page = await widget.gateway.request(
-        '/editions/${Uri.encodeComponent(widget.editionId)}/reviews',
+      final path = '/editions/${Uri.encodeComponent(widget.editionId)}/reviews';
+      var page = await widget.gateway.request(
+        path,
         query: {'limit': '50', 'distanceId': ?selectedDistance},
       );
+      // A nota da prova soma todas as distâncias: se a distância escolhida ainda não tem
+      // avaliações, mostra as da prova toda em vez de itens vazios.
+      final first = page['summary'];
+      if (selectedDistance != null &&
+          first is Map &&
+          (first['reviewCount'] as num? ?? 0) == 0) {
+        page = await widget.gateway.request(path, query: {'limit': '50'});
+      }
       if (mounted) {
         reviews = (page['items'] as List? ?? const [])
             .cast<Map<String, dynamic>>();
@@ -2586,37 +2595,8 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
-  Widget _overallRow(num? value, int count) => Padding(
-    key: const Key('summary-overall'),
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
-      children: [
-        const Icon(Icons.star_rounded, size: 20),
-        const SizedBox(width: 12),
-        const Expanded(
-          child: Text(
-            'Média geral',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ),
-        Text(
-          value == null
-              ? '-'
-              : '${decimalPt(value)} · ${thousands(count)} ${count == 1 ? 'avaliação' : 'avaliações'}',
-          style: const TextStyle(fontWeight: FontWeight.w800),
-        ),
-      ],
-    ),
-  );
-
   Widget reviewsTab(Map<String, dynamic> body) {
     final loaded = reviews;
-    final overall = overallValue(body);
-    final overallCount =
-        (reviewSummary?['reviewCount'] as num?)?.toInt() ??
-        ((body['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ??
-        loaded?.length ??
-        0;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -2631,7 +2611,6 @@ class _EditionScreenState extends State<EditionScreen> {
           Column(
             key: const Key('summary-details'),
             children: [
-              _overallRow(overall, overallCount),
               for (final (key, label, icon) in criteria)
                 bar(label, icon, summaryCriterion(key)),
             ],
