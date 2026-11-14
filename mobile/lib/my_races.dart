@@ -1864,6 +1864,107 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     }
   }
 
+  /// Menu do lápis da medalha em análise/aprovada: continuar a participação, ver a solicitação ou excluir.
+  Future<void> pendingMenu(Map<String, dynamic> request) async {
+    final approved =
+        request['status'] == 'approved' || request['status'] == 'linked';
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (approved && request['linkedEditionId'] != null)
+              ListTile(
+                key: const Key('pending-menu-continue'),
+                leading: const Icon(Icons.edit_note_rounded),
+                title: const Text('Atualizar minha participação'),
+                subtitle: const Text(
+                  'Tempo, percurso, avaliação e a foto da medalha',
+                ),
+                onTap: () => Navigator.pop(sheet, 'continue'),
+              ),
+            ListTile(
+              key: const Key('pending-menu-request'),
+              leading: const Icon(Icons.assignment_outlined),
+              title: const Text('Ver a solicitação'),
+              onTap: () => Navigator.pop(sheet, 'request'),
+            ),
+            ListTile(
+              key: const Key('pending-menu-delete'),
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text(
+                'Excluir medalha',
+                style: TextStyle(color: Colors.red),
+              ),
+              onTap: () => Navigator.pop(sheet, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (choice) {
+      case 'continue':
+        await concludePending(request);
+      case 'request':
+        _openRequests();
+      case 'delete':
+        await deletePending(request);
+    }
+  }
+
+  /// Exclui a medalha em análise/aprovada: sai a solicitação e a foto enviada com ela. A corrida do catálogo
+  /// continua (dá para cadastrar a medalha de novo escolhendo a corrida).
+  Future<void> deletePending(Map<String, dynamic> request) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Excluir medalha?'),
+        content: const Text(
+          'A solicitação e a foto da medalha enviadas serão excluídas. A corrida continua no catálogo, e você pode cadastrar a medalha de novo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('pending-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.gateway.request(
+        '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
+        method: 'DELETE',
+        query: {'expectedVersion': '${request['version']}'},
+      );
+      _pendingPhotos.remove(request['id']);
+      _reloadShelf();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Medalha excluída.')),
+      );
+    } on IdentityIssue catch (issue) {
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível excluir. Verifique a internet e tente de novo.',
+          ),
+        ),
+      );
+    }
+  }
+
   void _openRequests() => Navigator.of(context)
       .push(
         MaterialPageRoute<void>(
@@ -2011,9 +2112,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               key: Key('pending-edit-$id'),
               customBorder: const CircleBorder(),
               // Aprovada: edita/conclui a minha participação. Em análise: abre a solicitação (editar ou excluir).
-              onTap: approved && linked != null
-                  ? () => concludePending(request)
-                  : _openRequests,
+              onTap: () => pendingMenu(request),
               child: const Padding(
                 padding: EdgeInsets.all(5),
                 child: Icon(Icons.edit, size: 14, color: Colors.white),
