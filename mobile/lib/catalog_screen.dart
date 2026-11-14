@@ -3732,11 +3732,13 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             ),
           ),
         );
+        // Pilha zerada: a prateleira abre nova e já com a medalha concluída, sem uma tela velha por baixo
+        // (ao voltar, ela mostrava a lista de antes) e sem seta de voltar.
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute<void>(
             builder: (_) => MedalCollectionScreen(gateway: widget.gateway),
           ),
-          (route) => route.isFirst,
+          (route) => false,
         );
       }
     } on IdentityIssue catch (issue) {
@@ -4001,9 +4003,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 child: const Text('Consultar processamento da foto'),
               ),
           ],
-          if (imageReference != null &&
-              draft['state'] == 'draft' &&
-              !upcoming) ...[
+          // Avaliação e comentário aparecem antes da foto (dá para preencher já); concluir só com a foto validada.
+          if (draft['state'] == 'draft' && !upcoming) ...[
             const Divider(height: 32),
             const Text(
               'Avaliação obrigatória',
@@ -4039,6 +4040,14 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 'Publicar conquista quando o feed estiver disponível',
               ),
             ),
+            if (imageReference == null)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Anexe a foto da medalha (Selecionar foto) para poder concluir.',
+                  key: Key('needs-photo-hint'),
+                ),
+              ),
             if (!ratingsComplete)
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
@@ -4047,7 +4056,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 ),
               ),
             FilledButton(
-              onPressed: saving || !ratingsComplete ? null : complete,
+              onPressed: saving || !ratingsComplete || imageReference == null
+                  ? null
+                  : complete,
               child: Text(saving ? 'Concluindo...' : 'Concluir participação'),
             ),
           ],

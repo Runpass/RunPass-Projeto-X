@@ -692,6 +692,12 @@ void main() {
         'PATCH /participations/draft-1',
         'POST /participations/draft-1/complete',
       ]);
+      // Ao concluir, a pilha é zerada: a prateleira abre nova (com a medalha) e sem tela velha por baixo.
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
+      expect(
+        tester.state<NavigatorState>(find.byType(Navigator)).canPop(),
+        isFalse,
+      );
     },
   );
 

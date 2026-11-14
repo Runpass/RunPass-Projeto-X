@@ -643,6 +643,17 @@ class _SignedPhotoState extends State<SignedPhoto> {
     load();
   }
 
+  /// A lista reaproveita este estado quando muda a ordem (uma medalha nova entra na frente): sem recarregar
+  /// ao trocar o endereço, a foto de uma medalha aparecia em outra.
+  @override
+  void didUpdateWidget(SignedPhoto oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.endpoint != widget.endpoint) {
+      url = null;
+      load();
+    }
+  }
+
   Future<void> load() async {
     final endpoint = widget.endpoint;
     if (endpoint == null) return;
@@ -706,6 +717,7 @@ class MedalPhoto extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SignedPhoto(
+    key: ValueKey('medal-photo-$participationId-$useDisplayImage'),
     gateway: gateway,
     endpoint: participationId == null
         ? null
