@@ -78,40 +78,76 @@ FeedEntry entryFromPost(
 typedef ShareFunction = Future<ShareResult> Function(ShareParams params);
 ShareFunction shareFunction = (params) => SharePlus.instance.share(params);
 
-/// Imagem usada quando a medalha nao tem foto (ou nao foi possivel baixa-la). Trocavel nos testes.
+/// Monta a imagem da publicacao para compartilhar. Trocavel nos testes.
 typedef ShareCardBuilder = Future<Uint8List> Function({
   required String title,
+  String? caption,
   required String line,
   required String author,
+  Uint8List? photoBytes,
 });
 ShareCardBuilder shareCardBuilder = buildShareCard;
 
-/// Cartao quadrado com trofeu, nome da corrida e distancia/tempo. Garante que o compartilhamento
-/// sempre leve uma imagem, que e o que Instagram e Facebook aceitam.
+const double _cardSide = 1080;
+const double _cardHeaderHeight = 320;
+const double _cardFooterHeight = 320;
+const double _cardPhotoHeight = 1350 - _cardHeaderHeight - _cardFooterHeight;
+const double _cardTotalHeight =
+    _cardHeaderHeight + _cardPhotoHeight + _cardFooterHeight;
+
+/// Recorte "cover" (preenche sem distorcer, cortando o excesso) da imagem de origem para caber
+/// exatamente no retangulo de destino.
+Rect _coverSrcRect(ui.Image image, Size dst) {
+  final iw = image.width.toDouble();
+  final ih = image.height.toDouble();
+  final srcAspect = iw / ih;
+  final dstAspect = dst.width / dst.height;
+  if (srcAspect > dstAspect) {
+    final cropWidth = ih * dstAspect;
+    return Rect.fromLTWH((iw - cropWidth) / 2, 0, cropWidth, ih);
+  }
+  final cropHeight = iw / dstAspect;
+  return Rect.fromLTWH(0, (ih - cropHeight) / 2, iw, cropHeight);
+}
+
+/// Imagem da propria publicacao: titulo da corrida, texto que o autor escreveu ao publicar
+/// (quando houver), a foto da medalha (quando houver) e a distancia/tempo da corrida (quando
+/// houver), abaixo da foto. Garante que o compartilhamento sempre leve uma imagem, que e o que
+/// Instagram e Facebook aceitam.
 Future<Uint8List> buildShareCard({
   required String title,
+  String? caption,
   required String line,
   required String author,
+  Uint8List? photoBytes,
 }) async {
-  const side = 1080.0;
   final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, side, side));
-  canvas.drawRect(
-    const Rect.fromLTWH(0, 0, side, side),
-    Paint()
-      ..shader = ui.Gradient.linear(Offset.zero, const Offset(side, side), [
-        runPassNavy,
-        const Color(0xff5a2a1c),
-        runPassOrange,
-      ]),
+  final canvas = Canvas(
+    recorder,
+    const Rect.fromLTWH(0, 0, _cardSide, _cardTotalHeight),
   );
+
+  void bg(Rect rect) => canvas.drawRect(
+    rect,
+    Paint()
+      ..shader = ui.Gradient.linear(
+        rect.topLeft,
+        rect.bottomRight,
+        [runPassNavy, const Color(0xff5a2a1c), runPassOrange],
+        // ui.Gradient.linear (ao contrario do LinearGradient do widget) exige
+        // colorStops explicito quando ha mais de 2 cores, senao lanca
+        // ArgumentError sempre que chamado.
+        const [0.0, 0.5, 1.0],
+      ),
+  );
+
   void text(
     String value,
     double y,
     double size, {
     FontWeight weight = FontWeight.w700,
     Color color = Colors.white,
-    int maxLines = 3,
+    int maxLines = 2,
     String? family,
   }) {
     final painter = TextPainter(
@@ -128,38 +164,83 @@ Future<Uint8List> buildShareCard({
       textDirection: TextDirection.ltr,
       maxLines: maxLines,
       ellipsis: '…',
-    )..layout(maxWidth: side - 160);
-    painter.paint(canvas, Offset((side - painter.width) / 2, y));
+    )..layout(maxWidth: _cardSide - 160);
+    painter.paint(canvas, Offset((_cardSide - painter.width) / 2, y));
   }
 
-  text(
-    String.fromCharCode(Icons.emoji_events.codePoint),
-    150,
-    300,
-    color: runPassGold,
-    family: Icons.emoji_events.fontFamily,
+  // Cabecalho: titulo da corrida e o texto que o autor escreveu ao publicar.
+  bg(const Rect.fromLTWH(0, 0, _cardSide, _cardHeaderHeight));
+  text(title, 56, 56, weight: FontWeight.w900);
+  if (caption != null && caption.isNotEmpty) {
+    text(caption, 190, 32, weight: FontWeight.w500, color: Colors.white70);
+  }
+
+  // Foto da medalha (recorte "cover"); sem foto, usa um marcador no lugar.
+  final photoRect = const Rect.fromLTWH(
+    0,
+    _cardHeaderHeight,
+    _cardSide,
+    _cardPhotoHeight,
   );
-  text(title, 520, 76, weight: FontWeight.w900);
+  ui.Image? photo;
+  if (photoBytes != null) {
+    try {
+      final codec = await ui.instantiateImageCodec(photoBytes);
+      photo = (await codec.getNextFrame()).image;
+    } on Object {
+      photo = null;
+    }
+  }
+  if (photo != null) {
+    canvas.drawImageRect(
+      photo,
+      _coverSrcRect(photo, photoRect.size),
+      photoRect,
+      Paint(),
+    );
+  } else {
+    bg(photoRect);
+    text(
+      String.fromCharCode(Icons.emoji_events.codePoint),
+      photoRect.top + photoRect.height / 2 - 130,
+      260,
+      color: runPassGold,
+      family: Icons.emoji_events.fontFamily,
+      maxLines: 1,
+    );
+  }
+
+  // Rodape: distancia/tempo da corrida (quando houver) e marca.
+  final footerTop = _cardHeaderHeight + _cardPhotoHeight;
+  bg(Rect.fromLTWH(0, footerTop, _cardSide, _cardFooterHeight));
+  var y = footerTop + 50;
   if (line.isNotEmpty) {
-    text(line, 760, 56, weight: FontWeight.w500, maxLines: 1);
+    text(line, y, 44, weight: FontWeight.w700, color: runPassGold, maxLines: 1);
+    y += 70;
+  }
+  if (author.isNotEmpty) {
+    text(
+      author,
+      y,
+      32,
+      weight: FontWeight.w500,
+      color: Colors.white70,
+      maxLines: 1,
+    );
   }
   text(
-    author,
-    850,
-    44,
-    weight: FontWeight.w500,
-    color: Colors.white70,
-    maxLines: 1,
-  );
-  text(
     '+1Pódio',
-    950,
-    56,
+    footerTop + _cardFooterHeight - 70,
+    48,
     weight: FontWeight.w900,
     color: runPassGold,
     maxLines: 1,
   );
-  final image = await recorder.endRecording().toImage(1080, 1080);
+
+  final image = await recorder.endRecording().toImage(
+    _cardSide.toInt(),
+    _cardTotalHeight.toInt(),
+  );
   final data = await image.toByteData(format: ui.ImageByteFormat.png);
   return data!.buffer.asUint8List();
 }
@@ -352,47 +433,48 @@ class _PostCardState extends State<PostCard> {
     return XFile(file.path, mimeType: mimeType, name: name);
   }
 
-  /// Foto da medalha pelo link assinado; sem foto, sem rede ou demora, usa o cartao desenhado.
-  Future<XFile> shareImage() async {
+  /// Bytes da foto da medalha pelo link assinado; sem foto, sem rede ou demora, retorna nulo
+  /// (o cartao e montado sem foto nesse caso, nao se compartilha a foto crua sozinha).
+  Future<Uint8List?> _fetchPhotoBytes() async {
     final id = entry.race.participation['id'] as String?;
+    if (id == null) return null;
     try {
-      if (id == null) throw const IdentityIssue('NO_ID');
       final reply = await widget.gateway
           .request('/participations/${Uri.encodeComponent(id)}/image')
           .timeout(const Duration(seconds: 6));
       final url = Uri.tryParse(reply['url'] as String? ?? '');
-      if (url == null || url.scheme != 'https') {
-        throw const IdentityIssue('NO_URL');
-      }
+      if (url == null || url.scheme != 'https') return null;
       final client = HttpClient()
         ..connectionTimeout = const Duration(seconds: 6);
       try {
         final response = await (await client.getUrl(url))
             .close()
             .timeout(const Duration(seconds: 10));
-        if (response.statusCode != 200) {
-          throw const IdentityIssue('NO_IMAGE');
-        }
+        if (response.statusCode != 200) return null;
         final bytes = await response
             .fold<List<int>>([], (all, chunk) => all..addAll(chunk))
             .timeout(const Duration(seconds: 15));
-        final type = reply['contentType'] as String? ?? 'image/jpeg';
-        return await _writeShareFile(
-          Uint8List.fromList(bytes),
-          type,
-          type == 'image/png' ? 'medalha.png' : 'medalha.jpg',
-        );
+        return Uint8List.fromList(bytes);
       } finally {
         client.close(force: true);
       }
     } on Object {
-      final card = await shareCardBuilder(
-        title: entry.title,
-        line: shareLine(),
-        author: entry.mine ? '' : entry.author,
-      );
-      return await _writeShareFile(card, 'image/png', 'runpass.png');
+      return null;
     }
+  }
+
+  /// Monta a imagem da propria publicacao (titulo, texto que o autor escreveu ao publicar,
+  /// foto da medalha e distancia/tempo da corrida, quando houver) para compartilhar.
+  Future<XFile> shareImage() async {
+    final photoBytes = await _fetchPhotoBytes();
+    final card = await shareCardBuilder(
+      title: entry.title,
+      caption: entry.comment,
+      line: shareLine(),
+      author: entry.mine ? '' : entry.author,
+      photoBytes: photoBytes,
+    );
+    return _writeShareFile(card, 'image/png', 'runpass.png');
   }
 
   Future<void> share() async {

@@ -1580,8 +1580,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
         borderRadius: BorderRadius.circular(14),
         child: Padding(
           // Sem card/borda/sombra: a medalha fica direto no fundo da tela,
-          // como no template.
-          padding: const EdgeInsets.symmetric(horizontal: 2),
+          // como no template. Sem padding horizontal proprio: o espacamento
+          // entre as medalhas vem só do crossAxisSpacing da grade, senão o
+          // recuo dobra e as imagens não ficam próximas.
+          padding: EdgeInsets.zero,
           child: Column(
             // Altura fixa (sem Expanded/Center) para a imagem e para os
             // blocos de texto: assim a medalha e a prateleira ficam na
@@ -1654,8 +1656,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     crossAxisCount: 3,
     shrinkWrap: true,
     physics: const NeverScrollableScrollPhysics(),
-    mainAxisSpacing: 3,
-    crossAxisSpacing: 2,
+    mainAxisSpacing: 4,
+    crossAxisSpacing: 4,
     // Baixo o suficiente para o nicho de nogueira (proporcao fixa 1086:1448)
     // mais o texto caberem usando a largura inteira do card, sem cortar.
     childAspectRatio: 0.5,
