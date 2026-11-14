@@ -203,12 +203,12 @@ Widget runPassNavigation(
         2 => CatalogScreen(gateway: gateway),
         _ => RunnerProfileScreen(gateway: gateway),
       };
-      final route = MaterialPageRoute<void>(builder: (_) => screen);
-      if (subScreen) {
-        Navigator.of(context).pushAndRemoveUntil(route, (r) => false);
-      } else {
-        Navigator.of(context).pushReplacement(route);
-      }
+      // Trocar de aba sempre zera a pilha: a seta de voltar só existe em telas abertas a partir
+      // de outra (ex.: o "+" das medalhas), nunca nas telas principais.
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (_) => screen),
+        (r) => false,
+      );
     },
   );
 }

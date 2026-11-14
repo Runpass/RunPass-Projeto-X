@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'catalog_screen.dart';
+import 'edition_requests.dart';
 import 'identity_gateway.dart';
 import 'profile_photo.dart' show PhotoChoice, askPhotoChoice;
 import 'runpass_theme.dart';
@@ -175,6 +176,25 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     ),
   );
 
+  /// Não achou: pede o cadastro da corrida, já com o nome lido da medalha no formulário.
+  Future<void> requestRace() async {
+    final sent = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => EditionRequestFormScreen(
+          gateway: widget.gateway,
+          prefill: {if (queries.isNotEmpty) 'name': queries.first},
+        ),
+      ),
+    );
+    if (sent != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Pedido enviado. Acompanhe em "Minhas solicitações".'),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Adicionar medalha')),
@@ -258,6 +278,13 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                   ? 'Procurar a corrida nas corridas'
                   : 'Não é nenhuma? Procurar nas corridas',
             ),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('medal-scan-request'),
+            onPressed: requestRace,
+            icon: const Icon(Icons.add_circle_outline),
+            label: const Text('Não encontrou? Pedir cadastro da corrida'),
           ),
         ],
       ],

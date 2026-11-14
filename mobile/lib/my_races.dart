@@ -1491,6 +1491,37 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   MedalGrouping grouping = MedalGrouping.all;
   bool newestFirst = true;
 
+  /// Exclui a medalha: a participação some das medalhas e de "Minhas corridas" (a corrida segue no catálogo).
+  Future<void> deleteMedal(RaceRecord race) async {
+    final id = race.participation['id'] as String;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}',
+        method: 'DELETE',
+        query: {'expectedVersion': '${race.participation['version']}'},
+      );
+      forgetMedalDisplayImage(id);
+      if (!mounted) return;
+      setState(() {
+        races = loadMyRaces(widget.gateway);
+      });
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Medalha excluída. Ela também saiu de Minhas corridas.',
+          ),
+        ),
+      );
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível excluir a medalha. Tente de novo.'),
+        ),
+      );
+    }
+  }
+
   Future<void> editMedal(RaceRecord race) async {
     final result = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
@@ -1505,6 +1536,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     );
     if (result == null || !mounted) return;
     final id = race.participation['id'] as String;
+    if (result['_delete'] == true) return deleteMedal(race);
     try {
       await widget.gateway.request(
         '/participations/${Uri.encodeComponent(id)}',
@@ -1976,6 +2008,32 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
     super.dispose();
   }
 
+  Future<void> confirmDelete() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Excluir medalha?'),
+        content: const Text(
+          'A medalha e a sua participação nesta corrida serão excluídas: tempo, colocação, número de peito e avaliação. '
+          'Ela também deixa de aparecer em Minhas corridas. A corrida continua no catálogo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('medal-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (sure == true && mounted) Navigator.pop(context, {'_delete': true});
+  }
+
   String? _blankToNull(String text) {
     final trimmed = text.trim();
     return trimmed.isEmpty ? null : trimmed;
@@ -2174,6 +2232,16 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              key: const Key('medal-delete'),
+              onPressed: confirmDelete,
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              label: const Text(
+                'Excluir medalha',
+                style: TextStyle(color: Colors.red),
+              ),
             ),
           ],
         ),

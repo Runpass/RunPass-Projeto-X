@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
+import 'package:runpass/edition_requests.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/medal_scan.dart';
 
@@ -259,6 +260,28 @@ void main() {
     },
   );
 
+  testWidgets(
+    'sem corrida achada, dá para pedir o cadastro com o nome da medalha',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['CIRCUITO DAS ESTAÇÕES']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      await tester.ensureVisible(find.byKey(const Key('medal-scan-request')));
+      await tester.tap(find.byKey(const Key('medal-scan-request')));
+      await tester.pumpAndSettle();
+      expect(find.byType(EditionRequestFormScreen), findsOneWidget);
+      expect(find.text('CIRCUITO DAS ESTAÇÕES'), findsOneWidget);
+    },
+  );
+
   testWidgets('aparelho sem leitor de texto avisa e ainda leva às corridas', (
     tester,
   ) async {
@@ -308,6 +331,115 @@ void main() {
       );
       expect(medalQueries(const []), isEmpty);
       expect(medalQueries(['Ab', '12']), isEmpty);
+    },
+  );
+
+  testWidgets(
+    'excluir medalha: confirma, envia DELETE com a versão e some da lista',
+    (tester) async {
+      final calls = <String>[];
+      var deleted = false;
+      final editions = {
+        'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+      };
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          calls.add(
+            '$method ${uri.path}${uri.query.isEmpty ? '' : '?${uri.query}'}',
+          );
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          if (uri.path == '/me') {
+            return const JsonReply(200, {
+              'displayName': 'Corredor Teste',
+              'username': 'teste',
+              'version': 1,
+            });
+          }
+          if (uri.path == '/me/participations') {
+            return JsonReply(200, {
+              'items': deleted ? [] : [done('p1', 'a', seconds: 1500)],
+            });
+          }
+          if (uri.path == '/participations/p1' && method == 'DELETE') {
+            deleted = true;
+            return const JsonReply(200, {});
+          }
+          final match = editions[uri.pathSegments.last];
+          return match == null
+              ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
+              : JsonReply(200, match);
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(home: MedalCollectionScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('medal-edit-p1')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('medal-edit-p1')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('medal-delete')));
+      await tester.tap(find.byKey(const Key('medal-delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('Excluir medalha?'), findsOneWidget);
+      // Cancelar não exclui nada.
+      await tester.tap(find.text('Cancelar').last);
+      await tester.pumpAndSettle();
+      expect(calls.any((c) => c.startsWith('DELETE')), isFalse);
+
+      await tester.tap(find.byKey(const Key('medal-delete')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('medal-delete-confirm')));
+      await tester.pumpAndSettle();
+      expect(
+        calls
+            .where(
+              (c) => c.startsWith('DELETE /participations/p1?expectedVersion='),
+            )
+            .length,
+        1,
+      );
+      expect(find.byKey(const Key('medal-edit-p1')), findsNothing);
+      expect(find.textContaining('saiu de Minhas corridas'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'seta de voltar só existe nas corridas abertas pelo "+", não nas abas',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(const []),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(BackButton), findsNothing);
+      await tapAdd(tester);
+      await tester.tap(find.byKey(const Key('medal-scan-catalog')));
+      await tester.pumpAndSettle();
+      expect(find.byType(CatalogScreen), findsOneWidget);
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      expect(navigator.canPop(), isTrue); // dá para voltar às medalhas
+      await tester.tap(find.text('Perfil'));
+      await tester.pumpAndSettle();
+      expect(find.byType(RunnerProfileScreen), findsOneWidget);
+      expect(navigator.canPop(), isFalse); // aba aberta: sem seta, sem pilha
+      await tester.tap(find.text('Medalhas'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
+      expect(navigator.canPop(), isFalse);
     },
   );
 
