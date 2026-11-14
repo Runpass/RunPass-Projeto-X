@@ -299,7 +299,10 @@ void main() {
       expect(find.text('Distância selecionada.'), findsOneWidget);
       expect(
         paths.where(
-          (c) => c != '/me/participations' && c != '/me/edition-requests',
+          (c) =>
+              c != '/me/participations' &&
+              c != '/me/edition-requests' &&
+              !c.endsWith('/comments'),
         ),
         [
           '/editions',
@@ -434,6 +437,7 @@ void main() {
         (c) =>
             !c.contains('/me/participations') &&
             !c.contains('/me/edition-requests') &&
+            !c.endsWith('/comments') &&
             !c.endsWith('/image'),
       ),
       [

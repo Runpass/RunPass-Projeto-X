@@ -34,6 +34,7 @@ from .models import ReviewRequestDecision
 from .operator_admin import rename_edition, set_social_links
 from .quality_report import REPORT as QUALITY_REPORT
 from .service import Problem
+from .social import list_edition_comments_for_team, remove_edition_comment_as_team
 from .store import Conflict, Unavailable
 
 MAX_AUTH_AGE = 3600
@@ -379,6 +380,18 @@ def create_admin_app(
     ):
         need(op, "catalog_admin")
         return {"items": search_editions(catalog, q, limit)}
+
+    @app.get("/admin/editions/{edition_id}/comments")
+    def edition_comments_team(edition_id: str, op: Operator):
+        need(op, "catalog_admin")
+        return {"items": list_edition_comments_for_team(store, edition_id)}
+
+    @app.delete("/admin/edition-comments/{comment_id}")
+    def edition_comment_remove(comment_id: str, op: Operator):
+        actor = need(op, "catalog_admin")
+        removed = remove_edition_comment_as_team(store, comment_id)
+        audit(store, actor.subject, "edition.comment.remove", removed, clock)
+        return {"id": comment_id, "removed": True}
 
     class EditionRename(BaseModel):
         model_config = ConfigDict(extra="forbid")

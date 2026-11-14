@@ -1445,6 +1445,11 @@ class _EditionScreenState extends State<EditionScreen> {
   bool savingPlan = false;
   String? bannerUrl, bannerCredit;
   List<int>? provisionalBanner;
+  // Comentários da corrida (qualquer pessoa da beta comenta; independe de participação).
+  final comments = <Map<String, dynamic>>[];
+  String? commentsCursor, commentsError;
+  bool loadingComments = false, sendingComment = false;
+  final commentField = TextEditingController();
   Map<String, dynamic>? myReview;
 
   static const criteria = [
@@ -1457,6 +1462,12 @@ class _EditionScreenState extends State<EditionScreen> {
     ('safety', 'Segurança', Icons.health_and_safety_outlined),
     ('valueForMoney', 'Custo-benefício', Icons.savings_outlined),
   ];
+
+  @override
+  void dispose() {
+    commentField.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -1493,6 +1504,7 @@ class _EditionScreenState extends State<EditionScreen> {
     }
     if (mounted && edition != null) {
       loadReviews();
+      loadComments();
       loadBanner();
       loadProvisional();
       loadParticipants();
@@ -2688,6 +2700,225 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
+  /// Comentários da corrida, mais recentes primeiro (qualquer pessoa da beta lê e comenta).
+  Future<void> loadComments({bool more = false}) async {
+    if (loadingComments) return;
+    setState(() {
+      loadingComments = true;
+      commentsError = null;
+      if (!more) {
+        comments.clear();
+        commentsCursor = null;
+      }
+    });
+    try {
+      final page = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/comments',
+        query: {
+          'limit': '20',
+          if (more && commentsCursor != null) 'cursor': commentsCursor!,
+        },
+      );
+      if (!mounted) return;
+      comments.addAll(
+        (page['items'] as List? ?? const []).cast<Map<String, dynamic>>(),
+      );
+      commentsCursor = page['nextCursor'] as String?;
+    } on IdentityIssue catch (issue) {
+      if (mounted) commentsError = catalogError(issue);
+    } on Exception {
+      if (mounted) {
+        commentsError = 'Não foi possível carregar os comentários agora.';
+      }
+    } finally {
+      if (mounted) setState(() => loadingComments = false);
+    }
+  }
+
+  Future<void> sendComment() async {
+    final text = commentField.text.trim();
+    if (text.isEmpty || sendingComment) return;
+    setState(() {
+      sendingComment = true;
+      commentsError = null;
+    });
+    try {
+      final made = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/comments',
+        method: 'POST',
+        body: {'text': text},
+      );
+      if (!mounted) return;
+      commentField.clear();
+      setState(() => comments.insert(0, made));
+    } on IdentityIssue catch (issue) {
+      if (mounted) {
+        commentsError = issue.code == 'COMMENT_LIMIT_REACHED'
+            ? 'Você já fez o máximo de comentários nesta corrida. Apague um para escrever outro.'
+            : issue.code == 'EDITION_ARCHIVED'
+            ? 'Esta corrida está arquivada e não recebe novos comentários.'
+            : catalogError(issue);
+      }
+    } on Exception {
+      if (mounted) {
+        commentsError = 'Não foi possível enviar agora. Verifique a internet e tente de novo.';
+      }
+    } finally {
+      if (mounted) setState(() => sendingComment = false);
+    }
+  }
+
+  Future<void> deleteComment(Map<String, dynamic> comment) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Apagar comentário?'),
+        content: const Text('O comentário deixa de aparecer para todos.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('edition-comment-delete-confirm'),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Apagar'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    try {
+      await widget.gateway.request(
+        '/edition-comments/${Uri.encodeComponent(comment['id'] as String)}',
+        method: 'DELETE',
+      );
+      if (mounted) {
+        setState(() => comments.removeWhere((c) => c['id'] == comment['id']));
+      }
+    } on Exception {
+      if (mounted) {
+        setState(
+          () => commentsError = 'Não foi possível apagar agora. Tente de novo.',
+        );
+      }
+    }
+  }
+
+  /// Comentários da corrida: caixa para escrever e a lista (qualquer pessoa da beta comenta, com ou sem participação).
+  List<Widget> commentsSection() => [
+    const SizedBox(height: 18),
+    Text(
+      'Comentários da corrida',
+      key: const Key('edition-comments-title'),
+      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+    ),
+    const SizedBox(height: 8),
+    TextField(
+      key: const Key('edition-comment-field'),
+      controller: commentField,
+      maxLength: 1000,
+      minLines: 1,
+      maxLines: 4,
+      textCapitalization: TextCapitalization.sentences,
+      decoration: InputDecoration(
+        labelText: 'Comente sobre esta corrida',
+        hintText: 'Percurso, organização, dicas para quem vai correr…',
+        suffixIcon: IconButton(
+          key: const Key('edition-comment-send'),
+          tooltip: 'Enviar comentário',
+          icon: sendingComment
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.send_rounded),
+          onPressed: sendingComment ? null : sendComment,
+        ),
+      ),
+    ),
+    if (commentsError != null)
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(commentsError!, key: const Key('edition-comments-error')),
+      ),
+    const SizedBox(height: 8),
+    if (loadingComments && comments.isEmpty)
+      const Center(child: CircularProgressIndicator())
+    else if (comments.isEmpty && commentsError == null)
+      Text(
+        'Ainda não há comentários nesta corrida. Seja a primeira pessoa!',
+        key: const Key('edition-comments-empty'),
+        style: TextStyle(color: context.muted),
+      ),
+    for (final comment in comments)
+      Card(
+        key: Key('edition-comment-${comment['id']}'),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: context.softFill,
+                child: const Icon(Icons.person, color: runPassOrange, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            (comment['author'] as Map?)?['displayName']
+                                    as String? ??
+                                'Corredor RunPass',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (DateTime.tryParse('${comment['createdAt']}') !=
+                            null) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            timeAgo(DateTime.parse('${comment['createdAt']}')),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: context.muted,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text('${comment['text']}'),
+                  ],
+                ),
+              ),
+              if (comment['mine'] == true)
+                IconButton(
+                  key: Key('edition-comment-delete-${comment['id']}'),
+                  tooltip: 'Apagar meu comentário',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  onPressed: () => deleteComment(comment),
+                ),
+            ],
+          ),
+        ),
+      ),
+    if (commentsCursor != null)
+      TextButton(
+        key: const Key('edition-comments-more'),
+        onPressed: loadingComments ? null : () => loadComments(more: true),
+        child: const Text('Ver mais comentários'),
+      ),
+  ];
+
   Widget reviewsTab(Map<String, dynamic> body) {
     final loaded = reviews;
     return ListView(
@@ -2744,6 +2975,7 @@ class _EditionScreenState extends State<EditionScreen> {
             const SizedBox(height: 10),
           ],
         ],
+        ...commentsSection(),
       ],
     );
   }

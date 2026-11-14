@@ -16,6 +16,7 @@ from .models import (
     BannerSuggestion,
     CompleteParticipation,
     CreateComment,
+    CreateEditionComment,
     CreateParticipation,
     CreateProfile,
     EditComment,
@@ -630,6 +631,25 @@ def create_app(
     @app.post("/posts/{id}/comments", status_code=201, operation_id="createPostComment")
     def create_comment(id: str, body: CreateComment, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().comment(actor, id, idempotency_key, body.text, body.parentId)
+
+    @app.get("/editions/{id}/comments", operation_id="listEditionComments")
+    def list_edition_comments(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().edition_comments(actor, id, limit, cursor)
+
+    @app.post("/editions/{id}/comments", status_code=201, operation_id="createEditionComment")
+    def create_edition_comment(
+        id: str, body: CreateEditionComment, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        return friends().edition_comment(actor, id, idempotency_key, body.text)
+
+    @app.delete("/edition-comments/{id}", operation_id="deleteEditionComment")
+    def delete_edition_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().delete_edition_comment(actor, id, idempotency_key)
 
     @app.put("/comments/{id}/like", operation_id="likeComment")
     def put_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
