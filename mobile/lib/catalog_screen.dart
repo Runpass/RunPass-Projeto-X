@@ -3288,11 +3288,15 @@ class ParticipationDraftScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> initial;
   final PhotoSelector? photoSelector;
+
+  /// Foto já escolhida (ex.: a da medalha, vinda de "Adicionar medalha"): é enviada ao abrir o rascunho.
+  final List<int>? initialPhoto;
   const ParticipationDraftScreen({
     super.key,
     required this.gateway,
     required this.initial,
     this.photoSelector,
+    this.initialPhoto,
   });
 
   @override
@@ -3352,6 +3356,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
     loadEditionDate();
     if (draft['state'] == 'completed') loadReview();
+    if (widget.initialPhoto != null &&
+        draft['state'] == 'draft' &&
+        imageReference == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => sendInitialPhoto());
+    }
   }
 
   Future<void> loadReview() async {
@@ -3498,6 +3507,58 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
+  /// Valida o tipo e envia a foto; a referência só vale depois da validação do servidor.
+  Future<void> sendPhoto(List<int> bytes) async {
+    final contentType =
+        bytes.length >= 3 &&
+            bytes[0] == 0xff &&
+            bytes[1] == 0xd8 &&
+            bytes[2] == 0xff
+        ? 'image/jpeg'
+        : bytes.length >= 8 &&
+              bytes[0] == 0x89 &&
+              bytes[1] == 0x50 &&
+              bytes[2] == 0x4e &&
+              bytes[3] == 0x47
+        ? 'image/png'
+        : null;
+    if (contentType == null) {
+      throw const IdentityIssue('IMAGE_FORMAT_INVALID');
+    }
+    final result = await widget.gateway.uploadImage(bytes, contentType);
+    if (result['state'] == 'valid') {
+      imageReference = result['imageReference'] as String;
+      pendingUploadId = null;
+      message = 'Foto validada e privada. Ainda não foi publicada.';
+    } else if (result['state'] == 'failed') {
+      throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
+    } else {
+      pendingUploadId = result['uploadId'] as String;
+      message = 'Foto recebida e ainda em processamento.';
+    }
+  }
+
+  /// Foto que já veio escolhida (medalha): envia ao abrir, mostrando o mesmo andamento de sempre.
+  Future<void> sendInitialPhoto() async {
+    final bytes = widget.initialPhoto;
+    if (bytes == null) return;
+    setState(() {
+      uploading = true;
+      message = null;
+    });
+    try {
+      await sendPhoto(bytes);
+    } on IdentityIssue catch (issue) {
+      if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) {
+        message = 'Não foi possível enviar a foto da medalha. Toque em Selecionar foto para tentar de novo.';
+      }
+    } finally {
+      if (mounted) setState(() => uploading = false);
+    }
+  }
+
   Future<void> selectPhoto() async {
     setState(() {
       uploading = true;
@@ -3527,33 +3588,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         );
       }
       if (bytes == null) return;
-      final contentType =
-          bytes.length >= 3 &&
-              bytes[0] == 0xff &&
-              bytes[1] == 0xd8 &&
-              bytes[2] == 0xff
-          ? 'image/jpeg'
-          : bytes.length >= 8 &&
-                bytes[0] == 0x89 &&
-                bytes[1] == 0x50 &&
-                bytes[2] == 0x4e &&
-                bytes[3] == 0x47
-          ? 'image/png'
-          : null;
-      if (contentType == null) {
-        throw const IdentityIssue('IMAGE_FORMAT_INVALID');
-      }
-      final result = await widget.gateway.uploadImage(bytes, contentType);
-      if (result['state'] == 'valid') {
-        imageReference = result['imageReference'] as String;
-        pendingUploadId = null;
-        message = 'Foto validada e privada. Ainda não foi publicada.';
-      } else if (result['state'] == 'failed') {
-        throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
-      } else {
-        pendingUploadId = result['uploadId'] as String;
-        message = 'Foto recebida e ainda em processamento.';
-      }
+      await sendPhoto(bytes);
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
     } on Exception {

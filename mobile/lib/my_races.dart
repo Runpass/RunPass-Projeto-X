@@ -1769,6 +1769,9 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     if (registered == true && mounted) {
       setState(() {
         pendingMedals = loadPendingMedals(widget.gateway);
+        races = loadMyRaces(
+          widget.gateway,
+        ); // pode ter concluído uma medalha de verdade
       });
     }
   }
