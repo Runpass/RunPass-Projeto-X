@@ -173,4 +173,32 @@ void main() {
       expect(calls.where((c) => c.startsWith('POST')), isEmpty);
     },
   );
+
+  testWidgets(
+    'corrida de uma distância só já vem com a distância escolhida e o Já corri habilitado',
+    (tester) async {
+      final (gateway, _) = await setup();
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditionScreen(gateway: gateway, editionId: 'E1'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final ran = find.byKey(const Key('plan-ran'));
+      await tester.scrollUntilVisible(
+        ran,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(ran, findsOneWidget); // sem tocar na distância antes
+      expect(
+        find.text('Escolha uma distância para registrar que você já correu.'),
+        findsNothing,
+      );
+      expect(find.text('Minha situação nesta corrida'), findsNothing);
+    },
+  );
 }
