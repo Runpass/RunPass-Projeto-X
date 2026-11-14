@@ -1792,32 +1792,25 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     try {
-      final edition = await widget.gateway.request(
-        '/editions/${Uri.encodeComponent(editionId)}',
-      );
-      final options = [
-        for (final d in (edition['distances'] as List? ?? const []))
-          if (d is Map && d['kilometers'] is num) d,
-      ];
+      final options = await editionDistances(widget.gateway, editionId, null);
       final km = double.tryParse(
         '${(request['details'] as Map?)?['distanceKm'] ?? ''}',
       );
-      Map? picked = options.length == 1 ? options.first : null;
-      if (picked == null && km != null) {
-        for (final d in options) {
-          if (((d['kilometers'] as num) - km).abs() < 0.05) picked = d;
-        }
-      }
+      if (!mounted) return;
+      final picked = await chooseDistance(context, options, km: km);
+      if (!mounted) return;
       if (picked == null) {
-        // Não dá para saber a distância: a tela da corrida deixa escolher e marcar "Já corri".
-        await navigator.push(
-          MaterialPageRoute<void>(
-            builder: (_) =>
-                EditionScreen(gateway: widget.gateway, editionId: editionId),
-          ),
-        );
-        _reloadShelf();
-        return;
+        if (options.isEmpty) {
+          // Corrida sem distâncias: a tela da corrida deixa marcar "Já corri".
+          await navigator.push(
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  EditionScreen(gateway: widget.gateway, editionId: editionId),
+            ),
+          );
+          _reloadShelf();
+        }
+        return; // desistiu de escolher a distância
       }
       Map<String, dynamic> draft;
       List<int>? photo;
