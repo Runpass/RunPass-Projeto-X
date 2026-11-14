@@ -1491,7 +1491,17 @@ class _EditionScreenState extends State<EditionScreen> {
       final result = await widget.gateway.request(
         '/editions/${Uri.encodeComponent(widget.editionId)}',
       );
-      if (mounted) edition = result;
+      if (mounted) {
+        edition = result;
+        // Corrida com uma distância só (é o caso das cadastradas à mão): já vem escolhida, e dá para
+        // marcar "Já corri" e cadastrar a participação sem passos extras.
+        final distances = result['distances'] as List? ?? const [];
+        if (selectedDistance == null &&
+            distances.length == 1 &&
+            (distances.first as Map)['id'] is String) {
+          selectedDistance = (distances.first as Map)['id'] as String;
+        }
+      }
     } on IdentityIssue catch (issue) {
       if (mounted) error = catalogError(issue);
     } on Exception {
@@ -1680,11 +1690,6 @@ class _EditionScreenState extends State<EditionScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Minha situação nesta corrida',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-        ),
-        const SizedBox(height: 8),
         Wrap(
           spacing: 8,
           runSpacing: 8,
