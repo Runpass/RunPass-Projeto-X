@@ -3284,6 +3284,15 @@ class RatingInput extends StatelessWidget {
   );
 }
 
+/// Abre o recorte da foto da corrida/medalha e devolve os bytes ajustados (nulo se cancelar).
+Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
+    Navigator.of(context).push<List<int>>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => RacePhotoCropScreen(image: Uint8List.fromList(photo)),
+      ),
+    );
+
 class ParticipationDraftScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> initial;
@@ -3291,12 +3300,17 @@ class ParticipationDraftScreen extends StatefulWidget {
 
   /// Foto já escolhida (ex.: a da medalha, vinda de "Adicionar medalha"): é enviada ao abrir o rascunho.
   final List<int>? initialPhoto;
+
+  /// Ajuste (recorte) da foto inicial antes do envio; nulo se a pessoa desistir. Trocável nos testes.
+  final Future<List<int>?> Function(BuildContext context, List<int> photo)
+  initialPhotoCropper;
   const ParticipationDraftScreen({
     super.key,
     required this.gateway,
     required this.initial,
     this.photoSelector,
     this.initialPhoto,
+    this.initialPhotoCropper = cropRacePhoto,
   });
 
   @override
@@ -3547,7 +3561,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       message = null;
     });
     try {
-      await sendPhoto(bytes);
+      // Antes de enviar, a pessoa ajusta a foto (recorta, amplia, escolhe a proporção), como na escolha normal.
+      final cropped = await widget.initialPhotoCropper(context, bytes);
+      if (cropped == null) {
+        if (mounted) {
+          message = 'Foto não enviada. Toque em Selecionar foto quando quiser anexá-la.';
+        }
+        return;
+      }
+      await sendPhoto(cropped);
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
     } on Exception {

@@ -76,6 +76,7 @@ void main() {
               'version': 1,
             },
             initialPhoto: onePixelPng,
+            initialPhotoCropper: (context, photo) async => photo,
           ),
         ),
       );
@@ -109,5 +110,30 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(calls.where((c) => c.startsWith('POST /uploads')), isEmpty);
+  });
+
+  testWidgets('desistir do recorte da foto inicial não envia nada', (
+    tester,
+  ) async {
+    final (gateway, calls) = await setup();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ParticipationDraftScreen(
+          gateway: gateway,
+          initial: const {
+            'id': 'd3',
+            'editionId': 'E1',
+            'distanceId': '5k',
+            'state': 'draft',
+            'version': 1,
+          },
+          initialPhoto: onePixelPng,
+          initialPhotoCropper: (context, photo) async => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(calls.where((c) => c.startsWith('POST /uploads')), isEmpty);
+    expect(find.textContaining('Foto não enviada'), findsOneWidget);
   });
 }
