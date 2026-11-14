@@ -767,27 +767,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
   static int reviewsOf(Map<String, dynamic> edition) =>
       ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
 
-  /// Prioridade da corrida para ESTA pessoa: 0 já corri (ou tenho registro), 1 inscrito (pretendo correr),
-  /// 2 desejo correr, 3 as demais. Cada perfil vê a sua própria ordem, pois vem das suas marcações.
-  int priority(Map<String, dynamic> edition) {
-    final id = edition['id'] as String;
-    if (mine.containsKey(id)) return 0;
-    return switch (plans[id]) {
-      'registered' => 1,
-      'wanted' => 2,
-      _ => 3,
-    };
-  }
-
-  /// Itens na ordem escolhida pelos ícones: primeiro as minhas (por prioridade), depois as demais. Dentro de
-  /// cada grupo, por data ou por avaliação (cada ícone inverte a direção) e, em empate, por nº de avaliações
+  /// Itens na ordem escolhida pelos ícones: por padrão, as mais recentes primeiro (as minhas não passam mais
+  /// na frente). Por data ou por avaliação (cada ícone inverte a direção) e, em empate, por nº de avaliações
   /// e pelo nome. Corrida sem avaliação fica sempre por último na ordem por avaliação.
   List<Map<String, dynamic>> get view {
     final list = [...items];
     if (widget.serverPaging) return list;
     list.sort((a, b) {
-      final byPriority = priority(a).compareTo(priority(b));
-      if (byPriority != 0) return byPriority;
       if (sortBy == 'rating') {
         final sa = scoreOf(a);
         final sb = scoreOf(b);

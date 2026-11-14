@@ -2062,7 +2062,7 @@ void main() {
 
 void priorityOrderTests() {
   testWidgets(
-    'as corridas minhas vêm primeiro: corri, inscrito, desejo; depois as demais, por data',
+    'as minhas corridas não passam mais na frente: tudo por data, da mais recente para a mais antiga',
     (tester) async {
       tester.view.physicalSize = const Size(800, 4000);
       tester.view.devicePixelRatio = 1;
@@ -2118,11 +2118,11 @@ void priorityOrderTests() {
       List<String> order() =>
           (['A', 'B', 'C', 'D', 'E', 'F']
             ..sort((a, b) => top(a).compareTo(top(b))));
-      // Decrescente (padrão): D (corri), C (inscrito), F e B (desejo, F é mais recente), A e E (demais, A é mais recente).
-      expect(order(), ['D', 'C', 'F', 'B', 'A', 'E']);
+      // Padrão: da data mais recente para a mais antiga, sem pôr as minhas (D corri, C inscrito, B e F desejo) na frente.
+      expect(order(), ['A', 'E', 'F', 'B', 'C', 'D']);
       await tester.tap(find.byKey(const Key('catalog-sort')));
       await tester.pumpAndSettle();
-      // Crescente: os grupos continuam na mesma ordem; só a data dentro de cada um inverte.
+      // Crescente: a ordem inteira inverte.
       expect(order(), ['D', 'C', 'B', 'F', 'E', 'A']);
     },
   );
