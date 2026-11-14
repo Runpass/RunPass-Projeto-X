@@ -1698,7 +1698,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ],
   );
 
-  Widget grid(List<RaceRecord> list) => GridView.count(
+  Widget grid(
+    List<RaceRecord> list, [
+    List<Map<String, dynamic>> pending = const [],
+  ]) => GridView.count(
     padding: EdgeInsets.zero,
     crossAxisCount: 3,
     shrinkWrap: true,
@@ -1711,7 +1714,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     // da para reduzir muito mais sem arriscar sobrepor a proxima linha
     // quando isso acontecer; 0.52 aperta a folga sem cortar texto.
     childAspectRatio: 0.52,
-    children: [for (final race in list) tile(race)],
+    children: [
+      for (final request in pending) pendingTile(request),
+      for (final race in list) tile(race),
+    ],
   );
 
   /// Botao compacto ao lado de "Minhas medalhas": abre a foto da medalha para achar a corrida.
@@ -1741,17 +1747,163 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ),
   );
 
-  /// Medalhas provisórias (pedido de cadastro com a foto da medalha), até a equipe decidir.
-  Widget pendingSection(List<RaceRecord> done) =>
+  final _pendingPhotos = <String, Future<List<int>?>>{};
+
+  /// Medalha provisória (pedido de cadastro com a foto da medalha), até a equipe decidir: aparece junto das
+  /// outras na prateleira, em cinza e com cadeado. Aprovada, ganha cor e abre a corrida para concluir.
+  Widget pendingTile(Map<String, dynamic> request) {
+    final id = request['id'] as String;
+    final details = (request['details'] as Map?) ?? const {};
+    final linked = request['linkedEditionId'] as String?;
+    final approved =
+        request['status'] == 'approved' || request['status'] == 'linked';
+    final locked = !approved;
+    const grey = ColorFilter.matrix(<double>[
+      0.2126,
+      0.7152,
+      0.0722,
+      0,
+      0,
+      0.2126,
+      0.7152,
+      0.0722,
+      0,
+      0,
+      0.2126,
+      0.7152,
+      0.0722,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+    ]);
+    final photo = FutureBuilder<List<int>?>(
+      future: _pendingPhotos.putIfAbsent(
+        id,
+        () => widget.pendingPhotoLoader(widget.gateway, id),
+      ),
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        final image = bytes == null
+            ? const ColoredBox(
+                color: Color(0x33888888),
+                child: Center(
+                  child: Icon(Icons.workspace_premium_outlined, size: 40),
+                ),
+              )
+            : Image.memory(
+                Uint8List.fromList(bytes),
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              );
+        return locked
+            ? ColorFiltered(
+                colorFilter: grey,
+                child: Opacity(opacity: .6, child: image),
+              )
+            : image;
+      },
+    );
+    return Stack(
+      key: Key('pending-medal-$id'),
+      children: [
+        InkWell(
+          key: Key('pending-locked-$id-$locked'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: approved && linked != null
+              ? () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => EditionScreen(
+                      gateway: widget.gateway,
+                      editionId: linked,
+                    ),
+                  ),
+                )
+              : null,
+          child: Column(
+            children: [
+              _medalNiche(frame: medalFrameFor(null), photo: photo),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 32,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Text(
+                    '${details['name'] ?? 'Medalha'}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      color: locked ? context.muted : null,
+                    ),
+                  ),
+                ),
+              ),
+              Text(
+                pendingMedalStatus(request),
+                key: Key('pending-status-$id'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: context.muted, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+        if (locked)
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: AspectRatio(
+              aspectRatio: 1086 / 1448,
+              child: Center(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Color(0xAA000000),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.all(10),
+                    child: Icon(
+                      Icons.lock_outline_rounded,
+                      key: Key('pending-lock'),
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Prateleira: as medalhas concluídas e, junto, as em análise (cinza, com cadeado).
+  Widget shelf(List<RaceRecord> data) =>
       FutureBuilder<List<Map<String, dynamic>>>(
         future: pendingMedals,
-        builder: (context, snapshot) => PendingMedalsSection(
-          gateway: widget.gateway,
-          requests: visiblePendingMedals(snapshot.data ?? const [], {
-            for (final race in done) '${race.participation['editionId']}',
-          }),
-          photoLoader: widget.pendingPhotoLoader,
-        ),
+        builder: (context, snapshot) {
+          final pending = visiblePendingMedals(snapshot.data ?? const [], {
+            for (final race in data) '${race.participation['editionId']}',
+          });
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (data.isEmpty) ...[
+                if (pending.isNotEmpty) grid(const [], pending),
+                emptyShelf(),
+              ] else
+                ...sections(data, pending),
+            ],
+          );
+        },
       );
 
   Future<void> addMedal() async {
@@ -1796,10 +1948,14 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ),
   );
 
-  List<Widget> sections(List<RaceRecord> races) {
+  List<Widget> sections(
+    List<RaceRecord> races, [
+    List<Map<String, dynamic>> pending = const [],
+  ]) {
     final ordered = newestFirst ? races : races.reversed.toList();
     if (grouping == MedalGrouping.all) {
-      return [grid(ordered)];
+      // As medalhas em análise ficam junto das outras, no começo da prateleira (cinza, com cadeado).
+      return [grid(ordered, pending)];
     }
     final groups = <String, List<RaceRecord>>{};
     for (final race in ordered) {
@@ -1828,6 +1984,16 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       );
     }
     return [
+      if (pending.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.only(top: 8, bottom: 8),
+          child: Text(
+            'Em análise',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+          ),
+        ),
+        grid(const [], pending),
+      ],
       for (final key in keys) ...[
         Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 8),
@@ -1913,7 +2079,6 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               key: const Key('medals-list'),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
               children: [
-                pendingSection(data),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -2011,7 +2176,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                if (data.isEmpty) emptyShelf() else ...sections(data),
+                shelf(data),
               ],
             );
           },

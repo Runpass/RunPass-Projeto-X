@@ -59,54 +59,6 @@ final onePixelPng = base64Decode(
 
 void main() {
   test(
-    'só as sugestões de corrida ainda sem decisão aparecem para a pessoa',
-    () async {
-      final found = await loadPendingRequests(
-        await gateway([
-          request('a', 'pending'),
-          request('b', 'awaiting_load'),
-          request('c', 'approved'),
-          request('d', 'rejected'),
-          request('e', 'linked', kind: 'banner'),
-          request('f', 'pending', kind: 'banner'),
-        ]),
-      );
-      expect([for (final r in found) r['id']], ['a', 'b']);
-    },
-  );
-
-  testWidgets(
-    'a sugestão em análise aparece só para mim, cinza e com cadeado',
-    (tester) async {
-      final g = await gateway([request('a', 'pending')]);
-      final found = await loadPendingRequests(g);
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PendingRequestsSection(gateway: g, requests: found),
-          ),
-        ),
-      );
-      expect(find.text('Minhas sugestões em análise'), findsOneWidget);
-      expect(find.text('Corrida a'), findsOneWidget);
-      expect(
-        find.textContaining('Em análise pela equipe · só você vê'),
-        findsOneWidget,
-      );
-      expect(find.byIcon(Icons.lock_outline_rounded), findsOneWidget);
-      // sem sugestões, a seção não ocupa espaço
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: PendingRequestsSection(gateway: g, requests: const []),
-          ),
-        ),
-      );
-      expect(find.byKey(const Key('pending-requests')), findsNothing);
-    },
-  );
-
-  test(
     'sem banner meu esperando decisão nesta corrida, nada provisório aparece',
     () async {
       final g = await gateway([

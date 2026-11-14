@@ -734,7 +734,16 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('pending-medals')), findsOneWidget);
+      // As medalhas em análise ficam junto das minhas medalhas (na mesma prateleira), não numa seção à parte.
+      expect(find.text('Medalhas em análise'), findsNothing);
+      expect(find.byKey(const Key('medals-title')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(GridView),
+          matching: find.byKey(const Key('pending-medal-r1')),
+        ),
+        findsOneWidget,
+      );
       // Em análise: bloqueada, com cadeado.
       expect(find.byKey(const Key('pending-status-r1')), findsOneWidget);
       expect(find.text('Em análise pela equipe'), findsOneWidget);

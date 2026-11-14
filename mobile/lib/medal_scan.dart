@@ -602,6 +602,23 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                   ),
                 ),
               ),
+            if (chosenId != null) ...[
+              // Escolhi a corrida: o próximo passo é a minha participação nela (tempo, percurso, avaliação, medalha).
+              const SizedBox(height: 4),
+              FilledButton.icon(
+                key: const Key('medal-scan-conclude'),
+                onPressed: concludeChosen,
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: const Text('Continuar: tempo e avaliação'),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(top: 6, bottom: 4),
+                child: Text(
+                  'Vou usar esta corrida e a sua foto da medalha. No próximo passo você coloca o tempo, o percurso e a avaliação.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
           ],
           if (note != null)
             Padding(
@@ -646,16 +663,6 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
               label: const Text('Procurar a corrida nas corridas'),
             ),
           ] else ...[
-            if (chosenId != null) ...[
-              // Escolhi uma corrida do catálogo e o cadastro foi preenchido com os dados dela.
-              FilledButton.icon(
-                key: const Key('medal-scan-conclude'),
-                onPressed: concludeChosen,
-                icon: const Icon(Icons.check_rounded),
-                label: const Text('Concluir cadastro da medalha'),
-              ),
-              const SizedBox(height: 8),
-            ],
             OutlinedButton.icon(
               key: const Key('medal-scan-catalog'),
               onPressed: openCatalog,

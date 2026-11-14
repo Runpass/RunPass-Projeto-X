@@ -18,7 +18,7 @@ import 'location_picker.dart';
 import 'my_races.dart';
 import 'notifications.dart';
 import 'organizer_post.dart';
-import 'pending_requests.dart';
+import 'pending_requests.dart' show loadProvisionalBanner;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 
@@ -466,7 +466,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
   final phrase = TextEditingController();
   Map<String, dynamic>? searchInfo;
-  List<Map<String, dynamic>> pendingRequests = const [];
   final items = <Map<String, dynamic>>[];
   Map<String, Map<String, dynamic>> mine = {};
   // Situação da pessoa em cada corrida (desejada ou inscrita): edição -> `wanted` | `registered`.
@@ -500,13 +499,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
     super.initState();
     load();
     loadMine();
-    loadPending();
     loadViewPreferences();
-  }
-
-  Future<void> loadPending() async {
-    final found = await loadPendingRequests(widget.gateway);
-    if (mounted) setState(() => pendingRequests = found);
   }
 
   Future<void> loadViewPreferences() async {
@@ -925,14 +918,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
     if (!more && error == null) await loadRest();
   }
 
-  Future<void> openMyRequests() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
-      ),
-    );
-    if (mounted) loadPending(); // pode ter excluído ou corrigido alguma
-  }
+  void openMyRequests() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+    ),
+  );
 
   Future<void> requestRace() async {
     final sent = await Navigator.of(context).push<Map<String, dynamic>>(
@@ -948,7 +938,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
       ),
     );
     if (sent != null && mounted) {
-      loadPending();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Pedido enviado. Acompanhe em "Minhas solicitações".'),
@@ -1107,11 +1096,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
               ],
             ),
-          ),
-          // Sugestões minhas que a equipe ainda não decidiu: visíveis só para mim, até a decisão.
-          PendingRequestsSection(
-            gateway: widget.gateway,
-            requests: pendingRequests,
           ),
           if (showFilters)
             Card(
@@ -3447,7 +3431,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   }
 
   /// Meus dados desta corrida: distância, tempo, colocação e número de peito.
-  List<Widget> raceDataFields({required String saveLabel}) => [
+  List<Widget> raceDataFields({String? saveLabel}) => [
     if (distances.length > 1)
       DropdownButtonFormField<String>(
         key: const Key('distance-field'),
@@ -3478,19 +3462,33 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         labelText: 'Número de peito (opcional)',
       ),
     ),
-    FilledButton(
-      onPressed: saving ? null : save,
-      child: Text(saving ? 'Salvando...' : saveLabel),
-    ),
+    if (saveLabel != null)
+      FilledButton(
+        onPressed: saving ? null : save,
+        child: Text(saving ? 'Salvando...' : saveLabel),
+      ),
   ];
 
-  Future<void> save() async {
+  /// Grava tempo, colocação, número de peito e distância (PATCH). Ao concluir, vai junto e só se mudou algo.
+  /// Devolve se pode seguir (falha de validação ou de rede mostra o motivo e devolve falso).
+  Future<bool> saveData({
+    bool announce = true,
+    bool onlyIfChanged = false,
+  }) async {
     final seconds = parseDuration(time.text), place = positive(placement.text);
     if (seconds == -1 || place == -1 || bib.text.length > 40) {
       setState(
         () => message = 'O tempo deve ser como 1:30:00 (ou só segundos), a colocação um número inteiro maior que zero e o número de peito ter no máximo 40 caracteres.',
       );
-      return;
+      return false;
+    }
+    final newBib = bib.text.trim().isEmpty ? null : bib.text.trim();
+    if (onlyIfChanged &&
+        seconds == draft['timeSeconds'] &&
+        place == draft['placement'] &&
+        newBib == draft['bibNumber'] &&
+        (distanceId == null || distanceId == draft['distanceId'])) {
+      return true;
     }
     setState(() {
       saving = true;
@@ -3509,16 +3507,22 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             'distanceId': distanceId,
         },
       );
-      if (mounted) {
+      if (mounted && announce) {
         message = draft['state'] == 'completed'
             ? 'Dados da corrida salvos.'
             : 'Rascunho salvo. Nada foi publicado.';
       }
+      return true;
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
+      return false;
     } finally {
       if (mounted) setState(() => saving = false);
     }
+  }
+
+  Future<void> save() async {
+    await saveData();
   }
 
   /// Valida o tipo e envia a foto; a referência só vale depois da validação do servidor.
@@ -3695,6 +3699,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       setState(
         () => message = 'Para concluir, anexe uma foto validada e marque "Declaro que concluí esta corrida".',
       );
+      return;
+    }
+    // Sem "Salvar rascunho": o tempo, a colocação e o peito preenchidos são gravados ao concluir.
+    if (!await saveData(announce: false, onlyIfChanged: true) || !mounted) {
       return;
     }
     setState(() {
@@ -3962,7 +3970,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
-          ...raceDataFields(saveLabel: 'Salvar rascunho'),
+          // Corrida já realizada: sem "Salvar rascunho"; o tempo, a colocação e o peito seguem junto ao concluir.
+          // Corrida futura não se conclui ainda, então ali o rascunho precisa do botão para guardar.
+          ...raceDataFields(saveLabel: upcoming ? 'Salvar rascunho' : null),
           const SizedBox(height: 12),
           if (upcoming && draft['state'] == 'draft')
             Container(
