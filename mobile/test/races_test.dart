@@ -92,6 +92,16 @@ Future<IdentityGateway> runner({
         final show = foundFor?.call(uri.queryParameters['q'] ?? '') ?? true;
         return JsonReply(200, {'items': show ? found : []});
       }
+      if (uri.path == '/participations' && method == 'POST') {
+        final sent = body! as Map;
+        return JsonReply(201, {
+          'id': 'd1',
+          'editionId': sent['editionId'],
+          'distanceId': sent['distanceId'],
+          'state': 'draft',
+          'version': 1,
+        });
+      }
       if (uri.path == '/me/edition-requests') {
         return JsonReply(200, {'items': requests});
       }
@@ -440,6 +450,50 @@ void main() {
     },
   );
 
+  testWidgets(
+    'com a corrida escolhida o botão Concluir fica disponível e abre o rascunho nela',
+    (tester) async {
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Meia Maratona de São Paulo',
+            'date': '2026-09-20',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '21k', 'kilometers': 21.0975},
+            ],
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Meia Maratona']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      // Antes de escolher a corrida, não há Concluir.
+      expect(find.byKey(const Key('medal-scan-conclude')), findsNothing);
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      final conclude = find.byKey(const Key('medal-scan-conclude'));
+      expect(conclude, findsOneWidget);
+      await tester.ensureVisible(conclude);
+      await tester.tap(conclude);
+      await tester.pumpAndSettle();
+      // Vai ao rascunho da participação na corrida escolhida (a foto segue junto quando existe).
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      expect(find.text('Rascunho da participação'), findsOneWidget);
+    },
+  );
+
   testWidgets('aparelho sem leitor de texto avisa e ainda leva às corridas', (
     tester,
   ) async {
@@ -680,7 +734,16 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('pending-medals')), findsOneWidget);
+      // As medalhas em análise ficam junto das minhas medalhas (na mesma prateleira), não numa seção à parte.
+      expect(find.text('Medalhas em análise'), findsNothing);
+      expect(find.byKey(const Key('medals-title')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(GridView),
+          matching: find.byKey(const Key('pending-medal-r1')),
+        ),
+        findsOneWidget,
+      );
       // Em análise: bloqueada, com cadeado.
       expect(find.byKey(const Key('pending-status-r1')), findsOneWidget);
       expect(find.text('Em análise pela equipe'), findsOneWidget);

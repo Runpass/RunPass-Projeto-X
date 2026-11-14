@@ -29,14 +29,41 @@ class DurationField extends StatelessWidget {
     var chosen = _read(controller.text);
     final result = await showModalBottomSheet<String>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
       builder: (sheet) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Tempo da corrida',
-              style: TextStyle(fontWeight: FontWeight.w700),
+            // Cabeçalho com OK sempre visível no alto: Cancelar à esquerda, OK à direita.
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  TextButton(
+                    key: const Key('duration-cancel'),
+                    onPressed: () => Navigator.of(sheet).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                  const Expanded(
+                    child: Text(
+                      'Tempo da corrida',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  TextButton(
+                    key: const Key('duration-ok'),
+                    onPressed: () =>
+                        Navigator.of(sheet)
+                            .pop(chosen == Duration.zero ? '' : format(chosen)),
+                    child: const Text(
+                      'OK',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ],
+              ),
             ),
             SizedBox(
               height: 200,
@@ -67,7 +94,7 @@ class DurationField extends StatelessWidget {
                     onPressed: () =>
                         Navigator.of(sheet)
                             .pop(chosen == Duration.zero ? '' : format(chosen)),
-                    child: const Text('Confirmar'),
+                    child: const Text('OK'),
                   ),
                 ],
               ),

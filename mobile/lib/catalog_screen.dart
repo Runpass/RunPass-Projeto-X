@@ -18,7 +18,7 @@ import 'location_picker.dart';
 import 'my_races.dart';
 import 'notifications.dart';
 import 'organizer_post.dart';
-import 'pending_requests.dart';
+import 'pending_requests.dart' show loadProvisionalBanner;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 
@@ -466,7 +466,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
   final phrase = TextEditingController();
   Map<String, dynamic>? searchInfo;
-  List<Map<String, dynamic>> pendingRequests = const [];
   final items = <Map<String, dynamic>>[];
   Map<String, Map<String, dynamic>> mine = {};
   // Situação da pessoa em cada corrida (desejada ou inscrita): edição -> `wanted` | `registered`.
@@ -500,13 +499,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
     super.initState();
     load();
     loadMine();
-    loadPending();
     loadViewPreferences();
-  }
-
-  Future<void> loadPending() async {
-    final found = await loadPendingRequests(widget.gateway);
-    if (mounted) setState(() => pendingRequests = found);
   }
 
   Future<void> loadViewPreferences() async {
@@ -925,14 +918,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
     if (!more && error == null) await loadRest();
   }
 
-  Future<void> openMyRequests() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
-      ),
-    );
-    if (mounted) loadPending(); // pode ter excluído ou corrigido alguma
-  }
+  void openMyRequests() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+    ),
+  );
 
   Future<void> requestRace() async {
     final sent = await Navigator.of(context).push<Map<String, dynamic>>(
@@ -948,7 +938,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
       ),
     );
     if (sent != null && mounted) {
-      loadPending();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Pedido enviado. Acompanhe em "Minhas solicitações".'),
@@ -1107,11 +1096,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
               ],
             ),
-          ),
-          // Sugestões minhas que a equipe ainda não decidiu: visíveis só para mim, até a decisão.
-          PendingRequestsSection(
-            gateway: widget.gateway,
-            requests: pendingRequests,
           ),
           if (showFilters)
             Card(
@@ -3284,15 +3268,33 @@ class RatingInput extends StatelessWidget {
   );
 }
 
+/// Abre o recorte da foto da corrida/medalha e devolve os bytes ajustados (nulo se cancelar).
+Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
+    Navigator.of(context).push<List<int>>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => RacePhotoCropScreen(image: Uint8List.fromList(photo)),
+      ),
+    );
+
 class ParticipationDraftScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> initial;
   final PhotoSelector? photoSelector;
+
+  /// Foto já escolhida (ex.: a da medalha, vinda de "Adicionar medalha"): é enviada ao abrir o rascunho.
+  final List<int>? initialPhoto;
+
+  /// Ajuste (recorte) da foto inicial antes do envio; nulo se a pessoa desistir. Trocável nos testes.
+  final Future<List<int>?> Function(BuildContext context, List<int> photo)
+  initialPhotoCropper;
   const ParticipationDraftScreen({
     super.key,
     required this.gateway,
     required this.initial,
     this.photoSelector,
+    this.initialPhoto,
+    this.initialPhotoCropper = cropRacePhoto,
   });
 
   @override
@@ -3352,6 +3354,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
     loadEditionDate();
     if (draft['state'] == 'completed') loadReview();
+    if (widget.initialPhoto != null &&
+        draft['state'] == 'draft' &&
+        imageReference == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => sendInitialPhoto());
+    }
   }
 
   Future<void> loadReview() async {
@@ -3424,7 +3431,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   }
 
   /// Meus dados desta corrida: distância, tempo, colocação e número de peito.
-  List<Widget> raceDataFields({required String saveLabel}) => [
+  List<Widget> raceDataFields({String? saveLabel}) => [
     if (distances.length > 1)
       DropdownButtonFormField<String>(
         key: const Key('distance-field'),
@@ -3455,19 +3462,33 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         labelText: 'Número de peito (opcional)',
       ),
     ),
-    FilledButton(
-      onPressed: saving ? null : save,
-      child: Text(saving ? 'Salvando...' : saveLabel),
-    ),
+    if (saveLabel != null)
+      FilledButton(
+        onPressed: saving ? null : save,
+        child: Text(saving ? 'Salvando...' : saveLabel),
+      ),
   ];
 
-  Future<void> save() async {
+  /// Grava tempo, colocação, número de peito e distância (PATCH). Ao concluir, vai junto e só se mudou algo.
+  /// Devolve se pode seguir (falha de validação ou de rede mostra o motivo e devolve falso).
+  Future<bool> saveData({
+    bool announce = true,
+    bool onlyIfChanged = false,
+  }) async {
     final seconds = parseDuration(time.text), place = positive(placement.text);
     if (seconds == -1 || place == -1 || bib.text.length > 40) {
       setState(
         () => message = 'O tempo deve ser como 1:30:00 (ou só segundos), a colocação um número inteiro maior que zero e o número de peito ter no máximo 40 caracteres.',
       );
-      return;
+      return false;
+    }
+    final newBib = bib.text.trim().isEmpty ? null : bib.text.trim();
+    if (onlyIfChanged &&
+        seconds == draft['timeSeconds'] &&
+        place == draft['placement'] &&
+        newBib == draft['bibNumber'] &&
+        (distanceId == null || distanceId == draft['distanceId'])) {
+      return true;
     }
     setState(() {
       saving = true;
@@ -3486,15 +3507,81 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             'distanceId': distanceId,
         },
       );
-      if (mounted) {
+      if (mounted && announce) {
         message = draft['state'] == 'completed'
             ? 'Dados da corrida salvos.'
             : 'Rascunho salvo. Nada foi publicado.';
       }
+      return true;
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
+      return false;
     } finally {
       if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> save() async {
+    await saveData();
+  }
+
+  /// Valida o tipo e envia a foto; a referência só vale depois da validação do servidor.
+  Future<void> sendPhoto(List<int> bytes) async {
+    final contentType =
+        bytes.length >= 3 &&
+            bytes[0] == 0xff &&
+            bytes[1] == 0xd8 &&
+            bytes[2] == 0xff
+        ? 'image/jpeg'
+        : bytes.length >= 8 &&
+              bytes[0] == 0x89 &&
+              bytes[1] == 0x50 &&
+              bytes[2] == 0x4e &&
+              bytes[3] == 0x47
+        ? 'image/png'
+        : null;
+    if (contentType == null) {
+      throw const IdentityIssue('IMAGE_FORMAT_INVALID');
+    }
+    final result = await widget.gateway.uploadImage(bytes, contentType);
+    if (result['state'] == 'valid') {
+      imageReference = result['imageReference'] as String;
+      pendingUploadId = null;
+      message = 'Foto validada e privada. Ainda não foi publicada.';
+    } else if (result['state'] == 'failed') {
+      throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
+    } else {
+      pendingUploadId = result['uploadId'] as String;
+      message = 'Foto recebida e ainda em processamento.';
+    }
+  }
+
+  /// Foto que já veio escolhida (medalha): envia ao abrir, mostrando o mesmo andamento de sempre.
+  Future<void> sendInitialPhoto() async {
+    final bytes = widget.initialPhoto;
+    if (bytes == null) return;
+    setState(() {
+      uploading = true;
+      message = null;
+    });
+    try {
+      // Antes de enviar, a pessoa ajusta a foto (recorta, amplia, escolhe a proporção), como na escolha normal.
+      final cropped = await widget.initialPhotoCropper(context, bytes);
+      if (cropped == null) {
+        if (mounted) {
+          message = 'Foto não enviada. Toque em Selecionar foto quando quiser anexá-la.';
+        }
+        return;
+      }
+      await sendPhoto(cropped);
+    } on IdentityIssue catch (issue) {
+      if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) {
+        message = 'Não foi possível enviar a foto da medalha. Toque em Selecionar foto para tentar de novo.';
+      }
+    } finally {
+      if (mounted) setState(() => uploading = false);
     }
   }
 
@@ -3527,33 +3614,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         );
       }
       if (bytes == null) return;
-      final contentType =
-          bytes.length >= 3 &&
-              bytes[0] == 0xff &&
-              bytes[1] == 0xd8 &&
-              bytes[2] == 0xff
-          ? 'image/jpeg'
-          : bytes.length >= 8 &&
-                bytes[0] == 0x89 &&
-                bytes[1] == 0x50 &&
-                bytes[2] == 0x4e &&
-                bytes[3] == 0x47
-          ? 'image/png'
-          : null;
-      if (contentType == null) {
-        throw const IdentityIssue('IMAGE_FORMAT_INVALID');
-      }
-      final result = await widget.gateway.uploadImage(bytes, contentType);
-      if (result['state'] == 'valid') {
-        imageReference = result['imageReference'] as String;
-        pendingUploadId = null;
-        message = 'Foto validada e privada. Ainda não foi publicada.';
-      } else if (result['state'] == 'failed') {
-        throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
-      } else {
-        pendingUploadId = result['uploadId'] as String;
-        message = 'Foto recebida e ainda em processamento.';
-      }
+      await sendPhoto(bytes);
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
     } on Exception {
@@ -3638,6 +3699,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       setState(
         () => message = 'Para concluir, anexe uma foto validada e marque "Declaro que concluí esta corrida".',
       );
+      return;
+    }
+    // Sem "Salvar rascunho": o tempo, a colocação e o peito preenchidos são gravados ao concluir.
+    if (!await saveData(announce: false, onlyIfChanged: true) || !mounted) {
       return;
     }
     setState(() {
@@ -3905,7 +3970,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
-          ...raceDataFields(saveLabel: 'Salvar rascunho'),
+          // Corrida já realizada: sem "Salvar rascunho"; o tempo, a colocação e o peito seguem junto ao concluir.
+          // Corrida futura não se conclui ainda, então ali o rascunho precisa do botão para guardar.
+          ...raceDataFields(saveLabel: upcoming ? 'Salvar rascunho' : null),
           const SizedBox(height: 12),
           if (upcoming && draft['state'] == 'draft')
             Container(

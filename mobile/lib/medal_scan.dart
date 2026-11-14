@@ -280,6 +280,88 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     });
   }
 
+  /// "Concluir" com uma corrida do catálogo escolhida: abre o rascunho da participação nessa corrida, já com a
+  /// foto da medalha, para completar tempo, avaliação e concluir. Sem a distância certa, abre a corrida para escolher.
+  Future<void> concludeChosen() async {
+    final edition = matches.firstWhere(
+      (m) => m['id'] == chosenId,
+      orElse: () => const {},
+    );
+    final id = chosenId;
+    if (id == null || edition.isEmpty) return;
+    final km = double.tryParse(distance.text.trim().replaceAll(',', '.'));
+    final options = [
+      for (final d in (edition['distances'] as List? ?? const []))
+        if (d is Map && d['kilometers'] is num) d,
+    ];
+    Map? picked;
+    if (options.length == 1) {
+      picked = options.first;
+    } else if (km != null) {
+      for (final d in options) {
+        if (((d['kilometers'] as num) - km).abs() < 0.05) picked = d;
+      }
+    }
+    final navigator = Navigator.of(context);
+    if (picked == null) {
+      // Não dá para saber a distância: a tela da corrida deixa escolher e marcar "Já corri".
+      await navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => EditionScreen(gateway: widget.gateway, editionId: id),
+        ),
+      );
+      return;
+    }
+    setState(() => working = true);
+    List<int>? photo;
+    try {
+      final file = File(widget.photoPath);
+      photo = file.existsSync() ? await file.readAsBytes() : null;
+    } on Exception {
+      photo = null;
+    }
+    try {
+      final draft = await widget.gateway.request(
+        '/participations',
+        method: 'POST',
+        body: {'editionId': id, 'distanceId': picked['id']},
+      );
+      if (!mounted) return;
+      setState(() => working = false);
+      await navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => ParticipationDraftScreen(
+            gateway: widget.gateway,
+            initial: draft,
+            initialPhoto: photo,
+          ),
+        ),
+      );
+      if (mounted) navigator.pop(true); // a prateleira recarrega ao voltar
+    } on IdentityIssue catch (issue) {
+      if (!mounted) return;
+      setState(() => working = false);
+      if (issue.code == 'PARTICIPATION_EXISTS') {
+        // Já existe participação nesta corrida: abre a corrida, onde ela está.
+        await navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                EditionScreen(gateway: widget.gateway, editionId: id),
+          ),
+        );
+      } else {
+        setState(() => note = catalogError(issue));
+      }
+    } on Exception {
+      if (mounted) {
+        setState(() {
+          working = false;
+          note = 'Sem conexão com o servidor. Verifique a internet e tente de novo.';
+        });
+      }
+    }
+  }
+
   Future<void> pickDate() async {
     final current = DateTime.tryParse(requestDateToIso(date.text.trim()) ?? '');
     final picked = await showDatePicker(
@@ -520,6 +602,23 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                   ),
                 ),
               ),
+            if (chosenId != null) ...[
+              // Escolhi a corrida: o próximo passo é a minha participação nela (tempo, percurso, avaliação, medalha).
+              const SizedBox(height: 4),
+              FilledButton.icon(
+                key: const Key('medal-scan-conclude'),
+                onPressed: concludeChosen,
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: const Text('Continuar: tempo e avaliação'),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(top: 6, bottom: 4),
+                child: Text(
+                  'Vou usar esta corrida e a sua foto da medalha. No próximo passo você coloca o tempo, o percurso e a avaliação.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
           ],
           if (note != null)
             Padding(
@@ -564,7 +663,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
               label: const Text('Procurar a corrida nas corridas'),
             ),
           ] else ...[
-            FilledButton.icon(
+            OutlinedButton.icon(
               key: const Key('medal-scan-catalog'),
               onPressed: openCatalog,
               icon: const Icon(Icons.search_rounded),

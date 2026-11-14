@@ -425,10 +425,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Rascunho da participação'), findsOneWidget);
     expect(find.textContaining('não gera medalha'), findsOneWidget);
+    // Corrida já realizada: não há "Salvar rascunho"; o tempo segue junto quando a participação é concluída.
     await pickTime(tester, hours: 1);
-    await tester.tap(find.text('Salvar rascunho'));
-    await tester.pumpAndSettle();
-    expect(find.text('Rascunho salvo. Nada foi publicado.'), findsOneWidget);
+    expect(find.text('Salvar rascunho'), findsNothing);
+    expect(find.text('Rascunho salvo. Nada foi publicado.'), findsNothing);
     expect(
       calls.where(
         (c) =>
@@ -446,7 +446,6 @@ void main() {
         'GET /editions/A/reviews',
         'POST /participations',
         'GET /editions/A',
-        'PATCH /participations/draft-1',
       ],
     );
   });
@@ -586,6 +585,113 @@ void main() {
           'POST /participations/draft-1/complete',
         ],
       );
+    },
+  );
+
+  testWidgets(
+    'concluir grava antes o tempo escolhido no temporizador (sem Salvar rascunho)',
+    (tester) async {
+      final calls = <String>[];
+      Map<String, dynamic>? patch;
+      Map<String, dynamic>? completion;
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          calls.add('$method ${uri.path}');
+          if (uri.path == '/uploads') {
+            return const JsonReply(201, {
+              'uploadId': 'upload-1',
+              'uploadUrl': 'https://private.example/upload-1',
+              'uploadMethod': 'PUT',
+              'uploadHeaders': {'Content-Type': 'image/jpeg'},
+            });
+          }
+          if (uri.path.endsWith('/finalize')) {
+            return const JsonReply(200, {
+              'uploadId': 'upload-1',
+              'state': 'valid',
+              'imageReference': 'img-valid',
+            });
+          }
+          if (uri.path == '/participations/draft-1' && method == 'PATCH') {
+            patch = Map<String, dynamic>.from(body! as Map);
+            return const JsonReply(200, {
+              'id': 'draft-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'draft',
+              'version': 2,
+              'timeSeconds': 2700,
+            });
+          }
+          if (uri.path.endsWith('/complete')) {
+            completion = Map<String, dynamic>.from(body! as Map);
+            return const JsonReply(200, {
+              'id': 'draft-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'completed',
+              'version': 3,
+              'medalImageReference': 'img-valid',
+            });
+          }
+          return const JsonReply(200, {'items': []});
+        },
+        byteTransport: (uri, method, headers, bytes) async => 200,
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: const {
+              'id': 'draft-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'draft',
+              'version': 1,
+            },
+            photoSelector: () async => [0xff, 0xd8, 0xff, 0xd9],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Salvar rascunho'), findsNothing);
+      await pickTime(tester, minutes: 45);
+      await tester.tap(find.text('Selecionar foto'));
+      await tester.pumpAndSettle();
+      final list = find.byType(Scrollable).first;
+      final declaration = find.text('Declaro que concluí esta corrida');
+      final finish = find.text('Concluir participação');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await rateAll(tester, skip: 'Segurança');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await tester.tap(find.byKey(const Key('rating-Segurança-4')));
+      await tester.pump();
+      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
+      await tester.tap(declaration);
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await tester.tap(finish);
+      await tester.pumpAndSettle();
+      // O tempo foi gravado (PATCH) ANTES de concluir, com a versão certa.
+      expect(patch?['timeSeconds'], 2700);
+      expect(patch?['expectedVersion'], 1);
+      expect(completion?['expectedVersion'], 2);
+      final order = calls
+          .where((c) => c.contains('draft-1') && !c.endsWith('/image'))
+          .toList();
+      expect(order, [
+        'PATCH /participations/draft-1',
+        'POST /participations/draft-1/complete',
+      ]);
     },
   );
 
