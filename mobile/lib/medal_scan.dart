@@ -88,6 +88,36 @@ List<String> medalQueries(List<String> lines, {int max = 3}) {
   return queries.take(max).toList();
 }
 
+/// Dados que dá para tirar do texto da medalha para já preencher o pedido de cadastro: o nome (a
+/// busca mais específica), a distância ("10 KM", "21K") e a data, se estiver impressa (dd/mm/aaaa).
+/// Só entra o que o texto realmente mostra; nada é adivinhado.
+Map<String, String> medalDetails(List<String> lines, List<String> queries) {
+  final details = <String, String>{
+    if (queries.isNotEmpty) 'name': queries.first,
+  };
+  final text = lines.join('\n');
+  final km = RegExp(
+    r'(?<![\d.,])(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:km|k)\b',
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (km != null) {
+    final value = double.tryParse(km.group(1)!.replaceAll(',', '.'));
+    if (value != null && value >= 1 && value <= 100) {
+      details['distanceKm'] = km.group(1)!.replaceAll(',', '.');
+    }
+  }
+  final date = RegExp(r'\b(\d{1,2})[/.\-](\d{1,2})[/.\-](20\d{2})\b')
+      .firstMatch(text);
+  if (date != null) {
+    final day = int.parse(date.group(1)!), month = int.parse(date.group(2)!);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      details['date'] =
+          '${date.group(3)}-${month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}';
+    }
+  }
+  return details;
+}
+
 /// Foto da medalha: pergunta câmera ou galeria, lê o texto e procura a corrida no catálogo.
 /// Devolve o caminho da foto, ou nulo se a pessoa desistir.
 typedef MedalPhotoPicker = Future<String?> Function(BuildContext context);
@@ -124,6 +154,14 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   bool working = true;
   String? note;
   List<String> queries = const [];
+  Map<String, String> details = const {};
+  bool unavailable = false;
+
+  List<String> get detailLines => [
+    if (details['name'] != null) 'Nome: ${details['name']}',
+    if (details['distanceKm'] != null) 'Distância: ${details['distanceKm']} km',
+    if (details['date'] != null) 'Data: ${displayDate(details['date']!)}',
+  ];
   final matches = <Map<String, dynamic>>[];
 
   @override
@@ -136,6 +174,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     try {
       final lines = await widget.reader.read(widget.photoPath);
       queries = medalQueries(lines);
+      details = medalDetails(lines, queries);
       if (queries.isEmpty) {
         note = 'Não consegui ler o nome da corrida nesta foto.';
       }
@@ -161,6 +200,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         note = 'Li o texto da medalha, mas não achei uma corrida com ele.';
       }
     } on MedalReadUnavailable {
+      unavailable = true;
       note = 'Este aparelho ainda não lê o texto da medalha.';
     } on Exception {
       note =
@@ -180,10 +220,8 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   Future<void> requestRace() async {
     final sent = await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(
-        builder: (_) => EditionRequestFormScreen(
-          gateway: widget.gateway,
-          prefill: {if (queries.isNotEmpty) 'name': queries.first},
-        ),
+        builder: (_) =>
+            EditionRequestFormScreen(gateway: widget.gateway, prefill: details),
       ),
     );
     if (sent != null && mounted) {
@@ -269,23 +307,62 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
               child: Text(note!, key: const Key('medal-scan-note')),
             ),
           const SizedBox(height: 8),
-          FilledButton.icon(
-            key: const Key('medal-scan-catalog'),
-            onPressed: openCatalog,
-            icon: const Icon(Icons.search_rounded),
-            label: Text(
-              matches.isEmpty
-                  ? 'Procurar a corrida nas corridas'
-                  : 'Não é nenhuma? Procurar nas corridas',
+          if (matches.isEmpty && !unavailable) ...[
+            // Não achou: sugere cadastrar a corrida, já com o que foi lido na medalha.
+            Card(
+              key: const Key('medal-scan-suggest'),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Esta corrida ainda não está no catálogo. Quer cadastrá-la?',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    if (details.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      const Text('Vou levar o que li na medalha:'),
+                      for (final line in detailLines)
+                        Text('• $line', key: Key('medal-detail-$line')),
+                    ],
+                  ],
+                ),
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            key: const Key('medal-scan-request'),
-            onPressed: requestRace,
-            icon: const Icon(Icons.add_circle_outline),
-            label: const Text('Não encontrou? Pedir cadastro da corrida'),
-          ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              key: const Key('medal-scan-request'),
+              onPressed: requestRace,
+              icon: const Icon(Icons.add_circle_outline),
+              label: const Text('Cadastrar esta corrida'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const Key('medal-scan-catalog'),
+              onPressed: openCatalog,
+              icon: const Icon(Icons.search_rounded),
+              label: const Text('Procurar a corrida nas corridas'),
+            ),
+          ] else ...[
+            FilledButton.icon(
+              key: const Key('medal-scan-catalog'),
+              onPressed: openCatalog,
+              icon: const Icon(Icons.search_rounded),
+              label: Text(
+                matches.isEmpty
+                    ? 'Procurar a corrida nas corridas'
+                    : 'Não é nenhuma? Procurar nas corridas',
+              ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const Key('medal-scan-request'),
+              onPressed: requestRace,
+              icon: const Icon(Icons.add_circle_outline),
+              label: const Text('Não encontrou? Pedir cadastro da corrida'),
+            ),
+          ],
         ],
       ],
     ),

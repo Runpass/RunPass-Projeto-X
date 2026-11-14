@@ -268,12 +268,19 @@ void main() {
           home: MedalCollectionScreen(
             gateway: await runner(),
             medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
-            medalTextReader: _FakeReader(['CIRCUITO DAS ESTAÇÕES']),
+            medalTextReader: _FakeReader([
+              'CIRCUITO DAS ESTAÇÕES',
+              '10 KM',
+              '22/11/2026',
+            ]),
           ),
         ),
       );
       await tester.pumpAndSettle();
       await tapAdd(tester);
+      expect(find.byKey(const Key('medal-scan-suggest')), findsOneWidget);
+      expect(find.text('• Distância: 10 km'), findsOneWidget);
+      expect(find.text('• Data: 22/11/2026'), findsOneWidget);
       await tester.ensureVisible(find.byKey(const Key('medal-scan-request')));
       await tester.tap(find.byKey(const Key('medal-scan-request')));
       await tester.pumpAndSettle();
