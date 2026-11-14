@@ -213,6 +213,19 @@ def create_app(
                 translation = text_fallback(phrase)
                 filters = CatalogFilters(limit=limit, **translation.filters)
             page = catalog.list(actor, filters)
+            if "q" not in translation.filters and (
+                not translation.filters or "consulta_semantica" in translation.not_applied
+            ):
+                # A IA nao achou um nome na frase ("Batman") e devolveria corridas que nada tem a ver (ou todas). Antes de
+                # aceitar isso, tenta o nome: se alguma corrida tiver todas as palavras, ela vale mais.
+                try:
+                    by_name = CatalogFilters(limit=limit, **text_fallback(phrase).filters)
+                except ValidationError:
+                    by_name = None
+                if by_name is not None:
+                    named = catalog.list(actor, by_name)
+                    if named["items"]:
+                        translation, filters, page = text_fallback(phrase), by_name, named
             # O cliente pagina depois por GET /editions com estes filtros e o mesmo limit.
             echoed = filters.model_dump(mode="json", exclude_none=True, exclude={"limit"})
         return {
