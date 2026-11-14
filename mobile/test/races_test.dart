@@ -450,6 +450,33 @@ void main() {
     },
   );
 
+  testWidgets('sem medalhas, a tela oferece adicionar a primeira pela foto', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: await runner(noRaces: true),
+          medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+          medalTextReader: _FakeReader(['CIRCUITO DAS ESTAÇÕES']),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Sua primeira medalha aparecerá aqui'),
+      findsOneWidget,
+    );
+    expect(find.byType(CatalogScreen), findsNothing);
+    await tester.tap(find.byKey(const Key('medal-add-first')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byType(MedalScanScreen),
+      findsOneWidget,
+    ); // vai direto à foto, não às corridas
+    expect(find.byType(CatalogScreen), findsNothing);
+  });
+
   testWidgets('editar medalha: muda forma, cor e legenda e salva via PATCH', (
     tester,
   ) async {

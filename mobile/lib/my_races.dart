@@ -1856,8 +1856,27 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             }
             final data = snapshot.data!;
             if (data.isEmpty) {
-              return loadMessage(
-                'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      // Sem medalhas ainda: começa pela foto da medalha, sem escolher a corrida antes.
+                      FilledButton.icon(
+                        key: const Key('medal-add-first'),
+                        onPressed: addMedal,
+                        icon: const Icon(Icons.add_a_photo_outlined),
+                        label: const Text('Adicionar medalha'),
+                      ),
+                    ],
+                  ),
+                ),
               );
             }
             final stats = RaceStats.of(data);
