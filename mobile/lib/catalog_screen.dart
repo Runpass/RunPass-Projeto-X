@@ -2202,13 +2202,6 @@ class _EditionScreenState extends State<EditionScreen> {
     padding: const EdgeInsets.all(20),
     children: [
       header(body),
-      // Minha avaliação e meu comentário também aqui (resumo), para quem já concluiu esta corrida.
-      if (mine?['state'] == 'completed' && myReview != null)
-        MyReviewView(
-          key: const Key('about-my-review'),
-          review: myReview!,
-          showItems: false,
-        ),
       // Nota média e quantidade de avaliações; tocar leva à aba Avaliações.
       Builder(
         builder: (tabContext) => InkWell(
@@ -2218,6 +2211,15 @@ class _EditionScreenState extends State<EditionScreen> {
           child: scoreCard(body),
         ),
       ),
+      // Minha avaliação e meu comentário logo abaixo da média geral (resumo), para quem já concluiu a corrida.
+      if (mine?['state'] == 'completed' && myReview != null) ...[
+        const SizedBox(height: 12),
+        MyReviewView(
+          key: const Key('about-my-review'),
+          review: myReview!,
+          showItems: false,
+        ),
+      ],
       const SizedBox(height: 16),
       if (body['description'] != null) Text(body['description'] as String),
       if (body['organizerName'] != null)

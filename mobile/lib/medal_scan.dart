@@ -202,11 +202,15 @@ class MedalScanScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final String photoPath;
   final MedalTextReader reader;
+
+  /// Seleção de foto do rascunho da participação (só os testes trocam; o app usa a galeria).
+  final PhotoSelector? draftPhotoSelector;
   const MedalScanScreen({
     super.key,
     required this.gateway,
     required this.photoPath,
     this.reader = const PlatformMedalTextReader(),
+    this.draftPhotoSelector,
   });
 
   @override
@@ -393,10 +397,13 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             gateway: widget.gateway,
             initial: draft,
             initialPhoto: photo,
+            photoSelector: widget.draftPhotoSelector,
           ),
         ),
       );
-      if (mounted) navigator.pop(true); // a prateleira recarrega ao voltar
+      // Se a participação foi concluída, a pilha já foi zerada e a prateleira nova está no topo: não há o que
+      // fechar (fechar aqui deixava a tela preta). Se voltou sem concluir, fecha e a prateleira recarrega.
+      if (mounted && navigator.canPop()) navigator.pop(true);
     } on IdentityIssue catch (issue) {
       if (!mounted) return;
       setState(() => working = false);
@@ -414,7 +421,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                   ),
           ),
         );
-        if (mounted) navigator.pop(true);
+        if (mounted && navigator.canPop()) navigator.pop(true);
       } else {
         setState(() => note = catalogError(issue));
       }

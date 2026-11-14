@@ -64,6 +64,7 @@ Future<IdentityGateway> runner({
     cognito: Uri.parse('https://cognito.example'),
     api: Uri.parse('https://api.example'),
     clientId: 'synthetic',
+    byteTransport: (uri, method, headers, bytes) async => 200,
     transport: (uri, method, headers, body) async {
       if (uri.host == 'cognito.example') {
         return const JsonReply(200, {
@@ -92,6 +93,31 @@ Future<IdentityGateway> runner({
       if (uri.path == '/editions') {
         final show = foundFor?.call(uri.queryParameters['q'] ?? '') ?? true;
         return JsonReply(200, {'items': show ? found : []});
+      }
+      if (uri.path == '/uploads' && method == 'POST') {
+        return const JsonReply(201, {
+          'uploadId': 'up1',
+          'uploadUrl': 'https://signed.example/up1',
+          'uploadMethod': 'PUT',
+          'uploadHeaders': {'Content-Type': 'image/jpeg'},
+        });
+      }
+      if (uri.path == '/uploads/up1/finalize') {
+        return const JsonReply(200, {
+          'uploadId': 'up1',
+          'state': 'valid',
+          'imageReference': 'img_ok',
+        });
+      }
+      if (uri.path == '/participations/d1/complete') {
+        return const JsonReply(200, {
+          'id': 'd1',
+          'editionId': 'a',
+          'distanceId': '10k',
+          'state': 'completed',
+          'version': 2,
+          'medalImageReference': 'img_ok',
+        });
       }
       if (uri.path == '/participations' && method == 'POST') {
         if (participationExists) {
@@ -584,6 +610,82 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ParticipationDraftScreen), findsOneWidget);
       expect(find.byType(EditionScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'concluir a participação de uma medalha nova volta à prateleira (sem tela preta)',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Corrida A',
+            'date': '2026-09-01',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '10k', 'kilometers': 10},
+            ],
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Corrida A']),
+            draftPhotoSelector: () async => [0xff, 0xd8, 0xff, 0xd9],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      final go = find.byKey(const Key('medal-scan-conclude'));
+      await tester.ensureVisible(go);
+      await tester.tap(go);
+      await tester.pumpAndSettle();
+      expect(find.text('Rascunho da participação'), findsOneWidget);
+      await tester.tap(find.text('Selecionar foto'));
+      await tester.pumpAndSettle();
+      final list = find.byType(Scrollable).first;
+      for (final label in [
+        'Organização',
+        'Percurso',
+        'Kit',
+        'Medalha',
+        'Hidratação',
+        'Estrutura',
+        'Segurança',
+        'Custo-benefício',
+      ]) {
+        final star = find.byKey(Key('rating-$label-5'));
+        await tester.scrollUntilVisible(star, 200, scrollable: list);
+        await tester.tap(star);
+        await tester.pump();
+      }
+      final declaration = find.text('Declaro que concluí esta corrida');
+      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
+      await tester.tap(declaration);
+      await tester.pumpAndSettle();
+      final finish = find.text('Concluir participação');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await tester.tap(finish);
+      await tester.pumpAndSettle();
+      // A prateleira aparece (não uma tela preta) e é a única tela: sem seta de voltar.
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
+      expect(find.byKey(const Key('medals-title')), findsOneWidget);
+      expect(
+        tester.state<NavigatorState>(find.byType(Navigator)).canPop(),
+        isFalse,
+      );
     },
   );
 
