@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -94,6 +95,17 @@ const double _cardFooterHeight = 320;
 const double _cardPhotoHeight = 1350 - _cardHeaderHeight - _cardFooterHeight;
 const double _cardTotalHeight =
     _cardHeaderHeight + _cardPhotoHeight + _cardFooterHeight;
+
+/// Carrega um asset de imagem (ex. a logo da marca) como ui.Image, para desenhar no canvas.
+Future<ui.Image?> _loadAssetImage(String path) async {
+  try {
+    final bytes = await rootBundle.load(path);
+    final codec = await ui.instantiateImageCodec(bytes.buffer.asUint8List());
+    return (await codec.getNextFrame()).image;
+  } on Object {
+    return null;
+  }
+}
 
 /// Recorte "cover" (preenche sem distorcer, cortando o excesso) da imagem de origem para caber
 /// exatamente no retangulo de destino.
@@ -228,14 +240,33 @@ Future<Uint8List> buildShareCard({
       maxLines: 1,
     );
   }
-  text(
-    '+1Pódio',
-    footerTop + _cardFooterHeight - 70,
-    48,
-    weight: FontWeight.w900,
-    color: runPassGold,
-    maxLines: 1,
-  );
+  // Logo da marca (versao clara, p/ contrastar com o fundo escuro); sem o
+  // asset carregar por algum motivo, cai para o texto "+1Pódio".
+  final logo = await _loadAssetImage('assets/brand/logo-dark.png');
+  if (logo != null) {
+    const logoHeight = 56.0;
+    final logoWidth = logo.width * (logoHeight / logo.height);
+    canvas.drawImageRect(
+      logo,
+      Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
+      Rect.fromLTWH(
+        (_cardSide - logoWidth) / 2,
+        footerTop + _cardFooterHeight - 78,
+        logoWidth,
+        logoHeight,
+      ),
+      Paint(),
+    );
+  } else {
+    text(
+      '+1Pódio',
+      footerTop + _cardFooterHeight - 70,
+      48,
+      weight: FontWeight.w900,
+      color: runPassGold,
+      maxLines: 1,
+    );
+  }
 
   final image = await recorder.endRecording().toImage(
     _cardSide.toInt(),

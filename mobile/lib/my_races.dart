@@ -1656,11 +1656,14 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     crossAxisCount: 3,
     shrinkWrap: true,
     physics: const NeverScrollableScrollPhysics(),
-    mainAxisSpacing: 4,
-    crossAxisSpacing: 4,
+    mainAxisSpacing: 0,
+    crossAxisSpacing: 2,
     // Baixo o suficiente para o nicho de nogueira (proporcao fixa 1086:1448)
-    // mais o texto caberem usando a largura inteira do card, sem cortar.
-    childAspectRatio: 0.5,
+    // mais o texto caberem usando a largura inteira do card, sem cortar —
+    // mesmo quando local/ano quebra em 2 linhas (o pior caso). Por isso nao
+    // da para reduzir muito mais sem arriscar sobrepor a proxima linha
+    // quando isso acontecer; 0.52 aperta a folga sem cortar texto.
+    childAspectRatio: 0.52,
     children: [for (final race in list) tile(race)],
   );
 
@@ -1735,7 +1738,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ];
   }
 
-  // Icone em cima, numero e legenda embaixo. A legenda sempre quebra nas
+  // Icone ao lado do numero (em vez de em cima), e a legenda embaixo: ganha
+  // altura vertical no card sem mudar fonte/cor. A legenda sempre quebra nas
   // 2 palavras (quebra manual, nao automatica): assim as 3 legendas ficam
   // com a mesma altura/duas linhas sempre, em vez de uma quebrar e outra
   // nao conforme o texto coube ou nao na largura.
@@ -1748,11 +1752,16 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(width: 28, height: 28, child: Center(child: icon)),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(width: 22, height: 22, child: Center(child: icon)),
+            const SizedBox(width: 6),
+            Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20),
+            ),
+          ],
         ),
         Text(
           '$firstWord\n$secondWord',
@@ -1804,7 +1813,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             final stats = RaceStats.of(data);
             return ListView(
               key: const Key('medals-list'),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
               children: [
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -1817,11 +1826,11 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 6),
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                      vertical: 16,
+                      vertical: 8,
                       horizontal: 12,
                     ),
                     child: IntrinsicHeight(
@@ -1831,7 +1840,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                             const Icon(
                               Icons.directions_run_rounded,
                               color: Color(0xff4cc38a),
-                              size: 28,
+                              size: 22,
                             ),
                             '${stats.kilometers.round()}',
                             "km's",
@@ -1845,8 +1854,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                           bigStat(
                             Image.asset(
                               'assets/icons/gold-medal.png',
-                              width: 28,
-                              height: 28,
+                              width: 22,
+                              height: 22,
                             ),
                             '${stats.completed}',
                             'medalhas',
@@ -1860,8 +1869,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                           bigStat(
                             Image.asset(
                               'assets/icons/location.png',
-                              width: 28,
-                              height: 28,
+                              width: 22,
+                              height: 22,
                             ),
                             '${stats.cities}',
                             'cidades',
@@ -1872,7 +1881,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 6),
                 Row(
                   children: [
                     Expanded(
@@ -1902,7 +1911,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 ...sections(data),
               ],
             );
