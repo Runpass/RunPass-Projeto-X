@@ -53,6 +53,7 @@ Future<IdentityGateway> runner({
   bool noRaces = false,
   List<Map<String, dynamic>> found = const [],
   List<Map<String, dynamic>> requests = const [],
+  bool Function(String q)? foundFor,
 }) async {
   final editions = {
     'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
@@ -87,7 +88,10 @@ Future<IdentityGateway> runner({
                 ],
         });
       }
-      if (uri.path == '/editions') return JsonReply(200, {'items': found});
+      if (uri.path == '/editions') {
+        final show = foundFor?.call(uri.queryParameters['q'] ?? '') ?? true;
+        return JsonReply(200, {'items': show ? found : []});
+      }
       if (uri.path == '/me/edition-requests') {
         return JsonReply(200, {'items': requests});
       }
@@ -197,6 +201,10 @@ void main() {
   });
 
   Future<void> tapAdd(WidgetTester tester) async {
+    // Tela alta: a tela da foto agora tem os campos editáveis acima dos botões.
+    tester.view.physicalSize = const Size(800, 3200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await tester.ensureVisible(find.byKey(const Key('medal-add-tile')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('medal-add-tile')));
@@ -283,13 +291,90 @@ void main() {
       await tester.pumpAndSettle();
       await tapAdd(tester);
       expect(find.byKey(const Key('medal-scan-suggest')), findsOneWidget);
-      expect(find.text('• Distância: 10 km'), findsOneWidget);
-      expect(find.text('• Data: 22/11/2026'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('medal-edit-distance')))
+            .controller!
+            .text,
+        '10',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('medal-edit-date')))
+            .controller!
+            .text,
+        '22/11/2026',
+      );
       await tester.ensureVisible(find.byKey(const Key('medal-scan-request')));
       await tester.tap(find.byKey(const Key('medal-scan-request')));
       await tester.pumpAndSettle();
       expect(find.byType(EditionRequestFormScreen), findsOneWidget);
       expect(find.text('CIRCUITO DAS ESTAÇÕES'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'dá para corrigir o que foi lido, buscar de novo e concluir com os dados editados',
+    (tester) async {
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Corrida São Paulo',
+            'date': '2026-09-01',
+            'city': 'São Paulo',
+            'state': 'SP',
+          },
+        ],
+        foundFor: (q) => q.toLowerCase().contains('são'),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Corrida Gão Paulo', '10 KM']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      // Leu "Gão" (errado): nada achado, mas o campo é editável.
+      expect(find.byKey(const Key('medal-match-a')), findsNothing);
+      final nameField = find.byKey(const Key('medal-edit-name'));
+      await tester.ensureVisible(nameField);
+      expect(
+        tester.widget<TextField>(nameField).controller!.text,
+        'Corrida Gão Paulo',
+      );
+      await tester.enterText(nameField, 'Corrida São Paulo');
+      await tester.ensureVisible(
+        find.byKey(const Key('medal-scan-search-again')),
+      );
+      await tester.tap(find.byKey(const Key('medal-scan-search-again')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
+      // Corrige de novo, completa data e cidade e conclui: o formulário leva os dados editados.
+      await tester.enterText(nameField, 'Meia São Paulo 2026');
+      await tester.enterText(
+        find.byKey(const Key('medal-edit-date')),
+        '15/03/2026',
+      );
+      await tester.enterText(
+        find.byKey(const Key('medal-edit-city')),
+        'Santos',
+      );
+      await tester.enterText(find.byKey(const Key('medal-edit-state')), 'sp');
+      final conclude = find.byKey(const Key('medal-scan-request'));
+      await tester.ensureVisible(conclude);
+      await tester.tap(conclude);
+      await tester.pumpAndSettle();
+      expect(find.byType(EditionRequestFormScreen), findsOneWidget);
+      for (final text in ['Meia São Paulo 2026', '15/03/2026', '10']) {
+        expect(find.text(text), findsWidgets, reason: text);
+      }
+      // Cidade e UF aparecem juntas no seletor do formulário.
+      expect(find.textContaining('Santos'), findsWidgets);
     },
   );
 

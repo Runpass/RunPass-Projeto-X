@@ -156,13 +156,14 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   List<String> queries = const [];
   Map<String, String> details = const {};
   bool unavailable = false;
-
-  List<String> get detailLines => [
-    if (details['name'] != null) 'Nome: ${details['name']}',
-    if (details['distanceKm'] != null) 'Distância: ${details['distanceKm']} km',
-    if (details['date'] != null) 'Data: ${displayDate(details['date']!)}',
-  ];
   final matches = <Map<String, dynamic>>[];
+
+  // O que a medalha mostra, para a pessoa conferir e corrigir antes de buscar de novo ou concluir.
+  final name = TextEditingController();
+  final date = TextEditingController(); // dd/mm/aaaa
+  final distance = TextEditingController();
+  final city = TextEditingController();
+  final state = TextEditingController();
 
   @override
   void initState() {
@@ -170,45 +171,185 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     scan();
   }
 
+  @override
+  void dispose() {
+    for (final c in [name, date, distance, city, state]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  /// O que está nos campos agora (já corrigido pela pessoa); só entra o que foi preenchido e é válido.
+  Map<String, String> editedDetails() {
+    final iso = requestDateToIso(date.text.trim());
+    final km = distance.text.trim().replaceAll(',', '.');
+    return {
+      if (name.text.trim().isNotEmpty) 'name': name.text.trim(),
+      'date': ?iso,
+      if (double.tryParse(km) != null) 'distanceKm': km,
+      if (city.text.trim().isNotEmpty) 'city': city.text.trim(),
+      if (state.text.trim().length == 2)
+        'state': state.text.trim().toUpperCase(),
+    };
+  }
+
+  Future<void> searchMatches(List<String> terms) async {
+    for (final query in terms) {
+      if (!mounted) return;
+      try {
+        final page = await widget.gateway.request(
+          '/editions',
+          query: {'q': query, 'limit': '5'},
+        );
+        for (final item in (page['items'] as List? ?? const [])) {
+          final edition = Map<String, dynamic>.from(item as Map);
+          if (!matches.any((m) => m['id'] == edition['id'])) {
+            matches.add(edition);
+          }
+        }
+      } on Exception {
+        // Uma busca que falha não derruba as outras: a pessoa ainda pode procurar à mão.
+      }
+      if (matches.length >= 8) break;
+    }
+  }
+
   Future<void> scan() async {
     try {
       final lines = await widget.reader.read(widget.photoPath);
       queries = medalQueries(lines);
       details = medalDetails(lines, queries);
+      name.text = details['name'] ?? '';
+      date.text = requestDateToDisplay(details['date'] ?? '');
+      distance.text = details['distanceKm'] ?? '';
       if (queries.isEmpty) {
         note = 'Não consegui ler o nome da corrida nesta foto.';
       }
-      for (final query in queries) {
-        if (!mounted) return;
-        try {
-          final page = await widget.gateway.request(
-            '/editions',
-            query: {'q': query, 'limit': '5'},
-          );
-          for (final item in (page['items'] as List? ?? const [])) {
-            final edition = Map<String, dynamic>.from(item as Map);
-            if (!matches.any((m) => m['id'] == edition['id'])) {
-              matches.add(edition);
-            }
-          }
-        } on Exception {
-          // Uma busca que falha não derruba as outras: a pessoa ainda pode procurar à mão.
-        }
-        if (matches.length >= 8) break;
-      }
+      await searchMatches(queries);
       if (queries.isNotEmpty && matches.isEmpty) {
         note = 'Li o texto da medalha, mas não achei uma corrida com ele.';
       }
     } on MedalReadUnavailable {
       unavailable = true;
-      note = 'Este aparelho ainda não lê o texto da medalha.';
+      note = 'Este aparelho ainda não lê o texto da medalha. Preencha abaixo.';
     } on Exception {
-      note =
-          'Não consegui ler esta foto. Tente outra, mais nítida e de frente.';
+      note = 'Não consegui ler esta foto. Tente outra, mais nítida e de frente, ou preencha abaixo.';
     } finally {
       if (mounted) setState(() => working = false);
     }
   }
+
+  /// Busca de novo com o nome corrigido pela pessoa.
+  Future<void> searchAgain() async {
+    final term = name.text.trim();
+    if (term.length < 2) return;
+    setState(() {
+      working = true;
+      note = null;
+      matches.clear();
+    });
+    await searchMatches([term]);
+    if (!mounted) return;
+    setState(() {
+      working = false;
+      if (matches.isEmpty) note = 'Não achei uma corrida com este nome.';
+    });
+  }
+
+  Future<void> pickDate() async {
+    final current = DateTime.tryParse(requestDateToIso(date.text.trim()) ?? '');
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: current ?? DateTime.now(),
+      firstDate: DateTime(1990),
+      lastDate: DateTime.now().add(const Duration(days: 730)),
+    );
+    if (picked != null) {
+      date.text = requestDateToDisplay(
+        picked.toIso8601String().substring(0, 10),
+      );
+    }
+  }
+
+  Widget editField(
+    String key,
+    String label, {
+    TextInputType? keyboard,
+    int? maxLength,
+    Widget? suffix,
+    String? hint,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: TextField(
+      key: Key('medal-edit-$key'),
+      controller: {
+        'name': name,
+        'date': date,
+        'distance': distance,
+        'city': city,
+        'state': state,
+      }[key],
+      keyboardType: keyboard,
+      maxLength: maxLength,
+      textCapitalization: key == 'state'
+          ? TextCapitalization.characters
+          : TextCapitalization.words,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        counterText: '',
+        suffixIcon: suffix,
+      ),
+    ),
+  );
+
+  /// Campos editáveis com o que foi lido da medalha.
+  Widget readCard() => Card(
+    key: const Key('medal-scan-edit'),
+    child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'O que li na medalha. Confira e corrija:',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 10),
+          editField('name', 'Nome da corrida', maxLength: 160),
+          editField(
+            'date',
+            'Data (dd/mm/aaaa)',
+            keyboard: TextInputType.datetime,
+            maxLength: 10,
+            suffix: IconButton(
+              key: const Key('medal-edit-date-pick'),
+              tooltip: 'Escolher no calendário',
+              icon: const Icon(Icons.calendar_month_outlined),
+              onPressed: pickDate,
+            ),
+          ),
+          editField(
+            'distance',
+            'Distância em km',
+            keyboard: const TextInputType.numberWithOptions(decimal: true),
+            maxLength: 8,
+          ),
+          editField('city', 'Cidade', hint: 'São Paulo', maxLength: 100),
+          editField('state', 'UF', hint: 'SP', maxLength: 2),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              key: const Key('medal-scan-search-again'),
+              onPressed: searchAgain,
+              icon: const Icon(Icons.search_rounded),
+              label: const Text('Buscar de novo com este nome'),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   void openCatalog() => Navigator.of(context).pushReplacement(
     MaterialPageRoute<void>(
@@ -231,7 +372,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
       MaterialPageRoute(
         builder: (_) => EditionRequestFormScreen(
           gateway: widget.gateway,
-          prefill: details,
+          prefill: editedDetails(),
           medalPhoto: photo,
         ),
       ),
@@ -315,8 +456,9 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(note!, key: const Key('medal-scan-note')),
             ),
+          readCard(),
           const SizedBox(height: 8),
-          if (matches.isEmpty && !unavailable) ...[
+          if (matches.isEmpty) ...[
             // Não achou: sugere cadastrar a corrida, já com o que foi lido na medalha.
             Card(
               key: const Key('medal-scan-suggest'),
@@ -329,12 +471,10 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                       'Esta corrida ainda não está no catálogo. Quer cadastrá-la?',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
-                    if (details.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      const Text('Vou levar o que li na medalha:'),
-                      for (final line in detailLines)
-                        Text('• $line', key: Key('medal-detail-$line')),
-                    ],
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Confira os dados acima: o cadastro leva o que estiver nos campos, junto com a foto da medalha.',
+                    ),
                   ],
                 ),
               ),
