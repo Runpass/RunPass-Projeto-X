@@ -7,6 +7,7 @@ import 'catalog_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
+import 'new_post.dart';
 import 'notifications.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
@@ -639,6 +640,20 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
         child: RunPassWordmark(compact: true),
       ),
       actions: [
+        IconButton(
+          key: const Key('new-post'),
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Nova postagem',
+          icon: const Icon(Icons.add_circle_outline_rounded),
+          onPressed: () async {
+            final published = await Navigator.of(context).push<bool>(
+              MaterialPageRoute<bool>(
+                builder: (_) => NewPostScreen(gateway: widget.gateway),
+              ),
+            );
+            if (published == true) reload(); // a postagem nova aparece no feed
+          },
+        ),
         IconButton(
           key: const Key('find-friends'),
           visualDensity: VisualDensity.compact,

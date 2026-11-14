@@ -199,6 +199,9 @@ class CompleteParticipation(Input):
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)]
     publishToFeed: bool
     comment: Annotated[str, Field(max_length=2000)] | None = None
+    # Outra foto, separada da medalha, para a publicacao no feed. Exigida quando publishToFeed e verdadeiro.
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
 
     @field_validator("declaredCompleted")
     @classmethod
@@ -206,6 +209,14 @@ class CompleteParticipation(Input):
         if value is not True:
             raise ValueError("Completion declaration required")
         return value
+
+
+class PublishParticipation(Input):
+    """Publica no feed uma participacao ja concluida (e ainda nao publicada), com uma foto propria."""
+
+    expectedVersion: Annotated[int, Field(ge=1)]
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+    postText: Annotated[str, Field(max_length=500)] | None = None
 
 
 class ReplaceReview(Input):

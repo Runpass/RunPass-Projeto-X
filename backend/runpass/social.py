@@ -522,6 +522,12 @@ class SocialService:
         post["likedByMe"] = any(sk == "LIKE#" + viewer for sk, _ in likes)
         if review and review.get("comment") and review.get("moderationState") != "invalidated":
             post["comment"] = review["comment"]
+        if part.get("postImageReference"):
+            post["hasPostImage"] = True  # a publicacao tem foto propria, separada da medalha
+        if part.get("postText"):
+            post["comment"] = part[
+                "postText"
+            ]  # o texto escrito ao publicar vale mais que o da avaliacao
         return post
 
     def _authorized_post(self, read, viewer, post_id):

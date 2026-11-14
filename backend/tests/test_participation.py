@@ -76,6 +76,166 @@ class ParticipationTests(unittest.TestCase):
             **changes,
         }
 
+    # ---- foto da publicacao no feed (separada da medalha) ----------------------------------------
+
+    POST_REF = "img_" + "a" * 64
+    POST_REF2 = "img_" + "b" * 64
+
+    def runner_image(self, reference, owner="owner", **extra):
+        key = ("operations", "USER#" + owner, "IMAGE#" + reference)
+        self.store.commit(
+            {key: None},
+            {key: {"owner": owner, "origin": "runner", "state": "valid", "refs": 0, **extra}},
+        )
+        return key
+
+    def test_publishing_on_completion_needs_a_separate_post_photo(self):
+        draft = self.service.create(self.actor, "c1", self.payload())
+        # publicar sem a foto da publicacao: recusado
+        with self.assertRaises(Problem) as erro:
+            self.service.complete(
+                self.actor, draft["id"], "x1", self.completion(draft, publishToFeed=True)
+            )
+        self.assertEqual(erro.exception.code, "POST_IMAGE_REQUIRED")
+        # foto da publicacao sem publicar: recusado
+        self.runner_image(self.POST_REF)
+        with self.assertRaises(Problem) as erro:
+            self.service.complete(
+                self.actor,
+                draft["id"],
+                "x2",
+                self.completion(draft, postImageReference=self.POST_REF),
+            )
+        self.assertEqual(erro.exception.code, "POST_IMAGE_NOT_ALLOWED")
+        # a mesma imagem nao pode ser a medalha e a publicacao
+        self.completion(draft, medalImageReference=self.POST_REF)
+        with self.assertRaises(Problem) as erro:
+            self.service.complete(
+                self.actor,
+                draft["id"],
+                "x3",
+                self.completion(
+                    draft,
+                    medalImageReference=self.POST_REF,
+                    publishToFeed=True,
+                    postImageReference=self.POST_REF,
+                ),
+            )
+        self.assertEqual(erro.exception.code, "POST_IMAGE_MUST_DIFFER")
+        # imagem de outra pessoa ou inexistente: recusada
+        other = self.admit("other")
+        self.runner_image(self.POST_REF2, owner="other")
+        for ref in (self.POST_REF2, "img_" + "c" * 64):
+            with self.assertRaises(Problem) as erro:
+                self.service.complete(
+                    self.actor,
+                    draft["id"],
+                    "x4" + ref[-2:],
+                    self.completion(draft, publishToFeed=True, postImageReference=ref),
+                )
+            self.assertEqual(erro.exception.code, "IMAGE_NOT_VALID")
+        del other
+        # certo: guarda as duas fotos e o texto; reserva as duas imagens
+        done = self.service.complete(
+            self.actor,
+            draft["id"],
+            "ok",
+            self.completion(
+                draft,
+                publishToFeed=True,
+                postImageReference=self.POST_REF,
+                postText="Cheguei! Que prova linda.",
+            ),
+        )
+        self.assertEqual(done["medalImageReference"], "img-valid")
+        self.assertEqual(done["postImageReference"], self.POST_REF)
+        self.assertEqual(done["postText"], "Cheguei! Que prova linda.")
+        self.assertTrue(done["publishToFeed"])
+        self.assertEqual(
+            self.store.get(("operations", "USER#owner", "IMAGE#" + self.POST_REF))["refs"], 1
+        )
+        self.assertEqual(self.store.get(("operations", "USER#owner", "IMAGE#img-valid"))["refs"], 1)
+
+    def test_publish_a_completed_participation_later_with_its_own_photo(self):
+        draft = self.service.create(self.actor, "c2", self.payload())
+        done = self.service.complete(self.actor, draft["id"], "d2", self.completion(draft))
+        self.assertFalse(done["publishToFeed"])
+        self.runner_image(self.POST_REF)
+        stale = {"expectedVersion": done["version"] + 5, "postImageReference": self.POST_REF}
+        with self.assertRaises(Problem) as erro:
+            self.service.publish(self.actor, draft["id"], "p0", stale)
+        self.assertEqual(erro.exception.code, "VERSION_CONFLICT")
+        # a foto da medalha nao serve como foto da publicacao
+        with self.assertRaises(Problem) as erro:
+            self.service.publish(
+                self.actor,
+                draft["id"],
+                "p1",
+                {"expectedVersion": done["version"], "postImageReference": "img-valid"},
+            )
+        self.assertEqual(erro.exception.code, "POST_IMAGE_MUST_DIFFER")
+        published = self.service.publish(
+            self.actor,
+            draft["id"],
+            "p2",
+            {
+                "expectedVersion": done["version"],
+                "postImageReference": self.POST_REF,
+                "postText": "Minha corrida",
+            },
+        )
+        self.assertTrue(published["publishToFeed"])
+        self.assertEqual(published["postText"], "Minha corrida")
+        self.assertEqual(published["version"], done["version"] + 1)
+        feed = self.store.get(("history", "FEED#PUBLIC", f"T#{done['completedAt']}#{draft['id']}"))
+        self.assertEqual(feed["owner"], "owner")
+        # mesma chave repete o resultado; publicar de novo e recusado
+        again = self.service.publish(
+            self.actor,
+            draft["id"],
+            "p2",
+            {
+                "expectedVersion": done["version"],
+                "postImageReference": self.POST_REF,
+                "postText": "Minha corrida",
+            },
+        )
+        self.assertEqual(again["version"], published["version"])
+        with self.assertRaises(Problem) as erro:
+            self.service.publish(
+                self.actor,
+                draft["id"],
+                "p3",
+                {"expectedVersion": published["version"], "postImageReference": self.POST_REF},
+            )
+        self.assertEqual(erro.exception.code, "ALREADY_PUBLISHED")
+
+    def test_publish_needs_a_completed_participation_of_the_owner(self):
+        draft = self.service.create(self.actor, "c3", self.payload())
+        self.runner_image(self.POST_REF)
+        body = {"expectedVersion": draft["version"], "postImageReference": self.POST_REF}
+        with self.assertRaises(Problem) as erro:  # rascunho nao publica
+            self.service.publish(self.actor, draft["id"], "q1", body)
+        self.assertEqual(erro.exception.code, "PARTICIPATION_NOT_COMPLETED")
+        other = self.admit("intruso")
+        with self.assertRaises(Problem) as erro:  # de outra pessoa: mesma resposta de inexistente
+            self.service.publish(other, draft["id"], "q2", body)
+        self.assertEqual(erro.exception.code, "PARTICIPATION_NOT_FOUND")
+
+    def test_deleting_releases_the_post_photo_too(self):
+        draft = self.service.create(self.actor, "c4", self.payload())
+        self.runner_image(self.POST_REF)
+        done = self.service.complete(
+            self.actor,
+            draft["id"],
+            "d4",
+            self.completion(draft, publishToFeed=True, postImageReference=self.POST_REF),
+        )
+        post_key = ("operations", "USER#owner", "IMAGE#" + self.POST_REF)
+        self.assertEqual(self.store.get(post_key)["refs"], 1)
+        self.service.delete(self.actor, draft["id"], "del4", done["version"])
+        self.assertEqual(self.store.get(post_key)["refs"], 0)
+
     def test_create_replay_reserves_edition_and_has_no_derived_effects(self):
         first = self.service.create(self.actor, "same-key", self.payload(timeSeconds=3600))
         replay = self.service.create(self.actor, "same-key", self.payload(timeSeconds=3600))
