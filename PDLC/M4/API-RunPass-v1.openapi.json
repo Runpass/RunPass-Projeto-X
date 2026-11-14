@@ -3152,6 +3152,206 @@
         "x-requires-beta-admission": true
       }
     },
+    "/editions/{id}/comments": {
+      "get": {
+        "operationId": "listEditionComments",
+        "tags": [
+          "Social"
+        ],
+        "description": "Comentarios da corrida, mais recentes primeiro. Qualquer pessoa admitida na beta le.",
+        "responses": {
+          "200": {
+            "description": "Pagina de comentarios",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionCommentPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      },
+      "post": {
+        "operationId": "createEditionComment",
+        "tags": [
+          "Social"
+        ],
+        "description": "Qualquer pessoa admitida na beta comenta a corrida (nao precisa de participacao). Chave de idempotencia evita duplicar; ate 10 por pessoa por corrida; corrida arquivada nao recebe.",
+        "responses": {
+          "201": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionComment"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEditionComment"
+              }
+            }
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/edition-comments/{id}": {
+      "delete": {
+        "operationId": "deleteEditionComment",
+        "tags": [
+          "Social"
+        ],
+        "summary": "So o autor apaga o proprio comentario; de outra pessoa responde 404. A equipe remove pelo portal.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Apagado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "deleted"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
     "/comments/{id}": {
       "delete": {
         "operationId": "deleteOwnComment",
@@ -9950,6 +10150,73 @@
             "format": "date-time"
           },
           "credit": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateEditionComment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "description": "Comentario na corrida: texto livre, visivel a quem esta na beta. Nao e avaliacao e nao exige participacao. Espacos em branco sao normalizados; ate 10 por pessoa por corrida."
+      },
+      "EditionComment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "editionId",
+          "text",
+          "createdAt",
+          "mine",
+          "author"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "editionId": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "mine": {
+            "type": "boolean",
+            "description": "True quando quem pergunta e o autor (pode apagar)."
+          },
+          "author": {
+            "$ref": "#/components/schemas/PublicProfile"
+          }
+        }
+      },
+      "EditionCommentPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionComment"
+            }
+          },
+          "nextCursor": {
             "type": "string"
           }
         }

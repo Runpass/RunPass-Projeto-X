@@ -194,6 +194,105 @@ function formularioRenomear() {
   );
 }
 
+/** Moderação: comentários que os usuários fizeram numa corrida. A equipe escolhe a corrida, lê e remove o que não deve ficar. */
+function formularioComentarios() {
+  const busca = el('input', { type: 'search', maxlength: '160', autocomplete: 'off', placeholder: 'Nome da corrida, ex.: batman' });
+  const buscar = el('button', { type: 'button', class: 'ok' }, 'Buscar corrida');
+  const estado = el('p', { class: 'meta', 'aria-live': 'polite' });
+  const corridas = el('ul', { class: 'escolhas', role: 'listbox' });
+  const lista = el('div');
+
+  const mostrar = async (corrida) => {
+    lista.replaceChildren(el('p', { class: 'meta' }, 'Carregando os comentários...'));
+    try {
+      const { items } = await api(`/admin/editions/${encodeURIComponent(corrida.id)}/comments`);
+      lista.replaceChildren(
+        el('h3', {}, `${corrida.name} · ${items.length} comentário(s)`),
+        ...(items.length
+          ? items.map((c) => {
+              const linha = el(
+                'div',
+                { class: 'cartao' },
+                el('div', { class: 'meta' }, `${dataHoraBr(c.createdAt)} · autor ${c.author}`),
+                el('p', {}, c.text),
+              );
+              const remover = el('button', { type: 'button', class: 'perigo' }, 'Remover comentário');
+              remover.addEventListener('click', async () => {
+                if (!window.confirm('Remover este comentário para todos? Não dá para desfazer.')) return;
+                remover.disabled = true;
+                try {
+                  await api(`/admin/edition-comments/${encodeURIComponent(c.id)}`, { method: 'DELETE' });
+                  linha.remove();
+                  aviso('Comentário removido.', 'ok');
+                } catch (falha) {
+                  remover.disabled = false;
+                  if (token) aviso(mensagem(falha.codigo), 'erro');
+                }
+              });
+              linha.append(el('div', { class: 'acoes' }, remover));
+              return linha;
+            })
+          : [el('p', { class: 'vazio' }, 'Nenhum comentário nesta corrida.')]),
+      );
+    } catch (falha) {
+      lista.replaceChildren();
+      if (token) aviso(mensagem(falha.codigo), 'erro');
+    }
+  };
+
+  const pesquisar = async () => {
+    const texto = busca.value.trim();
+    corridas.replaceChildren();
+    lista.replaceChildren();
+    if (texto.length < 2) {
+      estado.textContent = 'Digite pelo menos 2 letras do nome.';
+      return;
+    }
+    buscar.disabled = true;
+    estado.textContent = 'Buscando...';
+    try {
+      const { items } = await api(`/admin/editions?q=${encodeURIComponent(texto)}&limit=20`);
+      estado.textContent = items.length ? 'Escolha a corrida para ver os comentários.' : 'Nenhuma corrida encontrada.';
+      corridas.replaceChildren(
+        ...items.map((e) => {
+          const li = el('li', { role: 'option', 'aria-selected': 'false', tabindex: '0' }, `${e.name} · ${dataBr(e.date)} · ${e.city}/${e.state}`);
+          const escolher = () => {
+            for (const outro of corridas.children) outro.setAttribute('aria-selected', 'false');
+            li.setAttribute('aria-selected', 'true');
+            mostrar(e);
+          };
+          li.addEventListener('click', escolher);
+          li.addEventListener('keydown', (ev) => ev.key === 'Enter' && escolher());
+          return li;
+        }),
+      );
+    } catch (falha) {
+      estado.textContent = '';
+      if (token) aviso(mensagem(falha.codigo), 'erro');
+    } finally {
+      buscar.disabled = false;
+    }
+  };
+  buscar.addEventListener('click', pesquisar);
+  busca.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      pesquisar();
+    }
+  });
+  return el(
+    'article',
+    { class: 'cartao', id: 'moderar-comentarios' },
+    el('h2', {}, 'Comentários nas corridas'),
+    el('p', { class: 'ajuda' }, 'Qualquer pessoa da beta comenta numa corrida. Aqui a equipe lê e remove o que não deve ficar visível.'),
+    el('label', {}, 'Buscar corrida', busca),
+    el('div', { class: 'acoes' }, buscar),
+    estado,
+    corridas,
+    lista,
+  );
+}
+
 async function carregarPedidos() {
   const lista = $('pedidos');
   lista.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
@@ -220,6 +319,7 @@ async function carregarPedidos() {
           ]
         : []),
       formularioRenomear(),
+      formularioComentarios(),
     );
   } catch (erro) {
     if (token) {

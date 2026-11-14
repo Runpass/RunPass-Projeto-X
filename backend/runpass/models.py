@@ -214,6 +214,19 @@ class ReplaceReview(Input):
     comment: Annotated[str, Field(max_length=2000)] | None = None
 
 
+class CreateEditionComment(Input):
+    """Comentario na corrida (texto livre, visivel na beta). Nao e avaliacao e nao pede participacao."""
+
+    text: Annotated[str, Field(min_length=1, max_length=1000)]
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Comentario vazio")
+        return value
+
+
 class CreateComment(Input):
     text: Annotated[str, Field(min_length=1, max_length=1000)]
     # Resposta a um comentario (um nivel: responder a uma resposta vira resposta ao comentario raiz).

@@ -1271,5 +1271,152 @@ class SocialService:
         write(("history", "COMMENT#" + comment_id, "LOC"), None)
         write(("identity", "USER#" + loc["author"], "COMMENTREF#" + comment_id), None)
 
+    # ---- comentarios na corrida (qualquer pessoa admitida comenta; independe de participacao) ---------------
+
+    EDITION_COMMENT_MAX = 1000
+    EDITION_COMMENTS_PER_PERSON = 10  # por corrida
+    EDITION_COMMENT_SCAN = 500
+
+    def _edition_comment_rows(self, edition_id):
+        return self._list("history", "ECOMMENTS#" + edition_id, "C#", self.EDITION_COMMENT_SCAN)
+
+    def _edition_commentable(self, edition_id):
+        head = self.store.get(("catalog", "EDITION#" + edition_id, "HEAD"))
+        if not head or head.get("publicationState") != "approved":
+            raise Problem(404, "EDITION_NOT_FOUND")
+        return head
+
+    def _edition_comment_out(self, row, viewer):
+        profile = self._active_profile(self.store.get, row["author"]) or {}
+        return {
+            "id": row["id"],
+            "editionId": row["editionId"],
+            "text": row["text"],
+            "createdAt": row["createdAt"],
+            "mine": row["author"] == viewer,
+            "author": self._card(profile, viewer) if profile else {"id": row["author"]},
+        }
+
+    def edition_comment(self, actor, edition_id, key, text):
+        """Comentario na corrida, visivel para quem esta na beta. Sem participacao, avaliacao ou nota: so texto."""
+        text = " ".join(text.split()) if text else ""
+        if not text or len(text) > self.EDITION_COMMENT_MAX or any(ord(c) < 32 for c in text):
+            raise Problem(422, "INVALID_COMMENT")
+        self.identity.authorize(actor, admitted=True)
+        head = self._edition_commentable(edition_id)
+        if head.get("archived"):
+            raise Problem(409, "EDITION_ARCHIVED")
+
+        def work(read, write, account, now, replay):
+            if replay is not None:
+                loc = read(("history", "ECOMMENT#" + replay["id"], "LOC"))
+                row = loc and read(("history", "ECOMMENTS#" + edition_id, loc["sk"]))
+                if not row:
+                    raise Problem(404, "COMMENT_NOT_FOUND")
+                return self._edition_comment_out(row, actor.subject), replay
+            mine = [
+                r for _, r in self._edition_comment_rows(edition_id) if r["author"] == actor.subject
+            ]
+            if len(mine) >= self.EDITION_COMMENTS_PER_PERSON:
+                raise Problem(429, "COMMENT_LIMIT_REACHED")
+            comment_id, created = str(uuid4()), stamp(now)
+            sk = f"C#{created}#{comment_id}"
+            row = {
+                "id": comment_id,
+                "editionId": edition_id,
+                "author": actor.subject,
+                "text": text,
+                "createdAt": created,
+            }
+            row_key = ("history", "ECOMMENTS#" + edition_id, sk)
+            loc_key = ("history", "ECOMMENT#" + comment_id, "LOC")
+            write(row_key, row)
+            write(loc_key, {"editionId": edition_id, "sk": sk, "author": actor.subject})
+            write(
+                ("identity", "USER#" + actor.subject, "ECOMMENTREF#" + comment_id),
+                {"sharedKeys": [list(row_key), list(loc_key)]},
+            )
+            return self._edition_comment_out(row, actor.subject), {"id": comment_id}
+
+        return self.identity.transact(
+            actor,
+            "createEditionComment",
+            key,
+            {"editionId": edition_id, "text": text},
+            work,
+            admitted=True,
+        )
+
+    def edition_comments(self, actor, edition_id, limit=20, cursor=None):
+        """Mais recentes primeiro. `cursor` e a chave do ultimo item da pagina anterior."""
+        self.identity.authorize(actor, admitted=True)
+        self._edition_commentable(edition_id)
+        rows = [r for _, r in self._edition_comment_rows(edition_id)]
+        rows.sort(key=lambda r: (r["createdAt"], r["id"]), reverse=True)
+        rows = [r for r in rows if self._active_profile(self.store.get, r["author"])]
+        if cursor:
+            before = _cursor_decode(cursor)
+            rows = [r for r in rows if (r["createdAt"], r["id"]) < tuple(before)]
+        page = rows[:limit]
+        result = {"items": [self._edition_comment_out(r, actor.subject) for r in page]}
+        if len(rows) > limit and page:
+            result["nextCursor"] = _cursor_encode([page[-1]["createdAt"], page[-1]["id"]])
+        return result
+
+    def delete_edition_comment(self, actor, comment_id, key):
+        """So o autor apaga o proprio comentario (a equipe remove pelo portal, com outro caminho)."""
+
+        def work(read, write, account, now, replay):
+            loc = read(("history", "ECOMMENT#" + comment_id, "LOC"))
+            if not loc:
+                if replay is not None:
+                    return {"id": comment_id, "deleted": True}, replay
+                raise Problem(404, "COMMENT_NOT_FOUND")
+            if loc["author"] != actor.subject:
+                raise Problem(404, "COMMENT_NOT_FOUND")  # de outra pessoa = mesma resposta
+            self._erase_edition_comment(write, comment_id, loc)
+            return {"id": comment_id, "deleted": True}, {"id": comment_id}
+
+        return self.identity.transact(
+            actor, "deleteEditionComment", key, {"id": comment_id}, work, admitted=True
+        )
+
+    @staticmethod
+    def _erase_edition_comment(write, comment_id, loc):
+        write(("history", "ECOMMENTS#" + loc["editionId"], loc["sk"]), None)
+        write(("history", "ECOMMENT#" + comment_id, "LOC"), None)
+        write(("identity", "USER#" + loc["author"], "ECOMMENTREF#" + comment_id), None)
+
+
+def remove_edition_comment_as_team(store, comment_id):
+    """Remocao pela equipe (portal): sem checar o autor. Devolve a corrida e o autor, para a auditoria."""
+    loc_key = ("history", "ECOMMENT#" + comment_id, "LOC")
+    loc = store.get(loc_key)
+    if not loc:
+        raise Problem(404, "COMMENT_NOT_FOUND")
+    keys = {
+        ("history", "ECOMMENTS#" + loc["editionId"], loc["sk"]): None,
+        loc_key: None,
+        ("identity", "USER#" + loc["author"], "ECOMMENTREF#" + comment_id): None,
+    }
+    store.commit({k: store.get(k) for k in keys}, keys)
+    return {"id": comment_id, "editionId": loc["editionId"], "author": loc["author"]}
+
+
+def list_edition_comments_for_team(store, edition_id, limit=100):
+    """Comentarios da corrida para a equipe conferir (mais recentes primeiro), com o id de quem escreveu."""
+    rows, after = [], None
+    while len(rows) < limit:
+        page, after = store.query(
+            "history", "ECOMMENTS#" + edition_id, prefix="C#", after=after, limit=100
+        )
+        rows.extend(r for _, r in page)
+        if after is None:
+            break
+    rows.sort(key=lambda r: (r["createdAt"], r["id"]), reverse=True)
+    return [
+        {k: r[k] for k in ("id", "editionId", "author", "text", "createdAt")} for r in rows[:limit]
+    ]
+
 
 __all__ = ["SocialService", "Unavailable"]

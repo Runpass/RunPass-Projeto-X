@@ -906,6 +906,37 @@ class AdminApiTests(unittest.TestCase):
         self.assertIn("Corrida Pia Sintética", aviso["text"])
         self.assertIn("Minhas solicitações", aviso["text"])
 
+    def test_equipe_ve_e_remove_comentario_da_corrida_com_auditoria(self):
+        person = self.pessoa("tom")
+        head = ("catalog", "EDITION#synthetic-sp-2026", "HEAD")
+        self.assertIsNotNone(self.store.get(head))
+        feito = SocialService(self.identity).edition_comment(
+            person, "synthetic-sp-2026", "kc1", "Comentário que precisa sair"
+        )
+        h = self.auth()
+        listado = self.client.get("/admin/editions/synthetic-sp-2026/comments", headers=h)
+        self.assertEqual(listado.status_code, 200, listado.text)
+        self.assertEqual(
+            [(c["id"], c["text"]) for c in listado.json()["items"]],
+            [(feito["id"], "Comentário que precisa sair")],
+        )
+        # sem permissao de catalogo: recusado; com permissao: remove e some para os usuarios
+        self.assertEqual(
+            self.client.delete(
+                f"/admin/edition-comments/{feito['id']}", headers=self.auth(token("mod"))
+            ).status_code,
+            403,
+        )
+        r = self.client.delete(f"/admin/edition-comments/{feito['id']}", headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(
+            SocialService(self.identity).edition_comments(person, "synthetic-sp-2026")["items"], []
+        )
+        self.assertEqual(
+            self.client.delete(f"/admin/edition-comments/{feito['id']}", headers=h).status_code,
+            404,
+        )
+
     def test_sugerir_banner_de_corrida_ja_cadastrada_vai_para_a_fila_da_equipe(self):
         person = Principal("rui", True)
         self.identity.create_profile(person, "pr", {"displayName": "Rui", "username": "rui_x"})
