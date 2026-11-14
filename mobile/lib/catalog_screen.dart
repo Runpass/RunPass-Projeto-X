@@ -3540,6 +3540,21 @@ class RatingInput extends StatelessWidget {
   );
 }
 
+/// Foto atual da publicação (link curto e assinado), para ajustar o tamanho. Nulo se não der para baixar.
+Future<List<int>?> loadPostPhotoBytes(
+  IdentityGateway gateway,
+  String participationId,
+) async {
+  try {
+    final link = await gateway.request(
+      '/participations/${Uri.encodeComponent(participationId)}/post-image',
+    );
+    return await fetchImageBytes(link['url'] as String);
+  } on Exception {
+    return null;
+  }
+}
+
 /// Abre o recorte da foto da corrida/medalha e devolve os bytes ajustados (nulo se cancelar).
 Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
     Navigator.of(context).push<List<int>>(
@@ -3557,6 +3572,18 @@ class ParticipationDraftScreen extends StatefulWidget {
   /// Seleção da foto da publicação no feed (outra foto, separada da medalha). Nos testes troca-se; sem ela, usa a galeria.
   final PhotoSelector? postPhotoSelector;
 
+  /// Aberta a partir da minha publicação no feed: a edição ajusta a foto da PUBLICAÇÃO (não a da medalha).
+  final bool fromPost;
+
+  /// Baixa a foto atual da publicação para ajustar o tamanho, e abre o recorte. Trocáveis nos testes.
+  final Future<List<int>?> Function(
+    IdentityGateway gateway,
+    String participationId,
+  )
+  postPhotoLoader;
+  final Future<List<int>?> Function(BuildContext context, List<int> photo)
+  postPhotoCropper;
+
   /// Foto já escolhida (ex.: a da medalha, vinda de "Adicionar medalha"): é enviada ao abrir o rascunho.
   final List<int>? initialPhoto;
 
@@ -3569,6 +3596,9 @@ class ParticipationDraftScreen extends StatefulWidget {
     required this.initial,
     this.photoSelector,
     this.postPhotoSelector,
+    this.fromPost = false,
+    this.postPhotoLoader = loadPostPhotoBytes,
+    this.postPhotoCropper = cropRacePhoto,
     this.initialPhoto,
     this.initialPhotoCropper = cropRacePhoto,
   });
@@ -3614,6 +3644,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   void initState() {
     super.initState();
     draft = Map<String, dynamic>.from(widget.initial);
+    postText.text = draft['postText'] as String? ?? '';
     distanceId = draft['distanceId'] as String?;
     final seconds = draft['timeSeconds'];
     time = TextEditingController(
@@ -3866,6 +3897,111 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
+  /// Envia a foto da publicação e devolve a referência validada; nulo (com a mensagem na tela) se não servir,
+  /// inclusive quando for a mesma foto da medalha.
+  Future<String?> uploadPostBytes(List<int> bytes) async {
+    final isJpeg =
+        bytes.length >= 3 &&
+        bytes[0] == 0xff &&
+        bytes[1] == 0xd8 &&
+        bytes[2] == 0xff;
+    final isPng =
+        bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4e &&
+        bytes[3] == 0x47;
+    if (!isJpeg && !isPng) throw const IdentityIssue('IMAGE_FORMAT_INVALID');
+    final result = await widget.gateway.uploadImage(
+      bytes,
+      isJpeg ? 'image/jpeg' : 'image/png',
+    );
+    if (result['state'] != 'valid') {
+      throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
+    }
+    final reference = result['imageReference'] as String;
+    if (reference == imageReference ||
+        reference == draft['medalImageReference']) {
+      message = 'Escolha uma foto diferente da medalha para a publicação.';
+      return null;
+    }
+    return reference;
+  }
+
+  /// Grava (PATCH) a foto e/ou o texto da publicação já publicada.
+  Future<void> patchPost(Map<String, dynamic> changes, String done) async {
+    setState(() {
+      saving = true;
+      message = null;
+    });
+    try {
+      draft = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(draft['id'] as String)}',
+        method: 'PATCH',
+        body: {'expectedVersion': draft['version'], ...changes},
+      );
+      forgetPostPhoto(draft['id'] as String);
+      photoRevision++;
+      message = done;
+    } on IdentityIssue catch (issue) {
+      message = catalogError(issue);
+    } on Exception {
+      message =
+          'Não foi possível salvar agora. A publicação anterior foi mantida.';
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  /// Ajusta o TAMANHO (recorte/proporção) da foto já publicada: baixa a atual, abre o recorte e envia a nova.
+  Future<void> adjustPostPhoto() async {
+    final id = draft['id'] as String;
+    setState(() {
+      uploadingPost = true;
+      message = null;
+    });
+    try {
+      final current = await widget.postPhotoLoader(widget.gateway, id);
+      if (current == null) {
+        message =
+            'Não foi possível abrir a foto da publicação agora. Tente de novo.';
+        return;
+      }
+      if (!mounted) return;
+      final cropped = await widget.postPhotoCropper(context, current);
+      if (cropped == null) return; // desistiu do ajuste
+      final reference = await uploadPostBytes(cropped);
+      if (reference == null) return;
+      await patchPost({
+        'postImageReference': reference,
+      }, 'Tamanho da foto da publicação ajustado.');
+    } on IdentityIssue catch (issue) {
+      if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) {
+        message = 'Não foi possível ajustar a foto agora. Tente de novo.';
+      }
+    } finally {
+      if (mounted) setState(() => uploadingPost = false);
+    }
+  }
+
+  /// Troca a foto da publicação por outra (a da medalha não muda).
+  Future<void> replacePostPhoto() async {
+    final before = postImageReference;
+    postImageReference = null;
+    await selectPostPhoto();
+    if (!mounted) return;
+    final reference = postImageReference;
+    postImageReference = before;
+    if (reference == null) {
+      return; // desistiu ou a foto não serviu: a mensagem já explica
+    }
+    await patchPost({
+      'postImageReference': reference,
+    }, 'Foto da publicação trocada.');
+  }
+
   /// Escolhe e envia a foto da PUBLICAÇÃO (outra foto qualquer; não pode ser a da medalha).
   Future<void> selectPostPhoto() async {
     setState(() {
@@ -3895,30 +4031,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         );
       }
       if (bytes == null) return;
-      final isJpeg =
-          bytes.length >= 3 &&
-          bytes[0] == 0xff &&
-          bytes[1] == 0xd8 &&
-          bytes[2] == 0xff;
-      final isPng =
-          bytes.length >= 8 &&
-          bytes[0] == 0x89 &&
-          bytes[1] == 0x50 &&
-          bytes[2] == 0x4e &&
-          bytes[3] == 0x47;
-      if (!isJpeg && !isPng) throw const IdentityIssue('IMAGE_FORMAT_INVALID');
-      final result = await widget.gateway.uploadImage(
-        bytes,
-        isJpeg ? 'image/jpeg' : 'image/png',
-      );
-      if (result['state'] != 'valid') {
-        throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
-      }
-      final reference = result['imageReference'] as String;
-      if (reference == imageReference) {
-        message = 'Escolha uma foto diferente da medalha para a publicação.';
-        return;
-      }
+      final reference = await uploadPostBytes(bytes);
+      if (reference == null) return;
       postImageReference = reference;
       message =
           'Foto da publicação validada. Ela é separada da foto da medalha.';
@@ -4219,23 +4333,79 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 child: ColoredBox(
                   color: context.softFill,
                   child: MedalPhoto(
-                    key: ValueKey('medal-photo-$photoRevision'),
+                    key: ValueKey(
+                      'medal-photo-$photoRevision-${widget.fromPost}',
+                    ),
                     gateway: widget.gateway,
                     participationId: draft['id'] as String?,
                     size: 72,
+                    // Aberta pela publicação: mostra a foto da PUBLICAÇÃO (quando tem), não a da medalha.
+                    usePostImage:
+                        widget.fromPost && draft['postImageReference'] != null,
                   ),
                 ),
               ),
             ),
             const SizedBox(height: 8),
-            OutlinedButton.icon(
-              key: const Key('change-medal-photo'),
-              onPressed: saving || uploading ? null : changeMedalPhoto,
-              icon: const Icon(Icons.photo_library_outlined),
-              label: Text(
-                uploading ? 'Enviando foto...' : 'Trocar foto da medalha',
+            if (widget.fromPost) ...[
+              // Editar a publicação: o tamanho da foto publicada (a medalha se edita em Medalhas).
+              if (draft['postImageReference'] != null) ...[
+                OutlinedButton.icon(
+                  key: const Key('adjust-post-photo'),
+                  onPressed: saving || uploadingPost ? null : adjustPostPhoto,
+                  icon: const Icon(Icons.crop_rounded),
+                  label: Text(
+                    uploadingPost
+                        ? 'Enviando foto...'
+                        : 'Ajustar o tamanho da foto da publicação',
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+              OutlinedButton.icon(
+                key: const Key('replace-post-photo'),
+                onPressed: saving || uploadingPost ? null : replacePostPhoto,
+                icon: const Icon(Icons.photo_library_outlined),
+                label: Text(
+                  draft['postImageReference'] == null
+                      ? 'Escolher a foto da publicação'
+                      : 'Trocar a foto da publicação',
+                ),
               ),
-            ),
+              const SizedBox(height: 8),
+              TextField(
+                key: const Key('post-text-edit'),
+                controller: postText,
+                maxLength: 500,
+                minLines: 1,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Texto da publicação',
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  key: const Key('save-post-text'),
+                  onPressed: saving
+                      ? null
+                      : () => patchPost({
+                          'postText': postText.text.trim().isEmpty
+                              ? null
+                              : postText.text.trim(),
+                        }, 'Texto da publicação salvo.'),
+                  child: const Text('Salvar texto da publicação'),
+                ),
+              ),
+            ] else
+              OutlinedButton.icon(
+                key: const Key('change-medal-photo'),
+                onPressed: saving || uploading ? null : changeMedalPhoto,
+                icon: const Icon(Icons.photo_library_outlined),
+                label: Text(
+                  uploading ? 'Enviando foto...' : 'Trocar foto da medalha',
+                ),
+              ),
             const SizedBox(height: 12),
             const Text(
               'Participação concluída · medalha e avaliação registradas.',

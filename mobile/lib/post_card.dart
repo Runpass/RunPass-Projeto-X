@@ -363,6 +363,7 @@ class _PostCardState extends State<PostCard> {
         builder: (_) => ParticipationDraftScreen(
           gateway: widget.gateway,
           initial: Map<String, dynamic>.from(entry.race.participation),
+          fromPost: true,
         ),
       ),
     );
