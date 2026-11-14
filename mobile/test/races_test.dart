@@ -380,6 +380,66 @@ void main() {
     },
   );
 
+  testWidgets(
+    'tocar na corrida achada preenche o cadastro, e a data ganha as barras sozinha',
+    (tester) async {
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Meia Maratona de São Paulo',
+            'date': '2026-09-20',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '21k', 'kilometers': 21.0975},
+            ],
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Meia Maratona']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      String valueOf(String key) =>
+          tester.widget<TextField>(find.byKey(Key(key))).controller!.text;
+      expect(valueOf('medal-edit-name'), 'Meia Maratona');
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      // Nome, data, local e distância vieram da corrida escolhida, sem digitar.
+      expect(valueOf('medal-edit-name'), 'Meia Maratona de São Paulo');
+      expect(valueOf('medal-edit-date'), '20/09/2026');
+      expect(valueOf('medal-edit-distance'), '21.0975');
+      expect(find.text('SP - São Paulo'), findsOneWidget);
+      expect(
+        find.byType(EditionScreen),
+        findsNothing,
+      ); // tocar só preenche; abrir é o ícone
+      // A data aceita só números e coloca as barras sozinha.
+      final date = find.byKey(const Key('medal-edit-date'));
+      await tester.ensureVisible(date);
+      await tester.enterText(date, '15032026');
+      await tester.pump();
+      expect(valueOf('medal-edit-date'), '15/03/2026');
+      await tester.enterText(date, '1503');
+      await tester.pump();
+      expect(valueOf('medal-edit-date'), '15/03');
+      // O ícone abre a corrida.
+      await tester.ensureVisible(find.byKey(const Key('medal-open-a')));
+      await tester.tap(find.byKey(const Key('medal-open-a')));
+      await tester.pumpAndSettle();
+      expect(find.byType(EditionScreen), findsOneWidget);
+    },
+  );
+
   testWidgets('aparelho sem leitor de texto avisa e ainda leva às corridas', (
     tester,
   ) async {

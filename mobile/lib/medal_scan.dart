@@ -158,6 +158,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   Map<String, String> details = const {};
   bool unavailable = false;
   final matches = <Map<String, dynamic>>[];
+  String? chosenId; // corrida do catálogo que preencheu o cadastro
 
   // O que a medalha mostra, para a pessoa conferir e corrigir antes de buscar de novo ou concluir.
   final name = TextEditingController();
@@ -257,6 +258,28 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     });
   }
 
+  /// Toque numa corrida achada: preenche o cadastro com os dados dela (nome, data, local, distância),
+  /// sem digitar de novo. Os campos continuam editáveis.
+  void fillFrom(Map<String, dynamic> edition) {
+    final distances = [
+      for (final d in (edition['distances'] as List? ?? const []))
+        if (d is Map && d['kilometers'] is num) (d['kilometers'] as num),
+    ];
+    setState(() {
+      chosenId = edition['id'] as String?;
+      name.text = edition['name'] as String? ?? name.text;
+      if (edition['date'] is String) {
+        date.text = requestDateToDisplay(edition['date'] as String);
+      }
+      city.text = edition['city'] as String? ?? city.text;
+      state.text = edition['state'] as String? ?? state.text;
+      if (distances.length == 1) {
+        final km = distances.first;
+        distance.text = km == km.roundToDouble() ? '${km.toInt()}' : '$km';
+      }
+    });
+  }
+
   Future<void> pickDate() async {
     final current = DateTime.tryParse(requestDateToIso(date.text.trim()) ?? '');
     final picked = await showDatePicker(
@@ -293,6 +316,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     int? maxLength,
     Widget? suffix,
     String? hint,
+    List<TextInputFormatter>? formatters,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: TextField(
@@ -305,6 +329,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         'state': state,
       }[key],
       keyboardType: keyboard,
+      inputFormatters: formatters,
       maxLength: maxLength,
       textCapitalization: key == 'state'
           ? TextCapitalization.characters
@@ -335,8 +360,10 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
           editField(
             'date',
             'Data (dd/mm/aaaa)',
-            keyboard: TextInputType.datetime,
+            keyboard: TextInputType.number,
             maxLength: 10,
+            // Só os números: as barras entram sozinhas (dd/mm/aaaa).
+            formatters: const [DateMaskFormatter()],
             suffix: IconButton(
               key: const Key('medal-edit-date-pick'),
               tooltip: 'Escolher no calendário',
@@ -457,10 +484,15 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             const SizedBox(height: 8),
             for (final edition in matches)
               Card(
+                color: chosenId == edition['id']
+                    ? Theme.of(context).colorScheme.primaryContainer
+                    : null,
                 child: ListTile(
                   key: Key('medal-match-${edition['id']}'),
-                  leading: const Icon(
-                    Icons.directions_run,
+                  leading: Icon(
+                    chosenId == edition['id']
+                        ? Icons.check_circle
+                        : Icons.directions_run,
                     color: runPassOrange,
                   ),
                   title: Text(edition['name'] as String? ?? ''),
@@ -472,11 +504,17 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                         '${edition['city']}/${edition['state']}',
                     ].join(' · '),
                   ),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => EditionScreen(
-                        gateway: widget.gateway,
-                        editionId: edition['id'] as String,
+                  onTap: () => fillFrom(edition),
+                  trailing: IconButton(
+                    key: Key('medal-open-${edition['id']}'),
+                    tooltip: 'Abrir a corrida',
+                    icon: const Icon(Icons.open_in_new),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => EditionScreen(
+                          gateway: widget.gateway,
+                          editionId: edition['id'] as String,
+                        ),
                       ),
                     ),
                   ),
