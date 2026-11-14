@@ -823,6 +823,59 @@ void main() {
     expect(find.text('Minhas solicitações'), findsOneWidget);
   });
 
+  testWidgets(
+    'a foto acompanha a medalha quando a ordem muda (uma nova entra na frente)',
+    (tester) async {
+      final seen = <String>[];
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          seen.add(uri.path);
+          return JsonReply(200, {
+            'url': 'https://signed.example${uri.path}',
+            'expiresAt': '2099-01-01T00:00:00Z',
+          });
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      Widget photos(List<String> ids) => MaterialApp(
+        home: Column(
+          children: [
+            for (final id in ids)
+              SizedBox(
+                height: 40,
+                child: SignedPhoto(
+                  gateway: gateway,
+                  endpoint: '/participations/$id/image',
+                  fallback: const SizedBox(),
+                ),
+              ),
+          ],
+        ),
+      );
+      String? urlOf(int index) {
+        final image = tester.widget<Image>(find.byType(Image).at(index));
+        return (image.image as NetworkImage).url;
+      }
+
+      await tester.pumpWidget(photos(['velha']));
+      await tester.pumpAndSettle();
+      expect(urlOf(0), endsWith('/participations/velha/image'));
+      // Uma medalha nova entra na frente: a primeira posição agora é OUTRA medalha e precisa da foto dela.
+      await tester.pumpWidget(photos(['nova', 'velha']));
+      await tester.pumpAndSettle();
+      expect(urlOf(0), endsWith('/participations/nova/image'));
+      expect(urlOf(1), endsWith('/participations/velha/image'));
+    },
+  );
+
   testWidgets('editar medalha: muda forma, cor e legenda e salva via PATCH', (
     tester,
   ) async {

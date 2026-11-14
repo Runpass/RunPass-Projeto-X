@@ -136,4 +136,41 @@ void main() {
     expect(calls.where((c) => c.startsWith('POST /uploads')), isEmpty);
     expect(find.textContaining('Foto não enviada'), findsOneWidget);
   });
+
+  testWidgets(
+    'avaliação e comentário já aparecem sem foto; concluir só com a foto',
+    (tester) async {
+      final (gateway, calls) = await setup();
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: const {
+              'id': 'd4',
+              'editionId': 'E1',
+              'distanceId': '5k',
+              'state': 'draft',
+              'version': 1,
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Avaliação obrigatória'), findsOneWidget);
+      expect(find.text('Comentário (opcional)'), findsOneWidget);
+      expect(find.byKey(const Key('needs-photo-hint')), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Concluir participação'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(calls.where((c) => c.startsWith('POST')), isEmpty);
+    },
+  );
 }
