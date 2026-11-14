@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/identity_gateway.dart';
+import 'package:runpass/medal_scan.dart';
 
 final onePixelPng = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -47,7 +48,10 @@ Map<String, dynamic> done(
   'completedAt': ?completedAt,
 };
 
-Future<IdentityGateway> runner({bool noRaces = false}) async {
+Future<IdentityGateway> runner({
+  bool noRaces = false,
+  List<Map<String, dynamic>> found = const [],
+}) async {
   final editions = {
     'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
     'b': edition('b', 'Corrida B', '2025-05-01', 'Rio de Janeiro', 'RJ', 10),
@@ -81,6 +85,7 @@ Future<IdentityGateway> runner({bool noRaces = false}) async {
                 ],
         });
       }
+      if (uri.path == '/editions') return JsonReply(200, {'items': found});
       final match = editions[uri.pathSegments.last];
       return match == null
           ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
@@ -186,21 +191,125 @@ void main() {
     expect(find.byType(MedalCollectionScreen), findsNothing);
   });
 
-  testWidgets('tocar no "+" da prateleira abre o cadastro de corridas', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byType(CatalogScreen), findsNothing);
+  Future<void> tapAdd(WidgetTester tester) async {
     await tester.ensureVisible(find.byKey(const Key('medal-add-tile')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('medal-add-tile')));
     await tester.pumpAndSettle();
-    expect(find.byType(CatalogScreen), findsOneWidget);
-    expect(find.byType(MedalCollectionScreen), findsNothing);
+  }
+
+  testWidgets('"+" da prateleira pede a foto da medalha antes das corridas, '
+      'lê o texto e lista as corridas achadas', (tester) async {
+    final searched = <String>[];
+    final gateway = await runner(
+      found: [
+        {
+          'id': 'a',
+          'name': 'Corrida A',
+          'date': '2026-09-01',
+          'city': 'São Paulo',
+          'state': 'SP',
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: gateway,
+          medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+          medalTextReader: _FakeReader([
+            'CIRCUITO DAS ESTAÇÕES',
+            '10 KM',
+            'PRIMAVERA 2026',
+          ], onRead: searched.add),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tapAdd(tester);
+    expect(
+      find.byType(CatalogScreen),
+      findsNothing,
+    ); // não vai direto às corridas
+    expect(find.text('Adicionar medalha'), findsOneWidget);
+    expect(find.byKey(const Key('medal-scan-found')), findsOneWidget);
+    expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
+    expect(searched, ['/tmp/medalha.jpg']);
   });
+
+  testWidgets(
+    'sem corrida achada pela foto, o botão leva ao cadastro de corridas',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['CIRCUITO DAS ESTAÇÕES']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      expect(find.byKey(const Key('medal-scan-note')), findsOneWidget);
+      expect(find.byKey(const Key('medal-match-a')), findsNothing);
+      await tester.tap(find.byKey(const Key('medal-scan-catalog')));
+      await tester.pumpAndSettle();
+      expect(find.byType(CatalogScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets('aparelho sem leitor de texto avisa e ainda leva às corridas', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: await runner(),
+          medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+          medalTextReader: _FakeReader(const [], unavailable: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tapAdd(tester);
+    expect(find.textContaining('ainda não lê o texto'), findsOneWidget);
+    expect(find.byKey(const Key('medal-scan-catalog')), findsOneWidget);
+  });
+
+  testWidgets('desistir da foto no "+" não abre nada', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: await runner(),
+          medalPhotoPicker: (_) async => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tapAdd(tester);
+    expect(find.byType(MedalScanScreen), findsNothing);
+    expect(find.byType(CatalogScreen), findsNothing);
+    expect(find.byType(MedalCollectionScreen), findsOneWidget);
+  });
+
+  test(
+    'medalQueries ignora números e ruído e põe o nome mais longo primeiro',
+    () {
+      expect(
+        medalQueries([
+          '10 KM',
+          '2026',
+          'FINISHER',
+          'Circuito das Estações',
+          'Primavera',
+        ]),
+        ['Circuito das Estações', 'Primavera'],
+      );
+      expect(medalQueries(const []), isEmpty);
+      expect(medalQueries(['Ab', '12']), isEmpty);
+    },
+  );
 
   testWidgets('editar medalha: muda forma, cor e legenda e salva via PATCH', (
     tester,
@@ -540,4 +649,18 @@ void main() {
       expect(find.text('concluiu Corrida A'), findsOneWidget);
     },
   );
+}
+
+class _FakeReader implements MedalTextReader {
+  final List<String> lines;
+  final bool unavailable;
+  final void Function(String path)? onRead;
+  _FakeReader(this.lines, {this.unavailable = false, this.onRead});
+
+  @override
+  Future<List<String>> read(String path) async {
+    onRead?.call(path);
+    if (unavailable) throw MedalReadUnavailable();
+    return lines;
+  }
 }

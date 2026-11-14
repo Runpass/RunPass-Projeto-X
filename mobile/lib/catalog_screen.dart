@@ -1447,6 +1447,7 @@ class _EditionScreenState extends State<EditionScreen> {
   int photoColumns = GridColumns.standard;
   bool loadingPhotos = false;
   bool showAllReviews = false;
+  final peopleReviewsKey = GlobalKey();
   bool sendingBanner = false;
   // Detalhes (itens avaliados) da avaliação geral e da minha: recolher e expandir.
   bool showSummaryDetails = true, showMyDetails = true;
@@ -2379,6 +2380,21 @@ class _EditionScreenState extends State<EditionScreen> {
     ),
   );
 
+  /// Toque na nota geral: abre a lista completa das avaliações e comentários das pessoas.
+  void showPeopleReviews() {
+    setState(() => showAllReviews = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = peopleReviewsKey.currentContext;
+      if (target != null && mounted) {
+        Scrollable.ensureVisible(
+          target,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   /// Média geral da prova: resumo da API, nota da edição ou média das avaliações carregadas.
   num? overallValue(Map<String, dynamic> body) {
     final score = body['runScore'] as Map<String, dynamic>?;
@@ -2406,7 +2422,7 @@ class _EditionScreenState extends State<EditionScreen> {
     return noPublicItems ? own?.toDouble() : null;
   }
 
-  Widget scoreCard(Map<String, dynamic> body) {
+  Widget scoreCard(Map<String, dynamic> body, {VoidCallback? onTap}) {
     final score = body['runScore'] as Map<String, dynamic>?;
     final loaded = reviews ?? const <Map<String, dynamic>>[];
     final summary = reviewSummary;
@@ -2455,87 +2471,95 @@ class _EditionScreenState extends State<EditionScreen> {
                       loaded.where((r) => reviewAverage(r) >= 4).length /
                       loaded.length)
                   .round());
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            flex: 6,
-            child: Container(
-              key: const Key('score-card'),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: context.panel,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                children: [
-                  Text(
-                    decimalPt(value),
-                    style: const TextStyle(
-                      fontSize: 44,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Stars(value, size: 19),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${thousands(count)} avaliações',
-                          key: const Key('score-count'),
-                          style: TextStyle(fontSize: 13, color: context.muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (recommend != null) ...[
-            const SizedBox(width: 10),
+    return InkWell(
+      key: const Key('score-card-tap'),
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
             Expanded(
-              flex: 4,
+              flex: 6,
               child: Container(
-                padding: const EdgeInsets.all(12),
+                key: const Key('score-card'),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: context.greenFill,
+                  color: context.panel,
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.check_circle,
-                          color: Color(0xff2f9e5e),
-                          size: 20,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '$recommend%',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 18,
-                          ),
-                        ),
-                      ],
+                    Text(
+                      decimalPt(value),
+                      style: const TextStyle(
+                        fontSize: 44,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                    const Text(
-                      'recomendariam\nesta prova',
-                      style: TextStyle(fontSize: 11),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Stars(value, size: 19),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${thousands(count)} avaliações',
+                            key: const Key('score-count'),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: context.muted,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
+            if (recommend != null) ...[
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 4,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: context.greenFill,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.check_circle,
+                            color: Color(0xff2f9e5e),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '$recommend%',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Text(
+                        'recomendariam\nesta prova',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -2600,7 +2624,7 @@ class _EditionScreenState extends State<EditionScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        scoreCard(body),
+        scoreCard(body, onTap: showPeopleReviews),
         _detailsToggle(
           key: const Key('summary-details-toggle'),
           label: 'Itens da avaliação geral',
@@ -2626,11 +2650,15 @@ class _EditionScreenState extends State<EditionScreen> {
           )
         else if (loaded.isNotEmpty) ...[
           Row(
+            key: peopleReviewsKey,
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'O que os corredores estão dizendo',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  'O que os corredores estão dizendo (${loaded.length})',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
                 ),
               ),
               if (loaded.length > 3)

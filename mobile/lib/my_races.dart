@@ -14,6 +14,7 @@ import 'friends.dart';
 import 'grid_columns.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
+import 'medal_scan.dart';
 import 'notifications.dart';
 import 'post_card.dart' show FeedEntry, PostCard, PostThumb, entryFromPost;
 import 'profile_photo.dart';
@@ -1468,11 +1469,17 @@ class MedalCollectionScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final ImageBytesFetcher fetchDisplayPhoto;
   final MedalCropOpener openCropScreen;
+
+  /// Foto da medalha para o "+" e o leitor de texto dela. Trocáveis nos testes (câmera e Vision não rodam lá).
+  final MedalPhotoPicker medalPhotoPicker;
+  final MedalTextReader medalTextReader;
   const MedalCollectionScreen({
     super.key,
     required this.gateway,
     this.fetchDisplayPhoto = fetchImageBytes,
     this.openCropScreen = openMedalCropScreen,
+    this.medalPhotoPicker = pickMedalPhotoPath,
+    this.medalTextReader = const PlatformMedalTextReader(),
   });
 
   @override
@@ -1667,16 +1674,27 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     children: [for (final race in list) tile(race)],
   );
 
-  /// Botao compacto ao lado de "Minhas medalhas": leva para o cadastro de
-  /// uma nova corrida, o mesmo fluxo ja usado no resto do app (CatalogScreen).
+  /// Botao compacto ao lado de "Minhas medalhas": abre a foto da medalha para achar a corrida.
+  /// "+": primeiro a foto da medalha (câmera ou galeria); o app lê o texto e tenta achar a corrida.
+  /// Se não achar, a tela seguinte tem o botão que leva às corridas.
+  Future<void> addMedal() async {
+    final path = await widget.medalPhotoPicker(context);
+    if (path == null || !mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MedalScanScreen(
+          gateway: widget.gateway,
+          photoPath: path,
+          reader: widget.medalTextReader,
+        ),
+      ),
+    );
+  }
+
   Widget _addTile() => InkWell(
     key: const Key('medal-add-tile'),
     borderRadius: BorderRadius.circular(16),
-    onTap: () => Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CatalogScreen(gateway: widget.gateway),
-      ),
-    ),
+    onTap: addMedal,
     child: Container(
       width: 24,
       height: 24,
