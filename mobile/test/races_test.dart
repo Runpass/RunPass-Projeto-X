@@ -770,6 +770,59 @@ void main() {
     },
   );
 
+  testWidgets(
+    'medalha aprovada: mostra o nome atual da corrida e leva à minha participação',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              noRaces: true,
+              requests: [
+                medalRequest('r2', 'approved', linked: 'b'),
+                medalRequest('r1', 'pending'),
+              ],
+            ),
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // O pedido dizia "Corrida r2"; a corrida aprovada tem o nome atual do catálogo.
+      expect(find.byKey(const Key('pending-name-r2')), findsOneWidget);
+      expect(find.text('Corrida B'), findsOneWidget);
+      expect(find.text('Corrida r2'), findsNothing);
+      // Aprovada: tem o lápis de editar, sem cadeado, e tocar leva ao rascunho da participação.
+      expect(find.byKey(const Key('pending-edit-r2')), findsOneWidget);
+      expect(find.byKey(const Key('pending-locked-r2-false')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('pending-locked-r2-false')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      expect(find.text('Rascunho da participação'), findsOneWidget);
+    },
+  );
+
+  testWidgets('medalha em análise: o lápis e o toque abrem a solicitação', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: await runner(
+            noRaces: true,
+            requests: [medalRequest('r1', 'pending')],
+          ),
+          pendingPhotoLoader: (_, _) async => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('pending-locked-r1-true')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('pending-edit-r1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Minhas solicitações'), findsOneWidget);
+  });
+
   testWidgets('editar medalha: muda forma, cor e legenda e salva via PATCH', (
     tester,
   ) async {

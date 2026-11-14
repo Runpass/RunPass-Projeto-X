@@ -10,6 +10,7 @@ import 'catalog_screen.dart';
 import 'catalog_views.dart';
 import 'edition_cards.dart';
 import 'edit_profile.dart';
+import 'edition_requests.dart' show MyEditionRequestsScreen;
 import 'friends.dart';
 import 'grid_columns.dart';
 import 'identity_gateway.dart';
@@ -1748,6 +1749,116 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   );
 
   final _pendingPhotos = <String, Future<List<int>?>>{};
+  final _editionNames = <String, Future<String?>>{};
+
+  /// Nome atual da corrida (a equipe pode ter corrigido depois do pedido): vale o do catálogo.
+  Future<String?> _currentName(String editionId) =>
+      _editionNames.putIfAbsent(editionId, () async {
+        try {
+          final edition = await widget.gateway.request(
+            '/editions/${Uri.encodeComponent(editionId)}',
+          );
+          return edition['name'] as String?;
+        } on Exception {
+          return null;
+        }
+      });
+
+  void _reloadShelf() {
+    if (!mounted) return;
+    setState(() {
+      pendingMedals = loadPendingMedals(widget.gateway);
+      races = loadMyRaces(widget.gateway);
+    });
+  }
+
+  /// Medalha com a corrida aprovada: segue para a minha participação nela (tempo, percurso, avaliação e a
+  /// foto da medalha que já enviei). Se já existe um rascunho nessa corrida, abre o rascunho.
+  Future<void> concludePending(Map<String, dynamic> request) async {
+    final editionId = request['linkedEditionId'] as String?;
+    if (editionId == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      final edition = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(editionId)}',
+      );
+      final options = [
+        for (final d in (edition['distances'] as List? ?? const []))
+          if (d is Map && d['kilometers'] is num) d,
+      ];
+      final km = double.tryParse(
+        '${(request['details'] as Map?)?['distanceKm'] ?? ''}',
+      );
+      Map? picked = options.length == 1 ? options.first : null;
+      if (picked == null && km != null) {
+        for (final d in options) {
+          if (((d['kilometers'] as num) - km).abs() < 0.05) picked = d;
+        }
+      }
+      if (picked == null) {
+        // Não dá para saber a distância: a tela da corrida deixa escolher e marcar "Já corri".
+        await navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                EditionScreen(gateway: widget.gateway, editionId: editionId),
+          ),
+        );
+        _reloadShelf();
+        return;
+      }
+      Map<String, dynamic> draft;
+      List<int>? photo;
+      try {
+        draft = await widget.gateway.request(
+          '/participations',
+          method: 'POST',
+          body: {'editionId': editionId, 'distanceId': picked['id']},
+        );
+        photo = await widget.pendingPhotoLoader(
+          widget.gateway,
+          request['id'] as String,
+        );
+      } on IdentityIssue catch (issue) {
+        if (issue.code != 'PARTICIPATION_EXISTS') rethrow;
+        final mine = await loadMyEditions(widget.gateway);
+        final existing = mine[editionId];
+        if (existing == null) rethrow;
+        draft =
+            existing; // já existe: continua de onde parou (sem reenviar a foto)
+        photo = null;
+      }
+      if (!mounted) return;
+      await navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => ParticipationDraftScreen(
+            gateway: widget.gateway,
+            initial: draft,
+            initialPhoto: photo,
+          ),
+        ),
+      );
+      _reloadShelf();
+    } on IdentityIssue catch (issue) {
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível abrir agora. Verifique a internet e tente de novo.',
+          ),
+        ),
+      );
+    }
+  }
+
+  void _openRequests() => Navigator.of(context)
+      .push(
+        MaterialPageRoute<void>(
+          builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+        ),
+      )
+      .then((_) => _reloadShelf());
 
   /// Medalha provisória (pedido de cadastro com a foto da medalha), até a equipe decidir: aparece junto das
   /// outras na prateleira, em cinza e com cadeado. Aprovada, ganha cor e abre a corrida para concluir.
@@ -1814,15 +1925,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
           key: Key('pending-locked-$id-$locked'),
           borderRadius: BorderRadius.circular(14),
           onTap: approved && linked != null
-              ? () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => EditionScreen(
-                      gateway: widget.gateway,
-                      editionId: linked,
-                    ),
-                  ),
-                )
-              : null,
+              ? () => concludePending(request)
+              : _openRequests,
           child: Column(
             children: [
               _medalNiche(frame: medalFrameFor(null), photo: photo),
@@ -1831,15 +1935,19 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                 height: 32,
                 child: Align(
                   alignment: Alignment.topCenter,
-                  child: Text(
-                    '${details['name'] ?? 'Medalha'}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                      color: locked ? context.muted : null,
+                  child: FutureBuilder<String?>(
+                    future: linked == null ? null : _currentName(linked),
+                    builder: (context, snapshot) => Text(
+                      snapshot.data ?? '${details['name'] ?? 'Medalha'}',
+                      key: Key('pending-name-$id'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                        color: locked ? context.muted : null,
+                      ),
                     ),
                   ),
                 ),
@@ -1881,6 +1989,26 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               ),
             ),
           ),
+        Positioned(
+          top: 2,
+          right: 2,
+          child: Material(
+            color: Colors.black38,
+            shape: const CircleBorder(),
+            child: InkWell(
+              key: Key('pending-edit-$id'),
+              customBorder: const CircleBorder(),
+              // Aprovada: edita/conclui a minha participação. Em análise: abre a solicitação (editar ou excluir).
+              onTap: approved && linked != null
+                  ? () => concludePending(request)
+                  : _openRequests,
+              child: const Padding(
+                padding: EdgeInsets.all(5),
+                child: Icon(Icons.edit, size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
