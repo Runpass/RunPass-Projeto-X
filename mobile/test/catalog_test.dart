@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
@@ -122,6 +123,26 @@ Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
   final field = find.widgetWithText(TextFormField, 'Nome da corrida');
   await reveal(tester, field, backwards: true);
   await tester.enterText(field, name);
+}
+
+/// Escolhe o tempo no seletor de rolagem (horas, minutos e segundos) e confirma.
+Future<void> pickTime(
+  WidgetTester tester, {
+  int hours = 0,
+  int minutes = 0,
+  int seconds = 0,
+}) async {
+  await tester.ensureVisible(find.byKey(const Key('time-field')));
+  await tester.tap(find.byKey(const Key('time-field')));
+  await tester.pumpAndSettle();
+  final wheels = find.byType(CupertinoPicker);
+  for (final (index, steps) in [(0, hours), (1, minutes), (2, seconds)]) {
+    if (steps == 0) continue;
+    await tester.drag(wheels.at(index), Offset(0, -32.0 * steps));
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(find.byKey(const Key('duration-confirm')));
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -399,10 +420,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Rascunho da participação'), findsOneWidget);
     expect(find.textContaining('não gera medalha'), findsOneWidget);
-    await tester.enterText(
-      find.widgetWithText(TextField, 'Tempo (h:mm:ss ou segundos, opcional)'),
-      '3600',
-    );
+    await pickTime(tester, hours: 1);
     await tester.tap(find.text('Salvar rascunho'));
     await tester.pumpAndSettle();
     expect(find.text('Rascunho salvo. Nada foi publicado.'), findsOneWidget);
@@ -548,6 +566,7 @@ void main() {
         calls.where(
           (c) =>
               !c.contains('/me/participations') &&
+              !c.contains('/me/edition-requests') && // medalhas provisórias
               !c.endsWith('/image') &&
               c != 'GET /me',
         ),
@@ -996,18 +1015,17 @@ void main() {
         scrollable: list,
       );
       // O tempo guardado aparece formatado.
-      final timeLabel = find.text('Tempo (h:mm:ss ou segundos, opcional)');
-      await tester.scrollUntilVisible(timeLabel, 200, scrollable: list);
-      final timeField = find.widgetWithText(
-        TextField,
-        'Tempo (h:mm:ss ou segundos, opcional)',
+      final timeField = find.byKey(const Key('time-field'));
+      await tester.scrollUntilVisible(timeField, 200, scrollable: list);
+      expect(
+        find.descendant(of: timeField, matching: find.text('1:00:00')),
+        findsOneWidget,
       );
-      expect(tester.widget<TextField>(timeField).controller!.text, '1:00:00');
       await tester.tap(find.byKey(const Key('distance-field')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('5K').last);
       await tester.pumpAndSettle();
-      await tester.enterText(timeField, '1:30:00');
+      await pickTime(tester, minutes: 30); // parte de 1:00:00
       await tester.enterText(
         find.widgetWithText(TextField, 'Número de peito (opcional)'),
         '4821',
@@ -1394,48 +1412,44 @@ void main() {
       },
     );
 
-    testWidgets('avisa o que nao foi filtrado e quando a IA nao respondeu', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(800, 3000);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      var source = 'llm';
-      final gateway = await signed((uri, method, headers, body) async {
-        if (uri.path == '/editions/search') {
-          return JsonReply(200, {
-            'items': [entry('S1')],
-            'search': {
-              'source': source,
-              'filters': {'q': 'x'},
-              'applied': ['texto'],
-              'notApplied': ['preco_max_brl', 'altimetria'],
-            },
-          });
-        }
-        return const JsonReply(200, {'items': []});
-      });
-      await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
-      );
-      await tester.pumpAndSettle();
-      await openSearch(tester);
-      await typePhrase(tester, 'corrida barata e plana');
-      var notice = tester.widget<Text>(
-        find.byKey(const Key('catalog-search-notice')),
-      );
-      expect(notice.data, contains('Não filtrei por: preço, altimetria.'));
-      expect(notice.data, isNot(contains('interpretar a frase')));
-      source = 'text';
-      await typePhrase(tester, 'corrida barata e plana 2');
-      notice = tester.widget<Text>(
-        find.byKey(const Key('catalog-search-notice')),
-      );
-      expect(
-        notice.data,
-        contains('Não foi possível interpretar a frase agora'),
-      );
-    });
+    testWidgets(
+      'a busca por frase mostra só a lista, sem avisos de filtro ou de IA',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        var source = 'llm';
+        final gateway = await signed((uri, method, headers, body) async {
+          if (uri.path == '/editions/search') {
+            return JsonReply(200, {
+              'items': [entry('S1')],
+              'search': {
+                'source': source,
+                'filters': {'q': 'x'},
+                'applied': ['texto'],
+                'notApplied': ['preco_max_brl', 'altimetria'],
+              },
+            });
+          }
+          return const JsonReply(200, {'items': []});
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: CatalogScreen(gateway: gateway, serverPaging: true),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await openSearch(tester);
+        await typePhrase(tester, 'corrida barata e plana');
+        expect(find.byKey(const Key('catalog-search-notice')), findsNothing);
+        expect(find.text('Corrida S1'), findsOneWidget);
+        source = 'text';
+        await typePhrase(tester, 'corrida barata e plana 2');
+        expect(find.byKey(const Key('catalog-search-notice')), findsNothing);
+        expect(find.textContaining('interpretar a frase'), findsNothing);
+        expect(find.text('Corrida S1'), findsOneWidget);
+      },
+    );
 
     testWidgets('sem frase usa os campos de sempre, e limpar volta a lista', (
       tester,
@@ -1471,7 +1485,7 @@ void main() {
       expect(calls.last.queryParameters['city'], 'Acrelândia');
       await typePhrase(tester, 'qualquer coisa');
       expect(calls.last.path, '/editions/search');
-      expect(find.byKey(const Key('catalog-search-notice')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-search-notice')), findsNothing);
       await tester.ensureVisible(find.text('Limpar busca'));
       await tester.tap(find.text('Limpar busca'));
       await tester.pumpAndSettle();

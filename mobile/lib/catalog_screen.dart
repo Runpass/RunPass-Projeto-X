@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'agenda.dart';
 import 'catalog_views.dart';
+import 'duration_field.dart';
 import 'edition_cards.dart';
 import 'friends.dart';
 import 'grid_columns.dart';
@@ -202,12 +203,12 @@ Widget runPassNavigation(
         2 => CatalogScreen(gateway: gateway),
         _ => RunnerProfileScreen(gateway: gateway),
       };
-      final route = MaterialPageRoute<void>(builder: (_) => screen);
-      if (subScreen) {
-        Navigator.of(context).pushAndRemoveUntil(route, (r) => false);
-      } else {
-        Navigator.of(context).pushReplacement(route);
-      }
+      // Trocar de aba sempre zera a pilha: a seta de voltar só existe em telas abertas a partir
+      // de outra (ex.: o "+" das medalhas), nunca nas telas principais.
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (_) => screen),
+        (r) => false,
+      );
     },
   );
 }
@@ -247,8 +248,7 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
 class RaceArt extends StatelessWidget {
   final Map<String, dynamic> edition;
 
-  /// Na lista, a distância fica no canto superior esquerdo (os atalhos ocupam o direito); no banner da
-  /// corrida fica à direita, longe do botão de voltar.
+  /// A distância fica no canto superior esquerdo, na lista e no banner da corrida; o corredor, à direita.
   final bool labelAtLeft;
   const RaceArt({super.key, required this.edition, this.labelAtLeft = false});
 
@@ -461,8 +461,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
   };
   final form = GlobalKey<FormState>();
   // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
-  List<Map<String, dynamic>> suggestions = [];
-  Timer? suggestTimer;
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
   final phrase = TextEditingController();
   Map<String, dynamic>? searchInfo;
@@ -748,7 +746,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   @override
   void dispose() {
-    suggestTimer?.cancel();
     phrase.dispose();
     for (final controller in fields.values) {
       controller.dispose();
@@ -853,58 +850,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
     }
   }
 
-  void onPhraseChanged(String text) {
-    setState(() {});
-    suggestTimer?.cancel();
-    if (text.trim().length < 2) {
-      if (suggestions.isNotEmpty) setState(() => suggestions = []);
-      return;
-    }
-    suggestTimer = Timer(
-      const Duration(milliseconds: 400),
-      () => suggest(text.trim()),
-    );
-  }
-
-  Future<void> suggest(String text) async {
-    try {
-      final page = await widget.gateway.request(
-        '/editions',
-        query: {'q': text, 'limit': '8'},
-      );
-      // Resposta atrasada de um texto que já mudou é descartada.
-      if (!mounted || phrase.text.trim() != text) return;
-      setState(
-        () => suggestions = (page['items'] as List? ?? const [])
-            .cast<Map<String, dynamic>>(),
-      );
-    } on Exception {
-      // Sugestão é só ajuda: nunca mostra erro.
-      if (mounted) {
-        setState(() => suggestions = []);
-      }
-    }
-  }
-
-  Future<void> openSuggestion(Map<String, dynamic> edition) async {
-    setState(() => suggestions = []);
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => EditionScreen(
-          gateway: widget.gateway,
-          editionId: edition['id'] as String,
-        ),
-      ),
-    );
-    loadMine();
-  }
+  void onPhraseChanged(String text) => setState(() {});
 
   Future<void> load({bool more = false}) async {
     if (loading) return;
     final sentence = phrase.text.trim();
     if (!more) {
-      suggestTimer?.cancel();
-      suggestions = [];
       activeFilters = sentence.isNotEmpty
           ? {}
           : {
@@ -963,28 +914,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
       if (mounted) setState(() => loading = false);
     }
     if (!more && error == null) await loadRest();
-  }
-
-  /// Aviso honesto sobre a busca por frase: o que o catalogo nao filtra e quando a IA nao respondeu.
-  String? get searchNotice {
-    final info = searchInfo;
-    if (info == null) return null;
-    const labels = {
-      'preco_max_brl': 'preço',
-      'altimetria': 'altimetria',
-      'distancia_max_km': 'distância máxima',
-      'consulta_semantica': 'o tema da frase',
-      'raio_km': 'proximidade ("perto de mim")',
-    };
-    final skipped = (info['notApplied'] as List? ?? const [])
-        .map((k) => labels[k] ?? '$k')
-        .toList();
-    final parts = [
-      if (info['source'] == 'text') 'Não foi possível interpretar a frase agora. Mostrando a busca pelo nome.',
-      if (skipped.isNotEmpty)
-        'Não filtrei por: ${skipped.join(', ')}. Os resultados não consideram isso.',
-    ];
-    return parts.isEmpty ? null : parts.join('\n');
   }
 
   void openMyRequests() => Navigator.of(context).push(
@@ -1121,8 +1050,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
               }) => null,
               textInputAction: TextInputAction.search,
               onSubmitted: (_) {
-                suggestTimer?.cancel();
-                setState(() => suggestions = []);
                 load();
               },
               onChanged: onPhraseChanged,
@@ -1140,8 +1067,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
                             ? null
                             : () {
                                 phrase.clear();
-                                suggestTimer?.cancel();
-                                setState(() => suggestions = []);
                                 load();
                               },
                       ),
@@ -1170,38 +1095,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
               ],
             ),
           ),
-          if (suggestions.isNotEmpty && phrase.text.trim().length >= 2)
-            Card(
-              key: const Key('catalog-suggestions'),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: Text(
-                      suggestions.length > 1
-                          ? 'Encontramos ${suggestions.length} corridas. Escolha uma:'
-                          : 'Encontramos esta corrida:',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  for (final edition in suggestions)
-                    ListTile(
-                      key: Key('suggestion-${edition['id']}'),
-                      dense: true,
-                      leading: const Icon(
-                        Icons.directions_run,
-                        color: runPassOrange,
-                      ),
-                      title: Text(edition['name'] as String),
-                      subtitle: Text(
-                        '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
-                      ),
-                      onTap: () => openSuggestion(edition),
-                    ),
-                ],
-              ),
-            ),
           if (showFilters)
             Card(
               child: Padding(
@@ -1371,14 +1264,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           // Mesmo espaço (12) entre "Minhas solicitações", o público e o ano.
           if (showFilters) const SizedBox(height: 12),
-          if (searchNotice != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Text(
-                searchNotice!,
-                key: const Key('catalog-search-notice'),
-              ),
-            ),
           if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
             TextButton(
@@ -1562,6 +1447,7 @@ class _EditionScreenState extends State<EditionScreen> {
   int photoColumns = GridColumns.standard;
   bool loadingPhotos = false;
   bool showAllReviews = false;
+  final peopleReviewsKey = GlobalKey();
   bool sendingBanner = false;
   // Detalhes (itens avaliados) da avaliação geral e da minha: recolher e expandir.
   bool showSummaryDetails = true, showMyDetails = true;
@@ -1944,10 +1830,19 @@ class _EditionScreenState extends State<EditionScreen> {
   Future<void> loadReviews() async {
     setState(() => loadingReviews = true);
     try {
-      final page = await widget.gateway.request(
-        '/editions/${Uri.encodeComponent(widget.editionId)}/reviews',
+      final path = '/editions/${Uri.encodeComponent(widget.editionId)}/reviews';
+      var page = await widget.gateway.request(
+        path,
         query: {'limit': '50', 'distanceId': ?selectedDistance},
       );
+      // A nota da prova soma todas as distâncias: se a distância escolhida ainda não tem
+      // avaliações, mostra as da prova toda em vez de itens vazios.
+      final first = page['summary'];
+      if (selectedDistance != null &&
+          first is Map &&
+          (first['reviewCount'] as num? ?? 0) == 0) {
+        page = await widget.gateway.request(path, query: {'limit': '50'});
+      }
       if (mounted) {
         reviews = (page['items'] as List? ?? const [])
             .cast<Map<String, dynamic>>();
@@ -1997,7 +1892,7 @@ class _EditionScreenState extends State<EditionScreen> {
       child: Stack(
         children: [
           // Base: arte padrão da corrida; a imagem aprovada, quando existe, cobre por cima.
-          Positioned.fill(child: RaceArt(edition: body)),
+          Positioned.fill(child: RaceArt(edition: body, labelAtLeft: true)),
           if (bannerUrl != null)
             Positioned.fill(
               child: Image.network(
@@ -2485,12 +2380,26 @@ class _EditionScreenState extends State<EditionScreen> {
     ),
   );
 
-  Widget scoreCard(Map<String, dynamic> body) {
+  /// Toque na nota geral: abre a lista completa das avaliações e comentários das pessoas.
+  void showPeopleReviews() {
+    setState(() => showAllReviews = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = peopleReviewsKey.currentContext;
+      if (target != null && mounted) {
+        Scrollable.ensureVisible(
+          target,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  /// Média geral da prova: resumo da API, nota da edição ou média das avaliações carregadas.
+  num? overallValue(Map<String, dynamic> body) {
     final score = body['runScore'] as Map<String, dynamic>?;
     final loaded = reviews ?? const <Map<String, dynamic>>[];
-    final summary = reviewSummary;
-    final value =
-        (summary?['average'] as num?) ??
+    return (reviewSummary?['average'] as num?) ??
         (score?['value'] is num
             ? score!['value'] as num
             : num.tryParse('${score?['value'] ?? ''}')) ??
@@ -2498,6 +2407,26 @@ class _EditionScreenState extends State<EditionScreen> {
             ? null
             : loaded.map(reviewAverage).reduce((a, b) => a + b) /
                   loaded.length);
+  }
+
+  /// Nota por item: resumo da API, média da lista pública ou, se nada disso existir, a minha avaliação.
+  double? summaryCriterion(String key) {
+    final byCriterion = (reviewSummary?['byCriterion'] as Map?) ?? const {};
+    final fromPublic = (byCriterion[key] as num?)?.toDouble() ?? average(key);
+    if (fromPublic != null) return fromPublic;
+    final mineRatings = myReview?['ratings'] as Map?;
+    final own = mineRatings?[key] as num?;
+    final noPublicItems = criteria.every(
+      (c) => ((byCriterion[c.$1] as num?) ?? average(c.$1)) == null,
+    );
+    return noPublicItems ? own?.toDouble() : null;
+  }
+
+  Widget scoreCard(Map<String, dynamic> body, {VoidCallback? onTap}) {
+    final score = body['runScore'] as Map<String, dynamic>?;
+    final loaded = reviews ?? const <Map<String, dynamic>>[];
+    final summary = reviewSummary;
+    final value = overallValue(body);
     if (value == null) {
       return Container(
         padding: const EdgeInsets.all(16),
@@ -2542,87 +2471,95 @@ class _EditionScreenState extends State<EditionScreen> {
                       loaded.where((r) => reviewAverage(r) >= 4).length /
                       loaded.length)
                   .round());
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            flex: 6,
-            child: Container(
-              key: const Key('score-card'),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: context.panel,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                children: [
-                  Text(
-                    decimalPt(value),
-                    style: const TextStyle(
-                      fontSize: 44,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Stars(value, size: 19),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${thousands(count)} avaliações',
-                          key: const Key('score-count'),
-                          style: TextStyle(fontSize: 13, color: context.muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (recommend != null) ...[
-            const SizedBox(width: 10),
+    return InkWell(
+      key: const Key('score-card-tap'),
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
             Expanded(
-              flex: 4,
+              flex: 6,
               child: Container(
-                padding: const EdgeInsets.all(12),
+                key: const Key('score-card'),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: context.greenFill,
+                  color: context.panel,
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.check_circle,
-                          color: Color(0xff2f9e5e),
-                          size: 20,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '$recommend%',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 18,
-                          ),
-                        ),
-                      ],
+                    Text(
+                      decimalPt(value),
+                      style: const TextStyle(
+                        fontSize: 44,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                    const Text(
-                      'recomendariam\nesta prova',
-                      style: TextStyle(fontSize: 11),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Stars(value, size: 19),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${thousands(count)} avaliações',
+                            key: const Key('score-count'),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: context.muted,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
+            if (recommend != null) ...[
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 4,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: context.greenFill,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.check_circle,
+                            color: Color(0xff2f9e5e),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '$recommend%',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Text(
+                        'recomendariam\nesta prova',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -2684,13 +2621,10 @@ class _EditionScreenState extends State<EditionScreen> {
 
   Widget reviewsTab(Map<String, dynamic> body) {
     final loaded = reviews;
-    final byCriterion = (reviewSummary?['byCriterion'] as Map?) ?? const {};
-    double? criterion(String key) =>
-        (byCriterion[key] as num?)?.toDouble() ?? average(key);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        scoreCard(body),
+        scoreCard(body, onTap: showPeopleReviews),
         _detailsToggle(
           key: const Key('summary-details-toggle'),
           label: 'Itens da avaliação geral',
@@ -2702,7 +2636,7 @@ class _EditionScreenState extends State<EditionScreen> {
             key: const Key('summary-details'),
             children: [
               for (final (key, label, icon) in criteria)
-                bar(label, icon, criterion(key)),
+                bar(label, icon, summaryCriterion(key)),
             ],
           ),
         const SizedBox(height: 14),
@@ -2716,11 +2650,15 @@ class _EditionScreenState extends State<EditionScreen> {
           )
         else if (loaded.isNotEmpty) ...[
           Row(
+            key: peopleReviewsKey,
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'O que os corredores estão dizendo',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  'O que os corredores estão dizendo (${loaded.length})',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
                 ),
               ),
               if (loaded.length > 3)
@@ -3430,13 +3368,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             ? null
             : (value) => setState(() => distanceId = value),
       ),
-    TextField(
-      controller: time,
-      keyboardType: TextInputType.datetime,
-      decoration: const InputDecoration(
-        labelText: 'Tempo (h:mm:ss ou segundos, opcional)',
-      ),
-    ),
+    DurationField(controller: time, enabled: !saving),
     TextField(
       controller: placement,
       keyboardType: TextInputType.number,

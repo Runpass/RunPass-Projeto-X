@@ -390,6 +390,12 @@ def create_app(
             raise Unavailable()
         return edition_requests.list_mine(actor, limit, cursor)
 
+    @app.get("/edition-requests/{id}/medal-image", operation_id="getEditionRequestMedalImage")
+    def edition_request_medal_image(id: str, actor: Actor):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.medal_image(actor, id)
+
     @app.get("/edition-requests/{id}", operation_id="getEditionRequest")
     def get_edition_request(id: str, actor: Actor):
         if edition_requests is None:

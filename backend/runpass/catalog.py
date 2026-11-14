@@ -273,8 +273,12 @@ class CatalogService:
                     Decimal(str(d["kilometers"])) == filters.distanceKm for d in body["distances"]
                 ):
                     continue
-                if filters.q and filters.q not in normalized(body["name"]):
-                    continue
+                if filters.q:
+                    # Todas as palavras da busca precisam estar no nome, em qualquer ordem e sem exigir os
+                    # mesmos hifens/pontuacao ("clube itau edicao circo" acha "Clube Itau - Edicao Circo").
+                    name_text = normalized(body["name"])
+                    if not all(word in name_text for word in filters.q.split()):
+                        continue
                 if filters.audience and is_kids(body["name"]) != (filters.audience == "kids"):
                     continue
                 # Inscricao desconhecida nunca vira "aberta": so casa com "unknown".

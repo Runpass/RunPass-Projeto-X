@@ -269,12 +269,15 @@ class AdminApiTests(unittest.TestCase):
         self.store = self.identity.store
         self.catalog = CatalogService(self.identity, Fernet.generate_key())
         seed_synthetic(self.catalog, ROOT / "backend/fixtures/catalog.synthetic.json")
-        self.requests = EditionRequestService(self.identity, Fernet.generate_key(), self.catalog)
+        self.blobs = MemoryBlobStore()
+        self.requests = EditionRequestService(
+            self.identity, Fernet.generate_key(), self.catalog, self.blobs
+        )
         self.mfa_on = True
         self.now = NOW.timestamp()
         self.cognito, self.lam, self.logs = FakeUsers(), FakeLambda(), FakeLogs()
         self.sched = FakeScheduler()
-        self.s3, self.blobs = FakeS3(), MemoryBlobStore()
+        self.s3 = FakeS3()
         self.pages = {}
         self.openai_org = FakeCosts({})
         self.openai_org.configured = False
@@ -509,6 +512,52 @@ class AdminApiTests(unittest.TestCase):
         # aprovar de novo e recusado
         self.assertEqual(self.aprovar(request).status_code, 409)
 
+    def test_equipe_corrige_o_nome_ao_aprovar_e_depois_pelo_catalogo(self):
+        _, request = self.pedido("duda", "Corrda do Clube Itau Sircuo", "2027-04-10", "SP", km=5)
+        resposta = self.client.post(
+            f"/admin/edition-requests/{request['id']}/approve",
+            json={"expectedVersion": request["version"], "name": "Corrida do Clube Itaú Circo"},
+            headers=self.auth(),
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        edition_id = resposta.json()["request"]["linkedEditionId"]
+        self.assertEqual(self.catalog._edition(edition_id)["name"], "Corrida do Clube Itaú Circo")
+        self.assertIn("corrida-do-clube-itau-circo", edition_id)
+        # depois de criada, o nome ainda pode ser corrigido pelo catalogo (nova versao, mesmo id)
+        antes = self.catalog._edition(edition_id)["version"]
+        r = self.client.patch(
+            f"/admin/editions/{edition_id}",
+            json={"name": "  Corrida do Clube Itaú - Edição Circo "},
+            headers=self.auth(),
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["name"], "Corrida do Clube Itaú - Edição Circo")
+        corrida = self.catalog._edition(edition_id)
+        self.assertEqual(corrida["name"], "Corrida do Clube Itaú - Edição Circo")
+        self.assertEqual(corrida["version"], antes + 1)
+        self.assertEqual(corrida["date"], "2027-04-10")  # so o nome muda
+        # a busca da equipe acha pelo nome novo (palavras em qualquer ordem, sem exigir o hifen)
+        achadas = self.client.get(
+            "/admin/editions", params={"q": "clube itau edicao circo"}, headers=self.auth()
+        ).json()["items"]
+        self.assertIn(edition_id, [e["id"] for e in achadas])
+        # nome vazio, corrida inexistente e pedido sem permissao
+        self.assertEqual(
+            self.client.patch(
+                f"/admin/editions/{edition_id}", json={"name": "   "}, headers=self.auth()
+            ).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.patch(
+                "/admin/editions/nao-existe", json={"name": "X"}, headers=self.auth()
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.patch(f"/admin/editions/{edition_id}", json={"name": "X"}).status_code, 401
+        )
+
     def test_aprovar_pedido_de_corrida_que_ja_existe_so_vincula(self):
         person, request = self.pedido("bia", "Corrida Sintética São Paulo", "2026-11-08", "SP")
         antes = len(self.catalog_ids())
@@ -575,6 +624,48 @@ class AdminApiTests(unittest.TestCase):
             "confirmRights": True,
             **mudanca,
         }
+
+    def test_foto_de_medalha_no_pedido_fica_privada_e_fora_da_fila_de_banners(self):
+        person = Principal("mel", True)
+        self.identity.create_profile(person, "pm", {"displayName": "Mel", "username": "mel_x"})
+        self.identity.admit(person, "am", {"birthDate": "1990-01-01", "declaresAdult": True})
+        reference = self.imagem_do_usuario("mel")
+        fields = EditionRequestFields(
+            name="Corrida Medalha Sintética",
+            date="2027-09-05",
+            city="São Paulo",
+            distanceKm=10,
+            imageReference=reference,
+            medalPhoto=True,
+        )
+        request = self.requests.create(person, "kmel", fields)
+        self.assertTrue(request["details"]["medalPhoto"])
+        imagem = self.store.get(("operations", "USER#mel", "IMAGE#" + reference))
+        self.assertEqual(imagem["refs"], 1)  # a imagem fica reservada pelo pedido
+        # nao e sugestao de banner: nao entra na fila de banners da equipe
+        rows, _ = self.store.query("history", "EREQ_QUEUE#image", prefix="", limit=50)
+        self.assertEqual(rows, [])
+        # o dono ve a propria foto; outra pessoa recebe o mesmo 404 de pedido inexistente
+        link = self.requests.medal_image(person, request["id"])
+        self.assertTrue(link["url"].startswith("memory://private/derived/"))
+        outra = Principal("noe", True)
+        self.identity.create_profile(outra, "pn", {"displayName": "Noe", "username": "noe_x"})
+        self.identity.admit(outra, "an", {"birthDate": "1990-01-01", "declaresAdult": True})
+        with self.assertRaises(Problem) as erro:
+            self.requests.medal_image(outra, request["id"])
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_AVAILABLE")
+
+    def test_pedido_sem_foto_de_medalha_nao_serve_imagem_e_medalha_exige_imagem(self):
+        person, request = self.pedido(
+            "lia", "Corrida Lia Sintética", "2027-09-06", "SP", image=True
+        )
+        with self.assertRaises(Problem) as erro:  # tem imagem, mas e banner: nao e foto de medalha
+            self.requests.medal_image(person, request["id"])
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_AVAILABLE")
+        with self.assertRaises(ValueError):
+            EditionRequestFields(
+                name="X", date="2027-09-06", city="São Paulo", distanceKm=5, medalPhoto=True
+            )
 
     def test_banner_no_pedido_exige_imagem_propria_e_valida(self):
         person, request = self.pedido(

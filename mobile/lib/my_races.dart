@@ -14,6 +14,8 @@ import 'friends.dart';
 import 'grid_columns.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
+import 'medal_scan.dart';
+import 'pending_medals.dart';
 import 'notifications.dart';
 import 'post_card.dart' show FeedEntry, PostCard, PostThumb, entryFromPost;
 import 'profile_photo.dart';
@@ -1468,11 +1470,21 @@ class MedalCollectionScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final ImageBytesFetcher fetchDisplayPhoto;
   final MedalCropOpener openCropScreen;
+
+  /// Foto da medalha para o "+" e o leitor de texto dela. Trocáveis nos testes (câmera e Vision não rodam lá).
+  final MedalPhotoPicker medalPhotoPicker;
+  final MedalTextReader medalTextReader;
+
+  /// Carrega a foto da medalha provisória. Trocável nos testes (o link assinado não roda lá).
+  final Future<List<int>?> Function(IdentityGateway, String) pendingPhotoLoader;
   const MedalCollectionScreen({
     super.key,
     required this.gateway,
     this.fetchDisplayPhoto = fetchImageBytes,
     this.openCropScreen = openMedalCropScreen,
+    this.medalPhotoPicker = pickMedalPhotoPath,
+    this.medalTextReader = const PlatformMedalTextReader(),
+    this.pendingPhotoLoader = loadRequestMedalPhoto,
   });
 
   @override
@@ -1481,8 +1493,42 @@ class MedalCollectionScreen extends StatefulWidget {
 
 class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late Future<List<RaceRecord>> races = loadMyRaces(widget.gateway);
+  late Future<List<Map<String, dynamic>>> pendingMedals = loadPendingMedals(
+    widget.gateway,
+  );
   MedalGrouping grouping = MedalGrouping.all;
   bool newestFirst = true;
+
+  /// Exclui a medalha: a participação some das medalhas e de "Minhas corridas" (a corrida segue no catálogo).
+  Future<void> deleteMedal(RaceRecord race) async {
+    final id = race.participation['id'] as String;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}',
+        method: 'DELETE',
+        query: {'expectedVersion': '${race.participation['version']}'},
+      );
+      forgetMedalDisplayImage(id);
+      if (!mounted) return;
+      setState(() {
+        races = loadMyRaces(widget.gateway);
+      });
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Medalha excluída. Ela também saiu de Minhas corridas.',
+          ),
+        ),
+      );
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível excluir a medalha. Tente de novo.'),
+        ),
+      );
+    }
+  }
 
   Future<void> editMedal(RaceRecord race) async {
     final result = await showModalBottomSheet<Map<String, dynamic>>(
@@ -1498,6 +1544,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     );
     if (result == null || !mounted) return;
     final id = race.participation['id'] as String;
+    if (result['_delete'] == true) return deleteMedal(race);
     try {
       await widget.gateway.request(
         '/participations/${Uri.encodeComponent(id)}',
@@ -1667,16 +1714,45 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     children: [for (final race in list) tile(race)],
   );
 
-  /// Botao compacto ao lado de "Minhas medalhas": leva para o cadastro de
-  /// uma nova corrida, o mesmo fluxo ja usado no resto do app (CatalogScreen).
+  /// Botao compacto ao lado de "Minhas medalhas": abre a foto da medalha para achar a corrida.
+  /// "+": primeiro a foto da medalha (câmera ou galeria); o app lê o texto e tenta achar a corrida.
+  /// Se não achar, a tela seguinte tem o botão que leva às corridas.
+  /// Medalhas provisórias (pedido de cadastro com a foto da medalha), até a equipe decidir.
+  Widget pendingSection(List<RaceRecord> done) =>
+      FutureBuilder<List<Map<String, dynamic>>>(
+        future: pendingMedals,
+        builder: (context, snapshot) => PendingMedalsSection(
+          gateway: widget.gateway,
+          requests: visiblePendingMedals(snapshot.data ?? const [], {
+            for (final race in done) '${race.participation['editionId']}',
+          }),
+          photoLoader: widget.pendingPhotoLoader,
+        ),
+      );
+
+  Future<void> addMedal() async {
+    final path = await widget.medalPhotoPicker(context);
+    if (path == null || !mounted) return;
+    final registered = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => MedalScanScreen(
+          gateway: widget.gateway,
+          photoPath: path,
+          reader: widget.medalTextReader,
+        ),
+      ),
+    );
+    if (registered == true && mounted) {
+      setState(() {
+        pendingMedals = loadPendingMedals(widget.gateway);
+      });
+    }
+  }
+
   Widget _addTile() => InkWell(
     key: const Key('medal-add-tile'),
     borderRadius: BorderRadius.circular(16),
-    onTap: () => Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CatalogScreen(gateway: widget.gateway),
-      ),
-    ),
+    onTap: addMedal,
     child: Container(
       width: 24,
       height: 24,
@@ -1806,8 +1882,28 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             }
             final data = snapshot.data!;
             if (data.isEmpty) {
-              return loadMessage(
-                'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      pendingSection(data),
+                      const Text(
+                        'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      // Sem medalhas ainda: começa pela foto da medalha, sem escolher a corrida antes.
+                      FilledButton.icon(
+                        key: const Key('medal-add-first'),
+                        onPressed: addMedal,
+                        icon: const Icon(Icons.add_a_photo_outlined),
+                        label: const Text('Adicionar medalha'),
+                      ),
+                    ],
+                  ),
+                ),
               );
             }
             final stats = RaceStats.of(data);
@@ -1815,6 +1911,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               key: const Key('medals-list'),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
               children: [
+                pendingSection(data),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -1956,6 +2053,32 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
   void dispose() {
     description.dispose();
     super.dispose();
+  }
+
+  Future<void> confirmDelete() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Excluir medalha?'),
+        content: const Text(
+          'A medalha e a sua participação nesta corrida serão excluídas: tempo, colocação, número de peito e avaliação. '
+          'Ela também deixa de aparecer em Minhas corridas. A corrida continua no catálogo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('medal-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (sure == true && mounted) Navigator.pop(context, {'_delete': true});
   }
 
   String? _blankToNull(String text) {
@@ -2156,6 +2279,16 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              key: const Key('medal-delete'),
+              onPressed: confirmDelete,
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              label: const Text(
+                'Excluir medalha',
+                style: TextStyle(color: Colors.red),
+              ),
             ),
           ],
         ),

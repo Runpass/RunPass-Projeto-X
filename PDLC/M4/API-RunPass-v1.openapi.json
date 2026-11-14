@@ -2149,6 +2149,50 @@
         "x-requires-beta-admission": true
       }
     },
+    "/edition-requests/{id}/medal-image": {
+      "get": {
+        "operationId": "getEditionRequestMedalImage",
+        "summary": "Link temporario e assinado para a foto da medalha provisoria do proprio pedido de cadastro; so o dono. Nunca serve o original.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
     "/edition-requests/{id}/resubmit": {
       "post": {
         "operationId": "resubmitEditionRequest",
@@ -7473,6 +7517,11 @@
           "imageReference": {
             "type": "string",
             "description": "Banner suggested by the runner: an image already uploaded and validated by the same runner. Never published automatically; the team approves it with credit and rights."
+          },
+          "medalPhoto": {
+            "type": "boolean",
+            "default": false,
+            "description": "True quando a imagem e a foto da medalha da pessoa (medalha provisoria ate a equipe decidir o pedido). Fica privada, fora da fila de banners, e nunca vira banner nem fica publica. Exige imageReference."
           }
         }
       },
