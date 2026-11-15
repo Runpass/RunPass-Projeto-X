@@ -50,8 +50,11 @@ class RaceRecord {
       participation['hasPostImage'] == true ||
       participation['postImageReference'] != null;
 
+  /// Sem os dados da corrida, nunca mostra o código: corrida criada por pedido (`pedido-<nome>-<data>-<sufixo>`)
+  /// volta ao nome escrito no pedido; qualquer outra, só "Corrida".
   String get name =>
-      edition?['name'] as String? ?? 'Corrida ${participation['editionId']}';
+      edition?['name'] as String? ??
+      readableEditionName('${participation['editionId'] ?? ''}');
   String? get date => edition?['date'] as String?;
   int? get year => date == null ? null : int.tryParse(date!.substring(0, 4));
   static const noCity = 'Sem cidade';
@@ -1180,6 +1183,14 @@ Future<void> openMedal(
         ParticipationDraftScreen(gateway: gateway, initial: race.participation),
   ),
 );
+
+String readableEditionName(String editionId) {
+  final match = RegExp(r'^pedido-(.+)-\d{4}-\d{2}-\d{2}-[^-]+$')
+      .firstMatch(editionId);
+  final words = match?.group(1)?.split('-').where((w) => w.isNotEmpty);
+  if (words == null || words.isEmpty) return 'Corrida';
+  return words.map((w) => w[0].toUpperCase() + w.substring(1)).join(' ');
+}
 
 enum MedalGrouping { all, year, distance, city }
 

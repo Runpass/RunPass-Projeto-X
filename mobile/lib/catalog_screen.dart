@@ -3564,6 +3564,18 @@ Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
       ),
     );
 
+/// Recorte da foto da PUBLICAÇÃO: já vem na proporção do quadro do Feed, para a foto caber nele.
+Future<List<int>?> cropPostPhoto(BuildContext context, List<int> photo) =>
+    Navigator.of(context).push<List<int>>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => RacePhotoCropScreen(
+          image: Uint8List.fromList(photo),
+          initialAspect: RacePhotoCropScreen.feedAspect,
+        ),
+      ),
+    );
+
 /// Formulário do rascunho guardado ao sair da tela (por id do rascunho), para voltar de onde parou.
 /// Os testes limpam entre um e outro.
 final Map<String, Map<String, dynamic>> draftFormCache = {};
@@ -3602,7 +3614,7 @@ class ParticipationDraftScreen extends StatefulWidget {
     this.postPhotoSelector,
     this.fromPost = false,
     this.postPhotoLoader = loadPostPhotoBytes,
-    this.postPhotoCropper = cropRacePhoto,
+    this.postPhotoCropper = cropPostPhoto,
     this.initialPhoto,
     this.initialPhotoCropper = cropRacePhoto,
   });
@@ -3643,6 +3655,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     'valueForMoney': 0,
   };
   bool get ratingsComplete => ratings.values.every((v) => v >= 1);
+
+  /// Tem foto de publicação: o rascunho traz a referência; a publicação do Feed só diz que existe.
+  bool get hasPostPhoto =>
+      draft['postImageReference'] != null || draft['hasPostImage'] == true;
 
   @override
   void initState() {
@@ -4035,7 +4051,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         bytes = await Navigator.of(context).push<List<int>>(
           MaterialPageRoute(
             fullscreenDialog: true,
-            builder: (_) => RacePhotoCropScreen(image: original),
+            builder: (_) => RacePhotoCropScreen(
+              image: original,
+              initialAspect: RacePhotoCropScreen.feedAspect,
+            ),
           ),
         );
       }
@@ -4350,9 +4369,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                     gateway: widget.gateway,
                     participationId: draft['id'] as String?,
                     size: 72,
-                    // Aberta pela publicação: mostra a foto da PUBLICAÇÃO (quando tem), não a da medalha.
-                    usePostImage:
-                        widget.fromPost && draft['postImageReference'] != null,
+                    // Com foto de publicação, é ela que aparece (também em Medalhas, junto das avaliações).
+                    usePostImage: hasPostPhoto,
+                    fit: hasPostPhoto ? BoxFit.contain : BoxFit.cover,
                   ),
                 ),
               ),
@@ -4374,7 +4393,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             const SizedBox(height: 8),
             if (widget.fromPost) ...[
               // Editar a publicação: o tamanho da foto publicada (a medalha se edita em Medalhas).
-              if (draft['postImageReference'] != null) ...[
+              if (hasPostPhoto) ...[
                 OutlinedButton.icon(
                   key: const Key('adjust-post-photo'),
                   onPressed: saving || uploadingPost ? null : adjustPostPhoto,
@@ -4392,12 +4411,28 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 onPressed: saving || uploadingPost ? null : replacePostPhoto,
                 icon: const Icon(Icons.photo_library_outlined),
                 label: Text(
-                  draft['postImageReference'] == null
+                  !hasPostPhoto
                       ? 'Escolher a foto da publicação'
                       : 'Trocar a foto da publicação',
                 ),
               ),
               const SizedBox(height: 8),
+              // A medalha (foto, tempo, avaliação) se edita na mesma tela de Medalhas.
+              TextButton.icon(
+                key: const Key('change-medal'),
+                onPressed: saving || uploadingPost
+                    ? null
+                    : () => Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ParticipationDraftScreen(
+                            gateway: widget.gateway,
+                            initial: Map<String, dynamic>.from(draft),
+                          ),
+                        ),
+                      ),
+                icon: const Icon(Icons.workspace_premium_outlined),
+                label: const Text('Alterar medalha'),
+              ),
               TextField(
                 key: const Key('post-text-edit'),
                 controller: postText,

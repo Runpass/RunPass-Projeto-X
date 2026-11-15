@@ -148,6 +148,15 @@ Future<IdentityGateway> runner({
 void main() {
   setUp(draftFormCache.clear);
 
+  test('sem os dados da corrida, o nome nunca é o código do pedido', () {
+    expect(
+      readableEditionName('pedido-maratona-pai-de-acucar-2026-10-12-ab12cd'),
+      'Maratona Pai De Acucar',
+    );
+    expect(readableEditionName('demo-1'), 'Corrida');
+    expect(readableEditionName(''), 'Corrida');
+  });
+
   testWidgets(
     'Medalhas troca Conquistas por Por cidade, agrupando por cidade visitada',
     (tester) async {

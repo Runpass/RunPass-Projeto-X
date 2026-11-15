@@ -402,7 +402,17 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
 /// "Livre" deixa o quadro ser redimensionado pelas bordas; as demais fixam a proporção do quadro.
 class RacePhotoCropScreen extends StatefulWidget {
   final Uint8List image;
-  const RacePhotoCropScreen({super.key, required this.image});
+
+  /// Índice de [aspects] escolhido de início (4:3 para a medalha; 16:10 para a foto da publicação).
+  final int initialAspect;
+  const RacePhotoCropScreen({
+    super.key,
+    required this.image,
+    this.initialAspect = 2,
+  });
+
+  /// Proporção do quadro da publicação no Feed: a foto recortada nela preenche o quadro sem cortes.
+  static const feedAspect = 5;
 
   /// Proporções oferecidas (largura / altura); `null` é o recorte livre.
   static const aspects = <(String, double?)>[
@@ -411,6 +421,7 @@ class RacePhotoCropScreen extends StatefulWidget {
     ('4:3', 4 / 3),
     ('3:4', 3 / 4),
     ('16:9', 16 / 9),
+    ('Feed 16:10', 16 / 10),
   ];
 
   @override
@@ -419,7 +430,7 @@ class RacePhotoCropScreen extends StatefulWidget {
 
 class _RacePhotoCropScreenState extends State<RacePhotoCropScreen> {
   final controller = CropController();
-  int selected = 2; // 4:3: boa para foto de medalha
+  late int selected = widget.initialAspect;
   bool busy = false;
 
   double? get aspect => RacePhotoCropScreen.aspects[selected].$2;
