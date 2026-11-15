@@ -135,6 +135,8 @@ Future<void> open(
 }
 
 void main() {
+  setUp(draftFormCache.clear);
+
   testWidgets(
     'editar pela publicação ajusta a foto da publicação, não a da medalha',
     (tester) async {
@@ -254,6 +256,35 @@ void main() {
       await tester.pumpAndSettle();
       expect(b.patches.last['postText'], isNull);
       expect(b.patches.last.containsKey('postText'), isTrue); // nulo apaga
+    },
+  );
+
+  testWidgets(
+    'a medalha concluída mostra o nome da corrida embaixo da foto e sem as frases de apoio',
+    (tester) async {
+      final (gateway, _) = await setup();
+      await open(tester, gateway, fromPost: false);
+      final name = find.byKey(const Key('race-name-under-photo'));
+      expect(name, findsOneWidget);
+      expect(find.text('[FICTICIA] Corrida'), findsOneWidget);
+      // O nome vem logo abaixo da foto (antes do botão de trocar a foto).
+      final photo = tester.getRect(find.byType(ClipRRect).first);
+      expect(tester.getTopLeft(name).dy, greaterThanOrEqualTo(photo.bottom));
+      expect(
+        tester.getTopLeft(name).dy,
+        lessThan(
+          tester.getTopLeft(find.byKey(const Key('change-medal-photo'))).dy,
+        ),
+      );
+      // Sem as frases embaixo do botão de trocar a foto.
+      expect(
+        find.textContaining(
+          'Participação concluída · medalha e avaliação registradas',
+        ),
+        findsNothing,
+      );
+      expect(find.textContaining('Conquista não publicada'), findsNothing);
+      expect(find.textContaining('Conquista publicada'), findsNothing);
     },
   );
 }

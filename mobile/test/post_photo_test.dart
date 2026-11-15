@@ -119,6 +119,8 @@ Future<void> rateAndDeclare(WidgetTester tester) async {
 }
 
 void main() {
+  setUp(draftFormCache.clear);
+
   testWidgets(
     'publicar no feed pede outra foto, separada da medalha, e a envia junto',
     (tester) async {
@@ -370,6 +372,101 @@ void main() {
         isTrue,
       );
       expect(const RaceRecord({'id': 'c'}, null).hasPostImage, isFalse);
+    },
+  );
+
+  testWidgets(
+    'sair e voltar ao rascunho mantém a foto e o texto da publicação',
+    (tester) async {
+      tall(tester);
+      final (gateway, _) = await setup();
+      Widget draft() => MaterialApp(
+        home: ParticipationDraftScreen(
+          gateway: gateway,
+          initial: const {
+            'id': 'd1',
+            'editionId': 'E1',
+            'distanceId': '5k',
+            'state': 'draft',
+            'version': 2,
+          },
+          photoSelector: () async => jpeg,
+          postPhotoSelector: () async => jpeg,
+        ),
+      );
+      await tester.pumpWidget(draft());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Selecionar foto'));
+      await tester.pumpAndSettle();
+      final list = find.byType(Scrollable).first;
+      final publish = find.byKey(const Key('publish-to-feed'));
+      await tester.scrollUntilVisible(publish, 200, scrollable: list);
+      await tester.tap(publish);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('select-post-photo')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('post-text-field')),
+        'Texto guardado',
+      );
+      await tester.pumpWidget(const SizedBox()); // sai da tela
+      await tester.pumpWidget(draft()); // volta ao mesmo rascunho
+      await tester.pumpAndSettle();
+      final again = find.byKey(const Key('post-photo-ok'));
+      await tester.scrollUntilVisible(
+        again,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(again, findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('post-text-field')))
+            .controller!
+            .text,
+        'Texto guardado',
+      );
+    },
+  );
+
+  testWidgets(
+    'voltar da tela da medalha recarrega a foto da prateleira (foto trocada aparece)',
+    (tester) async {
+      tall(tester);
+      final (gateway, b) = await setup();
+      b.participations = [
+        {
+          'id': 'c1',
+          'editionId': 'E1',
+          'distanceId': '5k',
+          'state': 'completed',
+          'version': 4,
+          'publishToFeed': false,
+          'completedAt': '2026-11-01T10:00:00Z',
+          'medalImageReference': 'img_medalha',
+        },
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      int shelfPhotoRequests() => b.calls
+          .where((c) => c == 'GET /participations/c1/display-image')
+          .length;
+      final first = shelfPhotoRequests();
+      expect(first, greaterThanOrEqualTo(1));
+      await tester.tap(find.text('Corrida E1').first);
+      await tester.pumpAndSettle();
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      // Ao voltar a prateleira busca de novo a foto (antes ficava com a foto velha na tela).
+      expect(shelfPhotoRequests(), greaterThan(first));
     },
   );
 }

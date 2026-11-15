@@ -680,7 +680,12 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                         '${edition['city']}/${edition['state']}',
                     ].join(' · '),
                   ),
-                  onTap: () => fillFrom(edition),
+                  // Corrida que já existe: segue direto para a minha participação (tempo, km, avaliação e, se
+                  // quiser, a foto do post), sem passo intermediário.
+                  onTap: () {
+                    fillFrom(edition);
+                    concludeChosen();
+                  },
                   trailing: IconButton(
                     key: Key('medal-open-${edition['id']}'),
                     tooltip: 'Abrir a corrida',

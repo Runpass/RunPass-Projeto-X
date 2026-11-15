@@ -3564,6 +3564,10 @@ Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
       ),
     );
 
+/// Formulário do rascunho guardado ao sair da tela (por id do rascunho), para voltar de onde parou.
+/// Os testes limpam entre um e outro.
+final Map<String, Map<String, dynamic>> draftFormCache = {};
+
 class ParticipationDraftScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> initial;
@@ -3621,11 +3625,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   final postText = TextEditingController();
   bool declaredCompleted = false, publishToFeed = false;
   DateTime? editionDate;
+  String? editionName; // nome da corrida, mostrado embaixo da foto
   Map<String, dynamic>? review;
   List<Map<String, dynamic>> distances = const [];
   String? distanceId;
   // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
-  static final Map<String, Map<String, dynamic>> formCache = {};
   int photoRevision = 0;
   // Comeca vazio (0): a pessoa precisa dar uma nota de 1 a 5 em cada criterio.
   final ratings = {
@@ -3655,11 +3659,13 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     );
     bib = TextEditingController(text: draft['bibNumber'] as String? ?? '');
     comment = TextEditingController();
-    final saved = formCache[draft['id']];
+    final saved = draftFormCache[draft['id']];
     if (saved != null && draft['state'] == 'draft') {
       imageReference = saved['imageReference'] as String?;
       declaredCompleted = saved['declaredCompleted'] == true;
       publishToFeed = saved['publishToFeed'] == true;
+      postImageReference = saved['postImageReference'] as String?;
+      postText.text = saved['postText'] as String? ?? '';
       comment.text = saved['comment'] as String? ?? '';
       ratings.addAll(Map<String, int>.from(saved['ratings'] as Map));
     }
@@ -3701,6 +3707,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         setState(() {
           if (parsed != null && draft['state'] == 'draft') editionDate = parsed;
           distances = list;
+          editionName = edition['name'] as String?;
         });
       }
     } on Exception {
@@ -3718,15 +3725,17 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   @override
   void dispose() {
     if (draft['state'] == 'draft') {
-      formCache[draft['id'] as String] = {
+      draftFormCache[draft['id'] as String] = {
         'imageReference': imageReference,
         'declaredCompleted': declaredCompleted,
         'publishToFeed': publishToFeed,
+        'postImageReference': postImageReference,
+        'postText': postText.text,
         'comment': comment.text,
         'ratings': Map<String, int>.from(ratings),
       };
     } else {
-      formCache.remove(draft['id']);
+      draftFormCache.remove(draft['id']);
     }
     time.dispose();
     placement.dispose();
@@ -4117,6 +4126,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         },
       );
       forgetMedalPhoto(draft['id'] as String);
+      // A prateleira usa o recorte (display-image): esquece também o link dele.
+      forgetMedalDisplayImage(draft['id'] as String);
       photoRevision++;
       message = 'Foto da medalha atualizada.';
     } on IdentityIssue catch (issue) {
@@ -4346,6 +4357,20 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 ),
               ),
             ),
+            // Nome da corrida logo abaixo da foto.
+            if (editionName != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  editionName!,
+                  key: const Key('race-name-under-photo'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
+              ),
             const SizedBox(height: 8),
             if (widget.fromPost) ...[
               // Editar a publicação: o tamanho da foto publicada (a medalha se edita em Medalhas).
@@ -4406,16 +4431,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                   uploading ? 'Enviando foto...' : 'Trocar foto da medalha',
                 ),
               ),
-            const SizedBox(height: 12),
-            const Text(
-              'Participação concluída · medalha e avaliação registradas.',
-            ),
-            const SizedBox(height: 8),
-            Text(
-              draft['publishToFeed'] == true
-                  ? 'Conquista publicada: quem pode ver seu perfil vê esta corrida.'
-                  : 'Conquista não publicada: só você vê esta corrida.',
-            ),
             const SizedBox(height: 12),
             if (review != null) MyReviewView(review: review!),
             // Sem botão "Salvar visibilidade": cada chave grava ao ser alterada.
