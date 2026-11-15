@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'catalog_screen.dart';
 import 'identity_gateway.dart';
 import 'profile_photo.dart' show RacePhotoCropScreen;
+import 'tagged_people.dart';
 import 'runpass_theme.dart';
 
 /// Nova postagem (o "+" da Home): publica no feed uma corrida que eu já concluí e ainda não publiquei,
@@ -32,6 +33,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
   String? postImageReference, message;
   List<int>? preview;
   bool uploading = false, publishing = false;
+  List<Map<String, dynamic>> tagged = [];
   final text = TextEditingController();
 
   @override
@@ -107,6 +109,8 @@ class _NewPostScreenState extends State<NewPostScreen> {
           'expectedVersion': race.participation['version'],
           'postImageReference': reference,
           if (text.text.trim().isNotEmpty) 'postText': text.text.trim(),
+          if (tagged.isNotEmpty)
+            'taggedUserIds': [for (final p in tagged) p['id']],
         },
       );
       if (!mounted) return;
@@ -236,6 +240,28 @@ class _NewPostScreenState extends State<NewPostScreen> {
                   labelText: 'Texto da postagem (opcional)',
                 ),
               ),
+              OutlinedButton.icon(
+                key: const Key('new-post-tag'),
+                onPressed: publishing
+                    ? null
+                    : () async {
+                        final picked = await pickTaggedPeople(
+                          context,
+                          widget.gateway,
+                          tagged,
+                        );
+                        if (picked != null && mounted) {
+                          setState(() => tagged = picked);
+                        }
+                      },
+                icon: const Icon(Icons.local_offer_outlined),
+                label: Text(
+                  tagged.isEmpty
+                      ? 'Marcar pessoas'
+                      : 'Marcados: ${tagged.map((p) => '@${p['username']}').join(', ')}',
+                ),
+              ),
+              const SizedBox(height: 8),
               if (message != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),

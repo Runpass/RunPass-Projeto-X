@@ -21,6 +21,7 @@ import 'organizer_post.dart';
 import 'pending_requests.dart' show loadProvisionalBanner;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
+import 'tagged_people.dart';
 
 export 'home_screen.dart';
 export 'my_races.dart';
@@ -3633,6 +3634,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   String? imageReference, pendingUploadId;
   // Foto da publicação no feed: outra foto, separada da medalha.
   String? postImageReference;
+  List<Map<String, dynamic>> tagged = [];
   bool uploadingPost = false;
   final postText = TextEditingController();
   bool declaredCompleted = false, publishToFeed = false;
@@ -3665,6 +3667,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     super.initState();
     draft = Map<String, dynamic>.from(widget.initial);
     postText.text = draft['postText'] as String? ?? '';
+    tagged = [
+      for (final person in (draft['taggedProfiles'] as List? ?? const []))
+        Map<String, dynamic>.from(person as Map),
+    ];
     distanceId = draft['distanceId'] as String?;
     final seconds = draft['timeSeconds'];
     time = TextEditingController(
@@ -3954,6 +3960,31 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   }
 
   /// Grava (PATCH) a foto e/ou o texto da publicação já publicada.
+  Future<void> pickTags() async {
+    final picked = await pickTaggedPeople(context, widget.gateway, tagged);
+    if (picked != null && mounted) setState(() => tagged = picked);
+  }
+
+  Widget tagButton({required bool saveNow}) => OutlinedButton.icon(
+    key: const Key('tag-people'),
+    onPressed: saving || uploadingPost
+        ? null
+        : () async {
+            await pickTags();
+            if (saveNow && mounted) {
+              await patchPost({
+                'taggedUserIds': [for (final p in tagged) p['id']],
+              }, 'Marcações salvas.');
+            }
+          },
+    icon: const Icon(Icons.local_offer_outlined),
+    label: Text(
+      tagged.isEmpty
+          ? 'Marcar pessoas'
+          : 'Marcados: ${tagged.map((p) => '@${p['username']}').join(', ')}',
+    ),
+  );
+
   Future<void> patchPost(Map<String, dynamic> changes, String done) async {
     setState(() {
       saving = true;
@@ -4220,6 +4251,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           if (publishToFeed) 'postImageReference': postImageReference,
           if (publishToFeed && postText.text.trim().isNotEmpty)
             'postText': postText.text.trim(),
+          if (publishToFeed && tagged.isNotEmpty)
+            'taggedUserIds': [for (final p in tagged) p['id']],
           if (comment.text.isNotEmpty) 'comment': comment.text,
         },
       );
@@ -4416,6 +4449,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                       : 'Trocar a foto da publicação',
                 ),
               ),
+              const SizedBox(height: 8),
+              tagButton(saveNow: true),
               const SizedBox(height: 8),
               // A medalha (foto, tempo, avaliação) se edita na mesma tela de Medalhas.
               TextButton.icon(
@@ -4645,6 +4680,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                   'Escolha outra foto para a publicação no feed; a da medalha não vai para o feed.',
                   key: Key('post-photo-hint'),
                 ),
+              tagButton(saveNow: false),
+              const SizedBox(height: 8),
               TextField(
                 key: const Key('post-text-field'),
                 controller: postText,

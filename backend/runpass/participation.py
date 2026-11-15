@@ -83,6 +83,7 @@ class ParticipationService:
                 "publishToFeed",
                 "postImageReference",
                 "postText",
+                "taggedUserIds",
                 "medalFrameId",
                 "medalDescription",
                 "medalCity",
@@ -273,6 +274,8 @@ class ParticipationService:
                 item["postImageReference"] = post_ref
                 if payload.get("postText"):
                     item["postText"] = payload["postText"]
+                if payload.get("taggedUserIds"):
+                    item["taggedUserIds"] = self._tags(read, actor, payload["taggedUserIds"])
             review = {
                 "participationId": participation_id,
                 "reviewVersion": 1,
@@ -383,6 +386,8 @@ class ParticipationService:
                 item["postText"] = payload["postText"]
             else:
                 item.pop("postText", None)
+            if payload.get("taggedUserIds"):
+                item["taggedUserIds"] = self._tags(read, actor, payload["taggedUserIds"])
             feed_key = ("history", "FEED#PUBLIC", f"T#{item['completedAt']}#{participation_id}")
             feed_ref_key = ("history", pk, "FEEDREF#" + participation_id)
             read(feed_key)
@@ -788,6 +793,29 @@ class ParticipationService:
 
         return self.identity.transact(actor, "getDeletionOperation", None, {}, work, admitted=True)
 
+    @staticmethod
+    def _tags(read, actor, ids):
+        """Valida quem pode ser marcado: conta ativa, nao eu mesmo, e (perfil publico OU eu ja sigo/sou amigo).
+        Perfil privado so recebe marcacao de quem ele aceitou seguir ou e amigo. Sem repetir, ordem mantida."""
+        out = []
+        for subject in dict.fromkeys(ids or []):
+            if subject == actor.subject:
+                raise Problem(422, "INVALID_TAG")
+            account = read(("identity", "USER#" + subject, "ACCOUNT"))
+            profile = read(("identity", "USER#" + subject, "PROFILE"))
+            if not account or not profile or account.get("state") != "active":
+                raise Problem(422, "INVALID_TAG")
+            if profile.get("isPrivate", False):
+                follow = read(("identity", "USER#" + subject, "FOLLOWER#" + actor.subject))
+                friend = read(("identity", "USER#" + actor.subject, "FRIEND#" + subject))
+                if not (
+                    (follow and follow.get("state") == "active")
+                    or (friend and friend.get("state") == "active")
+                ):
+                    raise Problem(422, "INVALID_TAG")
+            out.append(subject)
+        return out
+
     def patch(self, actor, participation_id, key, payload):
         current = self.get(actor, participation_id)
         edition_id = payload.get("editionId", current["editionId"])
@@ -862,6 +890,14 @@ class ParticipationService:
                     item[field] = payload[field]
             if observed:
                 item["catalogVersion"] = observed["version"]
+            if payload.get("taggedUserIds") is not None:
+                if item.get("state") != "completed" or not item.get("publishToFeed"):
+                    raise Problem(409, "NOT_PUBLISHED")
+                tags = self._tags(read, actor, payload["taggedUserIds"])
+                if tags:
+                    item["taggedUserIds"] = tags
+                else:
+                    item.pop("taggedUserIds", None)
             if payload.get("postImageReference") is not None:
                 new_ref = payload["postImageReference"]
                 if item.get("state") != "completed" or not item.get("publishToFeed"):

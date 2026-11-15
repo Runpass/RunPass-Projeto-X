@@ -524,6 +524,13 @@ class SocialService:
             post["comment"] = review["comment"]
         if part.get("postImageReference"):
             post["hasPostImage"] = True  # a publicacao tem foto propria, separada da medalha
+        tagged = []
+        for subject in part.get("taggedUserIds") or []:
+            profile = self._active_profile(self.store.get, subject)
+            if profile:
+                tagged.append(self._card(profile, viewer))
+        if tagged:
+            post["tagged"] = tagged
         if part.get("postText"):
             post["comment"] = part[
                 "postText"
