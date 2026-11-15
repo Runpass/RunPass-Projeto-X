@@ -719,6 +719,9 @@ class MedalPhoto extends StatelessWidget {
 
   /// Foto da publicação no feed (separada da medalha); só use quando a participação tem uma.
   final bool usePostImage;
+
+  /// Muda quando a foto foi trocada: força recarregar o link (a lista reaproveita o estado da foto).
+  final int revision;
   const MedalPhoto({
     super.key,
     required this.gateway,
@@ -727,6 +730,7 @@ class MedalPhoto extends StatelessWidget {
     this.fit = BoxFit.cover,
     this.useDisplayImage = false,
     this.usePostImage = false,
+    this.revision = 0,
   });
 
   @override
@@ -1166,11 +1170,11 @@ String loadError(Object error) => error is IdentityIssue
     ? catalogError(error)
     : 'Não foi possível carregar seus dados. Tente novamente.';
 
-void openMedal(
+Future<void> openMedal(
   BuildContext context,
   IdentityGateway gateway,
   RaceRecord race,
-) => Navigator.of(context).push(
+) => Navigator.of(context).push<void>(
   MaterialPageRoute<void>(
     builder: (_) =>
         ParticipationDraftScreen(gateway: gateway, initial: race.participation),
@@ -1656,7 +1660,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   Widget tile(RaceRecord race) => Stack(
     children: [
       InkWell(
-        onTap: () => openMedal(context, widget.gateway, race),
+        onTap: () async {
+          await openMedal(context, widget.gateway, race);
+          _reloadShelf(); // a foto/dados podem ter mudado na tela da medalha
+        },
         borderRadius: BorderRadius.circular(14),
         child: Padding(
           // Sem card/borda/sombra: a medalha fica direto no fundo da tela,
@@ -1677,6 +1684,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   gateway: widget.gateway,
                   participationId: race.participation['id'] as String?,
                   useDisplayImage: true,
+                  revision: shelfRevision,
                   fit: BoxFit.cover,
                 ),
               ),
@@ -1780,6 +1788,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ),
   );
 
+  int shelfRevision =
+      0; // sobe quando uma medalha é editada: as fotos recarregam
   final _pendingPhotos = <String, Future<List<int>?>>{};
   final _editionNames = <String, Future<String?>>{};
 
@@ -1799,6 +1809,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   void _reloadShelf() {
     if (!mounted) return;
     setState(() {
+      shelfRevision++;
       pendingMedals = loadPendingMedals(widget.gateway);
       races = loadMyRaces(widget.gateway);
     });

@@ -878,9 +878,17 @@ class ParticipationService:
                         write(old_key, {**old_image, "refs": max(0, old_image.get("refs", 0) - 1)})
                     item["postImageReference"] = new_ref
             if "medalImageReference" in payload:
+                before = item.get("medalImageReference")
                 self._replace_medal_image(
                     read, write, pk, participation_id, item, payload["medalImageReference"]
                 )
+                if (
+                    item.get("medalImageReference") != before
+                    and "medalDisplayImageReference" not in payload
+                ):
+                    # O recorte da prateleira era da foto ANTIGA: sem limpar, a prateleira seguia
+                    # mostrando a foto velha depois de trocar a foto da medalha.
+                    self._clear_medal_display_image(read, write, pk, item)
             if "medalDisplayImageReference" in payload:
                 reference = payload["medalDisplayImageReference"]
                 if reference is None:

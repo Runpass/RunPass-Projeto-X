@@ -4126,6 +4126,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         },
       );
       forgetMedalPhoto(draft['id'] as String);
+      // A prateleira usa o recorte (display-image): esquece também o link dele.
+      forgetMedalDisplayImage(draft['id'] as String);
       photoRevision++;
       message = 'Foto da medalha atualizada.';
     } on IdentityIssue catch (issue) {
