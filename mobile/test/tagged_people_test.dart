@@ -65,7 +65,14 @@ void main() {
         ),
       );
       expect(find.text('Foi lindo'), findsOneWidget);
-      expect(find.text('Marcados (2)'), findsOneWidget);
+      expect(find.byKey(const Key('post-tagged-p1')), findsOneWidget);
+      // Fica na linha de baixo, à direita do ícone de comentários.
+      expect(
+        tester.getTopLeft(find.byKey(const Key('post-tagged-p1'))).dy,
+        greaterThan(tester.getTopLeft(find.text('Foi lindo')).dy),
+      );
+      await tester.ensureVisible(find.byKey(const Key('post-tagged-p1')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-tagged-p1')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('tagged-dialog')), findsOneWidget);
