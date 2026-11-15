@@ -2172,8 +2172,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   Future<void> addMedal() async {
     final path = await widget.medalPhotoPicker(context);
     if (path == null || !mounted) return;
-    final registered = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
+    final registered = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute<Object?>(
         builder: (_) => MedalScanScreen(
           gateway: widget.gateway,
           photoPath: path,
@@ -2182,7 +2182,17 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
         ),
       ),
     );
-    if (registered == true && mounted) {
+    if (registered == 'request' && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 6),
+          content: Text(
+            'Pedido enviado. A medalha fica em análise (cinza, com cadeado). Quando a equipe aprovar a corrida, toque nela para colocar o tempo e a avaliação.',
+          ),
+        ),
+      );
+    }
+    if (registered != null && mounted) {
       setState(() {
         pendingMedals = loadPendingMedals(widget.gateway);
         races = loadMyRaces(

@@ -600,12 +600,6 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     ),
   );
 
-  void openCatalog() => Navigator.of(context).pushReplacement(
-    MaterialPageRoute<void>(
-      builder: (_) => CatalogScreen(gateway: widget.gateway),
-    ),
-  );
-
   /// Não achou: pede o cadastro da corrida, já com o nome lido da medalha no formulário.
   Future<void> requestRace() async {
     // A foto segue junto: a medalha fica provisória em Medalhas até a equipe confirmar a corrida.
@@ -628,7 +622,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     );
     if (sent != null && mounted) {
       // Volta às medalhas, onde a medalha provisória já aparece como "Em análise".
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop('request');
     }
   }
 
@@ -700,18 +694,40 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                     fillFrom(edition);
                     concludeChosen();
                   },
-                  trailing: IconButton(
-                    key: Key('medal-open-${edition['id']}'),
-                    tooltip: 'Abrir a corrida',
-                    icon: const Icon(Icons.open_in_new),
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => EditionScreen(
-                          gateway: widget.gateway,
-                          editionId: edition['id'] as String,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Edição diferente da que quero cadastrar: copia os dados para os campos, eu ajusto o que
+                      // for diferente (data, distância, local) e sigo com o cadastro manual.
+                      IconButton(
+                        key: Key('medal-base-${edition['id']}'),
+                        tooltip: 'Não é esta edição: usar como base',
+                        icon: const Icon(Icons.edit_note_rounded),
+                        onPressed: () {
+                          fillFrom(edition);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Dados copiados para os campos. Ajuste o que for diferente e toque em Fazer o cadastro manual.',
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      IconButton(
+                        key: Key('medal-open-${edition['id']}'),
+                        tooltip: 'Abrir a corrida',
+                        icon: const Icon(Icons.open_in_new),
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => EditionScreen(
+                              gateway: widget.gateway,
+                              editionId: edition['id'] as String,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
               ),
@@ -740,7 +756,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             ),
           readCard(),
           const SizedBox(height: 8),
-          if (matches.isEmpty) ...[
+          if (matches.isEmpty)
             // Não achou: sugere cadastrar a corrida, já com o que foi lido na medalha.
             Card(
               key: const Key('medal-scan-suggest'),
@@ -750,50 +766,25 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Esta corrida ainda não está no catálogo. Quer cadastrá-la?',
+                      'Esta corrida ainda não está no catálogo.',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'Confira os dados acima: o cadastro leva o que estiver nos campos, junto com a foto da medalha.',
+                      'Confira os dados acima e faça o cadastro manual: ele leva o que estiver nos campos, junto com a foto da medalha.',
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            FilledButton.icon(
-              key: const Key('medal-scan-request'),
-              onPressed: requestRace,
-              icon: const Icon(Icons.add_circle_outline),
-              label: const Text('Concluir cadastro da medalha'),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              key: const Key('medal-scan-catalog'),
-              onPressed: openCatalog,
-              icon: const Icon(Icons.search_rounded),
-              label: const Text('Procurar a corrida nas corridas'),
-            ),
-          ] else ...[
-            OutlinedButton.icon(
-              key: const Key('medal-scan-catalog'),
-              onPressed: openCatalog,
-              icon: const Icon(Icons.search_rounded),
-              label: Text(
-                matches.isEmpty
-                    ? 'Procurar a corrida nas corridas'
-                    : 'Não é nenhuma? Procurar nas corridas',
-              ),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              key: const Key('medal-scan-request'),
-              onPressed: requestRace,
-              icon: const Icon(Icons.add_circle_outline),
-              label: const Text('Não encontrou? Pedir cadastro da corrida'),
-            ),
-          ],
+          const SizedBox(height: 8),
+          // Sempre disponível, depois da busca pela foto: cadastro manual com os campos (editáveis) acima.
+          FilledButton.icon(
+            key: const Key('medal-scan-request'),
+            onPressed: requestRace,
+            icon: const Icon(Icons.edit_note_rounded),
+            label: const Text('Fazer o cadastro manual'),
+          ),
         ],
       ],
     ),
