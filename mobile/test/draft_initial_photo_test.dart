@@ -88,6 +88,8 @@ Future<(IdentityGateway, List<String>)> setup({String? officialUrl}) async {
 }
 
 void main() {
+  setUp(draftFormCache.clear);
+
   testWidgets(
     'a foto que já veio escolhida (medalha) é enviada ao abrir o rascunho',
     (tester) async {
