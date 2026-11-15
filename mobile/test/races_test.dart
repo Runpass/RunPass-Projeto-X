@@ -702,33 +702,34 @@ void main() {
     },
   );
 
-  testWidgets('corrida encontrada: não oferece a pesquisa na internet', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: MedalCollectionScreen(
-          gateway: await runner(
-            found: [
-              {
-                'id': 'a',
-                'name': 'Corrida A',
-                'date': '2026-09-01',
-                'city': 'São Paulo',
-                'state': 'SP',
-              },
-            ],
+  testWidgets(
+    'a pesquisa na internet já está na primeira tela, com ou sem corrida encontrada',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              found: [
+                {
+                  'id': 'a',
+                  'name': 'Corrida A',
+                  'date': '2026-09-01',
+                  'city': 'São Paulo',
+                  'state': 'SP',
+                },
+              ],
+            ),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Corrida A']),
           ),
-          medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
-          medalTextReader: _FakeReader(['Corrida A']),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tapAdd(tester);
-    expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
-    expect(find.byKey(const Key('medal-scan-web-search')), findsNothing);
-  });
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
+      expect(find.byKey(const Key('medal-scan-web-search')), findsOneWidget);
+    },
+  );
 
   testWidgets('aparelho sem leitor de texto avisa e ainda leva às corridas', (
     tester,
