@@ -357,6 +357,9 @@ class ParticipationTests(unittest.TestCase):
         self.assertEqual(changed["taggedUserIds"], ["pub", "priv"])
         post = SocialService(self.identity).post(publico, draft["id"])
         self.assertEqual([p["username"] for p in post["tagged"]], ["pub", "priv"])
+        # O Feed (Todos) tambem traz as marcacoes, nao so a leitura de uma publicacao.
+        feed = SocialService(self.identity).feed(publico)["items"]
+        self.assertEqual([p["username"] for p in feed[0]["tagged"]], ["pub", "priv"])
         cleared = self.service.patch(
             self.actor,
             draft["id"],

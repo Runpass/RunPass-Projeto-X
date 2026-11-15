@@ -735,21 +735,9 @@ class _PostCardState extends State<PostCard> {
                 ),
               ),
             ),
-            if (entry.comment != null || entry.tagged.isNotEmpty) ...[
+            if (entry.comment != null) ...[
               const SizedBox(height: 6),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: Text(entry.comment ?? '')),
-                  // Pessoas marcadas: link à direita do comentário, abre o pop-up com os perfis.
-                  if (entry.tagged.isNotEmpty && entry.postId != null)
-                    TaggedLink(
-                      gateway: widget.gateway,
-                      postId: entry.postId!,
-                      tagged: entry.tagged,
-                    ),
-                ],
-              ),
+              Text(entry.comment!),
             ],
             const SizedBox(height: 12),
             AspectRatio(
@@ -838,6 +826,15 @@ class _PostCardState extends State<PostCard> {
                     ],
                   ),
                 ),
+                // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
+                if (entry.tagged.isNotEmpty && entry.postId != null) ...[
+                  const SizedBox(width: 22),
+                  TaggedLink(
+                    gateway: widget.gateway,
+                    postId: entry.postId!,
+                    tagged: entry.tagged,
+                  ),
+                ],
                 const Spacer(),
                 InkWell(
                   key: Key('share-${entry.race.participation['id']}'),

@@ -174,7 +174,7 @@ class _TagPickerState extends State<_TagPicker> {
   );
 }
 
-/// Link "Marcados (n)" ao lado do comentário: abre um pop-up com o perfil de cada pessoa marcada.
+/// Ícone de etiqueta com a contagem, embaixo do cartão ao lado dos comentários: abre um pop-up com o perfil de cada pessoa marcada.
 class TaggedLink extends StatelessWidget {
   final IdentityGateway gateway;
   final String postId;
@@ -187,11 +187,19 @@ class TaggedLink extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => TextButton.icon(
-    key: Key('post-tagged-$postId'),
-    onPressed: () => showTaggedPeople(context, gateway, tagged),
-    icon: const Icon(Icons.local_offer_outlined, size: 18),
-    label: Text('Marcados (${tagged.length})'),
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Pessoas marcadas',
+    child: InkWell(
+      key: Key('post-tagged-$postId'),
+      onTap: () => showTaggedPeople(context, gateway, tagged),
+      child: Row(
+        children: [
+          const Icon(Icons.local_offer_outlined),
+          const SizedBox(width: 6),
+          Text('${tagged.length}'),
+        ],
+      ),
+    ),
   );
 }
 
