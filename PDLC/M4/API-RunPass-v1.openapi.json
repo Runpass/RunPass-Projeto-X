@@ -6628,6 +6628,16 @@
             "type": "string",
             "maxLength": 500,
             "description": "Texto da publicacao no feed."
+          },
+          "taggedUserIds": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
           }
         },
         "description": "Conclui somente rascunho de edição não arquivada cuja data não é futura em America/Sao_Paulo. Oito notas e imagem válida obrigatórias. Versão, conta, distância e imagem revalidadas no commit; publishToFeed é intenção explícita separada da conclusão."
@@ -6728,6 +6738,16 @@
           "postText": {
             "type": "string",
             "maxLength": 500
+          },
+          "taggedUserIds": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
           }
         }
       },
@@ -7039,6 +7059,16 @@
             "maxLength": 500,
             "nullable": true,
             "description": "Texto da publicacao; nulo apaga."
+          },
+          "taggedUserIds": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
           }
         }
       },
@@ -8141,6 +8171,13 @@
           "hasPostImage": {
             "type": "boolean",
             "description": "A publicacao tem foto propria (GET /participations/{id}/post-image); sem ela, vale a foto da medalha."
+          },
+          "tagged": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicProfile"
+            },
+            "description": "Pessoas marcadas na publicacao (so contas ativas)."
           }
         },
         "required": [
@@ -10384,6 +10421,16 @@
           "postText": {
             "type": "string",
             "maxLength": 500
+          },
+          "taggedUserIds": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
           }
         },
         "description": "Publica no feed uma participacao concluida e ainda nao publicada, com foto propria. A conclusao com publishToFeed exige postImageReference."

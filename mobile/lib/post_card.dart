@@ -12,6 +12,7 @@ import 'catalog_screen.dart'
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
+import 'tagged_people.dart';
 import 'runpass_theme.dart';
 
 /// Um cartao do Inicio. Vem de uma publicacao (`/feed`, `/posts/{id}`) ou de uma corrida
@@ -25,6 +26,7 @@ class FeedEntry {
   final bool mine;
   final Map? authorProfile;
   final Map? lastComment;
+  final List<Map<String, dynamic>> tagged;
   int likes, comments;
   bool liked;
 
@@ -37,6 +39,7 @@ class FeedEntry {
     required this.mine,
     this.authorProfile,
     this.lastComment,
+    this.tagged = const [],
     this.comment,
     this.place,
     this.publishedAt,
@@ -70,6 +73,10 @@ FeedEntry entryFromPost(
     mine: myId != null && author['id'] == myId,
     authorProfile: author,
     lastComment: post['lastComment'] as Map?,
+    tagged: [
+      for (final person in (post['tagged'] as List? ?? const []))
+        Map<String, dynamic>.from(person as Map),
+    ],
     likes: (post['likeCount'] as num?)?.toInt() ?? 0,
     comments: (post['commentCount'] as num?)?.toInt() ?? 0,
     liked: post['likedByMe'] == true,
@@ -362,7 +369,10 @@ class _PostCardState extends State<PostCard> {
       MaterialPageRoute<void>(
         builder: (_) => ParticipationDraftScreen(
           gateway: widget.gateway,
-          initial: Map<String, dynamic>.from(entry.race.participation),
+          initial: {
+            ...entry.race.participation,
+            'taggedProfiles': entry.tagged,
+          },
           fromPost: true,
         ),
       ),
@@ -725,9 +735,21 @@ class _PostCardState extends State<PostCard> {
                 ),
               ),
             ),
-            if (entry.comment != null) ...[
+            if (entry.comment != null || entry.tagged.isNotEmpty) ...[
               const SizedBox(height: 6),
-              Text(entry.comment!),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: Text(entry.comment ?? '')),
+                  // Pessoas marcadas: link à direita do comentário, abre o pop-up com os perfis.
+                  if (entry.tagged.isNotEmpty && entry.postId != null)
+                    TaggedLink(
+                      gateway: widget.gateway,
+                      postId: entry.postId!,
+                      tagged: entry.tagged,
+                    ),
+                ],
+              ),
             ],
             const SizedBox(height: 12),
             AspectRatio(

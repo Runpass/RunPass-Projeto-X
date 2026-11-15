@@ -130,6 +130,11 @@ class PatchParticipation(Input):
     # Foto e texto da publicacao no feed (so de participacao concluida e ja publicada).
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
+    # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
     # Modelo de medalha (catalogo fixo de imagens); None volta ao padrao
     # (circular_prata_azul). Customizacao visual da legenda abaixo tambem opcional.
     medalFrameId: (
@@ -205,6 +210,11 @@ class CompleteParticipation(Input):
     # Outra foto, separada da medalha, para a publicacao no feed. Exigida quando publishToFeed e verdadeiro.
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
+    # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
 
     @field_validator("declaredCompleted")
     @classmethod
@@ -220,6 +230,11 @@ class PublishParticipation(Input):
     expectedVersion: Annotated[int, Field(ge=1)]
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
     postText: Annotated[str, Field(max_length=500)] | None = None
+    # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
 
 
 class ReplaceReview(Input):

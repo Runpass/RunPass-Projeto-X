@@ -314,6 +314,57 @@ class ParticipationTests(unittest.TestCase):
         )
         self.assertEqual(swapped["medalDisplayImageReference"], crop_ref)
 
+    def test_marcar_pessoas_na_publicacao_com_as_regras_de_perfil(self):
+        publico = self.admit("pub")
+        privado = self.admit("priv")
+        self.admit("seguido")
+        profile = self.identity.profile(privado)
+        self.identity.patch_profile(
+            privado, "mk-priv", {"expectedVersion": profile["version"], "isPrivate": True}
+        )
+        draft = self.service.create(self.actor, "t1", self.payload())
+        self.runner_image(self.POST_REF)
+        done = self.service.complete(
+            self.actor,
+            draft["id"],
+            "t2",
+            self.completion(
+                draft,
+                publishToFeed=True,
+                postImageReference=self.POST_REF,
+                taggedUserIds=["pub"],
+            ),
+        )
+        self.assertEqual(done["taggedUserIds"], ["pub"])  # perfil publico: nao precisa seguir
+        # Perfil privado sem seguir, eu mesmo e conta inexistente: recusados.
+        for bad in (["priv"], ["owner"], ["ninguem"]):
+            with self.assertRaises(Problem) as erro:
+                self.service.patch(
+                    self.actor,
+                    draft["id"],
+                    "t3" + bad[0],
+                    {"expectedVersion": done["version"], "taggedUserIds": bad},
+                )
+            self.assertEqual(erro.exception.code, "INVALID_TAG")
+        # Depois de seguir, o privado pode ser marcado; lista vazia remove tudo.
+        SocialService(self.identity).follow(self.actor, "priv", "t4")
+        changed = self.service.patch(
+            self.actor,
+            draft["id"],
+            "t5",
+            {"expectedVersion": done["version"], "taggedUserIds": ["pub", "priv", "pub"]},
+        )
+        self.assertEqual(changed["taggedUserIds"], ["pub", "priv"])
+        post = SocialService(self.identity).post(publico, draft["id"])
+        self.assertEqual([p["username"] for p in post["tagged"]], ["pub", "priv"])
+        cleared = self.service.patch(
+            self.actor,
+            draft["id"],
+            "t6",
+            {"expectedVersion": changed["version"], "taggedUserIds": []},
+        )
+        self.assertNotIn("taggedUserIds", cleared)
+
     def test_patch_post_photo_needs_a_published_participation(self):
         draft = self.service.create(self.actor, "c6", self.payload())
         done = self.service.complete(self.actor, draft["id"], "d6", self.completion(draft))
