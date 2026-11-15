@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'catalog_screen.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
+import 'pending_participation.dart';
 import 'profile_photo.dart';
 
 /// Pedido de prova ausente: o corredor informa nome, data, cidade e distância; a equipe confere a
@@ -100,6 +101,14 @@ class EditionRequestFormScreen extends StatefulWidget {
   /// Quando presente, não se escolhe banner.
   final List<int>? medalPhoto;
 
+  /// Coleta a minha participação (tempo, avaliação...) antes de enviar o pedido com a foto da medalha. Devolve o
+  /// mapa, `{}` para enviar sem ela, ou nulo para voltar ao formulário. Trocável nos testes.
+  final Future<Map<String, dynamic>?> Function(
+    BuildContext context,
+    String raceName,
+  )?
+  participationCollector;
+
   /// Baixa a imagem do link colado em "Buscar na internet". Troque nos testes.
   final ImageLinkFetcher imageFetcher;
   const EditionRequestFormScreen({
@@ -109,6 +118,7 @@ class EditionRequestFormScreen extends StatefulWidget {
     this.prefill = const {},
     this.bannerSelector,
     this.medalPhoto,
+    this.participationCollector,
     this.imageFetcher = fetchImageFromLink,
   });
   @override
@@ -126,6 +136,8 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
   List<int>? banner;
   String? bannerRef;
   String? medalRef;
+  Map<String, dynamic>?
+  participation; // coletada uma vez; reenvio não pergunta de novo
 
   bool get correcting => widget.existing != null;
 
@@ -202,6 +214,24 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       'distanceKm': double.parse(text('distanceKm').replaceAll(',', '.')),
       if (text('officialUrl').isNotEmpty) 'officialUrl': text('officialUrl'),
     };
+    // Cadastro manual com foto da medalha: antes de enviar, pede tempo e avaliação (opcional), que ficam
+    // guardados com o pedido e são aplicados quando a corrida for aprovada.
+    if (!correcting && widget.medalPhoto != null && participation == null) {
+      final collected = widget.participationCollector != null
+          ? await widget.participationCollector!(context, text('name'))
+          : await Navigator.of(context).push<Map<String, dynamic>>(
+              MaterialPageRoute(
+                builder: (_) => PendingParticipationScreen(
+                  gateway: widget.gateway,
+                  raceName: text('name'),
+                ),
+              ),
+            );
+      if (collected == null || !mounted) {
+        return; // voltou: continua no formulário
+      }
+      participation = collected;
+    }
     setState(() {
       saving = true;
       error = null;
@@ -219,6 +249,9 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
           widget.medalPhoto!,
         );
         body['medalImageReference'] = medalRef;
+        if (participation != null && participation!.isNotEmpty) {
+          body['participation'] = participation;
+        }
       }
       Map<String, dynamic> result;
       if (correcting) {

@@ -937,6 +937,105 @@ class AdminApiTests(unittest.TestCase):
             404,
         )
 
+    RATINGS = {
+        "organization": 5,
+        "course": 4,
+        "kit": 4,
+        "medal": 5,
+        "hydration": 3,
+        "facilities": 4,
+        "safety": 5,
+        "valueForMoney": 4,
+    }
+
+    def test_pedido_guarda_a_participacao_para_aplicar_quando_aprovar(self):
+        person = self.pessoa("ana2")
+        medalha = self.imagem_do_usuario("ana2")
+        post = self.imagem_do_usuario("ana3", owner="ana2")
+        fields = EditionRequestFields(
+            name="Corrida Ana Sintética",
+            date="2026-03-10",
+            city="São Paulo",
+            state="SP",
+            distanceKm=10,
+            medalImageReference=medalha,
+            participation={
+                "timeSeconds": 3300,
+                "placement": 42,
+                "bibNumber": "A-77",
+                "ratings": self.RATINGS,
+                "comment": "Gostei do percurso",
+                "publishToFeed": True,
+                "postImageReference": post,
+                "postText": "Cheguei!",
+            },
+        )
+        request = self.requests.create(person, "kana2", fields)
+        guardada = request["participation"]
+        self.assertEqual(guardada["timeSeconds"], 3300)
+        self.assertEqual(guardada["ratings"], self.RATINGS)
+        self.assertEqual(guardada["postImageReference"], post)
+        # so o dono ve; a foto da publicacao fica reservada e fora da fila de banners
+        self.assertEqual(self.requests.get(person, request["id"])["participation"], guardada)
+        self.assertEqual(self.store.get(("operations", "USER#ana2", "IMAGE#" + post))["refs"], 1)
+        rows, _ = self.store.query("history", "EREQ_QUEUE#image", prefix="", limit=50)
+        self.assertEqual(rows, [])
+        # a equipe aprova como sempre; os dados continuam no pedido
+        aprovado = self.aprovar(request).json()["request"]
+        self.assertEqual(aprovado["linkedEditionId"][:7], "pedido-")
+        self.assertEqual(self.requests.get(person, request["id"])["participation"], guardada)
+        # excluir o pedido libera as duas reservas (medalha e foto da publicacao)
+        self.requests.delete(person, request["id"], "kdel", aprovado["version"])
+        self.assertEqual(self.store.get(("operations", "USER#ana2", "IMAGE#" + post))["refs"], 0)
+        self.assertEqual(self.store.get(("operations", "USER#ana2", "IMAGE#" + medalha))["refs"], 0)
+
+    def test_participacao_pendente_exige_foto_da_medalha_e_regras_da_publicacao(self):
+        base = {
+            "name": "Corrida Regras Sintética",
+            "date": "2026-03-11",
+            "city": "São Paulo",
+            "distanceKm": 5,
+        }
+        # sem foto da medalha: recusada
+        with self.assertRaises(ValueError):
+            EditionRequestFields(**base, participation={"ratings": self.RATINGS})
+        medalha = "img_" + "1" * 64
+        # publicar exige a foto da publicacao, e a foto sem publicar nao vale
+        with self.assertRaises(ValueError):
+            EditionRequestFields(
+                **base,
+                medalImageReference=medalha,
+                participation={"ratings": self.RATINGS, "publishToFeed": True},
+            )
+        with self.assertRaises(ValueError):
+            EditionRequestFields(
+                **base,
+                medalImageReference=medalha,
+                participation={"ratings": self.RATINGS, "postImageReference": "img_" + "2" * 64},
+            )
+        # nota fora de 1 a 5 e recusada
+        with self.assertRaises(ValueError):
+            EditionRequestFields(
+                **base,
+                medalImageReference=medalha,
+                participation={"ratings": {**self.RATINGS, "kit": 9}},
+            )
+        # a foto da publicacao nao pode ser a da medalha (a mesma referencia)
+        person = self.pessoa("bia2")
+        ref = self.imagem_do_usuario("bia2")
+        mesma = EditionRequestFields(
+            **base,
+            medalImageReference=ref,
+            participation={
+                "ratings": self.RATINGS,
+                "publishToFeed": True,
+                "postImageReference": ref,
+            },
+        )
+        with self.assertRaises(Problem) as erro:
+            self.requests.create(person, "kbia2", mesma)
+        self.assertEqual(erro.exception.code, "POST_IMAGE_MUST_DIFFER")
+
     def test_sugerir_banner_de_corrida_ja_cadastrada_vai_para_a_fila_da_equipe(self):
         person = Principal("rui", True)
         self.identity.create_profile(person, "pr", {"displayName": "Rui", "username": "rui_x"})

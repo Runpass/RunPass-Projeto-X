@@ -272,6 +272,28 @@ class BannerSuggestion(Input):
     imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
 
 
+class PendingParticipation(Input):
+    """Dados da MINHA participacao informados junto do pedido de cadastro da corrida. Ficam guardados (so o
+    dono ve) e o app os aplica quando a equipe aprova a corrida, para a pessoa nao preencher de novo."""
+
+    timeSeconds: Annotated[int, Field(ge=1)] | None = None
+    placement: Annotated[int, Field(ge=1)] | None = None
+    bibNumber: Annotated[str, Field(max_length=40)] | None = None
+    ratings: ReviewRatings
+    comment: Annotated[str, Field(max_length=2000)] | None = None
+    publishToFeed: bool = False
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+
+    @model_validator(mode="after")
+    def post_photo_rules(self):
+        if self.publishToFeed and not self.postImageReference:
+            raise ValueError("Publicar no feed exige a foto da publicacao")
+        if self.postImageReference and not self.publishToFeed:
+            raise ValueError("A foto da publicacao so vale ao publicar no feed")
+        return self
+
+
 class EditionRequestFields(Input):
     """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
     (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""
@@ -286,6 +308,14 @@ class EditionRequestFields(Input):
     # Foto da MEDALHA da pessoa (medalha provisoria ate a equipe decidir o pedido): privada, fora da fila de
     # banners, nunca vira banner nem fica publica. Independe do banner sugerido em `imageReference`.
     medalImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    # Tempo, avaliacao etc. da participacao, para aplicar quando a corrida for aprovada. Exige a foto da medalha.
+    participation: PendingParticipation | None = None
+
+    @model_validator(mode="after")
+    def participation_needs_medal_photo(self):
+        if self.participation and not self.medalImageReference:
+            raise ValueError("A participacao pendente exige a foto da medalha")
+        return self
 
     @model_validator(mode="after")
     def distinct_images(self):

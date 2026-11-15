@@ -1082,6 +1082,37 @@ void main() {
   );
 
   testWidgets(
+    'corrida aprovada com participação guardada conclui sozinha, sem a pessoa voltar a preencher',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              noRaces: true,
+              requests: [
+                {
+                  ...medalRequest('r2', 'approved', linked: 'b'),
+                  'participation': {
+                    'timeSeconds': 3000,
+                    'ratings': {'organization': 5},
+                    'publishToFeed': false,
+                  },
+                },
+              ],
+            ),
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('a sua participação já foi concluída'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
     'medalha aprovada: mostra o nome atual da corrida e leva à minha participação',
     (tester) async {
       await tester.pumpWidget(

@@ -186,6 +186,7 @@ void main() {
           home: EditionRequestFormScreen(
             gateway: s.gateway,
             medalPhoto: onePixelPng,
+            participationCollector: (context, name) async => {},
             bannerSelector: (context) async => onePixelPng,
           ),
         ),
@@ -218,6 +219,7 @@ void main() {
           home: EditionRequestFormScreen(
             gateway: s.gateway,
             medalPhoto: onePixelPng,
+            participationCollector: (context, name) async => {},
             bannerSelector: (context) async => onePixelPng,
           ),
         ),

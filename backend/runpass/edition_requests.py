@@ -69,6 +69,7 @@ def projection(item):
             "linkedEditionId",
             "bannerState",
             "kind",
+            "participation",
         )
         if key in item
     }
@@ -155,6 +156,10 @@ class EditionRequestService:
     def create(self, actor, key, fields: EditionRequestFields):
         details = stored_details(fields)
         payload = {**details, "date": details["date"], "distanceKm": str(details["distanceKm"])}
+        if fields.participation:
+            payload["participation"] = fields.participation.model_dump(
+                mode="json", exclude_none=True
+            )
 
         def work(read, write, account, now, replay):
             if replay is not None:
@@ -168,6 +173,15 @@ class EditionRequestService:
             # So imagens JA enviadas e tratadas, desta pessoa (mesma regra da foto da participacao).
             banner = self._own_image(read, actor, fields.imageReference)
             medal = self._own_image(read, actor, fields.medalImageReference)
+            pending = fields.participation
+            post = None
+            if pending and pending.postImageReference:
+                if pending.postImageReference in (
+                    fields.imageReference,
+                    fields.medalImageReference,
+                ):
+                    raise Problem(422, "POST_IMAGE_MUST_DIFFER")
+                post = self._own_image(read, actor, pending.postImageReference)
             request_id, created = new_id(now), stamp(now)
             queue, owner = queue_key(created, request_id), owner_key(request_id)
             item = {
@@ -187,6 +201,12 @@ class EditionRequestService:
                 write(banner[0], {**banner[1], "refs": banner[1].get("refs", 0) + 1})
             if medal is not None:  # foto de medalha: so reserva a imagem; nao entra em fila alguma
                 write(medal[0], {**medal[1], "refs": medal[1].get("refs", 0) + 1})
+            if (
+                pending is not None
+            ):  # dados da participacao, para aplicar quando a corrida for aprovada
+                item["participation"] = pending.model_dump(exclude_none=True)
+            if post is not None:
+                write(post[0], {**post[1], "refs": post[1].get("refs", 0) + 1})
             write(item_key(actor.subject, request_id), item)
             write(owner, {"owner": actor.subject})
             write(queue, {"id": request_id, "createdAt": created, "details": details})
@@ -287,7 +307,10 @@ class EditionRequestService:
                 skey = tuple(shared)
                 read(skey)
                 write(skey, None)
-            refs = [details.get("medalImageReference")]
+            refs = [
+                details.get("medalImageReference"),
+                (item.get("participation") or {}).get("postImageReference"),
+            ]
             if not item.get(
                 "bannerState"
             ):  # banner ja publicado/descartado: a reserva ja foi resolvida

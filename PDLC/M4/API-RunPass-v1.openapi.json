@@ -7969,6 +7969,9 @@
           "medalImageReference": {
             "type": "string",
             "description": "Foto da medalha da pessoa (medalha provisoria ate a equipe decidir o pedido): imagem ja enviada e tratada pela mesma pessoa. Fica privada, fora da fila de banners, e nunca vira banner nem fica publica. Diferente de imageReference."
+          },
+          "participation": {
+            "$ref": "#/components/schemas/PendingParticipation"
           }
         }
       },
@@ -8015,6 +8018,9 @@
               "dismissed"
             ],
             "description": "Decision of the team on the banner suggested with the request; absent while undecided."
+          },
+          "participation": {
+            "$ref": "#/components/schemas/PendingParticipation"
           }
         },
         "description": "Owner-only view, not a public catalog record. Reviewed request preserves associated draft until owner completes it."
@@ -10381,6 +10387,47 @@
           }
         },
         "description": "Publica no feed uma participacao concluida e ainda nao publicada, com foto propria. A conclusao com publishToFeed exige postImageReference."
+      },
+      "PendingParticipation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ratings"
+        ],
+        "properties": {
+          "timeSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "placement": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "bibNumber": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "ratings": {
+            "$ref": "#/components/schemas/ReviewRatings"
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "publishToFeed": {
+            "type": "boolean",
+            "default": false
+          },
+          "postImageReference": {
+            "type": "string",
+            "description": "Foto da publicacao (obrigatoria se publishToFeed)."
+          },
+          "postText": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "description": "Dados da participacao guardados com o pedido de cadastro e aplicados pelo app quando a corrida for aprovada. Exige medalImageReference no pedido."
       }
     }
   }
