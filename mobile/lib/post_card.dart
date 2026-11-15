@@ -752,6 +752,10 @@ class _PostCardState extends State<PostCard> {
                           entry.race.participation['id'] as String?,
                       size: 72,
                       usePostImage: entry.race.hasPostImage,
+                      // A foto publicada aparece inteira dentro do quadro (a medalha continua preenchendo).
+                      fit: entry.race.hasPostImage
+                          ? BoxFit.contain
+                          : BoxFit.cover,
                     ),
                   ),
                 ),

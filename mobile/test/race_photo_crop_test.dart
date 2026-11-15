@@ -40,13 +40,20 @@ void main() {
   }
 
   testWidgets(
-    'oferece livre, 1:1, 4:3, 3:4 e 16:9, com 4:3 escolhido de início',
+    'oferece livre, 1:1, 4:3, 3:4, 16:9 e Feed 16:10, com 4:3 escolhido de início',
     (tester) async {
       await open(tester, (_) {});
       for (var i = 0; i < RacePhotoCropScreen.aspects.length; i++) {
         expect(find.byKey(Key('crop-aspect-$i')), findsOneWidget);
       }
-      for (final label in ['Livre', '1:1', '4:3', '3:4', '16:9']) {
+      for (final label in [
+        'Livre',
+        '1:1',
+        '4:3',
+        '3:4',
+        '16:9',
+        'Feed 16:10',
+      ]) {
         expect(find.text(label), findsOneWidget);
       }
       ChoiceChip chip(int i) =>
