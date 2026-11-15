@@ -1535,6 +1535,112 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   );
   MedalGrouping grouping = MedalGrouping.all;
   bool newestFirst = true;
+  bool _applying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    applyApprovedPending();
+  }
+
+  /// Corrida aprovada que tinha a minha participação guardada com o pedido (tempo, avaliação, fotos): cria e
+  /// conclui a participação sozinho, para eu não ter que voltar a preencher. Só mexe no que a equipe já aprovou;
+  /// se algo não casar (distância, data futura, participação já existente), deixa para o toque na medalha.
+  Future<void> applyApprovedPending() async {
+    if (_applying) return;
+    _applying = true;
+    try {
+      final pending = await pendingMedals;
+      final done = await races;
+      final doneEditions = {
+        for (final race in done) '${race.participation['editionId']}',
+      };
+      var applied = 0;
+      for (final request in pending) {
+        final data = request['participation'];
+        final linked = request['linkedEditionId'] as String?;
+        final approved =
+            request['status'] == 'approved' || request['status'] == 'linked';
+        if (data is! Map ||
+            data.isEmpty ||
+            !approved ||
+            linked == null ||
+            doneEditions.contains(linked)) {
+          continue;
+        }
+        if (await _applyOne(request, Map<String, dynamic>.from(data))) {
+          applied++;
+        }
+      }
+      if (applied > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              applied == 1
+                  ? 'A corrida foi aprovada e a sua participação já foi concluída, com o tempo e a avaliação que você guardou.'
+                  : '$applied corridas foram aprovadas e as suas participações já foram concluídas.',
+            ),
+          ),
+        );
+        _reloadShelf();
+      }
+    } on Exception {
+      // Não conseguiu agora: a medalha continua tocável e tenta de novo na próxima vez.
+    } finally {
+      _applying = false;
+    }
+  }
+
+  Future<bool> _applyOne(
+    Map<String, dynamic> request,
+    Map<String, dynamic> data,
+  ) async {
+    final editionId = request['linkedEditionId'] as String;
+    final details = (request['details'] as Map?) ?? const {};
+    final medalRef = details['medalImageReference'] as String?;
+    if (medalRef == null) return false;
+    final options = await editionDistances(widget.gateway, editionId, null);
+    final km = double.tryParse('${details['distanceKm'] ?? ''}');
+    Map? picked = options.length == 1 ? options.first : null;
+    if (picked == null && km != null) {
+      for (final d in options) {
+        if (((d['kilometers'] as num) - km).abs() < 0.05) picked = d;
+      }
+    }
+    if (picked == null) {
+      return false; // distância incerta: a pessoa escolhe ao tocar na medalha
+    }
+    try {
+      final draft = await widget.gateway.request(
+        '/participations',
+        method: 'POST',
+        body: {
+          'editionId': editionId,
+          'distanceId': picked['id'],
+          'timeSeconds': ?data['timeSeconds'],
+          'placement': ?data['placement'],
+          'bibNumber': ?data['bibNumber'],
+        },
+      );
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(draft['id'] as String)}/complete',
+        method: 'POST',
+        body: {
+          'expectedVersion': draft['version'],
+          'declaredCompleted': true,
+          'ratings': data['ratings'],
+          'medalImageReference': medalRef,
+          'publishToFeed': data['publishToFeed'] == true,
+          'postImageReference': ?data['postImageReference'],
+          'postText': ?data['postText'],
+          'comment': ?data['comment'],
+        },
+      );
+      return true;
+    } on IdentityIssue {
+      return false; // já existe participação, data futura etc.: fica para o toque na medalha
+    }
+  }
 
   /// Exclui a medalha: a participação some das medalhas e de "Minhas corridas" (a corrida segue no catálogo).
   Future<void> deleteMedal(RaceRecord race) async {
@@ -2006,28 +2112,6 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     final approved =
         request['status'] == 'approved' || request['status'] == 'linked';
     final locked = !approved;
-    const grey = ColorFilter.matrix(<double>[
-      0.2126,
-      0.7152,
-      0.0722,
-      0,
-      0,
-      0.2126,
-      0.7152,
-      0.0722,
-      0,
-      0,
-      0.2126,
-      0.7152,
-      0.0722,
-      0,
-      0,
-      0,
-      0,
-      0,
-      1,
-      0,
-    ]);
     final photo = FutureBuilder<List<int>?>(
       future: _pendingPhotos.putIfAbsent(
         id,
@@ -2047,12 +2131,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => const SizedBox.shrink(),
               );
-        return locked
-            ? ColorFiltered(
-                colorFilter: grey,
-                child: Opacity(opacity: .6, child: image),
-              )
-            : image;
+        return image; // a foto aparece normal; só o cadeado no canto indica que está em análise
       },
     );
     return Stack(
@@ -2083,7 +2162,6 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 12,
-                        color: locked ? context.muted : null,
                       ),
                     ),
                   ),
@@ -2101,25 +2179,30 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
           ),
         ),
         if (locked)
-          const Positioned(
+          // Cadeado pequeno no canto inferior direito da foto (em análise); a foto e os dados seguem ativos.
+          Positioned(
             top: 0,
             left: 0,
             right: 0,
             child: AspectRatio(
               aspectRatio: 1086 / 1448,
-              child: Center(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Color(0xAA000000),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Padding(
-                    padding: EdgeInsets.all(10),
-                    child: Icon(
-                      Icons.lock_outline_rounded,
-                      key: Key('pending-lock'),
-                      color: Colors.white,
-                      size: 26,
+              child: Align(
+                alignment: Alignment.bottomRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      color: Color(0xCC000000),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.all(5),
+                      child: Icon(
+                        Icons.lock_outline_rounded,
+                        key: Key('pending-lock'),
+                        color: Colors.white,
+                        size: 16,
+                      ),
                     ),
                   ),
                 ),
@@ -2187,7 +2270,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
         const SnackBar(
           duration: Duration(seconds: 6),
           content: Text(
-            'Pedido enviado. A medalha fica em análise (cinza, com cadeado). Quando a equipe aprovar a corrida, toque nela para colocar o tempo e a avaliação.',
+            'Pedido enviado. A medalha fica em análise, com um cadeado no canto. Quando a equipe aprovar, a sua participação é concluída sozinha com o que você preencheu.',
           ),
         ),
       );

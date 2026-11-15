@@ -1,13 +1,13 @@
 {
   "contract": "API-RunPass-v1.openapi.json",
   "version": "0.8.0-draft",
-  "sha256": "b1ac8c9018df70e9994c8cb38ec703030a8c9ac79bce0426c263d352f2e24414",
+  "sha256": "298fa12ecd6188b6049f18d91556116a6f11a8867850a496bd8bc1aee68de67e",
   "validator": "openapi-spec-validator",
   "validatorVersion": "0.7.2",
   "openapiErrors": 0,
-  "paths": 78,
-  "operations": 100,
-  "internalReferences": 878,
+  "paths": 84,
+  "operations": 108,
+  "internalReferences": 942,
   "schemaExamplesPassed": 39,
   "catalogFilterCombinationsPassed": 64,
   "limits": [
