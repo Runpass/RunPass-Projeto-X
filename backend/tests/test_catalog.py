@@ -384,6 +384,20 @@ class CatalogApiTests(unittest.TestCase):
             self.actor, "create", {"displayName": "Runner", "username": "runner"}
         )
 
+    def test_q_search_matches_all_words_in_any_order(self):
+        self.identity.admit(self.actor, "admit", ADULT)
+
+        def ids(query):
+            response = self.client.get(f"/editions?q={query}&limit=50", headers=self.headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            return {item["id"] for item in response.json()["items"]}
+
+        # "Desafio Sintético da Orla": palavras fora de ordem e sem acento ainda acham
+        self.assertIn("synthetic-rj-2026", ids("orla%20desafio"))
+        self.assertIn("synthetic-rj-2026", ids("desafio%20sintetico%20orla"))
+        # uma palavra que nao esta no nome derruba o resultado
+        self.assertNotIn("synthetic-rj-2026", ids("desafio%20maratona"))
+
     def test_admission_required_and_http_responses_match_canonical_schemas(self):
         self.assertEqual(self.client.get("/editions").status_code, 401)
         self.assertEqual(self.client.get("/editions", headers=self.headers).status_code, 403)

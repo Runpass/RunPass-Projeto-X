@@ -88,7 +88,7 @@ def create_aws_app(
         if settings.history_table:
             participations = ParticipationService(service, catalog, settings.cursor_encryption_key)
             edition_requests = EditionRequestService(
-                service, settings.cursor_encryption_key, catalog
+                service, settings.cursor_encryption_key, catalog, blob_store
             )
     social = SocialService(service) if settings.history_table else None
     uploads = None

@@ -16,6 +16,7 @@ from .models import (
     BannerSuggestion,
     CompleteParticipation,
     CreateComment,
+    CreateEditionComment,
     CreateParticipation,
     CreateProfile,
     EditComment,
@@ -24,6 +25,7 @@ from .models import (
     PatchEditionRequest,
     PatchParticipation,
     PatchProfile,
+    PublishParticipation,
     PutRacePlan,
     ReplaceReview,
     ResubmitEditionRequest,
@@ -213,6 +215,19 @@ def create_app(
                 translation = text_fallback(phrase)
                 filters = CatalogFilters(limit=limit, **translation.filters)
             page = catalog.list(actor, filters)
+            if "q" not in translation.filters and (
+                not translation.filters or "consulta_semantica" in translation.not_applied
+            ):
+                # A IA nao achou um nome na frase ("Batman") e devolveria corridas que nada tem a ver (ou todas). Antes de
+                # aceitar isso, tenta o nome: se alguma corrida tiver todas as palavras, ela vale mais.
+                try:
+                    by_name = CatalogFilters(limit=limit, **text_fallback(phrase).filters)
+                except ValidationError:
+                    by_name = None
+                if by_name is not None:
+                    named = catalog.list(actor, by_name)
+                    if named["items"]:
+                        translation, filters, page = text_fallback(phrase), by_name, named
             # O cliente pagina depois por GET /editions com estes filtros e o mesmo limit.
             echoed = filters.model_dump(mode="json", exclude_none=True, exclude={"limit"})
         return {
@@ -390,6 +405,29 @@ def create_app(
             raise Unavailable()
         return edition_requests.list_mine(actor, limit, cursor)
 
+    @app.get("/edition-requests/{id}/medal-image", operation_id="getEditionRequestMedalImage")
+    def edition_request_medal_image(id: str, actor: Actor):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.medal_image(actor, id)
+
+    @app.get("/edition-requests/{id}/banner-image", operation_id="getEditionRequestBannerImage")
+    def edition_request_banner_image(id: str, actor: Actor):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.medal_image(actor, id, "imageReference")
+
+    @app.delete("/edition-requests/{id}", operation_id="deleteEditionRequest")
+    def delete_edition_request(
+        id: str,
+        actor: Actor,
+        idempotency_key: IdempotencyKey,
+        expectedVersion: int = Query(..., ge=1),
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.delete(actor, id, idempotency_key, expectedVersion)
+
     @app.get("/edition-requests/{id}", operation_id="getEditionRequest")
     def get_edition_request(id: str, actor: Actor):
         if edition_requests is None:
@@ -424,6 +462,17 @@ def create_app(
         if participations is None:
             raise Unavailable()
         return participations.list(actor, state, limit, cursor)
+
+    @app.post("/participations/{id}/publish", operation_id="publishParticipation")
+    def publish_participation(
+        id: str,
+        body: PublishParticipation,
+        actor: Actor,
+        idempotency_key: IdempotencyKey,
+    ):
+        if participations is None:
+            raise Unavailable()
+        return participations.publish(actor, id, idempotency_key, body.model_dump())
 
     @app.post("/participations/{id}/complete", operation_id="completeParticipation")
     def complete_participation(
@@ -595,6 +644,25 @@ def create_app(
     def create_comment(id: str, body: CreateComment, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().comment(actor, id, idempotency_key, body.text, body.parentId)
 
+    @app.get("/editions/{id}/comments", operation_id="listEditionComments")
+    def list_edition_comments(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().edition_comments(actor, id, limit, cursor)
+
+    @app.post("/editions/{id}/comments", status_code=201, operation_id="createEditionComment")
+    def create_edition_comment(
+        id: str, body: CreateEditionComment, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        return friends().edition_comment(actor, id, idempotency_key, body.text)
+
+    @app.delete("/edition-comments/{id}", operation_id="deleteEditionComment")
+    def delete_edition_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().delete_edition_comment(actor, id, idempotency_key)
+
     @app.put("/comments/{id}/like", operation_id="likeComment")
     def put_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().like_comment(actor, id, idempotency_key, True)
@@ -628,6 +696,12 @@ def create_app(
         if uploads is None:
             raise Unavailable()
         return uploads.medal_image(actor, id)
+
+    @app.get("/participations/{id}/post-image", operation_id="getParticipationPostImage")
+    def participation_post_image(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.post_image(actor, id)
 
     @app.get("/participations/{id}/display-image", operation_id="getParticipationDisplayImage")
     def participation_display_image(id: str, actor: Actor):

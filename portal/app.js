@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, montarAprovacao, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, montarAprovacao, montarRenomear, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro, montarBannerArquivo, dimensoesEnvio, resumoImporte,
 } from './lib.js';
 
@@ -98,6 +98,201 @@ function iniciarSessao(t, assunto) {
 
 // ---- pedidos de corrida -----------------------------------------------------------------------
 
+/** Corrige o nome de uma corrida que já está no catálogo (ex.: pedido de usuário escrito errado):
+ *  1) busca a corrida pelo nome errado (botão Buscar ou Enter); 2) escolhe na lista; 3) edita o nome e salva. */
+function formularioRenomear() {
+  const busca = el('input', { type: 'search', maxlength: '160', autocomplete: 'off', placeholder: 'Nome (mesmo errado) ou parte dele, ex.: pai de acucar' });
+  const buscar = el('button', { type: 'button', class: 'ok' }, 'Buscar corrida');
+  const estado = el('p', { class: 'meta', 'aria-live': 'polite' });
+  const lista = el('ul', { class: 'escolhas', role: 'listbox' });
+  const edicao = el('div', { hidden: true });
+  let escolhida = null;
+  let itemAtual = null;
+
+  const mostrarEdicao = (e, li) => {
+    escolhida = e;
+    itemAtual = li;
+    for (const outro of lista.children) outro.setAttribute('aria-selected', 'false');
+    li.setAttribute('aria-selected', 'true');
+    const atual = el('p', { class: 'meta' }, `Corrida escolhida: ${e.name} · ${dataBr(e.date)} · ${e.city}/${e.state}`);
+    const novoNome = el('input', { type: 'text', maxlength: '160', autocomplete: 'off', value: e.name || '' });
+    const salvar = el('button', { type: 'button', class: 'ok' }, 'Salvar nome');
+    const erro = el('p', { class: 'aviso erro', hidden: true });
+    salvar.addEventListener('click', async () => {
+      salvar.disabled = true;
+      erro.hidden = true;
+      try {
+        const corpo = montarRenomear(novoNome.value);
+        await api(`/admin/editions/${encodeURIComponent(escolhida.id)}`, { method: 'PATCH', body: JSON.stringify(corpo) });
+        escolhida.name = corpo.name;
+        itemAtual.textContent = `${corpo.name} · ${dataBr(escolhida.date)} · ${escolhida.city}/${escolhida.state}`;
+        atual.textContent = `Corrida escolhida: ${corpo.name} · ${dataBr(escolhida.date)} · ${escolhida.city}/${escolhida.state}`;
+        aviso(`Nome salvo: ${corpo.name}.`, 'ok');
+      } catch (falha) {
+        if (token || !falha.codigo) {
+          erro.hidden = false;
+          erro.textContent = falha.codigo ? mensagem(falha.codigo) : falha.message;
+        }
+      } finally {
+        salvar.disabled = false;
+      }
+    });
+    edicao.hidden = false;
+    edicao.replaceChildren(atual, el('label', {}, 'Nome correto', novoNome), erro, el('div', { class: 'acoes' }, salvar));
+    novoNome.focus();
+  };
+
+  const pesquisar = async () => {
+    const texto = busca.value.trim();
+    escolhida = null;
+    edicao.hidden = true;
+    edicao.replaceChildren();
+    lista.replaceChildren();
+    if (texto.length < 2) {
+      estado.textContent = 'Digite pelo menos 2 letras do nome.';
+      return;
+    }
+    buscar.disabled = true;
+    estado.textContent = 'Buscando...';
+    try {
+      const { items } = await api(`/admin/editions?q=${encodeURIComponent(texto)}&limit=20`);
+      estado.textContent = items.length
+        ? `${items.length} corrida(s) encontrada(s). Escolha a que você quer corrigir.`
+        : 'Nenhuma corrida encontrada. Tente menos palavras ou outra grafia.';
+      lista.replaceChildren(
+        ...items.map((e) => {
+          const li = el('li', { role: 'option', 'aria-selected': 'false', tabindex: '0', 'data-id': e.id }, `${e.name} · ${dataBr(e.date)} · ${e.city}/${e.state}`);
+          li.addEventListener('click', () => mostrarEdicao(e, li));
+          li.addEventListener('keydown', (ev) => ev.key === 'Enter' && mostrarEdicao(e, li));
+          return li;
+        }),
+      );
+    } catch (falha) {
+      estado.textContent = '';
+      if (token) aviso(mensagem(falha.codigo), 'erro');
+    } finally {
+      buscar.disabled = false;
+    }
+  };
+  buscar.addEventListener('click', pesquisar);
+  busca.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      pesquisar();
+    }
+  });
+  return el(
+    'article',
+    { class: 'cartao', id: 'corrigir-nome' },
+    el('h2', {}, 'Corrigir o nome de uma corrida do catálogo'),
+    el('p', { class: 'ajuda' }, 'Busque a corrida pelo nome que está errado, escolha na lista e edite. Só o nome muda; data, local e inscritos continuam iguais.'),
+    el('label', {}, 'Buscar corrida', busca),
+    el('div', { class: 'acoes' }, buscar),
+    estado,
+    lista,
+    edicao,
+  );
+}
+
+/** Moderação: comentários que os usuários fizeram numa corrida. A equipe escolhe a corrida, lê e remove o que não deve ficar. */
+function formularioComentarios() {
+  const busca = el('input', { type: 'search', maxlength: '160', autocomplete: 'off', placeholder: 'Nome da corrida, ex.: batman' });
+  const buscar = el('button', { type: 'button', class: 'ok' }, 'Buscar corrida');
+  const estado = el('p', { class: 'meta', 'aria-live': 'polite' });
+  const corridas = el('ul', { class: 'escolhas', role: 'listbox' });
+  const lista = el('div');
+
+  const mostrar = async (corrida) => {
+    lista.replaceChildren(el('p', { class: 'meta' }, 'Carregando os comentários...'));
+    try {
+      const { items } = await api(`/admin/editions/${encodeURIComponent(corrida.id)}/comments`);
+      lista.replaceChildren(
+        el('h3', {}, `${corrida.name} · ${items.length} comentário(s)`),
+        ...(items.length
+          ? items.map((c) => {
+              const linha = el(
+                'div',
+                { class: 'cartao' },
+                el('div', { class: 'meta' }, `${dataHoraBr(c.createdAt)} · autor ${c.author}`),
+                el('p', {}, c.text),
+              );
+              const remover = el('button', { type: 'button', class: 'perigo' }, 'Remover comentário');
+              remover.addEventListener('click', async () => {
+                if (!window.confirm('Remover este comentário para todos? Não dá para desfazer.')) return;
+                remover.disabled = true;
+                try {
+                  await api(`/admin/edition-comments/${encodeURIComponent(c.id)}`, { method: 'DELETE' });
+                  linha.remove();
+                  aviso('Comentário removido.', 'ok');
+                } catch (falha) {
+                  remover.disabled = false;
+                  if (token) aviso(mensagem(falha.codigo), 'erro');
+                }
+              });
+              linha.append(el('div', { class: 'acoes' }, remover));
+              return linha;
+            })
+          : [el('p', { class: 'vazio' }, 'Nenhum comentário nesta corrida.')]),
+      );
+    } catch (falha) {
+      lista.replaceChildren();
+      if (token) aviso(mensagem(falha.codigo), 'erro');
+    }
+  };
+
+  const pesquisar = async () => {
+    const texto = busca.value.trim();
+    corridas.replaceChildren();
+    lista.replaceChildren();
+    if (texto.length < 2) {
+      estado.textContent = 'Digite pelo menos 2 letras do nome.';
+      return;
+    }
+    buscar.disabled = true;
+    estado.textContent = 'Buscando...';
+    try {
+      const { items } = await api(`/admin/editions?q=${encodeURIComponent(texto)}&limit=20`);
+      estado.textContent = items.length ? 'Escolha a corrida para ver os comentários.' : 'Nenhuma corrida encontrada.';
+      corridas.replaceChildren(
+        ...items.map((e) => {
+          const li = el('li', { role: 'option', 'aria-selected': 'false', tabindex: '0' }, `${e.name} · ${dataBr(e.date)} · ${e.city}/${e.state}`);
+          const escolher = () => {
+            for (const outro of corridas.children) outro.setAttribute('aria-selected', 'false');
+            li.setAttribute('aria-selected', 'true');
+            mostrar(e);
+          };
+          li.addEventListener('click', escolher);
+          li.addEventListener('keydown', (ev) => ev.key === 'Enter' && escolher());
+          return li;
+        }),
+      );
+    } catch (falha) {
+      estado.textContent = '';
+      if (token) aviso(mensagem(falha.codigo), 'erro');
+    } finally {
+      buscar.disabled = false;
+    }
+  };
+  buscar.addEventListener('click', pesquisar);
+  busca.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      pesquisar();
+    }
+  });
+  return el(
+    'article',
+    { class: 'cartao', id: 'moderar-comentarios' },
+    el('h2', {}, 'Comentários nas corridas'),
+    el('p', { class: 'ajuda' }, 'Qualquer pessoa da beta comenta numa corrida. Aqui a equipe lê e remove o que não deve ficar visível.'),
+    el('label', {}, 'Buscar corrida', busca),
+    el('div', { class: 'acoes' }, buscar),
+    estado,
+    corridas,
+    lista,
+  );
+}
+
 async function carregarPedidos() {
   const lista = $('pedidos');
   lista.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
@@ -123,6 +318,8 @@ async function carregarPedidos() {
             ...espera.map((p) => cartaoPedido(p, true)),
           ]
         : []),
+      formularioRenomear(),
+      formularioComentarios(),
     );
   } catch (erro) {
     if (token) {
@@ -143,12 +340,12 @@ async function verificarVinculos() {
 }
 
 /** Carrega a imagem enviada no pedido (rota protegida) e a mostra em `alvo`. */
-async function carregarImagemPedido(id, alvo) {
+async function carregarImagemPedido(id, alvo, tipo = 'image') {
   try {
-    const r = await fetch(`${cfg.apiUrl}/admin/edition-requests/${encodeURIComponent(id)}/image`, { headers: { Authorization: `Bearer ${token}` } });
+    const r = await fetch(`${cfg.apiUrl}/admin/edition-requests/${encodeURIComponent(id)}/${tipo === 'medal' ? 'medal-image' : 'image'}`, { headers: { Authorization: `Bearer ${token}` } });
     if (r.status === 401) return sair('INVALID_TOKEN');
     if (!r.ok) throw new Error('erro');
-    alvo.replaceChildren(el('img', { class: 'previa', src: URL.createObjectURL(await r.blob()), alt: 'Banner enviado pelo usuário' }));
+    alvo.replaceChildren(el('img', { class: 'previa', src: URL.createObjectURL(await r.blob()), alt: tipo === 'medal' ? 'Foto da medalha enviada pelo usuário' : 'Banner enviado pelo usuário' }));
   } catch (falha) {
     if (token) alvo.replaceChildren(el('p', { class: 'aviso erro' }, 'Não foi possível carregar a imagem enviada.'));
   }
@@ -238,6 +435,13 @@ function cartaoPedido(pedido, aguardando = false) {
           return [el('div', { class: 'meta' }, 'Banner enviado pelo usuário (só entra na fila de publicação depois que o pedido for aprovado e vinculado):'), caixa];
         })()
       : []),
+    ...(((pedido.details || {}).medalImageReference)
+      ? (() => {
+          const caixa = el('div', {}, el('p', { class: 'meta' }, 'Carregando a foto da medalha...'));
+          carregarImagemPedido(pedido.id, caixa, 'medal');
+          return [el('div', { class: 'meta' }, 'Foto da MEDALHA do usuário (medalha provisória: é privada, não é banner e não será publicada; serve para conferir a corrida):'), caixa];
+        })()
+      : []),
     el(
       'div',
       { class: 'acoes' },
@@ -269,6 +473,7 @@ async function decidir(pedido, corpo, botao) {
 /** Aprova: cria a corrida com os dados do pedido (a equipe confere estado e distâncias) e vincula o usuário. */
 function painelAprovacao(area, pedido, aguardando) {
   const d = pedido.details || {};
+  const nome = el('input', { type: 'text', maxlength: '160', autocomplete: 'off', value: d.name || '' });
   const estado = el('input', { type: 'text', maxlength: '2', placeholder: 'UF, ex.: SP', autocomplete: 'off', value: d.state || '' });
   const distancias = el('input', { type: 'text', maxlength: '80', placeholder: 'ex.: 5, 10', autocomplete: 'off', value: d.distanceKm ? String(d.distanceKm) : '' });
   const erro = el('p', { class: 'aviso erro', hidden: true });
@@ -294,7 +499,7 @@ function painelAprovacao(area, pedido, aguardando) {
     let corpo;
     let corpoBanner = null;
     try {
-      corpo = montarAprovacao({ versao: pedido.version, estado: estado.value, distancias: distancias.value });
+      corpo = montarAprovacao({ versao: pedido.version, estado: estado.value, distancias: distancias.value, nome: nome.value.trim() === (d.name || '') ? '' : nome.value });
       // Valida o banner ANTES de criar a corrida, para não criar e depois falhar.
       if (pronto) corpoBanner = montarBannerArquivo({ editionId: 'a-definir', base64: pronto.base64, tipo: pronto.tipo, credito: credito.value, nota: nota.value, confirmou: confirmaDireito.checked });
       erro.hidden = true;
@@ -328,6 +533,7 @@ function painelAprovacao(area, pedido, aguardando) {
   });
   area.replaceChildren(
     el('p', { class: 'meta' }, `A corrida será criada como "${d.name || ''}", ${dataBr(d.date)}, ${d.city || ''}. A distância veio do usuário, sem fonte: confira antes de aprovar.`),
+    el('label', {}, 'Nome da corrida (corrija se o usuário escreveu errado)', nome),
     el('label', {}, 'Estado (UF)', estado),
     el('label', {}, 'Distâncias em km (separe por vírgula)', distancias),
     el('p', { class: 'meta' }, 'Se a mesma corrida já estiver no catálogo (mesma data e nome parecido), o usuário é só vinculado a ela. Sem o estado, o pedido fica aguardando a carga.'),

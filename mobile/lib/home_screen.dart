@@ -7,6 +7,7 @@ import 'catalog_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
+import 'new_post.dart';
 import 'notifications.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
@@ -17,49 +18,6 @@ export 'post_card.dart' show FeedEntry;
 /// Avisa a tela Início quando ela volta a ser a tela visível (por exemplo, ao voltar de um rascunho).
 final RouteObserver<ModalRoute<void>> runPassRouteObserver =
     RouteObserver<ModalRoute<void>>();
-
-/// A private draft of the signed-in runner. Drafts are not published, so they never appear
-/// in the feed; they are listed on Início so they can be found and continued.
-class DraftEntry {
-  final Map<String, dynamic> participation;
-  final Map<String, dynamic>? edition;
-  const DraftEntry(this.participation, this.edition);
-
-  String get title =>
-      edition?['name'] as String? ??
-      participation['editionId'] as String? ??
-      'Corrida';
-
-  /// Corrida que ainda não aconteceu: fica como rascunho até a data da prova.
-  bool get upcoming {
-    final date = DateTime.tryParse(edition?['date'] as String? ?? '');
-    if (date == null) return false;
-    final now = DateTime.now();
-    return date.isAfter(DateTime(now.year, now.month, now.day));
-  }
-
-  String get place =>
-      [edition?['city'], edition?['state']].whereType<String>().join('/');
-}
-
-Future<List<DraftEntry>> loadDrafts(IdentityGateway gateway) async {
-  try {
-    final page = await gateway.request(
-      '/me/participations',
-      query: {'state': 'draft', 'limit': '100'},
-    );
-    final drafts = (page['items'] as List? ?? const [])
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['state'] == 'draft')
-        .toList();
-    final editions = await loadEditions(gateway, [
-      for (final d in drafts) d['editionId'] as String,
-    ]);
-    return [for (final d in drafts) DraftEntry(d, editions[d['editionId']])];
-  } on Exception {
-    return const [];
-  }
-}
 
 enum FeedFilter {
   all('Todos', Icons.public_rounded),
@@ -258,7 +216,6 @@ class RunPassHomeScreen extends StatefulWidget {
 class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     with RouteAware, WidgetsBindingObserver {
   late Future<FeedLoad> feed = loadFeed(widget.gateway);
-  late Future<List<DraftEntry>> drafts = loadDrafts(widget.gateway);
   FeedFilter filter = FeedFilter.all;
 
   Future<void> selectFilter(FeedFilter item) async {
@@ -330,7 +287,6 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     if (!mounted) return;
     setState(() {
       feed = loadFeed(widget.gateway, filter: filter);
-      drafts = loadDrafts(widget.gateway);
     });
   }
 
@@ -348,133 +304,6 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
 
   void soon(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-
-  Future<void> openDraft(DraftEntry entry) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ParticipationDraftScreen(
-          gateway: widget.gateway,
-          initial: entry.participation,
-        ),
-      ),
-    );
-    reload();
-  }
-
-  Future<void> deleteDraft(DraftEntry entry) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Excluir rascunho?'),
-        content: Text(
-          '${entry.title}: o rascunho privado será excluído. Você poderá criar outro nesta edição.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Excluir rascunho'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(entry.participation['id'] as String)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${entry.participation['version']}'},
-      );
-    } on Exception {
-      soon('Não foi possível excluir o rascunho. Tente novamente.');
-    }
-    reload();
-  }
-
-  Widget draftTile(DraftEntry entry) => ListTile(
-    key: Key('draft-${entry.participation['id']}'),
-    contentPadding: EdgeInsets.zero,
-    leading: Icon(
-      entry.upcoming ? Icons.event_rounded : Icons.edit_note_rounded,
-    ),
-    title: Text(entry.title),
-    subtitle: Text(
-      [
-        if (entry.upcoming && entry.edition?['date'] is String)
-          displayDate(entry.edition!['date'] as String),
-        if (entry.place.isNotEmpty) entry.place,
-        entry.participation['distanceId'] as String? ?? '',
-      ].where((part) => part.isNotEmpty).join(' · '),
-    ),
-    trailing: IconButton(
-      key: Key('delete-draft-${entry.participation['id']}'),
-      tooltip: 'Excluir rascunho',
-      icon: const Icon(Icons.delete_outline_rounded),
-      onPressed: () => deleteDraft(entry),
-    ),
-    onTap: () => openDraft(entry),
-  );
-
-  Widget draftGroup(
-    Key key,
-    String title,
-    String caption,
-    List<DraftEntry> items,
-  ) {
-    if (items.isEmpty) return const SizedBox.shrink();
-    return Card(
-      key: key,
-      margin: const EdgeInsets.only(bottom: 14),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-            ),
-            Text(caption),
-            for (final entry in items) draftTile(entry),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget draftsSection() => FutureBuilder<List<DraftEntry>>(
-    future: drafts,
-    builder: (context, snapshot) {
-      final items = snapshot.data ?? const <DraftEntry>[];
-      if (items.isEmpty) return const SizedBox.shrink();
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          draftGroup(
-            const Key('upcoming-races'),
-            'Minhas corridas futuras',
-            'Ainda não aconteceram: ficam salvas como rascunho até a data da prova.',
-            [
-              for (final entry in items)
-                if (entry.upcoming) entry,
-            ],
-          ),
-          draftGroup(
-            const Key('drafts-in-progress'),
-            'Rascunhos em andamento',
-            'Privados: nada foi publicado.',
-            [
-              for (final entry in items)
-                if (!entry.upcoming) entry,
-            ],
-          ),
-        ],
-      );
-    },
-  );
 
   Widget welcome() => Container(
     padding: const EdgeInsets.all(24),
@@ -640,6 +469,20 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
       ),
       actions: [
         IconButton(
+          key: const Key('new-post'),
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Nova postagem',
+          icon: const Icon(Icons.add_circle_outline_rounded),
+          onPressed: () async {
+            final published = await Navigator.of(context).push<bool>(
+              MaterialPageRoute<bool>(
+                builder: (_) => NewPostScreen(gateway: widget.gateway),
+              ),
+            );
+            if (published == true) reload(); // a postagem nova aparece no feed
+          },
+        ),
+        IconButton(
           key: const Key('find-friends'),
           visualDensity: VisualDensity.compact,
           tooltip: 'Buscar amigos',
@@ -659,7 +502,6 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
         final next = loadFeed(widget.gateway, filter: filter);
         setState(() {
           feed = next;
-          drafts = loadDrafts(widget.gateway);
         });
         await next;
       },
@@ -681,7 +523,6 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
             children: [
               filters(),
               const SizedBox(height: 8),
-              draftsSection(),
               if (loading)
                 const Center(child: CircularProgressIndicator())
               // O convite "sem corridas ainda" só faz sentido em "Todos"; nos outros

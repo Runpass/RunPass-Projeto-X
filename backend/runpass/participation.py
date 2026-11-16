@@ -81,6 +81,9 @@ class ParticipationService:
                 "completedAt",
                 "medalImageReference",
                 "publishToFeed",
+                "postImageReference",
+                "postText",
+                "taggedUserIds",
                 "medalFrameId",
                 "medalDescription",
                 "medalCity",
@@ -90,6 +93,22 @@ class ParticipationService:
             )
             if key in item
         }
+
+    @staticmethod
+    def _post_image(read, subject, reference, medal_reference=None):
+        """(chave, registro) da foto da publicacao: imagem valida do proprio dono, diferente da foto da medalha."""
+        if reference == medal_reference:
+            raise Problem(422, "POST_IMAGE_MUST_DIFFER")
+        key = ("operations", "USER#" + subject, "IMAGE#" + reference)
+        image = read(key)
+        if (
+            not image
+            or image.get("state") != "valid"
+            or image.get("owner") != subject
+            or image.get("origin") != "runner"
+        ):
+            raise Problem(422, "IMAGE_NOT_VALID")
+        return key, image
 
     def _catalog_guard(self, read, edition_id, expected_catalog_version):
         head = read(("catalog", "EDITION#" + edition_id, "HEAD"))
@@ -217,6 +236,14 @@ class ParticipationService:
                 raise Problem(422, "IMAGE_NOT_VALID")
             if origin == "official" and image.get("origin") != "admin":
                 raise Problem(422, "IMAGE_NOT_VALID")
+            post_ref = payload.get("postImageReference")
+            if payload["publishToFeed"] and not post_ref:
+                raise Problem(422, "POST_IMAGE_REQUIRED")
+            if post_ref and not payload["publishToFeed"]:
+                raise Problem(422, "POST_IMAGE_NOT_ALLOWED")
+            post_image = (
+                self._post_image(read, actor.subject, post_ref, reference) if post_ref else None
+            )
             review_key = ("history", pk, "P#" + participation_id + "#REVIEW")
             medal_key = ("history", pk, "P#" + participation_id + "#MEDAL")
             if read(review_key) or read(medal_key):
@@ -243,6 +270,12 @@ class ParticipationService:
                 medalImageReference=reference,
                 publishToFeed=payload["publishToFeed"],
             )
+            if post_image:
+                item["postImageReference"] = post_ref
+                if payload.get("postText"):
+                    item["postText"] = payload["postText"]
+                if payload.get("taggedUserIds"):
+                    item["taggedUserIds"] = self._tags(read, actor, payload["taggedUserIds"])
             review = {
                 "participationId": participation_id,
                 "reviewVersion": 1,
@@ -290,6 +323,8 @@ class ParticipationService:
                 },
             )
             write(image_key, {**image, "refs": image.get("refs", 0) + 1})
+            if post_image:
+                write(post_image[0], {**post_image[1], "refs": post_image[1].get("refs", 0) + 1})
             write(claim_key, {"participationId": participation_id, "version": item["version"]})
             _write_review_pointer(
                 read, write, pk, item["editionId"], participation_id, item, actor.subject
@@ -316,6 +351,62 @@ class ParticipationService:
 
         return self.identity.transact(
             actor, "completeParticipation", key, payload, work, admitted=True
+        )
+
+    def publish(self, actor, participation_id, key, payload):
+        """Publica no feed uma participacao ja concluida e ainda nao publicada, com uma foto propria (a da medalha
+        nao entra). Mesmo ponteiro do feed que a conclusao grava; a leitura reconfere a visibilidade."""
+        pk = "USER#" + actor.subject
+
+        def work(read, write, account, now, replay):
+            part_key = ("history", pk, "P#" + participation_id + "#PART")
+            item = read(part_key)
+            owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
+            if not item or not owner or owner.get("owner") != actor.subject:
+                raise Problem(404, "PARTICIPATION_NOT_FOUND")
+            if replay is not None:
+                return self.projection(item), replay
+            if item.get("state") != "completed":
+                raise Problem(409, "PARTICIPATION_NOT_COMPLETED")
+            if item.get("publishToFeed"):
+                raise Problem(409, "ALREADY_PUBLISHED")
+            if item["version"] != payload["expectedVersion"]:
+                raise Problem(409, "VERSION_CONFLICT")
+            post_ref = payload["postImageReference"]
+            image_key, image = self._post_image(
+                read, actor.subject, post_ref, item.get("medalImageReference")
+            )
+            item.update(
+                publishToFeed=True,
+                postImageReference=post_ref,
+                version=item["version"] + 1,
+                updatedAt=stamp(now),
+            )
+            if payload.get("postText"):
+                item["postText"] = payload["postText"]
+            else:
+                item.pop("postText", None)
+            if payload.get("taggedUserIds"):
+                item["taggedUserIds"] = self._tags(read, actor, payload["taggedUserIds"])
+            feed_key = ("history", "FEED#PUBLIC", f"T#{item['completedAt']}#{participation_id}")
+            feed_ref_key = ("history", pk, "FEEDREF#" + participation_id)
+            read(feed_key)
+            read(feed_ref_key)
+            write(part_key, item)
+            write(
+                feed_key,
+                {
+                    "owner": actor.subject,
+                    "id": participation_id,
+                    "completedAt": item["completedAt"],
+                },
+            )
+            write(feed_ref_key, {"sharedKeys": [list(feed_key)]})
+            write(image_key, {**image, "refs": image.get("refs", 0) + 1})
+            return self.projection(item), {"id": participation_id}
+
+        return self.identity.transact(
+            actor, "publishParticipation", key, payload, work, admitted=True
         )
 
     # ---- planos de corrida: "quero correr" (wanted) e "vou correr / inscrito" (registered) ----
@@ -625,6 +716,12 @@ class ParticipationService:
                 image = read(image_key)
                 if image:
                     write(image_key, {**image, "refs": max(0, image.get("refs", 0) - 1)})
+            post_ref = part.get("postImageReference")
+            if post_ref:
+                post_key = ("operations", pk, "IMAGE#" + post_ref)
+                post_image = read(post_key)
+                if post_image:
+                    write(post_key, {**post_image, "refs": max(0, post_image.get("refs", 0) - 1)})
             event = {
                 "id": event_id,
                 "type": "participation_deleted",
@@ -696,6 +793,29 @@ class ParticipationService:
 
         return self.identity.transact(actor, "getDeletionOperation", None, {}, work, admitted=True)
 
+    @staticmethod
+    def _tags(read, actor, ids):
+        """Valida quem pode ser marcado: conta ativa, nao eu mesmo, e (perfil publico OU eu ja sigo/sou amigo).
+        Perfil privado so recebe marcacao de quem ele aceitou seguir ou e amigo. Sem repetir, ordem mantida."""
+        out = []
+        for subject in dict.fromkeys(ids or []):
+            if subject == actor.subject:
+                raise Problem(422, "INVALID_TAG")
+            account = read(("identity", "USER#" + subject, "ACCOUNT"))
+            profile = read(("identity", "USER#" + subject, "PROFILE"))
+            if not account or not profile or account.get("state") != "active":
+                raise Problem(422, "INVALID_TAG")
+            if profile.get("isPrivate", False):
+                follow = read(("identity", "USER#" + subject, "FOLLOWER#" + actor.subject))
+                friend = read(("identity", "USER#" + actor.subject, "FRIEND#" + subject))
+                if not (
+                    (follow and follow.get("state") == "active")
+                    or (friend and friend.get("state") == "active")
+                ):
+                    raise Problem(422, "INVALID_TAG")
+            out.append(subject)
+        return out
+
     def patch(self, actor, participation_id, key, payload):
         current = self.get(actor, participation_id)
         edition_id = payload.get("editionId", current["editionId"])
@@ -760,6 +880,7 @@ class ParticipationService:
                 "medalCity",
                 "medalState",
                 "medalYear",
+                "postText",
             ):
                 if field not in payload:
                     continue
@@ -769,10 +890,41 @@ class ParticipationService:
                     item[field] = payload[field]
             if observed:
                 item["catalogVersion"] = observed["version"]
+            if payload.get("taggedUserIds") is not None:
+                if item.get("state") != "completed" or not item.get("publishToFeed"):
+                    raise Problem(409, "NOT_PUBLISHED")
+                tags = self._tags(read, actor, payload["taggedUserIds"])
+                if tags:
+                    item["taggedUserIds"] = tags
+                else:
+                    item.pop("taggedUserIds", None)
+            if payload.get("postImageReference") is not None:
+                new_ref = payload["postImageReference"]
+                if item.get("state") != "completed" or not item.get("publishToFeed"):
+                    raise Problem(409, "NOT_PUBLISHED")
+                old_ref = item.get("postImageReference")
+                if new_ref != old_ref:
+                    new_key, new_image = self._post_image(
+                        read, actor.subject, new_ref, item.get("medalImageReference")
+                    )
+                    old_key = ("operations", pk, "IMAGE#" + old_ref) if old_ref else None
+                    old_image = read(old_key) if old_key else None
+                    write(new_key, {**new_image, "refs": new_image.get("refs", 0) + 1})
+                    if old_image:
+                        write(old_key, {**old_image, "refs": max(0, old_image.get("refs", 0) - 1)})
+                    item["postImageReference"] = new_ref
             if "medalImageReference" in payload:
+                before = item.get("medalImageReference")
                 self._replace_medal_image(
                     read, write, pk, participation_id, item, payload["medalImageReference"]
                 )
+                if (
+                    item.get("medalImageReference") != before
+                    and "medalDisplayImageReference" not in payload
+                ):
+                    # O recorte da prateleira era da foto ANTIGA: sem limpar, a prateleira seguia
+                    # mostrando a foto velha depois de trocar a foto da medalha.
+                    self._clear_medal_display_image(read, write, pk, item)
             if "medalDisplayImageReference" in payload:
                 reference = payload["medalDisplayImageReference"]
                 if reference is None:

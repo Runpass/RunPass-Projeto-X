@@ -31,9 +31,10 @@ from .catalog import normalized
 from .edition_requests import EditionRequestReview
 from .identity import AuthFailure
 from .models import ReviewRequestDecision
-from .operator_admin import set_social_links
+from .operator_admin import rename_edition, set_social_links
 from .quality_report import REPORT as QUALITY_REPORT
 from .service import Problem
+from .social import list_edition_comments_for_team, remove_edition_comment_as_team
 from .store import Conflict, Unavailable
 
 MAX_AUTH_AGE = 3600
@@ -140,16 +141,16 @@ def admit_operator(store, principal, token, mfa_enforced, clock=time.time):
 
 def search_editions(catalog, text, limit=20):
     """Busca por nome (contem) no catalogo, para escolher a corrida a vincular. Sem filtros de corredor."""
-    words = normalized(text)
+    words = normalized(text).split()
     rows, after, found, seen, evaluated = [], None, [], set(), 0
-    while len(found) < limit and evaluated < 600:
+    while len(found) < limit and evaluated < 3000:
         page, after = catalog.store.query("catalog", "CAT#GLOBAL#ANY#DATE", after=after, limit=100)
         for _, row in page:
             evaluated += 1
             body = catalog._edition(row["editionId"], row["version"])
             if body is None or body["id"] in seen or body.get("status") == "archived":
                 continue
-            if words and words not in normalized(body["name"]):
+            if words and not all(word in normalized(body["name"]) for word in words):
                 continue
             seen.add(body["id"])
             found.append(
@@ -323,6 +324,12 @@ def create_admin_app(
         data, kind = review.image(actor, request_id)
         return Response(data, media_type=kind, headers={"Cache-Control": "no-store"})
 
+    @app.get("/admin/edition-requests/{request_id}/medal-image")
+    def request_medal_image(request_id: str, op: Operator):
+        actor = need(op, "catalog_admin")
+        data, kind = review.medal_photo(actor, request_id)
+        return Response(data, media_type=kind, headers={"Cache-Control": "no-store"})
+
     @app.post("/admin/edition-requests/{request_id}/banner", status_code=201)
     def request_banner_publish(request_id: str, payload: RequestBanner, op: Operator):
         actor = need(op, "catalog_admin")
@@ -340,6 +347,8 @@ def create_admin_app(
         expectedVersion: int = Field(ge=1)
         state: str | None = Field(default=None, pattern=r"^[A-Za-z]{2}$")
         distances: list[str] | None = Field(default=None, min_length=1, max_length=8)
+        # Nome corrigido pela equipe (so vale quando a corrida e criada a partir do pedido).
+        name: str | None = Field(default=None, min_length=1, max_length=160)
 
     @app.post("/admin/edition-requests/sweep")
     def sweep_requests(op: Operator):
@@ -351,7 +360,12 @@ def create_admin_app(
     def approve_request(request_id: str, payload: RequestApproval, op: Operator):
         actor = need(op, "catalog_admin")
         outcome, item = review.approve_and_load(
-            actor, request_id, payload.expectedVersion, payload.state, payload.distances
+            actor,
+            request_id,
+            payload.expectedVersion,
+            payload.state,
+            payload.distances,
+            payload.name,
         )
         return {"outcome": outcome, "request": item}
 
@@ -366,6 +380,37 @@ def create_admin_app(
     ):
         need(op, "catalog_admin")
         return {"items": search_editions(catalog, q, limit)}
+
+    @app.get("/admin/editions/{edition_id}/comments")
+    def edition_comments_team(edition_id: str, op: Operator):
+        need(op, "catalog_admin")
+        return {"items": list_edition_comments_for_team(store, edition_id)}
+
+    @app.delete("/admin/edition-comments/{comment_id}")
+    def edition_comment_remove(comment_id: str, op: Operator):
+        actor = need(op, "catalog_admin")
+        removed = remove_edition_comment_as_team(store, comment_id)
+        audit(store, actor.subject, "edition.comment.remove", removed, clock)
+        return {"id": comment_id, "removed": True}
+
+    class EditionRename(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        name: str = Field(min_length=1, max_length=160)
+
+    @app.patch("/admin/editions/{edition_id}")
+    def edition_rename(edition_id: str, payload: EditionRename, op: Operator):
+        actor = need(op, "catalog_admin")
+        result = rename_edition(
+            catalog, actor, edition_id, payload.name, "https://portal.runpass.invalid/nome"
+        )
+        audit(
+            store,
+            actor.subject,
+            "edition.rename",
+            {"editionId": edition_id, "name": result["name"]},
+            clock,
+        )
+        return result
 
     class NewOperator(BaseModel):
         model_config = ConfigDict(extra="forbid")

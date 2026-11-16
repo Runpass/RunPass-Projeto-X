@@ -506,72 +506,33 @@ void main() {
     },
   );
 
-  testWidgets('ao digitar o nome, sugere as corridas para escolher uma', (
-    tester,
-  ) async {
-    big(tester);
-    final calls = <Uri>[];
-    final gateway = await signed((uri, method, headers, body) async {
-      calls.add(uri);
-      if (uri.path == '/editions' && uri.queryParameters['q'] != null) {
-        return JsonReply(200, {
-          'items': [
-            {...entry('A'), 'id': 'EA', 'name': 'Circuito das Estações Verão'},
-            {
-              ...entry('B'),
-              'id': 'EB',
-              'name': 'Circuito das Estações Primavera',
-            },
-          ],
-        });
-      }
-      if (uri.path == '/editions/EB') {
-        return JsonReply(200, {
-          ...entry('B'),
-          'id': 'EB',
-          'name': 'Circuito das Estações Primavera',
-        });
-      }
-      return const JsonReply(200, {'items': []});
-    });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('catalog-phrase')), 'circuito');
-    await tester.pump(const Duration(milliseconds: 500));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('catalog-suggestions')), findsOneWidget);
-    expect(find.text('Encontramos 2 corridas. Escolha uma:'), findsOneWidget);
-    expect(calls.any((u) => u.queryParameters['q'] == 'circuito'), isTrue);
-    await tester.tap(find.byKey(const Key('suggestion-EB')));
-    await tester.pumpAndSettle();
-    expect(find.byType(EditionScreen), findsOneWidget);
-    expect(find.text('Circuito das Estações Primavera'), findsOneWidget);
-  });
-
   testWidgets(
-    'texto curto não pede sugestões e a falha delas não mostra erro',
+    'ao digitar o nome não aparece cartão de sugestões nem chamada de busca até enviar',
     (tester) async {
       big(tester);
       final calls = <Uri>[];
       final gateway = await signed((uri, method, headers, body) async {
         calls.add(uri);
-        if (uri.queryParameters['q'] != null) {
-          return const JsonReply(503, {'code': 'X'});
-        }
         return const JsonReply(200, {'items': []});
       });
       await tester.pumpWidget(
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const Key('catalog-phrase')), 'c');
-      await tester.pump(const Duration(milliseconds: 600));
-      expect(calls.where((u) => u.queryParameters['q'] != null), isEmpty);
-      await tester.enterText(find.byKey(const Key('catalog-phrase')), 'cir');
+      final before = calls.length;
+      // A frase só aparece ao tocar na lupa.
+      expect(find.byKey(const Key('catalog-phrase')), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('catalog-phrase')),
+        'circuito',
+      );
       await tester.pump(const Duration(milliseconds: 600));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('catalog-suggestions')), findsNothing);
-      expect(find.byKey(const Key('catalog-error')), findsNothing);
+      expect(find.textContaining('Encontramos'), findsNothing);
+      expect(calls.length, before);
     },
   );
 
@@ -1011,18 +972,35 @@ void searchTests() {
     expect(year.selected, {''}); // volta para "Todos"
   });
 
-  testWidgets('pedir cadastro e minhas solicitações ficam sempre visíveis', (
-    tester,
-  ) async {
-    await openForm(tester);
-    await tester.tap(
-      find.byKey(const Key('catalog-search-toggle')),
-    ); // fecha a lupa
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
-    expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
-    expect(find.text('Minhas solicitações'), findsOneWidget);
-  });
+  testWidgets(
+    'pedir cadastro e minhas solicitações são ícones na barra superior',
+    (tester) async {
+      await openForm(tester);
+      await tester.tap(
+        find.byKey(const Key('catalog-search-toggle')),
+      ); // fecha a lupa
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
+      expect(find.byTooltip('Pedir cadastro da corrida'), findsOneWidget);
+      expect(find.byTooltip('Minhas solicitações'), findsOneWidget);
+      // Ícones na barra, junto da agenda, da lupa e dos avisos (não são mais botões de texto no corpo).
+      final bar = tester.getRect(find.byType(AppBar));
+      for (final key in [
+        'catalog-request-new',
+        'catalog-request-mine',
+        'catalog-agenda',
+        'catalog-search-toggle',
+      ]) {
+        expect(
+          bar.contains(tester.getCenter(find.byKey(Key(key)))),
+          isTrue,
+          reason: key,
+        );
+      }
+      expect(find.text('Pedir cadastro da corrida'), findsNothing);
+    },
+  );
 
   testWidgets(
     'a lista mostra a imagem aprovada e só pede link de quem tem imagem',

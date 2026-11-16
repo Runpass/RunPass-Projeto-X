@@ -127,6 +127,14 @@ class PatchParticipation(Input):
     showTime: bool | None = None
     showPlacement: bool | None = None
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    # Foto e texto da publicacao no feed (so de participacao concluida e ja publicada).
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
     # Modelo de medalha (catalogo fixo de imagens); None volta ao padrao
     # (circular_prata_azul). Customizacao visual da legenda abaixo tambem opcional.
     medalFrameId: (
@@ -199,6 +207,14 @@ class CompleteParticipation(Input):
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)]
     publishToFeed: bool
     comment: Annotated[str, Field(max_length=2000)] | None = None
+    # Outra foto, separada da medalha, para a publicacao no feed. Exigida quando publishToFeed e verdadeiro.
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
 
     @field_validator("declaredCompleted")
     @classmethod
@@ -208,10 +224,36 @@ class CompleteParticipation(Input):
         return value
 
 
+class PublishParticipation(Input):
+    """Publica no feed uma participacao ja concluida (e ainda nao publicada), com uma foto propria."""
+
+    expectedVersion: Annotated[int, Field(ge=1)]
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
+
+
 class ReplaceReview(Input):
     expectedVersion: Annotated[int, Field(ge=1)]
     ratings: ReviewRatings
     comment: Annotated[str, Field(max_length=2000)] | None = None
+
+
+class CreateEditionComment(Input):
+    """Comentario na corrida (texto livre, visivel na beta). Nao e avaliacao e nao pede participacao."""
+
+    text: Annotated[str, Field(min_length=1, max_length=1000)]
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Comentario vazio")
+        return value
 
 
 class CreateComment(Input):
@@ -245,6 +287,28 @@ class BannerSuggestion(Input):
     imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
 
 
+class PendingParticipation(Input):
+    """Dados da MINHA participacao informados junto do pedido de cadastro da corrida. Ficam guardados (so o
+    dono ve) e o app os aplica quando a equipe aprova a corrida, para a pessoa nao preencher de novo."""
+
+    timeSeconds: Annotated[int, Field(ge=1)] | None = None
+    placement: Annotated[int, Field(ge=1)] | None = None
+    bibNumber: Annotated[str, Field(max_length=40)] | None = None
+    ratings: ReviewRatings
+    comment: Annotated[str, Field(max_length=2000)] | None = None
+    publishToFeed: bool = False
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+
+    @model_validator(mode="after")
+    def post_photo_rules(self):
+        if self.publishToFeed and not self.postImageReference:
+            raise ValueError("Publicar no feed exige a foto da publicacao")
+        if self.postImageReference and not self.publishToFeed:
+            raise ValueError("A foto da publicacao so vale ao publicar no feed")
+        return self
+
+
 class EditionRequestFields(Input):
     """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
     (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""
@@ -256,6 +320,23 @@ class EditionRequestFields(Input):
     distanceKm: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
     officialUrl: Annotated[str, Field(max_length=500, pattern=r"^https://[^\s]+$")] | None = None
     imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    # Foto da MEDALHA da pessoa (medalha provisoria ate a equipe decidir o pedido): privada, fora da fila de
+    # banners, nunca vira banner nem fica publica. Independe do banner sugerido em `imageReference`.
+    medalImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    # Tempo, avaliacao etc. da participacao, para aplicar quando a corrida for aprovada. Exige a foto da medalha.
+    participation: PendingParticipation | None = None
+
+    @model_validator(mode="after")
+    def participation_needs_medal_photo(self):
+        if self.participation and not self.medalImageReference:
+            raise ValueError("A participacao pendente exige a foto da medalha")
+        return self
+
+    @model_validator(mode="after")
+    def distinct_images(self):
+        if self.medalImageReference and self.medalImageReference == self.imageReference:
+            raise ValueError("A foto da medalha e o banner precisam ser imagens diferentes")
+        return self
 
     @field_validator("name", "city")
     @classmethod

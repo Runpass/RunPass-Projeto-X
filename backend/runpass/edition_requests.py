@@ -69,6 +69,7 @@ def projection(item):
             "linkedEditionId",
             "bannerState",
             "kind",
+            "participation",
         )
         if key in item
     }
@@ -93,6 +94,8 @@ def stored_details(model: EditionRequestFields):
         details["officialUrl"] = model.officialUrl
     if model.imageReference:
         details["imageReference"] = model.imageReference
+    if model.medalImageReference:
+        details["medalImageReference"] = model.medalImageReference
     return details
 
 
@@ -100,18 +103,63 @@ MAX_BANNER_SUGGESTIONS = 5  # sugestoes de banner ainda sem decisao, por pessoa
 
 
 class EditionRequestService:
-    def __init__(self, identity, cursor_key, catalog=None):
+    def __init__(self, identity, cursor_key, catalog=None, blobs=None):
         self.identity, self.store = identity, identity.store
         self.cipher = Fernet(cursor_key)
         self.catalog = catalog
+        self.blobs = blobs
+
+    def medal_image(self, actor, request_id, field="medalImageReference"):
+        """Link curto da foto da medalha provisoria do PROPRIO pedido (a copia tratada, nunca o original)."""
+
+        def work(read, write, account, now, replay):
+            item = read(item_key(actor.subject, request_id))
+            details = (item or {}).get("details") or {}
+            if not item or not details.get(field):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")  # de outra pessoa = mesma resposta
+            if item.get("bannerState") and field == "imageReference":
+                raise Problem(
+                    404, "IMAGE_NOT_AVAILABLE"
+                )  # banner ja decidido: nada provisorio a mostrar
+            return {"reference": details[field], "now": now}, {}
+
+        found = self.identity.transact(actor, "getRequestMedalImage", None, {}, work, admitted=True)
+        if self.blobs is None:
+            raise Unavailable()
+        link = self.blobs.view_url(actor.subject, found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(minutes=5)),
+        }
 
     def _pending_count(self, actor):
         rows, _ = self.store.query("history", "USER#" + actor.subject, prefix="EREQ#", limit=100)
         return sum(1 for _, item in rows if item.get("status") == "pending")
 
+    @staticmethod
+    def _own_image(read, actor, reference):
+        """(chave, registro) de uma imagem valida e do proprio dono, ou None se nao houve imagem."""
+        if not reference:
+            return None
+        key = ("operations", "USER#" + actor.subject, "IMAGE#" + reference)
+        image = read(key)
+        if (
+            not image
+            or image.get("state") != "valid"
+            or image.get("owner") != actor.subject
+            or image.get("origin") != "runner"
+        ):
+            raise Problem(422, "IMAGE_NOT_VALID")
+        return key, image
+
     def create(self, actor, key, fields: EditionRequestFields):
         details = stored_details(fields)
         payload = {**details, "date": details["date"], "distanceKm": str(details["distanceKm"])}
+        if fields.participation:
+            payload["participation"] = fields.participation.model_dump(
+                mode="json", exclude_none=True
+            )
 
         def work(read, write, account, now, replay):
             if replay is not None:
@@ -122,22 +170,18 @@ class EditionRequestService:
             check_date(fields.date, now)
             if self._pending_count(actor) >= MAX_PENDING:
                 raise Problem(409, "TOO_MANY_PENDING_REQUESTS")
-            image_key, image = None, None
-            if fields.imageReference:
-                # So uma imagem JA enviada e tratada, desta pessoa (mesma regra da foto da participacao).
-                image_key = (
-                    "operations",
-                    "USER#" + actor.subject,
-                    "IMAGE#" + fields.imageReference,
-                )
-                image = read(image_key)
-                if (
-                    not image
-                    or image.get("state") != "valid"
-                    or image.get("owner") != actor.subject
-                    or image.get("origin") != "runner"
+            # So imagens JA enviadas e tratadas, desta pessoa (mesma regra da foto da participacao).
+            banner = self._own_image(read, actor, fields.imageReference)
+            medal = self._own_image(read, actor, fields.medalImageReference)
+            pending = fields.participation
+            post = None
+            if pending and pending.postImageReference:
+                if pending.postImageReference in (
+                    fields.imageReference,
+                    fields.medalImageReference,
                 ):
-                    raise Problem(422, "IMAGE_NOT_VALID")
+                    raise Problem(422, "POST_IMAGE_MUST_DIFFER")
+                post = self._own_image(read, actor, pending.postImageReference)
             request_id, created = new_id(now), stamp(now)
             queue, owner = queue_key(created, request_id), owner_key(request_id)
             item = {
@@ -150,11 +194,19 @@ class EditionRequestService:
                 "updatedAt": created,
                 "sharedKeys": [list(owner), list(queue)],
             }
-            if image_key is not None:
+            if banner is not None:  # sugestao de banner: a equipe decide com credito e autorizacao
                 image_queue = image_queue_key(created, request_id)
                 item["sharedKeys"].append(list(image_queue))
                 write(image_queue, {"id": request_id, "createdAt": created})
-                write(image_key, {**image, "refs": image.get("refs", 0) + 1})
+                write(banner[0], {**banner[1], "refs": banner[1].get("refs", 0) + 1})
+            if medal is not None:  # foto de medalha: so reserva a imagem; nao entra em fila alguma
+                write(medal[0], {**medal[1], "refs": medal[1].get("refs", 0) + 1})
+            if (
+                pending is not None
+            ):  # dados da participacao, para aplicar quando a corrida for aprovada
+                item["participation"] = pending.model_dump(exclude_none=True)
+            if post is not None:
+                write(post[0], {**post[1], "refs": post[1].get("refs", 0) + 1})
             write(item_key(actor.subject, request_id), item)
             write(owner, {"owner": actor.subject})
             write(queue, {"id": request_id, "createdAt": created, "details": details})
@@ -233,6 +285,50 @@ class EditionRequestService:
             "suggestEditionBanner",
             key,
             {"editionId": edition_id, "imageReference": image_reference},
+            work,
+            admitted=True,
+        )
+
+    def delete(self, actor, request_id, key, expected_version):
+        """A pessoa exclui o proprio pedido (em qualquer situacao). A corrida ja criada no catalogo, se
+        houver, continua; sai so o registro do pedido, as filas da equipe e a reserva das imagens."""
+
+        def work(read, write, account, now, replay):
+            ikey = item_key(actor.subject, request_id)
+            item = read(ikey)
+            if replay is not None:
+                return {"id": request_id, "deleted": True}, replay
+            if not item:
+                raise Problem(404, "EDITION_REQUEST_NOT_FOUND")  # de outra pessoa = mesma resposta
+            if item["version"] != expected_version:
+                raise Problem(409, "VERSION_CONFLICT")
+            details = item.get("details") or {}
+            for shared in item.get("sharedKeys", []):
+                skey = tuple(shared)
+                read(skey)
+                write(skey, None)
+            refs = [
+                details.get("medalImageReference"),
+                (item.get("participation") or {}).get("postImageReference"),
+            ]
+            if not item.get(
+                "bannerState"
+            ):  # banner ja publicado/descartado: a reserva ja foi resolvida
+                refs.append(details.get("imageReference"))
+            for reference in refs:
+                if reference:
+                    image_key = ("operations", "USER#" + actor.subject, "IMAGE#" + reference)
+                    image = read(image_key)
+                    if image:
+                        write(image_key, {**image, "refs": max(0, image.get("refs", 0) - 1)})
+            write(ikey, None)
+            return {"id": request_id, "deleted": True}, {"id": request_id}
+
+        return self.identity.transact(
+            actor,
+            "deleteEditionRequest",
+            key,
+            {"id": request_id, "expectedVersion": expected_version},
             work,
             admitted=True,
         )
@@ -442,7 +538,9 @@ class EditionRequestReview:
                 found.append(body)
         return found
 
-    def approve_and_load(self, actor, request_id, expected_version, state=None, distances=None):
+    def approve_and_load(
+        self, actor, request_id, expected_version, state=None, distances=None, name=None
+    ):
         """Aprova o pedido: acha a corrida no catalogo e vincula; se nao existir, CRIA a partir dos dados do pedido
         (a pessoa da equipe confere UF e distancias antes) e vincula; se faltar dado essencial, fica aguardando.
 
@@ -469,10 +567,12 @@ class EditionRequestReview:
             if item["status"] == AWAITING:  # continua aguardando: nada muda
                 return "awaiting", projection(item)
             return "awaiting", self._await(actor, request_id, ikey, item)
-        edition_id = f"pedido-{slug(details['name'])[:60]}-{details['date']}-{request_id[-6:]}"
+        # A equipe pode corrigir o nome escrito errado antes de criar a corrida.
+        final_name = " ".join((name or details["name"]).split())
+        edition_id = f"pedido-{slug(final_name)[:60]}-{details['date']}-{request_id[-6:]}"
         payload = {
             "id": edition_id,
-            "name": details["name"],
+            "name": final_name,
             "date": details["date"],
             "city": details["city"],
             "state": uf,
@@ -579,6 +679,17 @@ class EditionRequestReview:
         require_operator(self.store, actor, "catalog_admin", self.clock())
         _, item = self._with_image(request_id)
         return self.blobs.read_derived(item["owner"], item["details"]["imageReference"])
+
+    def medal_photo(self, actor, request_id):
+        """Foto da medalha do pedido (copia tratada), so para a equipe conferir a corrida. Nunca e publicada."""
+        require_operator(self.store, actor, "catalog_admin", self.clock())
+        _, item = self._load(request_id)
+        reference = item["details"].get("medalImageReference")
+        if not reference:
+            raise Problem(404, "IMAGE_NOT_AVAILABLE")
+        if self.blobs is None:
+            raise Unavailable()
+        return self.blobs.read_derived(item["owner"], reference)
 
     def images(self, actor, limit=50):
         """Banners sugeridos aguardando decisao, de pedidos ja vinculados a uma corrida do catalogo."""

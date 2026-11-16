@@ -173,6 +173,25 @@ def set_social_links(catalog, actor, edition_id, links, origin_url):
     return {"version": updated["version"], **{k: payload.get(k) for k in checkers}}
 
 
+def rename_edition(catalog, actor, edition_id, name, origin_url):
+    """Corrige o NOME de uma corrida do catalogo (ex.: pedido de usuario escrito errado), numa nova versao.
+    O id e o resto dos dados nao mudam; so o nome, com o mesmo cuidado de espacos do cadastro."""
+    clean = " ".join(str(name or "").split())
+    if not clean or len(clean) > 160 or any(ord(c) < 32 for c in clean):
+        raise Problem(422, "INVALID_INPUT")
+    body = catalog._edition(edition_id)
+    head = catalog.store.get(("catalog", "EDITION#" + edition_id, "HEAD"))
+    if body is None or head is None:
+        raise Problem(404, "EDITION_NOT_FOUND")
+    payload = {k: v for k, v in body.items() if k in ImportEdition.model_fields}
+    payload["archived"] = body.get("status") == "archived"
+    payload["name"] = clean
+    updated = CatalogImporter(catalog).put(
+        payload, expected_version=int(head["version"]), origin=origin_url, actor=actor
+    )
+    return {"id": edition_id, "name": clean, "version": updated["version"]}
+
+
 def normalize_image(data, content_type):
     """JPEG e PNG seguem como estao; WebP vira JPEG (o app e a limpeza usam JPEG/PNG). Outro tipo, erro."""
     if content_type in ("image/jpeg", "image/png"):

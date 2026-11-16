@@ -101,6 +101,38 @@ class EditionRequestTests(unittest.TestCase):
     def decision(**data):
         return ReviewRequestDecision.model_validate(data)
 
+    def test_http_delete_removes_my_request_and_only_mine(self):
+        created = self.create().json()
+        wrong = self.client.delete(
+            f"/edition-requests/{created['id']}?expectedVersion=1", headers=self.headers("bia")
+        )
+        self.assertEqual(wrong.status_code, 404)
+        stale = self.client.delete(
+            f"/edition-requests/{created['id']}?expectedVersion=7", headers=self.headers("ana")
+        )
+        self.assertEqual(stale.status_code, 409)
+        done = self.client.delete(
+            f"/edition-requests/{created['id']}?expectedVersion=1", headers=self.headers("ana")
+        )
+        self.assertEqual(done.status_code, 200, done.text)
+        self.assertEqual(done.json(), {"id": created["id"], "deleted": True})
+        self.assertEqual(
+            self.client.get(
+                f"/edition-requests/{created['id']}", headers=self.headers("ana")
+            ).status_code,
+            404,
+        )
+        mine = self.client.get("/me/edition-requests", headers=self.headers("ana")).json()
+        self.assertEqual(mine["items"], [])
+        # sem chave de idempotencia: recusado como nas demais escritas
+        self.assertEqual(
+            self.client.delete(
+                f"/edition-requests/{created['id']}?expectedVersion=1",
+                headers={"Authorization": "Bearer ana"},
+            ).status_code,
+            422,
+        )
+
     # --- criar -------------------------------------------------------------------------------
 
     def test_create_is_private_pending_and_matches_the_contract(self):

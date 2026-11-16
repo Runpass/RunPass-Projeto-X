@@ -86,6 +86,34 @@ class UploadTests(unittest.TestCase):
             self.service.medal_image(other, "does-not-exist")
         self.assertEqual(missing.exception.code, "IMAGE_NOT_AVAILABLE")
 
+    def test_post_image_is_separate_from_the_medal_and_only_exists_when_attached(self):
+        pid = self.seed_medal()
+        part_key = ("history", "USER#owner", "P#p1#PART")
+        # sem foto da publicacao: 404 (a foto da medalha nao serve de foto do post)
+        with self.assertRaises(Problem) as sem:
+            self.service.post_image(self.actor, pid)
+        self.assertEqual(sem.exception.code, "IMAGE_NOT_AVAILABLE")
+        part = self.store.get(part_key)
+        self.blobs.write_derived("postref", b"post-bytes", "image/jpeg", "owner")
+        self.store.commit({part_key: part}, {part_key: {**part, "postImageReference": "postref"}})
+        link = self.service.post_image(self.actor, pid)
+        self.assertTrue(link["url"].startswith("memory://private/derived/postref"))
+        self.assertEqual(link["expiresAt"], "2026-10-28T15:05:00Z")
+        # a regra de visibilidade e a mesma da medalha: outra pessoa nao ve; com a regra injetada, ve
+        other = self.admit("other")
+        with self.assertRaises(Problem) as negado:
+            self.service.post_image(other, pid)
+        self.assertEqual(negado.exception.code, "IMAGE_NOT_AVAILABLE")
+        shared = UploadService(
+            self.identity, self.blobs, may_view=lambda read, actor, owner, part: True
+        )
+        self.assertIn("url", shared.post_image(other, pid))
+        # participacao nao concluida nao serve foto
+        draft = self.store.get(part_key)
+        self.store.commit({part_key: draft}, {part_key: {**draft, "state": "draft"}})
+        with self.assertRaises(Problem):
+            self.service.post_image(self.actor, pid)
+
     def test_display_image_falls_back_to_official_then_prefers_override(self):
         pid = self.seed_medal()
         link = self.service.medal_display_image(self.actor, pid)

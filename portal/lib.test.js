@@ -235,6 +235,12 @@ test('aprovação do pedido: corpo validado e frase do resultado', async () => {
   assert.deepEqual(montarAprovacao({ versao: 3, estado: ' sp ', distancias: '5, 10 km' }), { expectedVersion: 3, state: 'SP', distances: ['5', '10'] });
   assert.deepEqual(montarAprovacao({ versao: 1, estado: '', distancias: '' }), { expectedVersion: 1 });
   assert.deepEqual(montarAprovacao({ versao: '2', distancias: ['21,0975'] }), { expectedVersion: 2, distances: ['21,0975'] });
+  assert.deepEqual(montarAprovacao({ versao: 1, nome: '  Corrida   do Clube  ' }), { expectedVersion: 1, name: 'Corrida do Clube' });
+  assert.deepEqual(montarAprovacao({ versao: 1, nome: '   ' }), { expectedVersion: 1 });
+  assert.throws(() => montarAprovacao({ versao: 1, nome: 'x'.repeat(161) }), /160/);
+  const { montarRenomear } = await import('./lib.js');
+  assert.deepEqual(montarRenomear('  Novo   nome '), { name: 'Novo nome' });
+  assert.throws(() => montarRenomear('  '), /nome/);
   assert.throws(() => montarAprovacao({ versao: 0 }), /Versão/);
   assert.throws(() => montarAprovacao({ versao: 1, estado: 'SPX' }), /2 letras/);
   assert.throws(() => montarAprovacao({ versao: 1, estado: '1' }), /2 letras/);

@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
+import 'package:runpass/edition_requests.dart';
 import 'package:runpass/identity_gateway.dart';
+import 'package:runpass/medal_scan.dart';
 
 final onePixelPng = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -47,7 +49,13 @@ Map<String, dynamic> done(
   'completedAt': ?completedAt,
 };
 
-Future<IdentityGateway> runner({bool noRaces = false}) async {
+Future<IdentityGateway> runner({
+  bool noRaces = false,
+  List<Map<String, dynamic>> found = const [],
+  List<Map<String, dynamic>> requests = const [],
+  bool Function(String q)? foundFor,
+  bool participationExists = false,
+}) async {
   final editions = {
     'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
     'b': edition('b', 'Corrida B', '2025-05-01', 'Rio de Janeiro', 'RJ', 10),
@@ -56,6 +64,7 @@ Future<IdentityGateway> runner({bool noRaces = false}) async {
     cognito: Uri.parse('https://cognito.example'),
     api: Uri.parse('https://api.example'),
     clientId: 'synthetic',
+    byteTransport: (uri, method, headers, bytes) async => 200,
     transport: (uri, method, headers, body) async {
       if (uri.host == 'cognito.example') {
         return const JsonReply(200, {
@@ -81,6 +90,51 @@ Future<IdentityGateway> runner({bool noRaces = false}) async {
                 ],
         });
       }
+      if (uri.path == '/editions') {
+        final show = foundFor?.call(uri.queryParameters['q'] ?? '') ?? true;
+        return JsonReply(200, {'items': show ? found : []});
+      }
+      if (uri.path == '/uploads' && method == 'POST') {
+        return const JsonReply(201, {
+          'uploadId': 'up1',
+          'uploadUrl': 'https://signed.example/up1',
+          'uploadMethod': 'PUT',
+          'uploadHeaders': {'Content-Type': 'image/jpeg'},
+        });
+      }
+      if (uri.path == '/uploads/up1/finalize') {
+        return const JsonReply(200, {
+          'uploadId': 'up1',
+          'state': 'valid',
+          'imageReference': 'img_ok',
+        });
+      }
+      if (uri.path == '/participations/d1/complete') {
+        return const JsonReply(200, {
+          'id': 'd1',
+          'editionId': 'a',
+          'distanceId': '10k',
+          'state': 'completed',
+          'version': 2,
+          'medalImageReference': 'img_ok',
+        });
+      }
+      if (uri.path == '/participations' && method == 'POST') {
+        if (participationExists) {
+          return const JsonReply(409, {'code': 'PARTICIPATION_EXISTS'});
+        }
+        final sent = body! as Map;
+        return JsonReply(201, {
+          'id': 'd1',
+          'editionId': sent['editionId'],
+          'distanceId': sent['distanceId'],
+          'state': 'draft',
+          'version': 1,
+        });
+      }
+      if (uri.path == '/me/edition-requests') {
+        return JsonReply(200, {'items': requests});
+      }
       final match = editions[uri.pathSegments.last];
       return match == null
           ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
@@ -92,6 +146,17 @@ Future<IdentityGateway> runner({bool noRaces = false}) async {
 }
 
 void main() {
+  setUp(draftFormCache.clear);
+
+  test('sem os dados da corrida, o nome nunca é o código do pedido', () {
+    expect(
+      readableEditionName('pedido-maratona-pai-de-acucar-2026-10-12-ab12cd'),
+      'Maratona Pai De Acucar',
+    );
+    expect(readableEditionName('demo-1'), 'Corrida');
+    expect(readableEditionName(''), 'Corrida');
+  });
+
   testWidgets(
     'Medalhas troca Conquistas por Por cidade, agrupando por cidade visitada',
     (tester) async {
@@ -186,21 +251,1016 @@ void main() {
     expect(find.byType(MedalCollectionScreen), findsNothing);
   });
 
-  testWidgets('tocar no "+" da prateleira abre o cadastro de corridas', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(home: MedalCollectionScreen(gateway: await runner())),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byType(CatalogScreen), findsNothing);
+  Future<void> tapAdd(WidgetTester tester) async {
+    // Tela alta: a tela da foto agora tem os campos editáveis acima dos botões.
+    tester.view.physicalSize = const Size(800, 3200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await tester.ensureVisible(find.byKey(const Key('medal-add-tile')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('medal-add-tile')));
     await tester.pumpAndSettle();
-    expect(find.byType(CatalogScreen), findsOneWidget);
-    expect(find.byType(MedalCollectionScreen), findsNothing);
+  }
+
+  testWidgets('"+" da prateleira pede a foto da medalha antes das corridas, '
+      'lê o texto e lista as corridas achadas', (tester) async {
+    final searched = <String>[];
+    final gateway = await runner(
+      found: [
+        {
+          'id': 'a',
+          'name': 'Corrida A',
+          'date': '2026-09-01',
+          'city': 'São Paulo',
+          'state': 'SP',
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: gateway,
+          medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+          medalTextReader: _FakeReader([
+            'CIRCUITO DAS ESTAÇÕES',
+            '10 KM',
+            'PRIMAVERA 2026',
+          ], onRead: searched.add),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tapAdd(tester);
+    expect(
+      find.byType(CatalogScreen),
+      findsNothing,
+    ); // não vai direto às corridas
+    expect(find.text('Adicionar medalha'), findsOneWidget);
+    expect(find.byKey(const Key('medal-scan-found')), findsOneWidget);
+    expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
+    expect(searched, ['/tmp/medalha.jpg']);
   });
+
+  testWidgets(
+    'depois da busca pela foto, o cadastro manual está sempre à mão e não há mais o botão de procurar nas corridas',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['CIRCUITO DAS ESTAÇÕES']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      expect(find.byKey(const Key('medal-scan-note')), findsOneWidget);
+      expect(find.byKey(const Key('medal-match-a')), findsNothing);
+      expect(
+        find.byKey(const Key('medal-scan-catalog')),
+        findsNothing,
+      ); // botão removido
+      final manual = find.byKey(const Key('medal-scan-request'));
+      await tester.ensureVisible(manual);
+      expect(find.text('Fazer o cadastro manual'), findsOneWidget);
+      await tester.tap(manual);
+      await tester.pumpAndSettle();
+      expect(find.byType(EditionRequestFormScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'sem corrida achada, dá para pedir o cadastro com o nome da medalha',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader([
+              'CIRCUITO DAS ESTAÇÕES',
+              '10 KM',
+              '22/11/2026',
+            ]),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      expect(find.byKey(const Key('medal-scan-suggest')), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('medal-edit-distance')))
+            .controller!
+            .text,
+        '10',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('medal-edit-date')))
+            .controller!
+            .text,
+        '22/11/2026',
+      );
+      await tester.ensureVisible(find.byKey(const Key('medal-scan-request')));
+      await tester.tap(find.byKey(const Key('medal-scan-request')));
+      await tester.pumpAndSettle();
+      expect(find.byType(EditionRequestFormScreen), findsOneWidget);
+      expect(find.text('CIRCUITO DAS ESTAÇÕES'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'dá para corrigir o que foi lido, buscar de novo e concluir com os dados editados',
+    (tester) async {
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Corrida São Paulo',
+            'date': '2026-09-01',
+            'city': 'São Paulo',
+            'state': 'SP',
+          },
+        ],
+        foundFor: (q) => q.toLowerCase().contains('são'),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Corrida Gão Paulo', '10 KM']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      // Leu "Gão" (errado): nada achado, mas o campo é editável.
+      expect(find.byKey(const Key('medal-match-a')), findsNothing);
+      final nameField = find.byKey(const Key('medal-edit-name'));
+      await tester.ensureVisible(nameField);
+      expect(
+        tester.widget<TextField>(nameField).controller!.text,
+        'Corrida Gão Paulo',
+      );
+      await tester.enterText(nameField, 'Corrida São Paulo');
+      await tester.ensureVisible(
+        find.byKey(const Key('medal-scan-search-again')),
+      );
+      await tester.tap(find.byKey(const Key('medal-scan-search-again')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
+      // Corrige de novo, completa data e cidade e conclui: o formulário leva os dados editados.
+      await tester.enterText(nameField, 'Meia São Paulo 2026');
+      await tester.enterText(
+        find.byKey(const Key('medal-edit-date')),
+        '15/03/2026',
+      );
+      // Estado e cidade na rolagem (sem digitar): confirma a primeira da lista.
+      await tester.ensureVisible(find.byKey(const Key('medal-edit-location')));
+      await tester.tap(find.byKey(const Key('medal-edit-location')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('location-done')));
+      await tester.pumpAndSettle();
+      expect(find.text('AC - Acrelândia'), findsOneWidget);
+      final conclude = find.byKey(const Key('medal-scan-request'));
+      await tester.ensureVisible(conclude);
+      await tester.tap(conclude);
+      await tester.pumpAndSettle();
+      expect(find.byType(EditionRequestFormScreen), findsOneWidget);
+      for (final text in ['Meia São Paulo 2026', '15/03/2026', '10']) {
+        expect(find.text(text), findsWidgets, reason: text);
+      }
+      // Cidade e UF escolhidas na rolagem seguem para o formulário.
+      expect(find.textContaining('Acrelândia'), findsWidgets);
+    },
+  );
+
+  testWidgets(
+    'a data do cadastro só aceita números e coloca as barras sozinha',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Meia Maratona']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      String valueOf(String key) =>
+          tester.widget<TextField>(find.byKey(Key(key))).controller!.text;
+      expect(valueOf('medal-edit-name'), 'Meia Maratona');
+      final date = find.byKey(const Key('medal-edit-date'));
+      await tester.ensureVisible(date);
+      await tester.enterText(date, '15032026');
+      await tester.pump();
+      expect(valueOf('medal-edit-date'), '15/03/2026');
+      await tester.enterText(date, '1503');
+      await tester.pump();
+      expect(valueOf('medal-edit-date'), '15/03');
+    },
+  );
+
+  testWidgets(
+    'tocar numa corrida que já existe vai direto para a participação (tempo, km, avaliação e foto do post)',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Meia Maratona de São Paulo',
+            'date': '2026-09-20',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '21k', 'kilometers': 21.0975},
+            ],
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Meia Maratona']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      // Sem passo intermediário: já está no rascunho da participação nessa corrida.
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      expect(find.text('Rascunho da participação'), findsOneWidget);
+      expect(find.byType(EditionScreen), findsNothing);
+      // Tempo e distância (km) para preencher, avaliação, e a foto do post é opcional (aparece ao publicar).
+      expect(find.byKey(const Key('time-field')), findsOneWidget);
+      expect(find.text('Avaliação obrigatória'), findsOneWidget);
+      final list = find.byType(Scrollable).first;
+      final publish = find.byKey(const Key('publish-to-feed'));
+      await tester.scrollUntilVisible(publish, 200, scrollable: list);
+      expect(find.byKey(const Key('select-post-photo')), findsNothing);
+      await tester.tap(publish);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('select-post-photo')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'corrida com várias distâncias e sem km informado: pergunta a distância e abre a participação',
+    (tester) async {
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Meia de São Paulo',
+            'date': '2026-09-20',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '5k', 'kilometers': 5},
+              {'id': '21k', 'kilometers': 21.0975},
+            ],
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Meia de São Paulo']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      // A lista tem duas distâncias e nenhuma foi informada: pergunta ali mesmo, sem sair para a corrida.
+      expect(find.text('Qual distância você correu?'), findsOneWidget);
+      expect(find.byType(EditionScreen), findsNothing);
+      await tester.tap(find.byKey(const Key('distance-option-21k')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      expect(find.text('Rascunho da participação'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'corrida em que já tenho participação: abre a participação, não só a corrida',
+    (tester) async {
+      final gateway = await runner(
+        participationExists: true,
+        found: [
+          {
+            'id': 'a',
+            'name': 'Corrida A',
+            'date': '2026-09-01',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '10k', 'kilometers': 10},
+            ],
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Corrida A']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      expect(find.byType(EditionScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'concluir a participação de uma medalha nova volta à prateleira (sem tela preta)',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Corrida A',
+            'date': '2026-09-01',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '10k', 'kilometers': 10},
+            ],
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Corrida A']),
+            draftPhotoSelector: () async => [0xff, 0xd8, 0xff, 0xd9],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      expect(find.text('Rascunho da participação'), findsOneWidget);
+      await tester.tap(find.text('Selecionar foto'));
+      await tester.pumpAndSettle();
+      final list = find.byType(Scrollable).first;
+      for (final label in [
+        'Organização',
+        'Percurso',
+        'Kit',
+        'Medalha',
+        'Hidratação',
+        'Estrutura',
+        'Segurança',
+        'Custo-benefício',
+      ]) {
+        final star = find.byKey(Key('rating-$label-5'));
+        await tester.scrollUntilVisible(star, 200, scrollable: list);
+        await tester.tap(star);
+        await tester.pump();
+      }
+      final declaration = find.text('Declaro que concluí esta corrida');
+      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
+      await tester.tap(declaration);
+      await tester.pumpAndSettle();
+      final finish = find.text('Concluir participação');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await tester.tap(finish);
+      await tester.pumpAndSettle();
+      // A prateleira aparece (não uma tela preta) e é a única tela: sem seta de voltar.
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
+      expect(find.byKey(const Key('medals-title')), findsOneWidget);
+      expect(
+        tester.state<NavigatorState>(find.byType(Navigator)).canPop(),
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets(
+    'corrida não encontrada: botão para pesquisar o nome na internet',
+    (tester) async {
+      final opened = <Uri>[];
+      final previous = linkOpener;
+      linkOpener = (uri) async {
+        opened.add(uri);
+        return true;
+      };
+      addTearDown(() => linkOpener = previous);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['MARATONA PAI DE ACUCAR']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      final web = find.byKey(const Key('medal-scan-web-search'));
+      await tester.ensureVisible(web);
+      expect(web, findsOneWidget);
+      await tester.tap(web);
+      await tester.pumpAndSettle();
+      expect(opened.single.host, 'www.google.com');
+      expect(
+        opened.single.queryParameters['q'],
+        'MARATONA PAI DE ACUCAR corrida',
+      );
+      // O nome corrigido na tela é o que vai na pesquisa; sem nome, o botão desabilita.
+      final field = find.byKey(const Key('medal-edit-name'));
+      await tester.ensureVisible(field);
+      await tester.enterText(field, 'Maratona Pão de Açúcar');
+      await tester.pump();
+      await tester.ensureVisible(web);
+      await tester.tap(web);
+      await tester.pumpAndSettle();
+      expect(
+        opened.last.queryParameters['q'],
+        'Maratona Pão de Açúcar corrida',
+      );
+      await tester.enterText(field, '   ');
+      await tester.pump();
+      expect(tester.widget<OutlinedButton>(web).onPressed, isNull);
+    },
+  );
+
+  testWidgets(
+    'a pesquisa na internet já está na primeira tela, com ou sem corrida encontrada',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              found: [
+                {
+                  'id': 'a',
+                  'name': 'Corrida A',
+                  'date': '2026-09-01',
+                  'city': 'São Paulo',
+                  'state': 'SP',
+                },
+              ],
+            ),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Corrida A']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
+      expect(find.byKey(const Key('medal-scan-web-search')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'edição diferente da que quero: usar como base copia os dados para os campos e segue no cadastro manual',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              found: [
+                {
+                  'id': 'a',
+                  'name': 'Meia Maratona de São Paulo',
+                  'date': '2024-09-20',
+                  'city': 'São Paulo',
+                  'state': 'SP',
+                  'distances': [
+                    {'id': '21k', 'kilometers': 21.0975},
+                  ],
+                },
+              ],
+            ),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Meia Maratona']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      String valueOf(String key) =>
+          tester.widget<TextField>(find.byKey(Key(key))).controller!.text;
+      await tester.ensureVisible(find.byKey(const Key('medal-base-a')));
+      await tester.tap(find.byKey(const Key('medal-base-a')));
+      await tester.pumpAndSettle();
+      // Copiou os dados da edição achada, sem sair da tela nem ir para a participação.
+      expect(find.byType(ParticipationDraftScreen), findsNothing);
+      expect(valueOf('medal-edit-name'), 'Meia Maratona de São Paulo');
+      expect(valueOf('medal-edit-date'), '20/09/2024');
+      // Ajusta o que é diferente (outro ano) e segue com o cadastro manual.
+      final date = find.byKey(const Key('medal-edit-date'));
+      await tester.ensureVisible(date);
+      await tester.enterText(date, '19092025');
+      await tester.pump();
+      final manual = find.byKey(const Key('medal-scan-request'));
+      await tester.ensureVisible(manual);
+      await tester.tap(manual);
+      await tester.pumpAndSettle();
+      expect(find.byType(EditionRequestFormScreen), findsOneWidget);
+      expect(find.text('19/09/2025'), findsWidgets);
+      expect(find.text('Meia Maratona de São Paulo'), findsWidgets);
+    },
+  );
+
+  testWidgets('aparelho sem leitor de texto avisa e ainda leva às corridas', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: await runner(),
+          medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+          medalTextReader: _FakeReader(const [], unavailable: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tapAdd(tester);
+    expect(find.textContaining('ainda não lê o texto'), findsOneWidget);
+    expect(find.byKey(const Key('medal-scan-request')), findsOneWidget);
+    expect(find.byKey(const Key('medal-scan-catalog')), findsNothing);
+  });
+
+  testWidgets('desistir da foto no "+" não abre nada', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: await runner(),
+          medalPhotoPicker: (_) async => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tapAdd(tester);
+    expect(find.byType(MedalScanScreen), findsNothing);
+    expect(find.byType(CatalogScreen), findsNothing);
+    expect(find.byType(MedalCollectionScreen), findsOneWidget);
+  });
+
+  test(
+    'medalQueries ignora números e ruído e põe o nome mais longo primeiro',
+    () {
+      expect(
+        medalQueries([
+          '10 KM',
+          '2026',
+          'FINISHER',
+          'Circuito das Estações',
+          'Primavera',
+        ]),
+        ['Circuito das Estações', 'Primavera'],
+      );
+      expect(medalQueries(const []), isEmpty);
+      expect(medalQueries(['Ab', '12']), isEmpty);
+    },
+  );
+
+  testWidgets(
+    'excluir medalha: confirma, envia DELETE com a versão e some da lista',
+    (tester) async {
+      final calls = <String>[];
+      var deleted = false;
+      final editions = {
+        'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+      };
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          calls.add(
+            '$method ${uri.path}${uri.query.isEmpty ? '' : '?${uri.query}'}',
+          );
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          if (uri.path == '/me') {
+            return const JsonReply(200, {
+              'displayName': 'Corredor Teste',
+              'username': 'teste',
+              'version': 1,
+            });
+          }
+          if (uri.path == '/me/participations') {
+            return JsonReply(200, {
+              'items': deleted ? [] : [done('p1', 'a', seconds: 1500)],
+            });
+          }
+          if (uri.path == '/participations/p1' && method == 'DELETE') {
+            deleted = true;
+            return const JsonReply(200, {});
+          }
+          final match = editions[uri.pathSegments.last];
+          return match == null
+              ? const JsonReply(404, {'code': 'EDITION_NOT_FOUND'})
+              : JsonReply(200, match);
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(home: MedalCollectionScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('medal-edit-p1')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('medal-edit-p1')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('medal-delete')));
+      await tester.tap(find.byKey(const Key('medal-delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('Excluir medalha?'), findsOneWidget);
+      // Cancelar não exclui nada.
+      await tester.tap(find.text('Cancelar').last);
+      await tester.pumpAndSettle();
+      expect(calls.any((c) => c.startsWith('DELETE')), isFalse);
+
+      await tester.tap(find.byKey(const Key('medal-delete')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('medal-delete-confirm')));
+      await tester.pumpAndSettle();
+      expect(
+        calls
+            .where(
+              (c) => c.startsWith('DELETE /participations/p1?expectedVersion='),
+            )
+            .length,
+        1,
+      );
+      expect(find.byKey(const Key('medal-edit-p1')), findsNothing);
+      expect(find.textContaining('saiu de Minhas corridas'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'seta de voltar só existe nas corridas abertas pelo "+", não nas abas',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              found: [
+                {
+                  'id': 'a',
+                  'name': 'Corrida A',
+                  'date': '2026-09-01',
+                  'city': 'São Paulo',
+                  'state': 'SP',
+                  'distances': [
+                    {'id': '10k', 'kilometers': 10},
+                  ],
+                },
+              ],
+            ),
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Corrida A']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(BackButton), findsNothing);
+      await tapAdd(tester);
+      // O ícone da corrida abre a corrida por cima (com seta de voltar).
+      await tester.ensureVisible(find.byKey(const Key('medal-open-a')));
+      await tester.tap(find.byKey(const Key('medal-open-a')));
+      await tester.pumpAndSettle();
+      expect(find.byType(EditionScreen), findsOneWidget);
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      expect(navigator.canPop(), isTrue); // dá para voltar às medalhas
+      await tester.tap(find.text('Perfil'));
+      await tester.pumpAndSettle();
+      expect(find.byType(RunnerProfileScreen), findsOneWidget);
+      expect(navigator.canPop(), isFalse); // aba aberta: sem seta, sem pilha
+      await tester.tap(find.text('Medalhas'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
+      expect(navigator.canPop(), isFalse);
+    },
+  );
+
+  testWidgets('sem medalhas, a tela oferece adicionar a primeira pela foto', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MedalCollectionScreen(
+          gateway: await runner(noRaces: true),
+          medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+          medalTextReader: _FakeReader(['CIRCUITO DAS ESTAÇÕES']),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Sua primeira medalha aparecerá aqui'),
+      findsOneWidget,
+    );
+    // A tela do Rafael continua inteira: filtros e totais, com o convite no lugar da prateleira.
+    expect(find.byKey(const Key('medals-list')), findsOneWidget);
+    expect(find.text('Por ano'), findsOneWidget);
+    expect(find.byKey(const Key('medals-empty')), findsOneWidget);
+    expect(find.byType(CatalogScreen), findsNothing);
+    await tester.tap(find.byKey(const Key('medal-add-first')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byType(MedalScanScreen),
+      findsOneWidget,
+    ); // vai direto à foto, não às corridas
+    expect(find.byType(CatalogScreen), findsNothing);
+  });
+
+  Map<String, dynamic> medalRequest(
+    String id,
+    String status, {
+    String? linked,
+    String? reason,
+  }) => {
+    'id': id,
+    'status': status,
+    'version': 1,
+    'details': {
+      'name': 'Corrida $id',
+      'date': '2027-03-14',
+      'city': 'São Paulo',
+      'distanceKm': 10,
+      'imageReference': 'img_$id',
+      'medalImageReference': 'img_med_$id',
+    },
+    'linkedEditionId': ?linked,
+    'reason': ?reason,
+  };
+
+  testWidgets(
+    'medalha provisória aparece cinza e com cadeado até a equipe aprovar',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              requests: [
+                medalRequest('r1', 'pending'),
+                medalRequest('r2', 'approved', linked: 'zz'),
+                medalRequest('r3', 'rejected', reason: 'Prova duplicada'),
+                medalRequest(
+                  'r4',
+                  'approved',
+                  linked: 'a',
+                ), // já concluída: some
+                {
+                  ...medalRequest('r5', 'pending'),
+                  'details': {'name': 'Só pedido', 'date': '2027-03-14'},
+                },
+              ],
+            ),
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // As medalhas em análise ficam junto das minhas medalhas (na mesma prateleira), não numa seção à parte.
+      expect(find.text('Medalhas em análise'), findsNothing);
+      expect(find.byKey(const Key('medals-title')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(GridView),
+          matching: find.byKey(const Key('pending-medal-r1')),
+        ),
+        findsOneWidget,
+      );
+      // Em análise: bloqueada, com cadeado.
+      expect(find.byKey(const Key('pending-status-r1')), findsOneWidget);
+      expect(find.text('Em análise pela equipe'), findsOneWidget);
+      expect(find.byKey(const Key('pending-locked-r1-true')), findsOneWidget);
+      // Aprovada: sem cinza nem cadeado, e convida a concluir.
+      expect(find.byKey(const Key('pending-locked-r2-false')), findsOneWidget);
+      expect(
+        find.text('Corrida aprovada. Toque para concluir.'),
+        findsOneWidget,
+      );
+      // Recusada: continua bloqueada e diz o motivo.
+      expect(
+        find.text('Cadastro não aprovado: Prova duplicada'),
+        findsOneWidget,
+      );
+      // Aprovada e já concluída (corrida 'a'): a medalha de verdade já está na prateleira.
+      expect(find.byKey(const Key('pending-medal-r4')), findsNothing);
+      // Pedido comum, sem foto de medalha: não vira medalha provisória.
+      expect(find.byKey(const Key('pending-medal-r5')), findsNothing);
+      expect(
+        find.byKey(const Key('pending-lock')),
+        findsNWidgets(2),
+      ); // r1 e r3
+    },
+  );
+
+  testWidgets(
+    'corrida aprovada com participação guardada conclui sozinha, sem a pessoa voltar a preencher',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              noRaces: true,
+              requests: [
+                {
+                  ...medalRequest('r2', 'approved', linked: 'b'),
+                  'participation': {
+                    'timeSeconds': 3000,
+                    'ratings': {'organization': 5},
+                    'publishToFeed': false,
+                  },
+                },
+              ],
+            ),
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('a sua participação já foi concluída'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'medalha aprovada: mostra o nome atual da corrida e leva à minha participação',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              noRaces: true,
+              requests: [
+                medalRequest('r2', 'approved', linked: 'b'),
+                medalRequest('r1', 'pending'),
+              ],
+            ),
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // O pedido dizia "Corrida r2"; a corrida aprovada tem o nome atual do catálogo.
+      expect(find.byKey(const Key('pending-name-r2')), findsOneWidget);
+      expect(find.text('Corrida B'), findsOneWidget);
+      expect(find.text('Corrida r2'), findsNothing);
+      // Aprovada: tem o lápis de editar, sem cadeado, e tocar leva ao rascunho da participação.
+      expect(find.byKey(const Key('pending-edit-r2')), findsOneWidget);
+      expect(find.byKey(const Key('pending-locked-r2-false')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('pending-locked-r2-false')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      expect(find.text('Rascunho da participação'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'lápis da medalha em análise: menu com ver a solicitação e excluir',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: await runner(
+              noRaces: true,
+              requests: [medalRequest('r1', 'pending')],
+            ),
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pending-locked-r1-true')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('pending-edit-r1')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('pending-menu-continue')),
+        findsNothing,
+      ); // ainda não aprovada
+      expect(find.byKey(const Key('pending-menu-delete')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('pending-menu-request')));
+      await tester.pumpAndSettle();
+      expect(find.text('Minhas solicitações'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'excluir a medalha aprovada (Batman) pela prateleira: confirma, DELETE e some',
+    (tester) async {
+      final calls = <String>[];
+      var deleted = false;
+      final request = medalRequest('r9', 'approved', linked: 'b');
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          calls.add(
+            '$method ${uri.path}${uri.query.isEmpty ? '' : '?${uri.query}'}',
+          );
+          if (uri.path == '/me/participations') {
+            return const JsonReply(200, {'items': []});
+          }
+          if (uri.path == '/me/edition-requests') {
+            return JsonReply(200, {
+              'items': deleted ? [] : [request],
+            });
+          }
+          if (uri.path == '/edition-requests/r9' && method == 'DELETE') {
+            deleted = true;
+            return const JsonReply(200, {'id': 'r9', 'deleted': true});
+          }
+          if (uri.path == '/editions/b') {
+            return JsonReply(
+              200,
+              edition('b', 'Batman Run', '2025-09-13', 'São Paulo', 'SP', 10),
+            );
+          }
+          return const JsonReply(200, {'items': []});
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            pendingPhotoLoader: (_, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pending-medal-r9')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('pending-edit-r9')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('pending-menu-continue')),
+        findsOneWidget,
+      ); // aprovada: dá para atualizar
+      await tester.tap(find.byKey(const Key('pending-menu-delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('Excluir medalha?'), findsOneWidget);
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+      expect(calls.any((c) => c.startsWith('DELETE')), isFalse);
+      await tester.tap(find.byKey(const Key('pending-edit-r9')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('pending-menu-delete')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('pending-delete-confirm')));
+      await tester.pumpAndSettle();
+      expect(
+        calls
+            .where((c) => c == 'DELETE /edition-requests/r9?expectedVersion=1')
+            .length,
+        1,
+      );
+      expect(find.byKey(const Key('pending-medal-r9')), findsNothing);
+      expect(find.text('Medalha excluída.'), findsOneWidget);
+    },
+  );
 
   testWidgets('editar medalha: muda forma, cor e legenda e salva via PATCH', (
     tester,
@@ -540,4 +1600,18 @@ void main() {
       expect(find.text('concluiu Corrida A'), findsOneWidget);
     },
   );
+}
+
+class _FakeReader implements MedalTextReader {
+  final List<String> lines;
+  final bool unavailable;
+  final void Function(String path)? onRead;
+  _FakeReader(this.lines, {this.unavailable = false, this.onRead});
+
+  @override
+  Future<List<String>> read(String path) async {
+    onRead?.call(path);
+    if (unavailable) throw MedalReadUnavailable();
+    return lines;
+  }
 }

@@ -12,6 +12,7 @@ import 'catalog_screen.dart'
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
+import 'tagged_people.dart';
 import 'runpass_theme.dart';
 
 /// Um cartao do Inicio. Vem de uma publicacao (`/feed`, `/posts/{id}`) ou de uma corrida
@@ -25,6 +26,7 @@ class FeedEntry {
   final bool mine;
   final Map? authorProfile;
   final Map? lastComment;
+  final List<Map<String, dynamic>> tagged;
   int likes, comments;
   bool liked;
 
@@ -37,6 +39,7 @@ class FeedEntry {
     required this.mine,
     this.authorProfile,
     this.lastComment,
+    this.tagged = const [],
     this.comment,
     this.place,
     this.publishedAt,
@@ -56,6 +59,7 @@ FeedEntry entryFromPost(
     post['participation'] as Map? ?? const {},
   );
   final author = Map<String, dynamic>.from(post['author'] as Map? ?? const {});
+  participation['hasPostImage'] = post['hasPostImage'] == true;
   final race = RaceRecord(participation, edition);
   return FeedEntry(
     postId: post['id'] as String?,
@@ -69,6 +73,10 @@ FeedEntry entryFromPost(
     mine: myId != null && author['id'] == myId,
     authorProfile: author,
     lastComment: post['lastComment'] as Map?,
+    tagged: [
+      for (final person in (post['tagged'] as List? ?? const []))
+        Map<String, dynamic>.from(person as Map),
+    ],
     likes: (post['likeCount'] as num?)?.toInt() ?? 0,
     comments: (post['commentCount'] as num?)?.toInt() ?? 0,
     liked: post['likedByMe'] == true,
@@ -361,7 +369,11 @@ class _PostCardState extends State<PostCard> {
       MaterialPageRoute<void>(
         builder: (_) => ParticipationDraftScreen(
           gateway: widget.gateway,
-          initial: Map<String, dynamic>.from(entry.race.participation),
+          initial: {
+            ...entry.race.participation,
+            'taggedProfiles': entry.tagged,
+          },
+          fromPost: true,
         ),
       ),
     );
@@ -471,7 +483,9 @@ class _PostCardState extends State<PostCard> {
     if (id == null) return null;
     try {
       final reply = await widget.gateway
-          .request('/participations/${Uri.encodeComponent(id)}/image')
+          .request(
+            '/participations/${Uri.encodeComponent(id)}/${entry.race.hasPostImage ? 'post-image' : 'image'}',
+          )
           .timeout(const Duration(seconds: 6));
       final url = Uri.tryParse(reply['url'] as String? ?? '');
       if (url == null || url.scheme != 'https') return null;
@@ -747,6 +761,11 @@ class _PostCardState extends State<PostCard> {
                       participationId:
                           entry.race.participation['id'] as String?,
                       size: 72,
+                      usePostImage: entry.race.hasPostImage,
+                      // A foto publicada aparece inteira dentro do quadro (a medalha continua preenchendo).
+                      fit: entry.race.hasPostImage
+                          ? BoxFit.contain
+                          : BoxFit.cover,
                     ),
                   ),
                 ),
@@ -807,6 +826,15 @@ class _PostCardState extends State<PostCard> {
                     ],
                   ),
                 ),
+                // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
+                if (entry.tagged.isNotEmpty && entry.postId != null) ...[
+                  const SizedBox(width: 22),
+                  TaggedLink(
+                    gateway: widget.gateway,
+                    postId: entry.postId!,
+                    tagged: entry.tagged,
+                  ),
+                ],
                 const Spacer(),
                 InkWell(
                   key: Key('share-${entry.race.participation['id']}'),
@@ -884,6 +912,7 @@ class PostThumb extends StatelessWidget {
                   gateway: gateway,
                   participationId: entry.race.participation['id'] as String?,
                   size: 40,
+                  usePostImage: entry.race.hasPostImage,
                 ),
                 Positioned(
                   left: 0,

@@ -429,7 +429,7 @@ export function abaInicial(preferida, permissoes) {
 
 /** Corpo do POST de aprovação (cria a corrida e vincula). Estado e distâncias são opcionais: sem estado, o pedido
  *  fica aguardando a carga. Lança Error com texto para a pessoa quando algo estiver errado. */
-export function montarAprovacao({ versao, estado, distancias }) {
+export function montarAprovacao({ versao, estado, distancias, nome }) {
   const v = Number(versao);
   if (!Number.isInteger(v) || v < 1) throw new Error('Versão do pedido inválida. Atualize a lista.');
   const corpo = { expectedVersion: v };
@@ -442,7 +442,20 @@ export function montarAprovacao({ versao, estado, distancias }) {
   if (km.length > 8) throw new Error('No máximo 8 distâncias.');
   if (km.some((d) => { const n = Number(String(d).replace(',', '.')); return !(n > 0 && n <= 1000); })) throw new Error('Distância inválida (use números entre 0 e 1000).');
   if (km.length) corpo.distances = km.map(String);
+  const n = (nome || '').trim().replace(/\s+/g, ' ');
+  if (n) {
+    if (n.length > 160) throw new Error('O nome pode ter no máximo 160 caracteres.');
+    corpo.name = n;
+  }
   return corpo;
+}
+
+/** Corpo do PATCH que corrige o nome de uma corrida do catálogo. */
+export function montarRenomear(nome) {
+  const n = (nome || '').trim().replace(/\s+/g, ' ');
+  if (!n) throw new Error('Informe o nome da corrida.');
+  if (n.length > 160) throw new Error('O nome pode ter no máximo 160 caracteres.');
+  return { name: n };
 }
 
 /** Frase para o resultado da aprovação, conforme o que o sistema fez. */

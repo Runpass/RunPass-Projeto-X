@@ -21,6 +21,8 @@ IdentityGateway demoGateway(DemoTransport demo) => IdentityGateway(
 );
 
 void main() {
+  setUp(draftFormCache.clear);
+
   testWidgets(
     'clearly labelled local demo goes from login through profile and admission to catalog',
     (tester) async {

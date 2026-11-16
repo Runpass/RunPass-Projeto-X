@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'catalog_screen.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
+import 'pending_participation.dart';
 import 'profile_photo.dart';
 
 /// Pedido de prova ausente: o corredor informa nome, data, cidade e distância; a equipe confere a
@@ -95,12 +96,30 @@ class EditionRequestFormScreen extends StatefulWidget {
 
   /// Escolhe e recorta a imagem do banner; nulo se a pessoa desistir. Troque nos testes.
   final Future<List<int>?> Function(BuildContext context)? bannerSelector;
+
+  /// Foto da medalha (medalha provisória): vai junto com o pedido, privada e fora da fila de banners.
+  /// Quando presente, não se escolhe banner.
+  final List<int>? medalPhoto;
+
+  /// Coleta a minha participação (tempo, avaliação...) antes de enviar o pedido com a foto da medalha. Devolve o
+  /// mapa, `{}` para enviar sem ela, ou nulo para voltar ao formulário. Trocável nos testes.
+  final Future<Map<String, dynamic>?> Function(
+    BuildContext context,
+    String raceName,
+  )?
+  participationCollector;
+
+  /// Baixa a imagem do link colado em "Buscar na internet". Troque nos testes.
+  final ImageLinkFetcher imageFetcher;
   const EditionRequestFormScreen({
     super.key,
     required this.gateway,
     this.existing,
     this.prefill = const {},
     this.bannerSelector,
+    this.medalPhoto,
+    this.participationCollector,
+    this.imageFetcher = fetchImageFromLink,
   });
   @override
   State<EditionRequestFormScreen> createState() =>
@@ -116,6 +135,9 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
   /// Banner sugerido (opcional): bytes já recortados e, depois do envio, a referência aceita pelo servidor.
   List<int>? banner;
   String? bannerRef;
+  String? medalRef;
+  Map<String, dynamic>?
+  participation; // coletada uma vez; reenvio não pergunta de novo
 
   bool get correcting => widget.existing != null;
 
@@ -155,9 +177,15 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       if (widget.bannerSelector != null) {
         bytes = await widget.bannerSelector!(context);
       } else {
-        final choice = await askPhotoChoice(context);
+        final choice = await askPhotoChoice(context, allowWeb: true);
         if (choice == null || choice == PhotoChoice.remove || !mounted) return;
-        bytes = await pickBannerPhoto(context, choice);
+        bytes = choice == PhotoChoice.web
+            ? await pickBannerFromWeb(
+                context,
+                query: text('name'),
+                fetcher: widget.imageFetcher,
+              )
+            : await pickBannerPhoto(context, choice);
       }
     } on Exception catch (problem) {
       if (mounted) setState(() => error = photoError(problem));
@@ -186,6 +214,24 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       'distanceKm': double.parse(text('distanceKm').replaceAll(',', '.')),
       if (text('officialUrl').isNotEmpty) 'officialUrl': text('officialUrl'),
     };
+    // Cadastro manual com foto da medalha: antes de enviar, pede tempo e avaliação (opcional), que ficam
+    // guardados com o pedido e são aplicados quando a corrida for aprovada.
+    if (!correcting && widget.medalPhoto != null && participation == null) {
+      final collected = widget.participationCollector != null
+          ? await widget.participationCollector!(context, text('name'))
+          : await Navigator.of(context).push<Map<String, dynamic>>(
+              MaterialPageRoute(
+                builder: (_) => PendingParticipationScreen(
+                  gateway: widget.gateway,
+                  raceName: text('name'),
+                ),
+              ),
+            );
+      if (collected == null || !mounted) {
+        return; // voltou: continua no formulário
+      }
+      participation = collected;
+    }
     setState(() {
       saving = true;
       error = null;
@@ -195,6 +241,17 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
         // Envia a imagem primeiro (a referência é só desta pessoa); o pedido leva só a referência.
         bannerRef ??= await uploadProfilePhoto(widget.gateway, banner!);
         body['imageReference'] = bannerRef;
+      }
+      if (!correcting && widget.medalPhoto != null) {
+        // A foto da medalha é outra imagem: privada, não vai para a fila de banners.
+        medalRef ??= await uploadProfilePhoto(
+          widget.gateway,
+          widget.medalPhoto!,
+        );
+        body['medalImageReference'] = medalRef;
+        if (participation != null && participation!.isNotEmpty) {
+          body['participation'] = participation;
+        }
       }
       Map<String, dynamic> result;
       if (correcting) {
@@ -243,6 +300,34 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
     }
   }
 
+  /// Foto da medalha que segue com o pedido (medalha provisória): só a pessoa a vê até a equipe decidir.
+  Widget medalNote() => Card(
+    key: const Key('request-medal-photo'),
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.memory(
+              Uint8List.fromList(widget.medalPhoto!),
+              width: 64,
+              height: 64,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const SizedBox(width: 64, height: 64),
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'A foto da sua medalha vai junto e fica só com você. A medalha aparece em Medalhas como "Em análise" até a equipe confirmar a corrida.',
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
   Widget bannerPicker() => Card(
     key: const Key('request-banner'),
     child: Padding(
@@ -289,7 +374,9 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
               key: const Key('request-banner-pick'),
               onPressed: saving ? null : chooseBanner,
               icon: const Icon(Icons.add_photo_alternate_outlined),
-              label: const Text('Escolher imagem do banner'),
+              label: const Text(
+                'Escolher imagem do banner (aparelho ou internet)',
+              ),
             ),
         ],
       ),
@@ -461,6 +548,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
               ],
             ),
           ),
+          if (!correcting && widget.medalPhoto != null) medalNote(),
           if (!correcting) bannerPicker(),
           if (error != null) ...[
             const SizedBox(height: 8),
@@ -470,7 +558,13 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
           FilledButton(
             key: const Key('request-submit'),
             onPressed: saving ? null : submit,
-            child: Text(correcting ? 'Corrigir e reenviar' : 'Enviar pedido'),
+            child: Text(
+              correcting
+                  ? 'Corrigir e reenviar'
+                  : (widget.medalPhoto != null
+                        ? 'Concluir cadastro da medalha'
+                        : 'Enviar pedido'),
+            ),
           ),
           if (saving) const Center(child: CircularProgressIndicator()),
         ],
@@ -527,6 +621,59 @@ class _MyEditionRequestsScreenState extends State<MyEditionRequestsScreen> {
       }
     } finally {
       if (mounted) setState(() => loading = false);
+    }
+  }
+
+  /// Exclui a própria solicitação (em qualquer situação). A corrida já criada no catálogo continua.
+  Future<void> remove(Map<String, dynamic> request) async {
+    final approved =
+        request['status'] == 'approved' || request['status'] == 'linked';
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Excluir solicitação?'),
+        content: Text(
+          approved
+              ? 'A solicitação sai da sua lista. A corrida que a equipe já criou no catálogo continua lá.'
+              : 'A solicitação e as imagens enviadas com ela serão excluídas, e a equipe deixa de analisá-la.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('request-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.gateway.request(
+        '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
+        method: 'DELETE',
+        query: {'expectedVersion': '${request['version']}'},
+      );
+      if (!mounted) return;
+      setState(() => items.removeWhere((e) => e['id'] == request['id']));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Solicitação excluída.')),
+      );
+    } on IdentityIssue catch (issue) {
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível excluir. Verifique a internet e tente de novo.',
+          ),
+        ),
+      );
     }
   }
 
@@ -623,6 +770,22 @@ class _MyEditionRequestsScreenState extends State<MyEditionRequestsScreen> {
                 ),
                 child: const Text('Ver a corrida no catálogo'),
               ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: Key('request-delete-${request['id']}'),
+                onPressed: () => remove(request),
+                icon: const Icon(
+                  Icons.delete_outline,
+                  color: Colors.red,
+                  size: 18,
+                ),
+                label: const Text(
+                  'Excluir solicitação',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ),
           ],
         ),
       ),

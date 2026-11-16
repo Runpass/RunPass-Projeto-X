@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
@@ -124,7 +125,29 @@ Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
   await tester.enterText(field, name);
 }
 
+/// Escolhe o tempo no seletor de rolagem (horas, minutos e segundos) e confirma.
+Future<void> pickTime(
+  WidgetTester tester, {
+  int hours = 0,
+  int minutes = 0,
+  int seconds = 0,
+}) async {
+  await tester.ensureVisible(find.byKey(const Key('time-field')));
+  await tester.tap(find.byKey(const Key('time-field')));
+  await tester.pumpAndSettle();
+  final wheels = find.byType(CupertinoPicker);
+  for (final (index, steps) in [(0, hours), (1, minutes), (2, seconds)]) {
+    if (steps == 0) continue;
+    await tester.drag(wheels.at(index), Offset(0, -32.0 * steps));
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(find.byKey(const Key('duration-confirm')));
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  setUp(draftFormCache.clear);
+
   test('rótulos dos status do pedido, inclusive aguardando a carga', () {
     expect(requestStatusLabel('pending'), 'Em análise pela equipe');
     expect(
@@ -276,17 +299,25 @@ void main() {
       await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
       expect(find.text('Distância selecionada.'), findsOneWidget);
-      expect(paths.where((c) => c != '/me/participations'), [
-        '/editions',
-        '/me/race-plans', // marcas dos atalhos da lista
-        '/editions/A',
-        '/editions/A/reviews',
-        '/editions/A/participants',
-        '/editions/A/registrants',
-        '/editions/A/photos',
-        '/me/race-plans/A',
-        '/editions/A/reviews',
-      ]);
+      expect(
+        paths.where(
+          (c) =>
+              c != '/me/participations' &&
+              c != '/me/edition-requests' &&
+              !c.endsWith('/comments'),
+        ),
+        [
+          '/editions',
+          '/me/race-plans', // marcas dos atalhos da lista
+          '/editions/A',
+          '/editions/A/reviews',
+          '/editions/A/participants',
+          '/editions/A/registrants',
+          '/editions/A/photos',
+          '/me/race-plans/A',
+          '/editions/A/reviews',
+        ],
+      );
     },
   );
 
@@ -399,16 +430,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Rascunho da participação'), findsOneWidget);
     expect(find.textContaining('não gera medalha'), findsOneWidget);
-    await tester.enterText(
-      find.widgetWithText(TextField, 'Tempo (h:mm:ss ou segundos, opcional)'),
-      '3600',
-    );
-    await tester.tap(find.text('Salvar rascunho'));
-    await tester.pumpAndSettle();
-    expect(find.text('Rascunho salvo. Nada foi publicado.'), findsOneWidget);
+    // Corrida já realizada: não há "Salvar rascunho"; o tempo segue junto quando a participação é concluída.
+    await pickTime(tester, hours: 1);
+    expect(find.text('Salvar rascunho'), findsNothing);
+    expect(find.text('Rascunho salvo. Nada foi publicado.'), findsNothing);
     expect(
       calls.where(
-        (c) => !c.contains('/me/participations') && !c.endsWith('/image'),
+        (c) =>
+            !c.contains('/me/participations') &&
+            !c.contains('/me/edition-requests') &&
+            !c.endsWith('/comments') &&
+            !c.endsWith('/image'),
       ),
       [
         'GET /editions/A',
@@ -420,7 +452,6 @@ void main() {
         'GET /editions/A/reviews',
         'POST /participations',
         'GET /editions/A',
-        'PATCH /participations/draft-1',
       ],
     );
   });
@@ -548,6 +579,7 @@ void main() {
         calls.where(
           (c) =>
               !c.contains('/me/participations') &&
+              !c.contains('/me/edition-requests') && // medalhas provisórias
               !c.endsWith('/image') &&
               c != 'GET /me',
         ),
@@ -558,6 +590,119 @@ void main() {
           'POST /uploads/upload-1/finalize',
           'POST /participations/draft-1/complete',
         ],
+      );
+    },
+  );
+
+  testWidgets(
+    'concluir grava antes o tempo escolhido no temporizador (sem Salvar rascunho)',
+    (tester) async {
+      final calls = <String>[];
+      Map<String, dynamic>? patch;
+      Map<String, dynamic>? completion;
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          calls.add('$method ${uri.path}');
+          if (uri.path == '/uploads') {
+            return const JsonReply(201, {
+              'uploadId': 'upload-1',
+              'uploadUrl': 'https://private.example/upload-1',
+              'uploadMethod': 'PUT',
+              'uploadHeaders': {'Content-Type': 'image/jpeg'},
+            });
+          }
+          if (uri.path.endsWith('/finalize')) {
+            return const JsonReply(200, {
+              'uploadId': 'upload-1',
+              'state': 'valid',
+              'imageReference': 'img-valid',
+            });
+          }
+          if (uri.path == '/participations/draft-1' && method == 'PATCH') {
+            patch = Map<String, dynamic>.from(body! as Map);
+            return const JsonReply(200, {
+              'id': 'draft-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'draft',
+              'version': 2,
+              'timeSeconds': 2700,
+            });
+          }
+          if (uri.path.endsWith('/complete')) {
+            completion = Map<String, dynamic>.from(body! as Map);
+            return const JsonReply(200, {
+              'id': 'draft-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'completed',
+              'version': 3,
+              'medalImageReference': 'img-valid',
+            });
+          }
+          return const JsonReply(200, {'items': []});
+        },
+        byteTransport: (uri, method, headers, bytes) async => 200,
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: const {
+              'id': 'draft-1',
+              'editionId': 'A',
+              'distanceId': '10k',
+              'state': 'draft',
+              'version': 1,
+            },
+            photoSelector: () async => [0xff, 0xd8, 0xff, 0xd9],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Salvar rascunho'), findsNothing);
+      await pickTime(tester, minutes: 45);
+      await tester.tap(find.text('Selecionar foto'));
+      await tester.pumpAndSettle();
+      final list = find.byType(Scrollable).first;
+      final declaration = find.text('Declaro que concluí esta corrida');
+      final finish = find.text('Concluir participação');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await rateAll(tester, skip: 'Segurança');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await tester.tap(find.byKey(const Key('rating-Segurança-4')));
+      await tester.pump();
+      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
+      await tester.tap(declaration);
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      await tester.tap(finish);
+      await tester.pumpAndSettle();
+      // O tempo foi gravado (PATCH) ANTES de concluir, com a versão certa.
+      expect(patch?['timeSeconds'], 2700);
+      expect(patch?['expectedVersion'], 1);
+      expect(completion?['expectedVersion'], 2);
+      final order = calls
+          .where((c) => c.contains('draft-1') && !c.endsWith('/image'))
+          .toList();
+      expect(order, [
+        'PATCH /participations/draft-1',
+        'POST /participations/draft-1/complete',
+      ]);
+      // Ao concluir, a pilha é zerada: a prateleira abre nova (com a medalha) e sem tela velha por baixo.
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
+      expect(
+        tester.state<NavigatorState>(find.byType(Navigator)).canPop(),
+        isFalse,
       );
     },
   );
@@ -996,18 +1141,17 @@ void main() {
         scrollable: list,
       );
       // O tempo guardado aparece formatado.
-      final timeLabel = find.text('Tempo (h:mm:ss ou segundos, opcional)');
-      await tester.scrollUntilVisible(timeLabel, 200, scrollable: list);
-      final timeField = find.widgetWithText(
-        TextField,
-        'Tempo (h:mm:ss ou segundos, opcional)',
+      final timeField = find.byKey(const Key('time-field'));
+      await tester.scrollUntilVisible(timeField, 200, scrollable: list);
+      expect(
+        find.descendant(of: timeField, matching: find.text('1:00:00')),
+        findsOneWidget,
       );
-      expect(tester.widget<TextField>(timeField).controller!.text, '1:00:00');
       await tester.tap(find.byKey(const Key('distance-field')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('5K').last);
       await tester.pumpAndSettle();
-      await tester.enterText(timeField, '1:30:00');
+      await pickTime(tester, minutes: 30); // parte de 1:00:00
       await tester.enterText(
         find.widgetWithText(TextField, 'Número de peito (opcional)'),
         '4821',
@@ -1394,48 +1538,44 @@ void main() {
       },
     );
 
-    testWidgets('avisa o que nao foi filtrado e quando a IA nao respondeu', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(800, 3000);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      var source = 'llm';
-      final gateway = await signed((uri, method, headers, body) async {
-        if (uri.path == '/editions/search') {
-          return JsonReply(200, {
-            'items': [entry('S1')],
-            'search': {
-              'source': source,
-              'filters': {'q': 'x'},
-              'applied': ['texto'],
-              'notApplied': ['preco_max_brl', 'altimetria'],
-            },
-          });
-        }
-        return const JsonReply(200, {'items': []});
-      });
-      await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
-      );
-      await tester.pumpAndSettle();
-      await openSearch(tester);
-      await typePhrase(tester, 'corrida barata e plana');
-      var notice = tester.widget<Text>(
-        find.byKey(const Key('catalog-search-notice')),
-      );
-      expect(notice.data, contains('Não filtrei por: preço, altimetria.'));
-      expect(notice.data, isNot(contains('interpretar a frase')));
-      source = 'text';
-      await typePhrase(tester, 'corrida barata e plana 2');
-      notice = tester.widget<Text>(
-        find.byKey(const Key('catalog-search-notice')),
-      );
-      expect(
-        notice.data,
-        contains('Não foi possível interpretar a frase agora'),
-      );
-    });
+    testWidgets(
+      'a busca por frase mostra só a lista, sem avisos de filtro ou de IA',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        var source = 'llm';
+        final gateway = await signed((uri, method, headers, body) async {
+          if (uri.path == '/editions/search') {
+            return JsonReply(200, {
+              'items': [entry('S1')],
+              'search': {
+                'source': source,
+                'filters': {'q': 'x'},
+                'applied': ['texto'],
+                'notApplied': ['preco_max_brl', 'altimetria'],
+              },
+            });
+          }
+          return const JsonReply(200, {'items': []});
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: CatalogScreen(gateway: gateway, serverPaging: true),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await openSearch(tester);
+        await typePhrase(tester, 'corrida barata e plana');
+        expect(find.byKey(const Key('catalog-search-notice')), findsNothing);
+        expect(find.text('Corrida S1'), findsOneWidget);
+        source = 'text';
+        await typePhrase(tester, 'corrida barata e plana 2');
+        expect(find.byKey(const Key('catalog-search-notice')), findsNothing);
+        expect(find.textContaining('interpretar a frase'), findsNothing);
+        expect(find.text('Corrida S1'), findsOneWidget);
+      },
+    );
 
     testWidgets('sem frase usa os campos de sempre, e limpar volta a lista', (
       tester,
@@ -1471,7 +1611,7 @@ void main() {
       expect(calls.last.queryParameters['city'], 'Acrelândia');
       await typePhrase(tester, 'qualquer coisa');
       expect(calls.last.path, '/editions/search');
-      expect(find.byKey(const Key('catalog-search-notice')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-search-notice')), findsNothing);
       await tester.ensureVisible(find.text('Limpar busca'));
       await tester.tap(find.text('Limpar busca'));
       await tester.pumpAndSettle();
@@ -1668,7 +1808,7 @@ void main() {
   });
 
   testWidgets(
-    'o campo de frase aparece sem abrir os filtros e busca pelo teclado',
+    'a lupa abre o campo de frase (Descreva a corrida) e busca pelo teclado',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -1691,13 +1831,13 @@ void main() {
         MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
       );
       await tester.pumpAndSettle();
-      // Sem tocar na lupa: o campo ja esta na tela, com o rotulo certo.
+      // Sem tocar na lupa, o campo não aparece; ao tocar, abre com o rótulo certo.
+      expect(find.byKey(const Key('catalog-phrase')), findsNothing);
+      expect(find.text('Descreva a corrida'), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('catalog-phrase')), findsOneWidget);
       expect(find.text('Descreva a corrida'), findsOneWidget);
-      expect(
-        find.text('Encontre sua próxima conquista'),
-        findsNothing,
-      ); // cartão de filtros fechado
       await tester.enterText(
         find.byKey(const Key('catalog-phrase')),
         'night run',
@@ -1928,7 +2068,7 @@ void main() {
 
 void priorityOrderTests() {
   testWidgets(
-    'as corridas minhas vêm primeiro: corri, inscrito, desejo; depois as demais, por data',
+    'as minhas corridas não passam mais na frente: tudo por data, da mais recente para a mais antiga',
     (tester) async {
       tester.view.physicalSize = const Size(800, 4000);
       tester.view.devicePixelRatio = 1;
@@ -1984,11 +2124,11 @@ void priorityOrderTests() {
       List<String> order() =>
           (['A', 'B', 'C', 'D', 'E', 'F']
             ..sort((a, b) => top(a).compareTo(top(b))));
-      // Decrescente (padrão): D (corri), C (inscrito), F e B (desejo, F é mais recente), A e E (demais, A é mais recente).
-      expect(order(), ['D', 'C', 'F', 'B', 'A', 'E']);
+      // Padrão: da data mais recente para a mais antiga, sem pôr as minhas (D corri, C inscrito, B e F desejo) na frente.
+      expect(order(), ['A', 'E', 'F', 'B', 'C', 'D']);
       await tester.tap(find.byKey(const Key('catalog-sort')));
       await tester.pumpAndSettle();
-      // Crescente: os grupos continuam na mesma ordem; só a data dentro de cada um inverte.
+      // Crescente: a ordem inteira inverte.
       expect(order(), ['D', 'C', 'B', 'F', 'E', 'A']);
     },
   );
@@ -2124,9 +2264,6 @@ void ratingTests() {
             w is SegmentedButton<String> &&
             w.key.toString().contains('filter-year'),
       );
-      final mine = tester
-          .getBottomLeft(find.byKey(const Key('catalog-request-mine')))
-          .dy;
       final sortDate = tester.getRect(find.byKey(const Key('catalog-sort')));
       final sortStar = tester.getRect(
         find.byKey(const Key('catalog-sort-rating')),
@@ -2150,24 +2287,23 @@ void ratingTests() {
             .first,
       );
       expect(yearArea.right, greaterThan(viewMenu.right - 1));
-      // Espaços iguais: Minhas solicitações -> linha do público -> ano.
+      // Espaço entre a linha do público e o ano.
       final rowTop = sortDate.top < aud.top ? sortDate.top : aud.top;
       final rowBottom = sortDate.bottom > aud.bottom
           ? sortDate.bottom
           : aud.bottom;
-      final gap1 = rowTop - mine;
       final gap2 = yr.top - rowBottom;
-      expect(gap1, closeTo(12, 1.5));
+      expect(rowTop, greaterThan(0));
       expect(gap2, closeTo(12, 1.5));
       // Mais ar entre a linha do ano e o primeiro cartão da lista.
       final firstCard = tester.getTopLeft(find.byType(Card).first).dy;
       expect(firstCard - yr.bottom, greaterThan(15));
       expect(firstCard - yr.bottom, lessThan(30));
-      // O pedido de cadastro fica acima, sem encostar nos demais blocos.
+      // O pedido de cadastro agora é um ícone da barra superior, acima da lista.
       final request = tester.getRect(
         find.byKey(const Key('catalog-request-new')),
       );
-      expect(request.bottom, lessThanOrEqualTo(mine + 1));
+      expect(request.bottom, lessThanOrEqualTo(aud.top));
     },
   );
 

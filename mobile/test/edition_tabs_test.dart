@@ -178,6 +178,75 @@ void main() {
     expect(bar.value, closeTo(4.8 / 5, 0.001));
   });
 
+  testWidgets(
+    'tocar na nota geral mostra todas as avaliações com os comentários',
+    (tester) async {
+      final gateway = await gatewayWith(
+        reviews: {
+          'items': [
+            for (final n in [1, 2, 3, 4, 5])
+              {
+                'participationId': 'p$n',
+                'ratings': myRatings,
+                'authorName': 'Pessoa $n',
+                'comment': 'Comentário $n',
+                'createdAt': '2024-09-23T10:00:00Z',
+              },
+          ],
+          'summary': {
+            'reviewCount': 5,
+            'average': 4.0,
+            'recommendPercent': 80,
+            'byCriterion': myRatings,
+          },
+        },
+      );
+      await open(tester, gateway, 'Avaliações');
+      expect(find.text('Comentário 1'), findsOneWidget);
+      expect(find.text('Comentário 4'), findsNothing); // só 3 antes do toque
+      await tester.tap(find.byKey(const Key('score-card-tap')));
+      await tester.pumpAndSettle();
+      for (final n in [1, 2, 3, 4, 5]) {
+        expect(
+          find.text('Comentário $n'),
+          findsOneWidget,
+          reason: 'comentário $n',
+        );
+      }
+      expect(
+        find.text('O que os corredores estão dizendo (5)'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'Sobre: minha avaliação e comentário ficam logo abaixo da média geral',
+    (tester) async {
+      final gateway = await gatewayWith(
+        completedByMe: true,
+        reviews: {
+          'items': [],
+          'summary': {'reviewCount': 3, 'average': 4.5},
+        },
+      );
+      await open(tester, gateway, 'Sobre');
+      final rating = tester.getRect(find.byKey(const Key('about-rating')));
+      final mine = tester.getRect(find.byKey(const Key('about-my-review')));
+      expect(
+        mine.top,
+        greaterThanOrEqualTo(rating.bottom),
+      ); // embaixo da média geral, não em cima
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('about-my-review')),
+          matching: find.text('“Gostei muito”'),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('Avaliações sem notas ainda mostra o cartão da média, vazio', (
     tester,
   ) async {
@@ -308,10 +377,10 @@ void main() {
     await tester.tap(find.byKey(const Key('summary-details-toggle')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('summary-details')), findsOneWidget);
-    // recolher a minha: itens e comentário somem, o título fica
+    // recolher a minha: os itens somem, o título e o comentário ficam à vista
     await tester.tap(find.byKey(const Key('my-details-toggle')));
     await tester.pumpAndSettle();
-    expect(find.text('“Gostei muito”'), findsNothing);
+    expect(find.text('“Gostei muito”'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const Key('my-review')),

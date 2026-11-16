@@ -188,6 +188,29 @@ class SearchRouteTests(unittest.TestCase):
         self.assertEqual(body["search"]["applied"], ["uf", "distancia_km"])
         self.assertNotIn("limit", body["search"]["filters"])
 
+    def test_name_in_the_phrase_wins_when_the_ai_finds_no_name(self):
+        """Buscar "Orla" nao pode devolver todas as corridas so porque a IA nao achou um nome na frase."""
+        self.identity.admit(self.actor, "admit", ADULT)
+        # A IA devolve filtro nenhum e marca o tema da frase como nao aplicado (era o caso de "Batman").
+        client = self.client(answer({}, not_applied=["consulta_semantica"]))
+        body = self.search(client, phrase="Orla").json()
+        self.assertEqual([e["id"] for e in body["items"]], ["synthetic-rj-2026"])
+        self.assertEqual(body["search"]["source"], "text")
+        self.assertEqual(body["search"]["filters"], {"q": "orla"})
+        # Sem nenhuma corrida com esse nome, vale o que a IA traduziu (nada some por causa disso).
+        body = self.search(client, phrase="Batman").json()
+        self.assertEqual(body["search"]["source"], "llm")
+        self.assertEqual(body["search"]["notApplied"], ["consulta_semantica"])
+        # Resposta sem filtro algum e sem aviso: o nome tambem vence (antes devolvia o catalogo inteiro).
+        client = self.client(answer({}))
+        body = self.search(client, phrase="Orla").json()
+        self.assertEqual([e["id"] for e in body["items"]], ["synthetic-rj-2026"])
+        self.assertEqual(body["search"]["source"], "text")
+        # Com a IA tendo achado o nome (q), nada muda.
+        client = self.client(answer({"q": "orla"}, applied=["texto"]))
+        body = self.search(client, phrase="Orla").json()
+        self.assertEqual(body["search"]["source"], "llm")
+
     def test_only_the_phrase_leaves_the_backend(self):
         self.identity.admit(self.actor, "admit", ADULT)
         client = self.client(answer())

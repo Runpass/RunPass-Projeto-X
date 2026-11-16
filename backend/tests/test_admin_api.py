@@ -22,6 +22,7 @@ from runpass.models import EditionRequestFields
 from runpass.operator_admin import grant_access
 from runpass.quality_live import LiveQuality
 from runpass.service import IdentityService, Problem
+from runpass.social import SocialService
 from runpass.store import MemoryStore, Unavailable
 from runpass.upload import MemoryBlobStore
 
@@ -269,12 +270,15 @@ class AdminApiTests(unittest.TestCase):
         self.store = self.identity.store
         self.catalog = CatalogService(self.identity, Fernet.generate_key())
         seed_synthetic(self.catalog, ROOT / "backend/fixtures/catalog.synthetic.json")
-        self.requests = EditionRequestService(self.identity, Fernet.generate_key(), self.catalog)
+        self.blobs = MemoryBlobStore()
+        self.requests = EditionRequestService(
+            self.identity, Fernet.generate_key(), self.catalog, self.blobs
+        )
         self.mfa_on = True
         self.now = NOW.timestamp()
         self.cognito, self.lam, self.logs = FakeUsers(), FakeLambda(), FakeLogs()
         self.sched = FakeScheduler()
-        self.s3, self.blobs = FakeS3(), MemoryBlobStore()
+        self.s3 = FakeS3()
         self.pages = {}
         self.openai_org = FakeCosts({})
         self.openai_org.configured = False
@@ -509,6 +513,52 @@ class AdminApiTests(unittest.TestCase):
         # aprovar de novo e recusado
         self.assertEqual(self.aprovar(request).status_code, 409)
 
+    def test_equipe_corrige_o_nome_ao_aprovar_e_depois_pelo_catalogo(self):
+        _, request = self.pedido("duda", "Corrda do Clube Itau Sircuo", "2027-04-10", "SP", km=5)
+        resposta = self.client.post(
+            f"/admin/edition-requests/{request['id']}/approve",
+            json={"expectedVersion": request["version"], "name": "Corrida do Clube Itaú Circo"},
+            headers=self.auth(),
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        edition_id = resposta.json()["request"]["linkedEditionId"]
+        self.assertEqual(self.catalog._edition(edition_id)["name"], "Corrida do Clube Itaú Circo")
+        self.assertIn("corrida-do-clube-itau-circo", edition_id)
+        # depois de criada, o nome ainda pode ser corrigido pelo catalogo (nova versao, mesmo id)
+        antes = self.catalog._edition(edition_id)["version"]
+        r = self.client.patch(
+            f"/admin/editions/{edition_id}",
+            json={"name": "  Corrida do Clube Itaú - Edição Circo "},
+            headers=self.auth(),
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["name"], "Corrida do Clube Itaú - Edição Circo")
+        corrida = self.catalog._edition(edition_id)
+        self.assertEqual(corrida["name"], "Corrida do Clube Itaú - Edição Circo")
+        self.assertEqual(corrida["version"], antes + 1)
+        self.assertEqual(corrida["date"], "2027-04-10")  # so o nome muda
+        # a busca da equipe acha pelo nome novo (palavras em qualquer ordem, sem exigir o hifen)
+        achadas = self.client.get(
+            "/admin/editions", params={"q": "clube itau edicao circo"}, headers=self.auth()
+        ).json()["items"]
+        self.assertIn(edition_id, [e["id"] for e in achadas])
+        # nome vazio, corrida inexistente e pedido sem permissao
+        self.assertEqual(
+            self.client.patch(
+                f"/admin/editions/{edition_id}", json={"name": "   "}, headers=self.auth()
+            ).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.patch(
+                "/admin/editions/nao-existe", json={"name": "X"}, headers=self.auth()
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.patch(f"/admin/editions/{edition_id}", json={"name": "X"}).status_code, 401
+        )
+
     def test_aprovar_pedido_de_corrida_que_ja_existe_so_vincula(self):
         person, request = self.pedido("bia", "Corrida Sintética São Paulo", "2026-11-08", "SP")
         antes = len(self.catalog_ids())
@@ -575,6 +625,125 @@ class AdminApiTests(unittest.TestCase):
             "confirmRights": True,
             **mudanca,
         }
+
+    def pessoa(self, sub):
+        person = Principal(sub, True)
+        self.identity.create_profile(
+            person, "p" + sub, {"displayName": sub.title(), "username": f"{sub}_x"}
+        )
+        self.identity.admit(person, "a" + sub, {"birthDate": "1990-01-01", "declaresAdult": True})
+        return person
+
+    def test_foto_de_medalha_no_pedido_fica_privada_e_o_banner_segue_a_fila(self):
+        person = self.pessoa("mel")
+        medalha = self.imagem_do_usuario("mel")
+        banner = self.imagem_do_usuario("mel2", owner="mel")
+        fields = EditionRequestFields(
+            name="Corrida Medalha Sintética",
+            date="2027-09-05",
+            city="São Paulo",
+            distanceKm=10,
+            imageReference=banner,
+            medalImageReference=medalha,
+        )
+        request = self.requests.create(person, "kmel", fields)
+        self.assertEqual(request["details"]["medalImageReference"], medalha)
+        self.assertEqual(request["details"]["imageReference"], banner)
+        for ref in (medalha, banner):  # as duas imagens ficam reservadas pelo pedido
+            self.assertEqual(self.store.get(("operations", "USER#mel", "IMAGE#" + ref))["refs"], 1)
+        # so o banner entra na fila de banners da equipe; a foto da medalha nao entra em fila alguma
+        rows, _ = self.store.query("history", "EREQ_QUEUE#image", prefix="", limit=50)
+        self.assertEqual(len(rows), 1)
+        # o dono ve a propria foto de medalha; outra pessoa recebe o mesmo 404 de pedido inexistente
+        link = self.requests.medal_image(person, request["id"])
+        self.assertTrue(link["url"].startswith("memory://private/derived/"))
+        outra = self.pessoa("noe")
+        with self.assertRaises(Problem) as erro:
+            self.requests.medal_image(outra, request["id"])
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_AVAILABLE")
+        # a equipe confere as duas imagens pelo portal
+        self.assertEqual(
+            self.client.get(
+                f"/admin/edition-requests/{request['id']}/medal-image", headers=self.auth()
+            ).status_code,
+            200,
+        )
+
+    def test_medalha_sem_banner_nao_entra_na_fila_e_imagens_repetidas_sao_recusadas(self):
+        person = self.pessoa("lia")
+        medalha = self.imagem_do_usuario("lia")
+        so_medalha = EditionRequestFields(
+            name="Corrida Lia Sintética",
+            date="2027-09-06",
+            city="São Paulo",
+            distanceKm=5,
+            medalImageReference=medalha,
+        )
+        request = self.requests.create(person, "klia", so_medalha)
+        rows, _ = self.store.query("history", "EREQ_QUEUE#image", prefix="", limit=50)
+        self.assertEqual(rows, [])
+        # sem foto de medalha: nao ha imagem para servir
+        _, comum = self.pedido("ivo", "Corrida Ivo Sintética", "2027-09-07", "SP", image=True)
+        with self.assertRaises(Problem) as erro:
+            self.requests.medal_image(self.pessoa("zeca"), comum["id"])
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_AVAILABLE")
+        self.assertEqual(request["details"]["medalImageReference"], medalha)
+        with self.assertRaises(ValueError):  # a mesma imagem nao pode ser medalha e banner
+            EditionRequestFields(
+                name="X",
+                date="2027-09-06",
+                city="São Paulo",
+                distanceKm=5,
+                imageReference=medalha,
+                medalImageReference=medalha,
+            )
+
+    def test_pessoa_exclui_o_proprio_pedido_em_qualquer_situacao(self):
+        person = self.pessoa("rui")
+        medalha = self.imagem_do_usuario("rui")
+        banner = self.imagem_do_usuario("rui2", owner="rui")
+        request = self.requests.create(
+            person,
+            "krui",
+            EditionRequestFields(
+                name="Corrida Rui Sintética",
+                date="2027-09-08",
+                city="São Paulo",
+                distanceKm=5,
+                imageReference=banner,
+                medalImageReference=medalha,
+            ),
+        )
+        # outra pessoa nao consegue (mesmo 404), versao errada e conflito
+        outra = self.pessoa("sol")
+        with self.assertRaises(Problem) as erro:
+            self.requests.delete(outra, request["id"], "ks1", 1)
+        self.assertEqual(erro.exception.code, "EDITION_REQUEST_NOT_FOUND")
+        with self.assertRaises(Problem) as erro:
+            self.requests.delete(person, request["id"], "ks2", 9)
+        self.assertEqual(erro.exception.code, "VERSION_CONFLICT")
+        feito = self.requests.delete(person, request["id"], "ks3", 1)
+        self.assertEqual(feito, {"id": request["id"], "deleted": True})
+        # saiu da fila da equipe, da lista da pessoa e liberou a reserva das imagens
+        fila = self.client.get("/admin/edition-requests", headers=self.auth()).json()
+        self.assertNotIn(request["id"], [p["id"] for p in fila["items"]])
+        self.assertEqual(self.requests.list_mine(person, 20, None)["items"], [])
+        rows, _ = self.store.query("history", "EREQ_QUEUE#image", prefix="", limit=50)
+        self.assertEqual(rows, [])
+        for ref in (medalha, banner):
+            self.assertEqual(self.store.get(("operations", "USER#rui", "IMAGE#" + ref))["refs"], 0)
+        # repetir com a mesma chave devolve o mesmo resultado; pedido sumiu para outra chave
+        self.assertEqual(self.requests.delete(person, request["id"], "ks3", 1)["deleted"], True)
+        with self.assertRaises(Problem) as erro:
+            self.requests.delete(person, request["id"], "ks4", 2)
+        self.assertEqual(erro.exception.code, "EDITION_REQUEST_NOT_FOUND")
+
+    def test_excluir_pedido_aprovado_mantem_a_corrida_do_catalogo(self):
+        person, request = self.pedido("gil", "Corrida Gil Sintética", "2027-09-09", "SP")
+        feito = self.aprovar(request).json()["request"]
+        edition_id = feito["linkedEditionId"]
+        self.requests.delete(person, request["id"], "kgil", feito["version"])
+        self.assertIsNotNone(self.catalog._edition(edition_id))  # a corrida continua
 
     def test_banner_no_pedido_exige_imagem_propria_e_valida(self):
         person, request = self.pedido(
@@ -690,6 +859,182 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(self.banner(request).status_code, 409)
         registro = self.store.get(("operations", "EREQ#" + request["id"], "BANNER"))
         self.assertEqual((registro["state"], registro["by"]), ("published", "op"))
+
+    def test_banner_sugerido_aparece_so_para_o_dono_ate_a_decisao_e_recusa_avisa(self):
+        person = self.pessoa("lu")
+        ref = self.imagem_do_usuario("lu")
+        sugestao = self.requests.suggest_banner(person, "sblu", "synthetic-sp-2026", ref)
+        # enquanto a equipe nao decide, o dono ve o proprio banner (provisorio); outra pessoa, nao
+        link = self.requests.medal_image(person, sugestao["id"], "imageReference")
+        self.assertTrue(link["url"].startswith("memory://private/derived/"))
+        with self.assertRaises(Problem) as erro:
+            self.requests.medal_image(self.pessoa("ze"), sugestao["id"], "imageReference")
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_AVAILABLE")
+        # a equipe descarta: o banner some para o dono e chega uma mensagem com o que aconteceu
+        r = self.client.post(
+            f"/admin/edition-requests/{sugestao['id']}/banner/dismiss",
+            json={"reason": "Imagem sem autorização do organizador"},
+            headers=self.auth(),
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        with self.assertRaises(Problem) as erro:
+            self.requests.medal_image(person, sugestao["id"], "imageReference")
+        self.assertEqual(erro.exception.code, "IMAGE_NOT_AVAILABLE")
+        avisos = SocialService(self.identity).notifications(person)["items"]
+        aviso = next(a for a in avisos if a["kind"] == "banner_dismissed")
+        self.assertIn("não foi aprovado", aviso["text"])
+        self.assertEqual(aviso["requestId"], sugestao["id"])
+        self.assertNotIn("actor", aviso)
+        self.assertTrue(aviso["unread"])
+
+    def test_corrida_recusada_avisa_o_motivo_e_nao_ha_aviso_sem_recusa(self):
+        person, request = self.pedido("pia", "Corrida Pia Sintética", "2027-10-01", "SP")
+        self.assertEqual(SocialService(self.identity).notifications(person)["items"], [])
+        r = self.client.post(
+            f"/admin/edition-requests/{request['id']}/decision",
+            json={
+                "expectedVersion": request["version"],
+                "decision": "reject",
+                "reason": "Corrida duplicada",
+            },
+            headers=self.auth(),
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        avisos = SocialService(self.identity).notifications(person)["items"]
+        aviso = next(a for a in avisos if a["kind"] == "request_rejected")
+        self.assertIn("Corrida duplicada", aviso["text"])
+        self.assertIn("Corrida Pia Sintética", aviso["text"])
+        self.assertIn("Minhas solicitações", aviso["text"])
+
+    def test_equipe_ve_e_remove_comentario_da_corrida_com_auditoria(self):
+        person = self.pessoa("tom")
+        head = ("catalog", "EDITION#synthetic-sp-2026", "HEAD")
+        self.assertIsNotNone(self.store.get(head))
+        feito = SocialService(self.identity).edition_comment(
+            person, "synthetic-sp-2026", "kc1", "Comentário que precisa sair"
+        )
+        h = self.auth()
+        listado = self.client.get("/admin/editions/synthetic-sp-2026/comments", headers=h)
+        self.assertEqual(listado.status_code, 200, listado.text)
+        self.assertEqual(
+            [(c["id"], c["text"]) for c in listado.json()["items"]],
+            [(feito["id"], "Comentário que precisa sair")],
+        )
+        # sem permissao de catalogo: recusado; com permissao: remove e some para os usuarios
+        self.assertEqual(
+            self.client.delete(
+                f"/admin/edition-comments/{feito['id']}", headers=self.auth(token("mod"))
+            ).status_code,
+            403,
+        )
+        r = self.client.delete(f"/admin/edition-comments/{feito['id']}", headers=h)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(
+            SocialService(self.identity).edition_comments(person, "synthetic-sp-2026")["items"], []
+        )
+        self.assertEqual(
+            self.client.delete(f"/admin/edition-comments/{feito['id']}", headers=h).status_code,
+            404,
+        )
+
+    RATINGS = {
+        "organization": 5,
+        "course": 4,
+        "kit": 4,
+        "medal": 5,
+        "hydration": 3,
+        "facilities": 4,
+        "safety": 5,
+        "valueForMoney": 4,
+    }
+
+    def test_pedido_guarda_a_participacao_para_aplicar_quando_aprovar(self):
+        person = self.pessoa("ana2")
+        medalha = self.imagem_do_usuario("ana2")
+        post = self.imagem_do_usuario("ana3", owner="ana2")
+        fields = EditionRequestFields(
+            name="Corrida Ana Sintética",
+            date="2026-03-10",
+            city="São Paulo",
+            state="SP",
+            distanceKm=10,
+            medalImageReference=medalha,
+            participation={
+                "timeSeconds": 3300,
+                "placement": 42,
+                "bibNumber": "A-77",
+                "ratings": self.RATINGS,
+                "comment": "Gostei do percurso",
+                "publishToFeed": True,
+                "postImageReference": post,
+                "postText": "Cheguei!",
+            },
+        )
+        request = self.requests.create(person, "kana2", fields)
+        guardada = request["participation"]
+        self.assertEqual(guardada["timeSeconds"], 3300)
+        self.assertEqual(guardada["ratings"], self.RATINGS)
+        self.assertEqual(guardada["postImageReference"], post)
+        # so o dono ve; a foto da publicacao fica reservada e fora da fila de banners
+        self.assertEqual(self.requests.get(person, request["id"])["participation"], guardada)
+        self.assertEqual(self.store.get(("operations", "USER#ana2", "IMAGE#" + post))["refs"], 1)
+        rows, _ = self.store.query("history", "EREQ_QUEUE#image", prefix="", limit=50)
+        self.assertEqual(rows, [])
+        # a equipe aprova como sempre; os dados continuam no pedido
+        aprovado = self.aprovar(request).json()["request"]
+        self.assertEqual(aprovado["linkedEditionId"][:7], "pedido-")
+        self.assertEqual(self.requests.get(person, request["id"])["participation"], guardada)
+        # excluir o pedido libera as duas reservas (medalha e foto da publicacao)
+        self.requests.delete(person, request["id"], "kdel", aprovado["version"])
+        self.assertEqual(self.store.get(("operations", "USER#ana2", "IMAGE#" + post))["refs"], 0)
+        self.assertEqual(self.store.get(("operations", "USER#ana2", "IMAGE#" + medalha))["refs"], 0)
+
+    def test_participacao_pendente_exige_foto_da_medalha_e_regras_da_publicacao(self):
+        base = {
+            "name": "Corrida Regras Sintética",
+            "date": "2026-03-11",
+            "city": "São Paulo",
+            "distanceKm": 5,
+        }
+        # sem foto da medalha: recusada
+        with self.assertRaises(ValueError):
+            EditionRequestFields(**base, participation={"ratings": self.RATINGS})
+        medalha = "img_" + "1" * 64
+        # publicar exige a foto da publicacao, e a foto sem publicar nao vale
+        with self.assertRaises(ValueError):
+            EditionRequestFields(
+                **base,
+                medalImageReference=medalha,
+                participation={"ratings": self.RATINGS, "publishToFeed": True},
+            )
+        with self.assertRaises(ValueError):
+            EditionRequestFields(
+                **base,
+                medalImageReference=medalha,
+                participation={"ratings": self.RATINGS, "postImageReference": "img_" + "2" * 64},
+            )
+        # nota fora de 1 a 5 e recusada
+        with self.assertRaises(ValueError):
+            EditionRequestFields(
+                **base,
+                medalImageReference=medalha,
+                participation={"ratings": {**self.RATINGS, "kit": 9}},
+            )
+        # a foto da publicacao nao pode ser a da medalha (a mesma referencia)
+        person = self.pessoa("bia2")
+        ref = self.imagem_do_usuario("bia2")
+        mesma = EditionRequestFields(
+            **base,
+            medalImageReference=ref,
+            participation={
+                "ratings": self.RATINGS,
+                "publishToFeed": True,
+                "postImageReference": ref,
+            },
+        )
+        with self.assertRaises(Problem) as erro:
+            self.requests.create(person, "kbia2", mesma)
+        self.assertEqual(erro.exception.code, "POST_IMAGE_MUST_DIFFER")
 
     def test_sugerir_banner_de_corrida_ja_cadastrada_vai_para_a_fila_da_equipe(self):
         person = Principal("rui", True)

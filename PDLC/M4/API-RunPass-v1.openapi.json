@@ -74,6 +74,69 @@
         "x-requires-beta-admission": true
       }
     },
+    "/participations/{id}/publish": {
+      "post": {
+        "operationId": "publishParticipation",
+        "description": "Publica no feed uma participacao concluida e ainda nao publicada, com uma foto propria (a da medalha nao entra). So o dono; 409 se ja publicada ou nao concluida.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishParticipation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Concluída, ou resultado idempotente anterior",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompletedParticipation"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
     "/uploads": {
       "post": {
         "operationId": "startUpload",
@@ -525,6 +588,50 @@
       "get": {
         "operationId": "getParticipationImage",
         "summary": "Link temporario e assinado para a foto sanitizada da medalha; so o dono ou quem a visibilidade autoriza. Nunca serve o original.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/participations/{id}/post-image": {
+      "get": {
+        "operationId": "getParticipationPostImage",
+        "summary": "Link temporario e assinado para a foto da publicacao (separada da medalha); so quem pode ver a participacao.",
         "parameters": [
           {
             "name": "id",
@@ -2147,6 +2254,164 @@
           }
         },
         "x-requires-beta-admission": true
+      },
+      "delete": {
+        "operationId": "deleteEditionRequest",
+        "summary": "A pessoa exclui o proprio pedido de cadastro, em qualquer situacao. A corrida ja criada no catalogo continua; saem o registro do pedido, as filas da equipe e a reserva das imagens.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pedido excluido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "deleted"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/edition-requests/{id}/medal-image": {
+      "get": {
+        "operationId": "getEditionRequestMedalImage",
+        "summary": "Link temporario e assinado para a foto da medalha provisoria do proprio pedido de cadastro; so o dono. Nunca serve o original.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/edition-requests/{id}/banner-image": {
+      "get": {
+        "operationId": "getEditionRequestBannerImage",
+        "summary": "Link temporario e assinado para o banner que a pessoa sugeriu no proprio pedido, enquanto a equipe ainda nao decidiu (visivel so para ela). Depois da decisao, 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link curto (5 minutos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MedalImageLink"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-requires-beta-admission": true
       }
     },
     "/edition-requests/{id}/resubmit": {
@@ -2989,6 +3254,206 @@
                 "$ref": "#/components/schemas/CreateComment"
               }
             }
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/editions/{id}/comments": {
+      "get": {
+        "operationId": "listEditionComments",
+        "tags": [
+          "Social"
+        ],
+        "description": "Comentarios da corrida, mais recentes primeiro. Qualquer pessoa admitida na beta le.",
+        "responses": {
+          "200": {
+            "description": "Pagina de comentarios",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionCommentPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-requires-beta-admission": true
+      },
+      "post": {
+        "operationId": "createEditionComment",
+        "tags": [
+          "Social"
+        ],
+        "description": "Qualquer pessoa admitida na beta comenta a corrida (nao precisa de participacao). Chave de idempotencia evita duplicar; ate 10 por pessoa por corrida; corrida arquivada nao recebe.",
+        "responses": {
+          "201": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionComment"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEditionComment"
+              }
+            }
+          }
+        },
+        "x-requires-beta-admission": true
+      }
+    },
+    "/edition-comments/{id}": {
+      "delete": {
+        "operationId": "deleteEditionComment",
+        "tags": [
+          "Social"
+        ],
+        "summary": "So o autor apaga o proprio comentario; de outra pessoa responde 404. A equipe remove pelo portal.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Apagado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "deleted"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "x-requires-beta-admission": true
@@ -6154,6 +6619,25 @@
           },
           "ratings": {
             "$ref": "#/components/schemas/ReviewRatings"
+          },
+          "postImageReference": {
+            "type": "string",
+            "description": "Imagem ja enviada e validada pela mesma pessoa (diferente da foto da medalha)."
+          },
+          "postText": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Texto da publicacao no feed."
+          },
+          "taggedUserIds": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
           }
         },
         "description": "Conclui somente rascunho de edição não arquivada cuja data não é futura em America/Sao_Paulo. Oito notas e imagem válida obrigatórias. Versão, conta, distância e imagem revalidadas no commit; publishToFeed é intenção explícita separada da conclusão."
@@ -6246,6 +6730,24 @@
           "medalDisplayImageReference": {
             "type": "string",
             "description": "Recorte opcional so para a prateleira (reposicionamento); a foto oficial (medalImageReference) nao muda."
+          },
+          "postImageReference": {
+            "type": "string",
+            "description": "Imagem ja enviada e validada pela mesma pessoa (diferente da foto da medalha)."
+          },
+          "postText": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "taggedUserIds": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
           }
         }
       },
@@ -6547,6 +7049,26 @@
             "maxLength": 200,
             "nullable": true,
             "description": "Identificador opaco de uma foto recortada pela pessoa so para a prateleira; null volta ao recorte automatico da foto oficial da medalha (medalImageReference), que nunca é alterada."
+          },
+          "postImageReference": {
+            "type": "string",
+            "description": "Nova foto da publicacao (ajustada/recortada); so participacao concluida e ja publicada. Diferente da foto da medalha."
+          },
+          "postText": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "Texto da publicacao; nulo apaga."
+          },
+          "taggedUserIds": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
           }
         }
       },
@@ -7473,6 +7995,13 @@
           "imageReference": {
             "type": "string",
             "description": "Banner suggested by the runner: an image already uploaded and validated by the same runner. Never published automatically; the team approves it with credit and rights."
+          },
+          "medalImageReference": {
+            "type": "string",
+            "description": "Foto da medalha da pessoa (medalha provisoria ate a equipe decidir o pedido): imagem ja enviada e tratada pela mesma pessoa. Fica privada, fora da fila de banners, e nunca vira banner nem fica publica. Diferente de imageReference."
+          },
+          "participation": {
+            "$ref": "#/components/schemas/PendingParticipation"
           }
         }
       },
@@ -7519,6 +8048,9 @@
               "dismissed"
             ],
             "description": "Decision of the team on the banner suggested with the request; absent while undecided."
+          },
+          "participation": {
+            "$ref": "#/components/schemas/PendingParticipation"
           }
         },
         "description": "Owner-only view, not a public catalog record. Reviewed request preserves associated draft until owner completes it."
@@ -7635,6 +8167,17 @@
           "lastComment": {
             "$ref": "#/components/schemas/Comment",
             "description": "Comentario mais recente, mostrado em destaque na publicacao."
+          },
+          "hasPostImage": {
+            "type": "boolean",
+            "description": "A publicacao tem foto propria (GET /participations/{id}/post-image); sem ela, vale a foto da medalha."
+          },
+          "tagged": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicProfile"
+            },
+            "description": "Pessoas marcadas na publicacao (so contas ativas)."
           }
         },
         "required": [
@@ -9521,7 +10064,9 @@
               "comment",
               "post",
               "comment_like",
-              "reply"
+              "reply",
+              "request_rejected",
+              "banner_dismissed"
             ]
           },
           "createdAt": {
@@ -9543,19 +10088,23 @@
           },
           "text": {
             "type": "string",
-            "description": "Trecho do comentario (ate 140 caracteres)."
+            "description": "Trecho do comentario (ate 140 caracteres). Nos avisos da equipe (request_rejected, banner_dismissed) e a mensagem completa, com o motivo."
           },
           "commentId": {
             "type": "string"
+          },
+          "requestId": {
+            "type": "string",
+            "description": "Pedido de cadastro ou sugestao de banner a que o aviso se refere (kinds request_rejected e banner_dismissed, que nao tem autor)."
           }
         },
         "required": [
           "id",
           "kind",
           "createdAt",
-          "unread",
-          "actor"
-        ]
+          "unread"
+        ],
+        "description": "`actor` so falta nos avisos da equipe (request_rejected e banner_dismissed): sugestao de corrida ou banner nao aprovada."
       },
       "NotificationPage": {
         "type": "object",
@@ -9785,6 +10334,147 @@
             "type": "string"
           }
         }
+      },
+      "CreateEditionComment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "description": "Comentario na corrida: texto livre, visivel a quem esta na beta. Nao e avaliacao e nao exige participacao. Espacos em branco sao normalizados; ate 10 por pessoa por corrida."
+      },
+      "EditionComment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "editionId",
+          "text",
+          "createdAt",
+          "mine",
+          "author"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "editionId": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "mine": {
+            "type": "boolean",
+            "description": "True quando quem pergunta e o autor (pode apagar)."
+          },
+          "author": {
+            "$ref": "#/components/schemas/PublicProfile"
+          }
+        }
+      },
+      "EditionCommentPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionComment"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "PublishParticipation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expectedVersion",
+          "postImageReference"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "postImageReference": {
+            "type": "string",
+            "description": "Imagem ja enviada e validada pela mesma pessoa (diferente da foto da medalha)."
+          },
+          "postText": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "taggedUserIds": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
+          }
+        },
+        "description": "Publica no feed uma participacao concluida e ainda nao publicada, com foto propria. A conclusao com publishToFeed exige postImageReference."
+      },
+      "PendingParticipation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ratings"
+        ],
+        "properties": {
+          "timeSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "placement": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "bibNumber": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "ratings": {
+            "$ref": "#/components/schemas/ReviewRatings"
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "publishToFeed": {
+            "type": "boolean",
+            "default": false
+          },
+          "postImageReference": {
+            "type": "string",
+            "description": "Foto da publicacao (obrigatoria se publishToFeed)."
+          },
+          "postText": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "description": "Dados da participacao guardados com o pedido de cadastro e aplicados pelo app quando a corrida for aprovada. Exige medalImageReference no pedido."
       }
     }
   }

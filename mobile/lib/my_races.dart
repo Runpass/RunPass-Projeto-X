@@ -10,10 +10,13 @@ import 'catalog_screen.dart';
 import 'catalog_views.dart';
 import 'edition_cards.dart';
 import 'edit_profile.dart';
+import 'edition_requests.dart' show MyEditionRequestsScreen;
 import 'friends.dart';
 import 'grid_columns.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
+import 'medal_scan.dart';
+import 'pending_medals.dart';
 import 'notifications.dart';
 import 'post_card.dart' show FeedEntry, PostCard, PostThumb, entryFromPost;
 import 'profile_photo.dart';
@@ -42,8 +45,16 @@ class RaceRecord {
   final Map<String, dynamic>? edition;
   const RaceRecord(this.participation, this.edition);
 
+  /// A publicação tem foto própria (separada da medalha): `/post-image`. Sem ela, vale a foto da medalha.
+  bool get hasPostImage =>
+      participation['hasPostImage'] == true ||
+      participation['postImageReference'] != null;
+
+  /// Sem os dados da corrida, nunca mostra o código: corrida criada por pedido (`pedido-<nome>-<data>-<sufixo>`)
+  /// volta ao nome escrito no pedido; qualquer outra, só "Corrida".
   String get name =>
-      edition?['name'] as String? ?? 'Corrida ${participation['editionId']}';
+      edition?['name'] as String? ??
+      readableEditionName('${participation['editionId'] ?? ''}');
   String? get date => edition?['date'] as String?;
   int? get year => date == null ? null : int.tryParse(date!.substring(0, 4));
   static const noCity = 'Sem cidade';
@@ -625,6 +636,11 @@ void forgetMedalDisplayImage(String participationId) => _photoLinks.remove(
   '/participations/${Uri.encodeComponent(participationId)}/display-image',
 );
 
+/// Esquece o link da foto da publicação, depois de ajustar/trocar.
+void forgetPostPhoto(String participationId) => _photoLinks.remove(
+  '/participations/${Uri.encodeComponent(participationId)}/post-image',
+);
+
 void forgetBanner(String profileId) =>
     _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/banner');
 
@@ -638,6 +654,17 @@ class _SignedPhotoState extends State<SignedPhoto> {
   void initState() {
     super.initState();
     load();
+  }
+
+  /// A lista reaproveita este estado quando muda a ordem (uma medalha nova entra na frente): sem recarregar
+  /// ao trocar o endereço, a foto de uma medalha aparecia em outra.
+  @override
+  void didUpdateWidget(SignedPhoto oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.endpoint != widget.endpoint) {
+      url = null;
+      load();
+    }
   }
 
   Future<void> load() async {
@@ -692,6 +719,12 @@ class MedalPhoto extends StatelessWidget {
   final double size;
   final BoxFit fit;
   final bool useDisplayImage;
+
+  /// Foto da publicação no feed (separada da medalha); só use quando a participação tem uma.
+  final bool usePostImage;
+
+  /// Muda quando a foto foi trocada: força recarregar o link (a lista reaproveita o estado da foto).
+  final int revision;
   const MedalPhoto({
     super.key,
     required this.gateway,
@@ -699,15 +732,20 @@ class MedalPhoto extends StatelessWidget {
     this.size = 46,
     this.fit = BoxFit.cover,
     this.useDisplayImage = false,
+    this.usePostImage = false,
+    this.revision = 0,
   });
 
   @override
   Widget build(BuildContext context) => SignedPhoto(
+    key: ValueKey(
+      'medal-photo-$participationId-$useDisplayImage-$usePostImage',
+    ),
     gateway: gateway,
     endpoint: participationId == null
         ? null
         : '/participations/${Uri.encodeComponent(participationId!)}/'
-              '${useDisplayImage ? 'display-image' : 'image'}',
+              '${usePostImage ? 'post-image' : (useDisplayImage ? 'display-image' : 'image')}',
     fallback: MedalArt(size: size),
     fit: fit,
   );
@@ -1135,16 +1173,24 @@ String loadError(Object error) => error is IdentityIssue
     ? catalogError(error)
     : 'Não foi possível carregar seus dados. Tente novamente.';
 
-void openMedal(
+Future<void> openMedal(
   BuildContext context,
   IdentityGateway gateway,
   RaceRecord race,
-) => Navigator.of(context).push(
+) => Navigator.of(context).push<void>(
   MaterialPageRoute<void>(
     builder: (_) =>
         ParticipationDraftScreen(gateway: gateway, initial: race.participation),
   ),
 );
+
+String readableEditionName(String editionId) {
+  final match = RegExp(r'^pedido-(.+)-\d{4}-\d{2}-\d{2}-[^-]+$')
+      .firstMatch(editionId);
+  final words = match?.group(1)?.split('-').where((w) => w.isNotEmpty);
+  if (words == null || words.isEmpty) return 'Corrida';
+  return words.map((w) => w[0].toUpperCase() + w.substring(1)).join(' ');
+}
 
 enum MedalGrouping { all, year, distance, city }
 
@@ -1468,11 +1514,25 @@ class MedalCollectionScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final ImageBytesFetcher fetchDisplayPhoto;
   final MedalCropOpener openCropScreen;
+
+  /// Foto da medalha para o "+" e o leitor de texto dela. Trocáveis nos testes (câmera e Vision não rodam lá).
+  final MedalPhotoPicker medalPhotoPicker;
+  final MedalTextReader medalTextReader;
+
+  /// Seleção de foto do rascunho da participação (só os testes trocam).
+  final PhotoSelector? draftPhotoSelector;
+
+  /// Carrega a foto da medalha provisória. Trocável nos testes (o link assinado não roda lá).
+  final Future<List<int>?> Function(IdentityGateway, String) pendingPhotoLoader;
   const MedalCollectionScreen({
     super.key,
     required this.gateway,
     this.fetchDisplayPhoto = fetchImageBytes,
     this.openCropScreen = openMedalCropScreen,
+    this.medalPhotoPicker = pickMedalPhotoPath,
+    this.medalTextReader = const PlatformMedalTextReader(),
+    this.draftPhotoSelector,
+    this.pendingPhotoLoader = loadRequestMedalPhoto,
   });
 
   @override
@@ -1481,8 +1541,148 @@ class MedalCollectionScreen extends StatefulWidget {
 
 class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late Future<List<RaceRecord>> races = loadMyRaces(widget.gateway);
+  late Future<List<Map<String, dynamic>>> pendingMedals = loadPendingMedals(
+    widget.gateway,
+  );
   MedalGrouping grouping = MedalGrouping.all;
   bool newestFirst = true;
+  bool _applying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    applyApprovedPending();
+  }
+
+  /// Corrida aprovada que tinha a minha participação guardada com o pedido (tempo, avaliação, fotos): cria e
+  /// conclui a participação sozinho, para eu não ter que voltar a preencher. Só mexe no que a equipe já aprovou;
+  /// se algo não casar (distância, data futura, participação já existente), deixa para o toque na medalha.
+  Future<void> applyApprovedPending() async {
+    if (_applying) return;
+    _applying = true;
+    try {
+      final pending = await pendingMedals;
+      final done = await races;
+      final doneEditions = {
+        for (final race in done) '${race.participation['editionId']}',
+      };
+      var applied = 0;
+      for (final request in pending) {
+        final data = request['participation'];
+        final linked = request['linkedEditionId'] as String?;
+        final approved =
+            request['status'] == 'approved' || request['status'] == 'linked';
+        if (data is! Map ||
+            data.isEmpty ||
+            !approved ||
+            linked == null ||
+            doneEditions.contains(linked)) {
+          continue;
+        }
+        if (await _applyOne(request, Map<String, dynamic>.from(data))) {
+          applied++;
+        }
+      }
+      if (applied > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              applied == 1
+                  ? 'A corrida foi aprovada e a sua participação já foi concluída, com o tempo e a avaliação que você guardou.'
+                  : '$applied corridas foram aprovadas e as suas participações já foram concluídas.',
+            ),
+          ),
+        );
+        _reloadShelf();
+      }
+    } on Exception {
+      // Não conseguiu agora: a medalha continua tocável e tenta de novo na próxima vez.
+    } finally {
+      _applying = false;
+    }
+  }
+
+  Future<bool> _applyOne(
+    Map<String, dynamic> request,
+    Map<String, dynamic> data,
+  ) async {
+    final editionId = request['linkedEditionId'] as String;
+    final details = (request['details'] as Map?) ?? const {};
+    final medalRef = details['medalImageReference'] as String?;
+    if (medalRef == null) return false;
+    final options = await editionDistances(widget.gateway, editionId, null);
+    final km = double.tryParse('${details['distanceKm'] ?? ''}');
+    Map? picked = options.length == 1 ? options.first : null;
+    if (picked == null && km != null) {
+      for (final d in options) {
+        if (((d['kilometers'] as num) - km).abs() < 0.05) picked = d;
+      }
+    }
+    if (picked == null) {
+      return false; // distância incerta: a pessoa escolhe ao tocar na medalha
+    }
+    try {
+      final draft = await widget.gateway.request(
+        '/participations',
+        method: 'POST',
+        body: {
+          'editionId': editionId,
+          'distanceId': picked['id'],
+          'timeSeconds': ?data['timeSeconds'],
+          'placement': ?data['placement'],
+          'bibNumber': ?data['bibNumber'],
+        },
+      );
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(draft['id'] as String)}/complete',
+        method: 'POST',
+        body: {
+          'expectedVersion': draft['version'],
+          'declaredCompleted': true,
+          'ratings': data['ratings'],
+          'medalImageReference': medalRef,
+          'publishToFeed': data['publishToFeed'] == true,
+          'postImageReference': ?data['postImageReference'],
+          'postText': ?data['postText'],
+          'comment': ?data['comment'],
+        },
+      );
+      return true;
+    } on IdentityIssue {
+      return false; // já existe participação, data futura etc.: fica para o toque na medalha
+    }
+  }
+
+  /// Exclui a medalha: a participação some das medalhas e de "Minhas corridas" (a corrida segue no catálogo).
+  Future<void> deleteMedal(RaceRecord race) async {
+    final id = race.participation['id'] as String;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}',
+        method: 'DELETE',
+        query: {'expectedVersion': '${race.participation['version']}'},
+      );
+      forgetMedalDisplayImage(id);
+      if (!mounted) return;
+      setState(() {
+        races = loadMyRaces(widget.gateway);
+      });
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Medalha excluída. Ela também saiu de Minhas corridas.',
+          ),
+        ),
+      );
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível excluir a medalha. Tente de novo.'),
+        ),
+      );
+    }
+  }
 
   Future<void> editMedal(RaceRecord race) async {
     final result = await showModalBottomSheet<Map<String, dynamic>>(
@@ -1498,6 +1698,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     );
     if (result == null || !mounted) return;
     final id = race.participation['id'] as String;
+    if (result['_delete'] == true) return deleteMedal(race);
     try {
       await widget.gateway.request(
         '/participations/${Uri.encodeComponent(id)}',
@@ -1576,7 +1777,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   Widget tile(RaceRecord race) => Stack(
     children: [
       InkWell(
-        onTap: () => openMedal(context, widget.gateway, race),
+        onTap: () async {
+          await openMedal(context, widget.gateway, race);
+          _reloadShelf(); // a foto/dados podem ter mudado na tela da medalha
+        },
         borderRadius: BorderRadius.circular(14),
         child: Padding(
           // Sem card/borda/sombra: a medalha fica direto no fundo da tela,
@@ -1597,6 +1801,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   gateway: widget.gateway,
                   participationId: race.participation['id'] as String?,
                   useDisplayImage: true,
+                  revision: shelfRevision,
                   fit: BoxFit.cover,
                 ),
               ),
@@ -1651,7 +1856,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ],
   );
 
-  Widget grid(List<RaceRecord> list) => GridView.count(
+  Widget grid(
+    List<RaceRecord> list, [
+    List<Map<String, dynamic>> pending = const [],
+  ]) => GridView.count(
     padding: EdgeInsets.zero,
     crossAxisCount: 3,
     shrinkWrap: true,
@@ -1664,19 +1872,434 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     // da para reduzir muito mais sem arriscar sobrepor a proxima linha
     // quando isso acontecer; 0.52 aperta a folga sem cortar texto.
     childAspectRatio: 0.52,
-    children: [for (final race in list) tile(race)],
+    children: [
+      for (final request in pending) pendingTile(request),
+      for (final race in list) tile(race),
+    ],
   );
 
-  /// Botao compacto ao lado de "Minhas medalhas": leva para o cadastro de
-  /// uma nova corrida, o mesmo fluxo ja usado no resto do app (CatalogScreen).
+  /// Botao compacto ao lado de "Minhas medalhas": abre a foto da medalha para achar a corrida.
+  /// "+": primeiro a foto da medalha (câmera ou galeria); o app lê o texto e tenta achar a corrida.
+  /// Se não achar, a tela seguinte tem o botão que leva às corridas.
+  /// Sem nenhuma medalha: a tela segue a mesma (filtros, totais, prateleira); aqui entra o convite
+  /// para adicionar a primeira, começando pela foto da medalha, sem escolher a corrida antes.
+  Widget emptyShelf() => Card(
+    key: const Key('medals-empty'),
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          const Text(
+            'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            key: const Key('medal-add-first'),
+            onPressed: addMedal,
+            icon: const Icon(Icons.add_a_photo_outlined),
+            label: const Text('Adicionar medalha'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  int shelfRevision =
+      0; // sobe quando uma medalha é editada: as fotos recarregam
+  final _pendingPhotos = <String, Future<List<int>?>>{};
+  final _editionNames = <String, Future<String?>>{};
+
+  /// Nome atual da corrida (a equipe pode ter corrigido depois do pedido): vale o do catálogo.
+  Future<String?> _currentName(String editionId) =>
+      _editionNames.putIfAbsent(editionId, () async {
+        try {
+          final edition = await widget.gateway.request(
+            '/editions/${Uri.encodeComponent(editionId)}',
+          );
+          return edition['name'] as String?;
+        } on Exception {
+          return null;
+        }
+      });
+
+  void _reloadShelf() {
+    if (!mounted) return;
+    setState(() {
+      shelfRevision++;
+      pendingMedals = loadPendingMedals(widget.gateway);
+      races = loadMyRaces(widget.gateway);
+    });
+  }
+
+  /// Medalha com a corrida aprovada: segue para a minha participação nela (tempo, percurso, avaliação e a
+  /// foto da medalha que já enviei). Se já existe um rascunho nessa corrida, abre o rascunho.
+  Future<void> concludePending(Map<String, dynamic> request) async {
+    final editionId = request['linkedEditionId'] as String?;
+    if (editionId == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      final options = await editionDistances(widget.gateway, editionId, null);
+      final km = double.tryParse(
+        '${(request['details'] as Map?)?['distanceKm'] ?? ''}',
+      );
+      if (!mounted) return;
+      final picked = await chooseDistance(context, options, km: km);
+      if (!mounted) return;
+      if (picked == null) {
+        if (options.isEmpty) {
+          // Corrida sem distâncias: a tela da corrida deixa marcar "Já corri".
+          await navigator.push(
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  EditionScreen(gateway: widget.gateway, editionId: editionId),
+            ),
+          );
+          _reloadShelf();
+        }
+        return; // desistiu de escolher a distância
+      }
+      Map<String, dynamic> draft;
+      List<int>? photo;
+      try {
+        draft = await widget.gateway.request(
+          '/participations',
+          method: 'POST',
+          body: {'editionId': editionId, 'distanceId': picked['id']},
+        );
+        photo = await widget.pendingPhotoLoader(
+          widget.gateway,
+          request['id'] as String,
+        );
+      } on IdentityIssue catch (issue) {
+        if (issue.code != 'PARTICIPATION_EXISTS') rethrow;
+        final mine = await loadMyEditions(widget.gateway);
+        final existing = mine[editionId];
+        if (existing == null) rethrow;
+        draft =
+            existing; // já existe: continua de onde parou (sem reenviar a foto)
+        photo = null;
+      }
+      if (!mounted) return;
+      await navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => ParticipationDraftScreen(
+            gateway: widget.gateway,
+            initial: draft,
+            initialPhoto: photo,
+          ),
+        ),
+      );
+      _reloadShelf();
+    } on IdentityIssue catch (issue) {
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível abrir agora. Verifique a internet e tente de novo.',
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Menu do lápis da medalha em análise/aprovada: continuar a participação, ver a solicitação ou excluir.
+  Future<void> pendingMenu(Map<String, dynamic> request) async {
+    final approved =
+        request['status'] == 'approved' || request['status'] == 'linked';
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (approved && request['linkedEditionId'] != null)
+              ListTile(
+                key: const Key('pending-menu-continue'),
+                leading: const Icon(Icons.edit_note_rounded),
+                title: const Text('Atualizar minha participação'),
+                subtitle: const Text(
+                  'Tempo, percurso, avaliação e a foto da medalha',
+                ),
+                onTap: () => Navigator.pop(sheet, 'continue'),
+              ),
+            ListTile(
+              key: const Key('pending-menu-request'),
+              leading: const Icon(Icons.assignment_outlined),
+              title: const Text('Ver a solicitação'),
+              onTap: () => Navigator.pop(sheet, 'request'),
+            ),
+            ListTile(
+              key: const Key('pending-menu-delete'),
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text(
+                'Excluir medalha',
+                style: TextStyle(color: Colors.red),
+              ),
+              onTap: () => Navigator.pop(sheet, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (choice) {
+      case 'continue':
+        await concludePending(request);
+      case 'request':
+        _openRequests();
+      case 'delete':
+        await deletePending(request);
+    }
+  }
+
+  /// Exclui a medalha em análise/aprovada: sai a solicitação e a foto enviada com ela. A corrida do catálogo
+  /// continua (dá para cadastrar a medalha de novo escolhendo a corrida).
+  Future<void> deletePending(Map<String, dynamic> request) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Excluir medalha?'),
+        content: const Text(
+          'A solicitação e a foto da medalha enviadas serão excluídas. A corrida continua no catálogo, e você pode cadastrar a medalha de novo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('pending-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.gateway.request(
+        '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
+        method: 'DELETE',
+        query: {'expectedVersion': '${request['version']}'},
+      );
+      _pendingPhotos.remove(request['id']);
+      _reloadShelf();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Medalha excluída.')),
+      );
+    } on IdentityIssue catch (issue) {
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível excluir. Verifique a internet e tente de novo.',
+          ),
+        ),
+      );
+    }
+  }
+
+  void _openRequests() => Navigator.of(context)
+      .push(
+        MaterialPageRoute<void>(
+          builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+        ),
+      )
+      .then((_) => _reloadShelf());
+
+  /// Medalha provisória (pedido de cadastro com a foto da medalha), até a equipe decidir: aparece junto das
+  /// outras na prateleira, em cinza e com cadeado. Aprovada, ganha cor e abre a corrida para concluir.
+  Widget pendingTile(Map<String, dynamic> request) {
+    final id = request['id'] as String;
+    final details = (request['details'] as Map?) ?? const {};
+    final linked = request['linkedEditionId'] as String?;
+    final approved =
+        request['status'] == 'approved' || request['status'] == 'linked';
+    final locked = !approved;
+    final photo = FutureBuilder<List<int>?>(
+      future: _pendingPhotos.putIfAbsent(
+        id,
+        () => widget.pendingPhotoLoader(widget.gateway, id),
+      ),
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        final image = bytes == null
+            ? const ColoredBox(
+                color: Color(0x33888888),
+                child: Center(
+                  child: Icon(Icons.workspace_premium_outlined, size: 40),
+                ),
+              )
+            : Image.memory(
+                Uint8List.fromList(bytes),
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              );
+        return image; // a foto aparece normal; só o cadeado no canto indica que está em análise
+      },
+    );
+    return Stack(
+      key: Key('pending-medal-$id'),
+      children: [
+        InkWell(
+          key: Key('pending-locked-$id-$locked'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: approved && linked != null
+              ? () => concludePending(request)
+              : _openRequests,
+          child: Column(
+            children: [
+              _medalNiche(frame: medalFrameFor(null), photo: photo),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 32,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: FutureBuilder<String?>(
+                    future: linked == null ? null : _currentName(linked),
+                    builder: (context, snapshot) => Text(
+                      snapshot.data ?? '${details['name'] ?? 'Medalha'}',
+                      key: Key('pending-name-$id'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Text(
+                pendingMedalStatus(request),
+                key: Key('pending-status-$id'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: context.muted, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+        if (locked)
+          // Cadeado pequeno no canto inferior direito da foto (em análise); a foto e os dados seguem ativos.
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: AspectRatio(
+              aspectRatio: 1086 / 1448,
+              child: Align(
+                alignment: Alignment.bottomRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      color: Color(0xCC000000),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.all(5),
+                      child: Icon(
+                        Icons.lock_outline_rounded,
+                        key: Key('pending-lock'),
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          top: 2,
+          right: 2,
+          child: Material(
+            color: Colors.black38,
+            shape: const CircleBorder(),
+            child: InkWell(
+              key: Key('pending-edit-$id'),
+              customBorder: const CircleBorder(),
+              // Aprovada: edita/conclui a minha participação. Em análise: abre a solicitação (editar ou excluir).
+              onTap: () => pendingMenu(request),
+              child: const Padding(
+                padding: EdgeInsets.all(5),
+                child: Icon(Icons.edit, size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Prateleira: as medalhas concluídas e, junto, as em análise (cinza, com cadeado).
+  Widget shelf(List<RaceRecord> data) =>
+      FutureBuilder<List<Map<String, dynamic>>>(
+        future: pendingMedals,
+        builder: (context, snapshot) {
+          final pending = visiblePendingMedals(snapshot.data ?? const [], {
+            for (final race in data) '${race.participation['editionId']}',
+          });
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (data.isEmpty) ...[
+                if (pending.isNotEmpty) grid(const [], pending),
+                emptyShelf(),
+              ] else
+                ...sections(data, pending),
+            ],
+          );
+        },
+      );
+
+  Future<void> addMedal() async {
+    final path = await widget.medalPhotoPicker(context);
+    if (path == null || !mounted) return;
+    final registered = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute<Object?>(
+        builder: (_) => MedalScanScreen(
+          gateway: widget.gateway,
+          photoPath: path,
+          reader: widget.medalTextReader,
+          draftPhotoSelector: widget.draftPhotoSelector,
+        ),
+      ),
+    );
+    if (registered == 'request' && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 6),
+          content: Text(
+            'Pedido enviado. A medalha fica em análise, com um cadeado no canto. Quando a equipe aprovar, a sua participação é concluída sozinha com o que você preencheu.',
+          ),
+        ),
+      );
+    }
+    if (registered != null && mounted) {
+      setState(() {
+        pendingMedals = loadPendingMedals(widget.gateway);
+        races = loadMyRaces(
+          widget.gateway,
+        ); // pode ter concluído uma medalha de verdade
+      });
+    }
+  }
+
   Widget _addTile() => InkWell(
     key: const Key('medal-add-tile'),
     borderRadius: BorderRadius.circular(16),
-    onTap: () => Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CatalogScreen(gateway: widget.gateway),
-      ),
-    ),
+    onTap: addMedal,
     child: Container(
       width: 24,
       height: 24,
@@ -1693,10 +2316,14 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ),
   );
 
-  List<Widget> sections(List<RaceRecord> races) {
+  List<Widget> sections(
+    List<RaceRecord> races, [
+    List<Map<String, dynamic>> pending = const [],
+  ]) {
     final ordered = newestFirst ? races : races.reversed.toList();
     if (grouping == MedalGrouping.all) {
-      return [grid(ordered)];
+      // As medalhas em análise ficam junto das outras, no começo da prateleira (cinza, com cadeado).
+      return [grid(ordered, pending)];
     }
     final groups = <String, List<RaceRecord>>{};
     for (final race in ordered) {
@@ -1725,6 +2352,16 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       );
     }
     return [
+      if (pending.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.only(top: 8, bottom: 8),
+          child: Text(
+            'Em análise',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+          ),
+        ),
+        grid(const [], pending),
+      ],
       for (final key in keys) ...[
         Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 8),
@@ -1805,11 +2442,6 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               return loadMessage(loadError(snapshot.error!));
             }
             final data = snapshot.data!;
-            if (data.isEmpty) {
-              return loadMessage(
-                'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
-              );
-            }
             final stats = RaceStats.of(data);
             return ListView(
               key: const Key('medals-list'),
@@ -1912,7 +2544,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                ...sections(data),
+                shelf(data),
               ],
             );
           },
@@ -1956,6 +2588,32 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
   void dispose() {
     description.dispose();
     super.dispose();
+  }
+
+  Future<void> confirmDelete() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Excluir medalha?'),
+        content: const Text(
+          'A medalha e a sua participação nesta corrida serão excluídas: tempo, colocação, número de peito e avaliação. '
+          'Ela também deixa de aparecer em Minhas corridas. A corrida continua no catálogo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('medal-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (sure == true && mounted) Navigator.pop(context, {'_delete': true});
   }
 
   String? _blankToNull(String text) {
@@ -2156,6 +2814,16 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              key: const Key('medal-delete'),
+              onPressed: confirmDelete,
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              label: const Text(
+                'Excluir medalha',
+                style: TextStyle(color: Colors.red),
+              ),
             ),
           ],
         ),
