@@ -244,14 +244,14 @@ Future<Uint8List> buildShareCard({
   // asset carregar por algum motivo, cai para o texto "+1Pódio".
   final logo = await _loadAssetImage('assets/brand/logo-dark.png');
   if (logo != null) {
-    const logoHeight = 56.0;
+    const logoHeight = 110.0;
     final logoWidth = logo.width * (logoHeight / logo.height);
     canvas.drawImageRect(
       logo,
       Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
       Rect.fromLTWH(
         (_cardSide - logoWidth) / 2,
-        footerTop + _cardFooterHeight - 78,
+        footerTop + _cardFooterHeight - 22 - logoHeight,
         logoWidth,
         logoHeight,
       ),
