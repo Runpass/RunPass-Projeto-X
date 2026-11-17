@@ -6598,7 +6598,6 @@
         "required": [
           "expectedVersion",
           "declaredCompleted",
-          "ratings",
           "medalImageReference",
           "publishToFeed"
         ],
@@ -6629,7 +6628,8 @@
             "maxLength": 2000
           },
           "ratings": {
-            "$ref": "#/components/schemas/ReviewRatings"
+            "$ref": "#/components/schemas/ReviewRatings",
+            "description": "Optional. Without ratings the participation completes with no review (the runner rates later with PUT /participations/{id}/review and expectedVersion 0) and does not count in the edition's public score. When present, all 8 criteria are required. `comment` requires `ratings`."
           },
           "postImageReference": {
             "type": "string",
@@ -6905,7 +6905,8 @@
         "properties": {
           "expectedVersion": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 0,
+            "description": "0 creates the review of a completed participation that has none; >= 1 replaces the current review (version must match)."
           },
           "ratings": {
             "$ref": "#/components/schemas/ReviewRatings"
@@ -10452,9 +10453,6 @@
       "PendingParticipation": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "ratings"
-        ],
         "properties": {
           "timeSeconds": {
             "type": "integer",
@@ -10469,7 +10467,8 @@
             "maxLength": 40
           },
           "ratings": {
-            "$ref": "#/components/schemas/ReviewRatings"
+            "$ref": "#/components/schemas/ReviewRatings",
+            "description": "Optional. Without ratings the pending participation applies with no review when the race is approved. `comment` requires `ratings`."
           },
           "comment": {
             "type": "string",

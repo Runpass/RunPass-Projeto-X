@@ -678,6 +678,56 @@ class ParticipationTests(unittest.TestCase):
         self.assertEqual(social.edition_participants(reader, "synthetic-sp-2025")["items"], [])
         self.assertEqual(social.edition_participants(reader, "synthetic-sp-2024", "5k")["total"], 0)
 
+    def test_complete_without_ratings_then_rate_later(self):
+        # Avaliacao opcional: conclui sem notas e avalia depois (expectedVersion 0 cria a avaliacao).
+        social = SocialService(self.identity)
+        reader = self.admit("reader")
+        draft = self.service.create(self.actor, "d-opt", self.payload(timeSeconds=3600))
+        body = self.completion(draft)
+        body.pop("ratings")
+        done = self.service.complete(self.actor, draft["id"], "c-opt", body)
+        self.assertEqual(done["state"], "completed")
+        pid = draft["id"]
+        # Sem avaliacao: nao ha review, nem evento de nota, nem aparece na lista publica de avaliacoes.
+        with self.assertRaises(Problem) as error:
+            self.service.get_review(self.actor, pid)
+        self.assertEqual(error.exception.code, "REVIEW_NOT_FOUND")
+        self.assertIsNone(self.store.get(("history", "USER#owner", "P#" + pid + "#REVIEW")))
+        self.assertEqual(social.edition_reviews(reader, "synthetic-sp-2024")["items"], [])
+        # Versao diferente de 0 nao cria avaliacao.
+        rating = {k: 4 for k in self.completion(draft)["ratings"]}
+        with self.assertRaises(Problem) as error:
+            self.service.replace_review(
+                self.actor, pid, "r-bad", {"expectedVersion": 1, "ratings": rating}
+            )
+        self.assertEqual(error.exception.code, "REVIEW_NOT_FOUND")
+        # Avaliar depois: expectedVersion 0 cria; aparece na lista publica e na leitura.
+        created = self.service.replace_review(
+            self.actor, pid, "r-new", {"expectedVersion": 0, "ratings": rating, "comment": "Depois"}
+        )
+        self.assertEqual(created["version"], 1)
+        self.assertEqual(self.service.get_review(self.actor, pid)["comment"], "Depois")
+        listed = social.edition_reviews(reader, "synthetic-sp-2024")
+        self.assertEqual([i["participationId"] for i in listed["items"]], [pid])
+        # Criar de novo com 0 e conflito; a versao certa substitui.
+        with self.assertRaises(Problem) as error:
+            self.service.replace_review(
+                self.actor, pid, "r-dup", {"expectedVersion": 0, "ratings": rating}
+            )
+        self.assertEqual(error.exception.code, "VERSION_CONFLICT")
+        again = self.service.replace_review(
+            self.actor, pid, "r-up", {"expectedVersion": 1, "ratings": rating}
+        )
+        self.assertEqual(again["version"], 2)
+
+    def test_delete_completed_participation_without_review(self):
+        draft = self.service.create(self.actor, "d-del", self.payload(timeSeconds=3600))
+        body = self.completion(draft)
+        body.pop("ratings")
+        done = self.service.complete(self.actor, draft["id"], "c-del", body)
+        out = self.service.delete(self.actor, draft["id"], "x-del", done["version"])
+        self.assertTrue(out["publiclyHidden"])
+
     def test_edition_photos_only_post_photos_of_published_participations(self):
         social = SocialService(self.identity)
         reader = self.admit("reader")
@@ -946,6 +996,19 @@ class ParticipationApiTests(unittest.TestCase):
             client.get("/me/participations?state=draft", headers=headers).json()["items"][0]["id"],
             participation_id,
         )
+        # Comentario sem notas nao vale (a avaliacao e tudo ou nada).
+        bad = client.post(
+            f"/participations/{participation_id}/complete",
+            headers={**headers, "Idempotency-Key": "c-bad"},
+            json={
+                "expectedVersion": 1,
+                "declaredCompleted": True,
+                "medalImageReference": "img-http",
+                "publishToFeed": False,
+                "comment": "sem notas",
+            },
+        )
+        self.assertEqual(bad.status_code, 422)
         plain = client.get("/me/participations?state=draft", headers=headers).json()["items"][0]
         self.assertNotIn("edition", plain)
         expanded = client.get("/me/participations?state=draft&expand=edition", headers=headers)

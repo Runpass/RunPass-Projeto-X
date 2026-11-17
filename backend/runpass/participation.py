@@ -252,6 +252,9 @@ class ParticipationService:
             claim = read(claim_key)
             if not claim or claim.get("participationId") != participation_id:
                 raise Problem(503, "PARTICIPATION_INTEGRITY_FAILURE")
+            # Avaliacao opcional: sem notas a participacao conclui sem avaliacao, sem evento de nota e sem
+            # ponteiro de avaliacao publica; a pessoa avalia depois (PUT .../review com expectedVersion 0).
+            ratings = payload.get("ratings")
             event_id = str(uuid4())
             event_key = ("operations", pk, "EVENT#" + event_id)
             shard = int(hashlib.sha256(event_id.encode()).hexdigest(), 16) % 16
@@ -260,8 +263,9 @@ class ParticipationService:
                 f"WORK#event#pending#{shard:02d}",
                 stamp(now) + "#" + event_id,
             )
-            read(event_key)
-            read(work_key)
+            if ratings is not None:
+                read(event_key)
+                read(work_key)
             item.update(
                 state="completed",
                 version=item["version"] + 1,
@@ -276,59 +280,63 @@ class ParticipationService:
                     item["postText"] = payload["postText"]
                 if payload.get("taggedUserIds"):
                     item["taggedUserIds"] = self._tags(read, actor, payload["taggedUserIds"])
-            review = {
-                "participationId": participation_id,
-                "reviewVersion": 1,
-                "effectVersion": 1,
-                "ratings": payload["ratings"],
-                "moderationState": "valid",
-                "editionId": item["editionId"],
-                "distanceId": item["distanceId"],
-            }
-            if payload.get("comment") is not None:
-                review["comment"] = payload["comment"]
+            review = None
+            if ratings is not None:
+                review = {
+                    "participationId": participation_id,
+                    "reviewVersion": 1,
+                    "effectVersion": 1,
+                    "ratings": ratings,
+                    "moderationState": "valid",
+                    "editionId": item["editionId"],
+                    "distanceId": item["distanceId"],
+                }
+                if payload.get("comment") is not None:
+                    review["comment"] = payload["comment"]
             medal = {
                 "participationId": participation_id,
                 "imageReference": reference,
                 "imageOrigin": origin,
                 "catalogVersion": item["catalogVersion"],
             }
-            event = {
-                "id": event_id,
-                "type": "participation_completed",
-                "state": "pending",
-                "participationId": participation_id,
-                "effectVersion": 1,
-                "editionId": item["editionId"],
-                "distanceId": item["distanceId"],
-                "ratings": payload["ratings"],
-                "occurredAt": stamp(now),
-                "dispatchEpoch": 1,
-                "workPartition": work_key[1],
-                "workSort": work_key[2],
-            }
             write(part_key, item)
-            write(review_key, review)
             write(medal_key, medal)
-            write(event_key, event)
-            write(
-                work_key,
-                {
-                    "owner": actor.subject,
-                    "eventId": event_id,
+            if review is not None:
+                event = {
+                    "id": event_id,
+                    "type": "participation_completed",
                     "state": "pending",
-                    "nextAttemptAt": stamp(now),
+                    "participationId": participation_id,
+                    "effectVersion": 1,
+                    "editionId": item["editionId"],
+                    "distanceId": item["distanceId"],
+                    "ratings": ratings,
+                    "occurredAt": stamp(now),
+                    "dispatchEpoch": 1,
                     "workPartition": work_key[1],
                     "workSort": work_key[2],
-                },
-            )
+                }
+                write(review_key, review)
+                write(event_key, event)
+                write(
+                    work_key,
+                    {
+                        "owner": actor.subject,
+                        "eventId": event_id,
+                        "state": "pending",
+                        "nextAttemptAt": stamp(now),
+                        "workPartition": work_key[1],
+                        "workSort": work_key[2],
+                    },
+                )
             write(image_key, {**image, "refs": image.get("refs", 0) + 1})
             if post_image:
                 write(post_image[0], {**post_image[1], "refs": post_image[1].get("refs", 0) + 1})
             write(claim_key, {"participationId": participation_id, "version": item["version"]})
-            _write_review_pointer(
-                read, write, pk, item["editionId"], participation_id, item, actor.subject
-            )
+            if review is not None:
+                _write_review_pointer(
+                    read, write, pk, item["editionId"], participation_id, item, actor.subject
+                )
             if payload["publishToFeed"]:
                 # Ponteiro global para o feed "Todos" (social.py:_public_feed), sem Scan: a
                 # visibilidade de verdade é sempre reconferida na leitura via can_view.
@@ -555,6 +563,8 @@ class ParticipationService:
         )
 
     def replace_review(self, actor, participation_id, key, payload):
+        """Substitui a avaliacao (expectedVersion >= 1) ou a CRIA para uma participacao concluida sem avaliacao
+        (expectedVersion 0): a pessoa pode avaliar depois de concluir."""
         pk = "USER#" + actor.subject
 
         def work(read, write, account, now, replay):
@@ -567,12 +577,16 @@ class ParticipationService:
                 or owner.get("owner") != actor.subject
                 or not part
                 or part.get("state") != "completed"
-                or not review
             ):
                 raise Problem(404, "REVIEW_NOT_FOUND")
+            creating = review is None
+            if creating and payload["expectedVersion"] != 0:
+                raise Problem(404, "REVIEW_NOT_FOUND")
             if replay is not None:
+                if creating:
+                    raise Problem(503, "PARTICIPATION_INTEGRITY_FAILURE")
                 return self.review_projection(review), replay
-            if review["reviewVersion"] != payload["expectedVersion"]:
+            if not creating and review["reviewVersion"] != payload["expectedVersion"]:
                 raise Problem(409, "VERSION_CONFLICT")
             event_id = str(uuid4())
             event_key = ("operations", pk, "EVENT#" + event_id)
@@ -586,22 +600,33 @@ class ParticipationService:
             read(event_key)
             read(audit_key)
             read(work_key)
-            updated = {
-                **review,
-                "reviewVersion": review["reviewVersion"] + 1,
-                "effectVersion": review["effectVersion"] + 1,
-                "ratings": payload["ratings"],
-                "moderationState": (
-                    "pending_review" if review["moderationState"] == "invalidated" else "valid"
-                ),
-            }
+            if creating:
+                updated = {
+                    "participationId": participation_id,
+                    "reviewVersion": 1,
+                    "effectVersion": 1,
+                    "ratings": payload["ratings"],
+                    "moderationState": "valid",
+                    "editionId": part["editionId"],
+                    "distanceId": part["distanceId"],
+                }
+            else:
+                updated = {
+                    **review,
+                    "reviewVersion": review["reviewVersion"] + 1,
+                    "effectVersion": review["effectVersion"] + 1,
+                    "ratings": payload["ratings"],
+                    "moderationState": (
+                        "pending_review" if review["moderationState"] == "invalidated" else "valid"
+                    ),
+                }
             if "comment" in payload and payload["comment"] is not None:
                 updated["comment"] = payload["comment"]
             else:
                 updated.pop("comment", None)
             event = {
                 "id": event_id,
-                "type": "review_replaced",
+                "type": "participation_completed" if creating else "review_replaced",
                 "state": "pending",
                 "participationId": participation_id,
                 "effectVersion": updated["effectVersion"],
@@ -611,16 +636,21 @@ class ParticipationService:
                 "dispatchEpoch": 1,
                 "workPartition": work_key[1],
                 "workSort": work_key[2],
+                **({"ratings": payload["ratings"]} if creating else {}),
             }
             write(review_key, updated)
             write(event_key, event)
+            if creating:
+                _write_review_pointer(
+                    read, write, pk, part["editionId"], participation_id, part, actor.subject
+                )
             write(
                 audit_key,
                 {
                     "eventId": event_id,
                     "participationId": participation_id,
                     "occurredAt": stamp(now),
-                    "before": self.review_projection(review),
+                    "before": self.review_projection(review) if review else None,
                     "after": self.review_projection(updated),
                 },
             )
