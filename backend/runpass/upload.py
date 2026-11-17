@@ -80,6 +80,14 @@ class MemoryBlobStore:
             "contentType": item["contentType"],
         }
 
+    def delete_derived(self, owner, reference):
+        """Apaga a copia tratada de UMA imagem do dono (exclusao de participacao). Devolve quantas removeu."""
+        item = self.derived.get(reference)
+        if item and item.get("owner") == owner:
+            self.derived.pop(reference, None)
+            return 1
+        return 0
+
     def delete_owner(self, owner):
         """Active local deletion of originals, versions and derived personal bytes."""
         removed = 0

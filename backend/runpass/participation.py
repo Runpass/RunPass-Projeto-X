@@ -799,6 +799,24 @@ class ParticipationService:
                     "dueAt": stamp(now + timedelta(days=7)),
                 },
             )
+            # Marcador que o executor da exclusao (ErasureProcessor.run_pending) encontra sem Scan.
+            erase_shard = int(hashlib.sha256(operation_id.encode()).hexdigest(), 16) % 16
+            marker_key = (
+                "operations",
+                f"WORK#erase_participation#pending#{erase_shard:02d}",
+                stamp(now) + "#" + operation_id,
+            )
+            read(marker_key)
+            write(
+                marker_key,
+                {
+                    "owner": actor.subject,
+                    "operationId": operation_id,
+                    "participationId": participation_id,
+                    "workPartition": marker_key[1],
+                    "workSort": marker_key[2],
+                },
+            )
             receipt = {"operationId": operation_id}
             return {
                 "operationId": operation_id,
@@ -1126,7 +1144,10 @@ class ParticipationService:
         items = [
             self.projection(item)
             for sk, item in rows
-            if sk.endswith("#PART") and (state is None or item.get("state") == state)
+            # Participacao excluida nao volta na lista (some na hora; o executor apaga os dados depois).
+            if sk.endswith("#PART")
+            and item.get("state") != "deleted"
+            and (state is None or item.get("state") == state)
         ]
         self.identity.authorize(actor, admitted=True)
         result = {"items": items}

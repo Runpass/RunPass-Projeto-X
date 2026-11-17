@@ -720,6 +720,77 @@ class ParticipationTests(unittest.TestCase):
         )
         self.assertEqual(again["version"], 2)
 
+    def _published_with_images(self):
+        """Participacao concluida e publicada, com foto da medalha e da postagem (copias tratadas no blob store)."""
+        from runpass.upload import MemoryBlobStore
+
+        draft = self.service.create(self.actor, "d-erase", self.payload(timeSeconds=3600))
+        post_ref = "img_" + "c" * 64
+        for ref in ("img-erase-medal", post_ref):
+            key = ("operations", "USER#owner", "IMAGE#" + ref)
+            self.store.commit(
+                {key: None},
+                {key: {"owner": "owner", "origin": "runner", "state": "valid", "refs": 0}},
+            )
+        body = self.completion(draft, medalImageReference="img-erase-medal")
+        body.update(publishToFeed=True, postImageReference=post_ref, postText="Texto do post")
+        done = self.service.complete(self.actor, draft["id"], "c-erase", body)
+        blobs = MemoryBlobStore()
+        for ref in ("img-erase-medal", post_ref):
+            blobs.derived[ref] = {"owner": "owner", "contentType": "image/png", "data": b"x"}
+        return done, blobs, post_ref
+
+    def test_participation_erasure_executor_removes_data_and_completes_the_operation(self):
+        from runpass.erasure import ErasureProcessor
+
+        done, blobs, post_ref = self._published_with_images()
+        pid = done["id"]
+        out = self.service.delete(self.actor, pid, "x-erase", done["version"])
+        self.assertEqual(out["state"], "pending")
+        # Some da lista na hora, mesmo antes do executor.
+        listed = [i["id"] for i in self.service.list(self.actor, None, 50, None)["items"]]
+        self.assertNotIn(pid, listed)
+        pk = "USER#owner"
+        self.assertIsNotNone(self.store.get(("history", pk, "P#" + pid + "#PART")))
+        # O executor roda: apaga participacao, avaliacao, medalha, imagens e conclui a operacao.
+        erasure = ErasureProcessor(self.identity, blobs)
+        self.assertEqual(erasure.run_pending_participations(), {"completed": 1, "pending": 0})
+        for suffix in ("#PART", "#REVIEW", "#MEDAL"):
+            self.assertIsNone(self.store.get(("history", pk, "P#" + pid + suffix)))
+        self.assertIsNone(self.store.get(("history", "PARTICIPATION#" + pid, "OWNER")))
+        self.assertIsNone(self.store.get(("operations", pk, "IMAGE#img-erase-medal")))
+        self.assertIsNone(self.store.get(("operations", pk, "IMAGE#" + post_ref)))
+        self.assertEqual(blobs.derived, {})  # as copias tratadas foram apagadas
+        state = self.service.get_deletion(self.actor, out["operationId"])
+        self.assertEqual(state["state"], "completed")
+        # Rodar de novo nao faz nada.
+        self.assertEqual(erasure.run_pending_participations(), {"completed": 0, "pending": 0})
+
+    def test_participation_erasure_keeps_images_still_used_and_never_touches_official_art(self):
+        from runpass.erasure import ErasureProcessor
+
+        done, blobs, post_ref = self._published_with_images()
+        # A foto da postagem tambem esta em uso por outra participacao: nao pode ser apagada.
+        key = ("operations", "USER#owner", "IMAGE#" + post_ref)
+        row = self.store.get(key)
+        self.store.commit({key: row}, {key: {**row, "refs": row["refs"] + 1}})
+        self.service.delete(self.actor, done["id"], "x-keep", done["version"])
+        ErasureProcessor(self.identity, blobs).run_pending_participations()
+        self.assertIsNotNone(self.store.get(key))
+        self.assertIn(post_ref, blobs.derived)
+        self.assertNotIn("img-erase-medal", blobs.derived)
+
+    def test_participation_erasure_does_not_touch_other_participations(self):
+        from runpass.erasure import ErasureProcessor
+
+        done, blobs, _ = self._published_with_images()
+        other = self.admit("other")
+        draft = self.service.create(other, "d-other", self.payload(timeSeconds=1800))
+        self.service.delete(self.actor, done["id"], "x-iso", done["version"])
+        ErasureProcessor(self.identity, blobs).run_pending_participations()
+        # O rascunho de outra pessoa continua la.
+        self.assertEqual(self.service.get(other, draft["id"])["state"], "draft")
+
     def test_delete_completed_participation_without_review(self):
         draft = self.service.create(self.actor, "d-del", self.payload(timeSeconds=3600))
         body = self.completion(draft)
