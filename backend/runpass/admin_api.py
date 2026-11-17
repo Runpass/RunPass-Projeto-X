@@ -197,6 +197,7 @@ def create_admin_app(
     sources=None,
     quality_live=None,
     auto_import=None,
+    discoveries=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
@@ -769,6 +770,60 @@ def create_admin_app(
         model_config = ConfigDict(extra="forbid")
         editionId: str = Field(max_length=120)
         reason: str = Field(max_length=200)
+
+    class DiscoveryImport(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        csv: str = Field(max_length=2_000_000)
+
+    class DiscoveryDecision(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        version: int = Field(ge=1)
+        decision: str = Field(max_length=10)
+        note: str | None = Field(default=None, max_length=300)
+
+    class DiscoveryPromote(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        version: int = Field(ge=1)
+        dryRun: bool = True
+
+    DiscoveryId = Annotated[str, PathParam(pattern=r"^[0-9a-f]{16}$")]
+
+    def need_discoveries(op):
+        actor = need(op, "catalog_admin")
+        if discoveries is None:
+            raise Unavailable()
+        return actor
+
+    @app.get("/admin/discoveries")
+    def discoveries_list(
+        op: Operator,
+        month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
+        status: str | None = Query(None, max_length=10),
+        city: str | None = Query(None, max_length=80),
+        q: str | None = Query(None, max_length=80),
+        origin: str | None = Query(None, max_length=5),
+        limit: int = Query(100, ge=1, le=500),
+        offset: int = Query(0, ge=0, le=100000),
+    ):
+        need_discoveries(op)
+        return discoveries.list(month, status, city, q, origin, limit, offset)
+
+    @app.post("/admin/discoveries/import", status_code=201)
+    def discoveries_import(payload: DiscoveryImport, op: Operator):
+        actor = need_discoveries(op)
+        return discoveries.import_csv(actor, payload.csv)
+
+    @app.post("/admin/discoveries/{discovery_id}/decision")
+    def discoveries_decide(discovery_id: DiscoveryId, payload: DiscoveryDecision, op: Operator):
+        actor = need_discoveries(op)
+        return discoveries.decide(
+            actor, discovery_id, payload.version, payload.decision, payload.note
+        )
+
+    @app.post("/admin/discoveries/{discovery_id}/promote")
+    def discoveries_promote(discovery_id: DiscoveryId, payload: DiscoveryPromote, op: Operator):
+        actor = need_discoveries(op)
+        return discoveries.promote(actor, discovery_id, payload.version, payload.dryRun)
 
     def need_auto_import(op):
         actor = need(op, "catalog_admin")

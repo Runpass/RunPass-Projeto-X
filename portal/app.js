@@ -781,6 +781,111 @@ async function carregarFontes() {
   }
 }
 
+const SITUACAO_DESCOBERTA = { new: 'Nova', reviewed: 'Conferida', rejected: 'Rejeitada', imported: 'Importada no catálogo' };
+
+async function importarDescobertas(evento) {
+  const arquivo = evento.target.files[0];
+  evento.target.value = '';
+  if (!arquivo) return;
+  if (arquivo.size > 2000000) return aviso(mensagem('CSV_TOO_LARGE'), 'erro');
+  try {
+    const r = await api('/admin/discoveries/import', { method: 'POST', body: JSON.stringify({ csv: await arquivo.text() }) });
+    const c = r.counts;
+    aviso(`Arquivo lido: ${c.created} novas, ${c.updated} completadas, ${c.unchanged} iguais, ${c.invalid} com erro.`, c.invalid ? 'erro' : 'ok');
+    await carregarDescobertas();
+  } catch (erro) {
+    if (token) aviso(mensagem(erro.codigo), 'erro');
+  }
+}
+
+function cartaoDescoberta(d) {
+  const erro = el('p', { class: 'aviso erro', hidden: true });
+  const botoes = [];
+  const enviar = async (caminho, corpo, ok) => {
+    for (const b of botoes) b.disabled = true;
+    try {
+      const r = await api(`/admin/discoveries/${d.id}/${caminho}`, { method: 'POST', body: JSON.stringify({ version: d.version, ...corpo }) });
+      aviso(typeof ok === 'function' ? ok(r) : ok, 'ok');
+      await carregarDescobertas();
+    } catch (falha) {
+      for (const b of botoes) b.disabled = false;
+      if (!token) return;
+      erro.hidden = false;
+      erro.textContent = mensagem(falha.codigo);
+    }
+  };
+  const acao = (rotulo, classe, fn) => {
+    const b = el('button', { type: 'button', class: classe }, rotulo);
+    b.addEventListener('click', fn);
+    botoes.push(b);
+    return b;
+  };
+  const aberta = d.status === 'new' || d.status === 'reviewed';
+  const resultado = el('div', { class: 'acoes' });
+  if (aberta) {
+    resultado.append(
+      acao('Marcar como conferida', 'sec', () => enviar('decision', { decision: 'review' }, 'Marcada como conferida.')),
+      acao('Simular promoção', 'sec', () => enviar('promote', { dryRun: true }, (r) => (r.status === 'created' ? 'Simulação: a corrida seria criada no catálogo.' : `Simulação: ${r.status} (não seria criada).`))),
+      acao('Promover para o catálogo', 'ok', () => {
+        if (window.confirm(`Criar "${d.name}" (${dataBr(d.date)}, ${d.city}) no catálogo do app?`)) enviar('promote', { dryRun: false }, 'Corrida criada no catálogo.');
+      }),
+      acao('Rejeitar', 'perigo', () => {
+        const nota = window.prompt(`Rejeitar "${d.name}". Motivo (opcional):`, '');
+        if (nota !== null) enviar('decision', { decision: 'reject', note: nota.trim() }, 'Rejeitada.');
+      }),
+    );
+  } else if (d.status === 'rejected') {
+    resultado.append(acao('Reabrir', 'sec', () => enviar('decision', { decision: 'reopen' }, 'Reaberta.')));
+  }
+  return el(
+    'article',
+    { class: 'cartao' },
+    el('h2', {}, d.name),
+    el('div', { class: 'linha' }, `${dataBr(d.date)} · ${d.city}/${d.state}${d.venue ? ' · ' + d.venue : ''}`),
+    el('div', { class: 'meta' }, `${SITUACAO_DESCOBERTA[d.status] || d.status} · origem ${d.origin === 'api' ? 'automática (API)' : 'arquivo CSV'} · vista ${d.seen}x`),
+    d.distancesKm.length ? el('div', { class: 'meta' }, `Distâncias: ${d.distancesKm.join(', ')} km`) : el('div', { class: 'aviso' }, 'Sem distância informada na fonte (não dá para promover).'),
+    d.organizer ? el('div', { class: 'meta' }, `Organizador: ${d.organizer}`) : '',
+    linkSeguro(d.sourceUrl) ? el('div', { class: 'meta' }, 'Fonte: ', el('a', { href: linkSeguro(d.sourceUrl), target: '_blank', rel: 'noopener noreferrer' }, d.sourceUrl)) : '',
+    d.excerpt ? el('div', { class: 'meta' }, `Trecho: "${d.excerpt}"`) : '',
+    d.editionId ? el('div', { class: 'meta' }, `Corrida no catálogo: ${d.editionId}`) : '',
+    erro,
+    resultado,
+  );
+}
+
+async function carregarDescobertas() {
+  const alvo = $('descobertas');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  const filtros = new URLSearchParams({ limit: '100' });
+  for (const [campo, id] of [['month', 'descobertas-mes'], ['status', 'descobertas-status'], ['q', 'descobertas-busca']]) {
+    const v = $(id).value.trim();
+    if (v) filtros.set(campo, v);
+  }
+  try {
+    const r = await api('/admin/discoveries?' + filtros);
+    const m = r.summary;
+    alvo.replaceChildren(
+      el(
+        'div',
+        { class: 'grade' },
+        cartaoNumero('Provas', String(m.total)),
+        cartaoNumero('Novas', String(m.byStatus.new)),
+        cartaoNumero('Conferidas', String(m.byStatus.reviewed)),
+        cartaoNumero('Importadas', String(m.byStatus.imported)),
+        cartaoNumero('Com distância', String(m.withDistance)),
+        cartaoNumero('Municípios', String(m.cities)),
+      ),
+      ...(r.items.length ? r.items.map(cartaoDescoberta) : [el('p', { class: 'vazio' }, 'Nenhuma prova com esses filtros. Importe um CSV ou espere a esteira enviar.')]),
+      r.matching > r.items.length ? el('p', { class: 'ajuda' }, `Mostrando ${r.items.length} de ${r.matching}. Use os filtros para ver as demais.`) : '',
+    );
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
 async function carregarCandidatas() {
   try {
     const r = await api('/admin/sources/candidates', { method: 'POST', body: '{}' });
@@ -1483,6 +1588,7 @@ function mostrarAba(nome) {
   if (nome === 'pedidos') carregarPedidos();
   if (nome === 'catalogo') carregarUltimoDisparo();
   if (nome === 'fontes') carregarFontes();
+  if (nome === 'descobertas') carregarDescobertas();
   if (nome === 'cadastros') carregarCadastros();
   if (nome === 'divergencias') carregarDivergencias();
   if (nome === 'qualidade') carregarQualidade();
@@ -1994,6 +2100,10 @@ $('atualizar-qualidade').addEventListener('click', carregarQualidade);
 $('verificar-vinculos').addEventListener('click', verificarVinculos);
 $('atualizar-divergencias').addEventListener('click', carregarDivergencias);
 $('atualizar-fontes').addEventListener('click', carregarFontes);
+$('atualizar-descobertas').addEventListener('click', carregarDescobertas);
+for (const id of ['descobertas-mes', 'descobertas-status']) $(id).addEventListener('change', carregarDescobertas);
+$('descobertas-busca').addEventListener('change', carregarDescobertas);
+$('descobertas-arquivo').addEventListener('change', importarDescobertas);
 $('carregar-candidatas').addEventListener('click', carregarCandidatas);
 $('baixar-aceitas').addEventListener('click', baixarAceitas);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);

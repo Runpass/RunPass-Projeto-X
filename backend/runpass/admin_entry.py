@@ -3,7 +3,7 @@
 import os
 from functools import lru_cache
 
-from .composition import create_admin_aws_app, create_auto_import_aws
+from .composition import create_admin_aws_app, create_auto_import_aws, create_discovery_aws
 from .lambda_entry import _boto_client, _settings
 
 
@@ -84,7 +84,16 @@ def _auto_import():
     )
 
 
+@lru_cache(maxsize=1)
+def _discoveries():
+    return create_discovery_aws(_settings(with_cursor_key=True), _boto_client("dynamodb"))
+
+
 def handler(event, context):
+    # Ingestao pela esteira do catalogo: evento do Lambda (so IAM), nunca uma rota HTTP publica.
+    if isinstance(event, dict) and isinstance(event.get("discoveryIngest"), dict):
+        pedido = event["discoveryIngest"]
+        return _discoveries().ingest(pedido.get("items"), "api", pedido.get("batchId"))
     # Evento da regra horaria (nao e uma chamada HTTP): importe automatico das corridas achadas pela rotina.
     if isinstance(event, dict) and event.get("autoImport") is True:
         return _auto_import().run("schedule")

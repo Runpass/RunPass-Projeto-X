@@ -52,6 +52,7 @@
         <button role="tab" id="aba-pedidos" data-aba="pedidos" aria-selected="true">Pedidos de corrida</button>
         <button role="tab" id="aba-catalogo" data-aba="catalogo" aria-selected="false">Atualizar catálogo</button>
         <button role="tab" id="aba-fontes" data-aba="fontes" aria-selected="false">Fontes de coleta</button>
+        <button role="tab" id="aba-descobertas" data-aba="descobertas" aria-selected="false">Provas descobertas</button>
         <button role="tab" id="aba-cadastros" data-aba="cadastros" aria-selected="false">Cadastros no app</button>
         <button role="tab" id="aba-banners" data-aba="banners" aria-selected="false">Banners</button>
         <button role="tab" id="aba-divergencias" data-aba="divergencias" aria-selected="false">Divergências</button>
@@ -153,6 +154,22 @@
         <p class="ajuda">Organizadores, plataformas e calendários de onde a rotina pode ler corridas. Toda fonte nasce <strong>pendente e desativada</strong> e só coleta depois de verificada (site oficial, robots.txt, termos e API ou feed conferidos) e ativada. Mudar o site de uma fonte derruba a verificação. Esta tela só cadastra; ela não acessa os sites.</p>
         <div id="fontes"></div>
         <div id="fonte-nova"></div>
+      </section>
+      <section id="sec-descobertas" data-sec="descobertas" hidden>
+        <div class="barra">
+          <h1>Provas descobertas</h1>
+          <div class="acoes">
+            <label class="sec arquivo">Importar CSV <input id="descobertas-arquivo" type="file" accept=".csv,text/csv" hidden></label>
+            <button id="atualizar-descobertas" type="button" class="sec">Atualizar</button>
+          </div>
+        </div>
+        <p class="ajuda">Provas que a esteira do catálogo encontrou na web. Elas chegam por duas portas: automática (API) e arquivo CSV importado aqui. A mesma prova nunca aparece duas vezes. <strong>Nada vai para o app sozinho:</strong> confira a fonte, marque como conferida ou rejeite, e só então promova para o catálogo (a promoção simula primeiro e exige a distância).</p>
+        <div class="filtros">
+          <label>Mês <input id="descobertas-mes" type="month"></label>
+          <label>Situação <select id="descobertas-status"><option value="">Todas</option><option value="new">Novas</option><option value="reviewed">Conferidas</option><option value="rejected">Rejeitadas</option><option value="imported">Importadas</option></select></label>
+          <label>Busca <input id="descobertas-busca" type="search" maxlength="80" placeholder="nome ou cidade"></label>
+        </div>
+        <div id="descobertas"></div>
       </section>
       <section id="sec-divergencias" data-sec="divergencias" hidden>
         <div class="barra">

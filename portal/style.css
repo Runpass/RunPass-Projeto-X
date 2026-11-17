@@ -99,3 +99,7 @@ h3 { margin: 18px 0 4px; font-size: 16px; }
 .subabas button { background: transparent; color: var(--suave); border: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 8px 12px; }
 .subabas button[aria-selected="true"] { color: var(--texto); font-weight: 700; border-bottom-color: var(--laranja); }
 .subabas button:hover { color: var(--texto); }
+
+.filtros { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; align-items: end; }
+.filtros label { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; }
+label.arquivo { cursor: pointer; display: inline-flex; align-items: center; padding: 8px 14px; border-radius: 8px; }

@@ -16,6 +16,28 @@ class AdminEntryTests(unittest.TestCase):
         auto.run.assert_called_once_with("schedule")
         api.assert_not_called()
 
+    def test_evento_de_ingestao_da_esteira_grava_descobertas_e_nao_chama_a_api(self):
+        disc = mock.Mock()
+        disc.ingest.return_value = {"counts": {"created": 1}}
+        evento = {"discoveryIngest": {"items": [{"name": "x"}], "batchId": "lote-1"}}
+        with (
+            mock.patch.object(admin_entry, "_discoveries", return_value=disc),
+            mock.patch.object(admin_entry, "_admin") as api,
+        ):
+            self.assertEqual(admin_entry.handler(evento, None), {"counts": {"created": 1}})
+        disc.ingest.assert_called_once_with([{"name": "x"}], "api", "lote-1")
+        api.assert_not_called()
+
+    def test_ingestao_so_vale_como_objeto_e_so_no_evento_do_lambda(self):
+        for event in ({"discoveryIngest": True}, {"discoveryIngest": "x"}, {"body": "{}"}):
+            api = mock.Mock(return_value={"statusCode": 200})
+            with (
+                mock.patch.object(admin_entry, "_admin", return_value=api),
+                mock.patch.object(admin_entry, "_discoveries") as disc,
+            ):
+                admin_entry.handler(event, None)
+            disc.assert_not_called()
+
     def test_chamada_http_e_qualquer_outro_evento_seguem_para_a_api(self):
         for event in (
             {"requestContext": {}},
