@@ -77,7 +77,7 @@ class CatalogViewMenu extends StatelessWidget {
           columns != null &&
           onColumnsChanged != null) ...[
         const PopupMenuDivider(),
-        for (final n in GridColumns.options)
+        for (final n in GridColumns.options.where((n) => n <= 3))
           CheckedPopupMenuItem<Object>(
             key: Key('grid-columns-$n'),
             value: n,

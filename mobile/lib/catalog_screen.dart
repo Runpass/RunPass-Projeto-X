@@ -133,8 +133,10 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   'EDITION_ARCHIVED' => 'Esta edição está arquivada e não aceita novos registros. Escolha outra corrida.',
   'EDITION_CHANGED' => 'O cadastro desta corrida foi atualizado depois que você abriu a tela. Volte à lista e abra a corrida de novo.',
   'INVALID_DISTANCE' => 'Informe uma distância entre 0,1 e 1000 km.',
-  'DISTANCE_NOT_ADDABLE' => 'Esta corrida já tem distâncias oficiais. Escolha uma delas.',
-  'DISTANCE_LIMIT_REACHED' => 'Esta corrida já tem o máximo de distâncias informadas por corredores.',
+  'DISTANCE_NOT_ADDABLE' =>
+    'Esta corrida já tem distâncias oficiais. Escolha uma delas.',
+  'DISTANCE_LIMIT_REACHED' =>
+    'Esta corrida já tem o máximo de distâncias informadas por corredores.',
   'DISTANCE_NOT_IN_EDITION' => 'Esta distância foi removida da corrida. Volte e escolha uma das distâncias atuais.',
   'PARTICIPATION_EXISTS' => 'Você já tem um registro nesta corrida (só é permitido um por edição). Abra o registro existente para continuar.',
   'VERSION_CONFLICT' => 'Este registro foi alterado em outro lugar (outro aparelho ou outra tela). Feche e abra de novo antes de editar.',
@@ -424,6 +426,23 @@ class _EditionCoverState extends State<EditionCover> {
   return (from: '$year-01-01', to: '$year-12-31');
 }
 
+/// Valor do filtro de ano que mostra só as corridas dos próximos [upcomingDays] dias (o padrão da lista).
+const upcomingFilter = 'next';
+const upcomingDays = 20;
+
+String _isoDay(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+/// Janela de hoje até daqui a [upcomingDays] dias.
+({String from, String to}) upcomingRange([DateTime? now]) {
+  final today = now ?? DateTime.now();
+  final day = DateTime(today.year, today.month, today.day);
+  return (
+    from: _isoDay(day),
+    to: _isoDay(day.add(const Duration(days: upcomingDays))),
+  );
+}
+
 /// Anos oferecidos no filtro: do próximo ano até 2024, do mais recente para o mais antigo.
 List<int> filterYears([DateTime? now, Iterable<int> extra = const []]) {
   // A faixa padrão vai do próximo ano até 2024; corridas cadastradas com data fora dela (mais antigas ou mais
@@ -455,15 +474,8 @@ class CatalogScreen extends StatefulWidget {
 
 class _CatalogScreenState extends State<CatalogScreen> {
   final fields = {
-    for (final key in [
-      'namePrefix',
-      'city',
-      'state',
-      'distanceKm',
-      'year',
-      'audience',
-    ])
-      key: TextEditingController(),
+    for (final key in ['namePrefix', 'city', 'state', 'distanceKm', 'year'])
+      key: TextEditingController(text: key == 'year' ? upcomingFilter : ''),
   };
   final form = GlobalKey<FormState>();
   // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
@@ -483,6 +495,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
   bool loading = false;
   bool showFilters = false;
 
+  /// Padrão da lista: só as corridas dos próximos 20 dias. Escolher um ano, "Todos os anos" ou buscar por um nome
+  /// mostra as outras.
+  bool get upcomingWindow =>
+      fields['year']!.text == upcomingFilter &&
+      fields['namePrefix']!.text.trim().isEmpty;
+
   int? get selectedYear => int.tryParse(fields['year']!.text);
 
   /// Anos das corridas já vistas (qualquer busca), para o filtro de ano alcançar todas as datas do catálogo.
@@ -490,6 +508,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   /// Ordem da lista: 'date' (padrão) ou 'rating'. Cada ícone liga a sua ordem; tocar de novo inverte.
   String sortBy = 'date';
+
+  /// Quantas corridas aparecem na tela por vez ("Carregar mais" mostra mais 20).
+  static const pageSize = 20;
+  int visibleCount = pageSize;
 
   /// Direção: em data, mais recentes primeiro; em avaliação, melhores primeiro.
   bool descending = true;
@@ -501,14 +523,33 @@ class _CatalogScreenState extends State<CatalogScreen> {
   @override
   void initState() {
     super.initState();
-    load();
+    start();
     loadMine();
     loadViewPreferences();
   }
 
+  /// Primeira carga: se o perfil tem cidade, a lista abre nela (dá para trocar ou limpar em "Estado e cidade").
+  Future<void> start() async {
+    try {
+      final me = await widget.gateway.request('/me');
+      final city = (me['city'] as String?)?.trim() ?? '';
+      final state = (me['state'] as String?)?.trim() ?? '';
+      if (city.isNotEmpty && state.isNotEmpty && mounted) {
+        fields['city']!.text = city;
+        fields['state']!.text = state;
+      }
+    } on Exception {
+      // Sem perfil ou sem conexão: abre com todas as cidades.
+    }
+    if (mounted) await load();
+  }
+
   Future<void> loadViewPreferences() async {
     final mode = await CatalogViewMode.read();
-    final columns = await GridColumns.read('catalog-grid-columns', fallback: 2);
+    final columns = (await GridColumns.read(
+      'catalog-grid-columns',
+      fallback: 2,
+    )).clamp(2, 3);
     if (mounted) {
       setState(() {
         viewMode = mode;
@@ -547,7 +588,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   /// Corpo da lista conforme a visualização escolhida.
   List<Widget> editionViews() {
-    final shown = view;
+    final shown = widget.serverPaging ? view : view.take(visibleCount).toList();
     switch (viewMode) {
       case CatalogViewMode.list:
         return [for (final edition in shown) editionCard(edition)];
@@ -859,10 +900,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
               if (yearRange(fields['year']!.text) case final range?) ...{
                 'dateFrom': range.from,
                 'dateTo': range.to,
+              } else if (upcomingWindow) ...{
+                'dateFrom': upcomingRange().from,
+                'dateTo': upcomingRange().to,
               },
               'registrationStatus': ?registration,
             };
       searchInfo = null;
+      visibleCount = pageSize;
       items.clear();
       nextCursor = null;
       pageLimit = widget.serverPaging ? '20' : '100';
@@ -947,6 +992,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
     for (final controller in fields.values) {
       controller.clear();
     }
+    fields['year']!.text = upcomingFilter;
     setState(() {
       registration = null;
       registrationEpoch++;
@@ -957,8 +1003,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// Há algum filtro além do nome? Se houver, o nome deixa de ser obrigatório.
   bool get hasOtherFilter =>
       fields['distanceKm']!.text.trim().isNotEmpty ||
-      fields['year']!.text.trim().isNotEmpty ||
-      fields['audience']!.text.trim().isNotEmpty ||
+      (fields['year']!.text.trim().isNotEmpty &&
+          fields['year']!.text != upcomingFilter) ||
       fields['state']!.text.trim().isNotEmpty ||
       fields['city']!.text.trim().isNotEmpty ||
       registration != null;
@@ -1261,36 +1307,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
-          // Público (todas, adultos ou kids) e, no espaço livre ao lado, a ordem da lista.
+          // A ordem da lista e a visualização (lista ou grade, até 3 colunas).
           Row(
             children: [
-              // Público: todas, só adultas ou só kids (kids = nome com Kids/Infantil/Mirim).
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: SegmentedButton<String>(
-                      key: ValueKey('filter-audience-$registrationEpoch'),
-                      showSelectedIcon: false,
-                      segments: const [
-                        ButtonSegment(value: '', label: Text('Todas')),
-                        ButtonSegment(value: 'adult', label: Text('Adultos')),
-                        ButtonSegment(value: 'kids', label: Text('Kids')),
-                      ],
-                      selected: {fields['audience']!.text},
-                      onSelectionChanged: loading
-                          ? null
-                          : (value) {
-                              setState(
-                                () => fields['audience']!.text = value.first,
-                              );
-                              load();
-                            },
-                    ),
-                  ),
-                ),
-              ),
+              const Spacer(),
               IconButton(
                 key: const Key('catalog-sort-rating'),
                 tooltip: sortBy != 'rating'
@@ -1332,35 +1352,37 @@ class _CatalogScreenState extends State<CatalogScreen> {
           const SizedBox(height: 12),
           Row(
             children: [
-              // Ano no mesmo padrão do seletor de público (Todas/Adultos/Kids), mas com a lista
-              // de anos, que rola para o lado quando não cabe.
+              // Ano em uma lista (o ano filtra na hora: é a forma de escolher a data).
               Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SegmentedButton<String>(
-                    key: ValueKey('filter-year-$registrationEpoch'),
-                    showSelectedIcon: false,
-                    segments: [
-                      const ButtonSegment(
-                        value: '',
-                        label: Text('Todos'),
-                        icon: Icon(Icons.calendar_today_rounded, size: 16),
-                      ),
-                      for (final y in filterYears(null, {
-                        ...knownYears,
-                        ?selectedYear,
-                      }))
-                        ButtonSegment(value: '$y', label: Text('$y')),
-                    ],
-                    selected: {fields['year']!.text},
-                    // O ano filtra na hora: é a única forma de escolher a data.
-                    onSelectionChanged: loading
-                        ? null
-                        : (value) {
-                            setState(() => fields['year']!.text = value.first);
-                            load();
-                          },
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey('filter-year-$registrationEpoch'),
+                  initialValue: fields['year']!.text,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Ano',
+                    prefixIcon: Icon(Icons.calendar_today_rounded, size: 18),
                   ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: upcomingFilter,
+                      child: Text('Próximos 20 dias'),
+                    ),
+                    const DropdownMenuItem(
+                      value: '',
+                      child: Text('Todos os anos'),
+                    ),
+                    for (final y in filterYears(null, {
+                      ...knownYears,
+                      ?selectedYear,
+                    }))
+                      DropdownMenuItem(value: '$y', child: Text('$y')),
+                  ],
+                  onChanged: loading
+                      ? null
+                      : (value) {
+                          setState(() => fields['year']!.text = value ?? '');
+                          load();
+                        },
                 ),
               ),
             ],
@@ -1371,7 +1393,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
           if (!loading && error == null && items.isEmpty)
             Text(
               nextCursor == null
-                  ? 'Nenhuma corrida encontrada com esses filtros.'
+                  ? (upcomingWindow
+                        ? 'Nenhuma corrida nos próximos 20 dias com esses filtros. Escolha "Todos os anos" ou um ano para ver as outras, ou troque a cidade.'
+                        : 'Nenhuma corrida encontrada com esses filtros.')
                   : 'Nenhuma corrida nesta página. Continue a busca.',
             ),
           if (!loading && error == null && items.isEmpty && nextCursor == null)
@@ -1384,7 +1408,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
               ),
             ),
           ...editionViews(),
-          if (nextCursor != null)
+          if (!widget.serverPaging && view.length > visibleCount)
+            TextButton(
+              key: const Key('catalog-show-more'),
+              onPressed: () => setState(() => visibleCount += pageSize),
+              child: const Text('Carregar mais'),
+            ),
+          if (widget.serverPaging && nextCursor != null)
             TextButton(
               onPressed: loading ? null : () => load(more: true),
               child: const Text('Carregar mais'),
@@ -2074,10 +2104,16 @@ class _EditionScreenState extends State<EditionScreen> {
           controller: controller,
           autofocus: true,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Distância em km', hintText: 'Ex.: 10'),
+          decoration: const InputDecoration(
+            labelText: 'Distância em km',
+            hintText: 'Ex.: 10',
+          ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Cancelar'),
+          ),
           FilledButton(
             key: const Key('add-distance-confirm'),
             onPressed: () => Navigator.pop(dialog, controller.text.trim()),
@@ -2109,7 +2145,9 @@ class _EditionScreenState extends State<EditionScreen> {
       if (mounted) setState(() => error = catalogError(issue));
     } on Exception {
       if (mounted) {
-        setState(() => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.');
+        setState(
+          () => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.',
+        );
       }
     }
   }

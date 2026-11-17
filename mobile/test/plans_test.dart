@@ -489,20 +489,15 @@ void main() {
       await tester.pumpAndSettle();
       final box = find.byKey(const ValueKey('filter-year-0'));
       await tester.ensureVisible(box);
+      await tester.tap(box);
+      await tester.pumpAndSettle();
       for (final year in ['2029', '2019', '2024']) {
-        final chip = find.descendant(of: box, matching: find.text(year));
-        await tester.ensureVisible(chip);
-        expect(chip, findsOneWidget, reason: 'ano $year no seletor');
+        expect(find.text(year), findsWidgets, reason: 'ano $year na lista');
       }
       // escolher um ano antigo filtra por ele e o ano continua disponível depois
-      final old = find.descendant(of: box, matching: find.text('2019'));
-      await tester.ensureVisible(old);
-      await tester.tap(old);
+      await tester.tap(find.text('2019').last);
       await tester.pumpAndSettle();
-      expect(
-        find.descendant(of: box, matching: find.text('2019')),
-        findsOneWidget,
-      );
+      expect(find.text('2019'), findsWidgets);
     },
   );
 
@@ -844,17 +839,6 @@ void searchTests() {
   }
 
   Future<void> pick(WidgetTester tester, String field, String option) async {
-    if (field == 'filter-year') {
-      // O ano é um seletor em linha (como Todas/Adultos/Kids): basta tocar no ano.
-      final year = find.descendant(
-        of: find.byKey(const ValueKey('filter-year-0')),
-        matching: find.text(option),
-      );
-      await tester.ensureVisible(year);
-      await tester.tap(year);
-      await tester.pumpAndSettle();
-      return;
-    }
     final box = find.byKey(ValueKey('$field-0'));
     await tester.ensureVisible(box);
     await tester.tap(box);
@@ -960,16 +944,14 @@ void searchTests() {
     await tester.tap(find.text('Limpar busca'));
     await tester.pumpAndSettle();
     expect(calls.last.containsKey('state'), isFalse);
-    expect(calls.last.containsKey('dateFrom'), isFalse);
+    // Sem filtro, volta ao padrão: só as corridas dos próximos 20 dias.
+    expect(calls.last['dateFrom'], upcomingRange().from);
+    expect(calls.last['dateTo'], upcomingRange().to);
     expect(find.text('Todos os estados e cidades'), findsOneWidget);
-    final year = tester.widget<SegmentedButton<String>>(
-      find.byWidgetPredicate(
-        (w) =>
-            w is SegmentedButton<String> &&
-            w.key.toString().contains('filter-year'),
-      ),
+    final year = tester.widget<DropdownButtonFormField<String>>(
+      find.byKey(const ValueKey('filter-year-1')),
     );
-    expect(year.selected, {''}); // volta para "Todos"
+    expect(year.initialValue, upcomingFilter);
   });
 
   testWidgets(
