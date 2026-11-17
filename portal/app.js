@@ -843,7 +843,7 @@ function cartaoDescoberta(d) {
     el('h2', {}, d.name),
     el('div', { class: 'linha' }, `${dataBr(d.date)} · ${d.city}/${d.state}${d.venue ? ' · ' + d.venue : ''}`),
     el('div', { class: 'meta' }, `${SITUACAO_DESCOBERTA[d.status] || d.status} · origem ${d.origin === 'api' ? 'automática (API)' : 'arquivo CSV'} · vista ${d.seen}x`),
-    d.distancesKm.length ? el('div', { class: 'meta' }, `Distâncias: ${d.distancesKm.join(', ')} km`) : el('div', { class: 'aviso' }, 'Sem distância informada na fonte (não dá para promover).'),
+    d.distancesKm.length ? el('div', { class: 'meta' }, `Distâncias: ${d.distancesKm.join(', ')} km`) : el('div', { class: 'aviso' }, 'Sem distância na fonte: entra no catálogo sem distância e o corredor informa ao se inscrever.'),
     d.organizer ? el('div', { class: 'meta' }, `Organizador: ${d.organizer}`) : '',
     linkSeguro(d.sourceUrl) ? el('div', { class: 'meta' }, 'Fonte: ', el('a', { href: linkSeguro(d.sourceUrl), target: '_blank', rel: 'noopener noreferrer' }, d.sourceUrl)) : '',
     d.excerpt ? el('div', { class: 'meta' }, `Trecho: "${d.excerpt}"`) : '',

@@ -353,8 +353,6 @@ class DiscoveryStore:
             raise Problem(409, "VERSION_CONFLICT")
         if item["status"] in ("imported", "rejected"):
             raise Problem(409, "DISCOVERY_NOT_PROMOTABLE")
-        if not item.get("distancesKm"):
-            raise Problem(422, "DISTANCE_REQUIRED")  # o importador do catalogo exige uma distancia
         row = {
             "source_external_id": f"{slug(item['name'])}-{item['date']}",
             "name": item["name"],
@@ -368,7 +366,7 @@ class DiscoveryStore:
             "venue": item.get("venue") or "",
             "last_verified_at": _iso(self.clock)[:10],
         }
-        results = rows_to_results([row], SOURCE_CODE)
+        results = rows_to_results([row], SOURCE_CODE, allow_no_distance=True)
         report = import_rows(
             self.catalog,
             actor,
@@ -410,7 +408,7 @@ class DiscoveryStore:
         counts = {"created": 0, "needs_review": 0, "unchanged": 0, "updated": 0, "error": 0}
         remaining, done = 0, 0
         for sk, item in sorted(self._all(), key=lambda r: r[0]):
-            if item["status"] not in ("new", "reviewed") or not item.get("distancesKm"):
+            if item["status"] not in ("new", "reviewed"):
                 continue
             if item.get("bulkOutcome"):
                 continue

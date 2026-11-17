@@ -334,12 +334,54 @@ class CatalogService:
             raise Problem(422, "DISTANCE_NOT_IN_EDITION")
         return body
 
+    MAX_RUNNER_DISTANCES = 5
+
+    def add_runner_distance(self, actor, edition_id, kilometers):
+        """O corredor informa a distancia de uma corrida que veio sem ela (ou so com distancias de corredores).
+        Nunca mexe em distancia que veio de uma fonte, e acrescenta so uma por vez, marcada `informedBy`."""
+        from .catalog_import import distance_entry, parse_km
+
+        try:
+            km = parse_km(str(kilometers))
+        except ValueError as error:
+            raise Problem(422, "INVALID_DISTANCE") from error
+        entry = {**distance_entry(km), "informedBy": "runner"}
+        for _ in range(3):
+            body = self.detail(actor, edition_id)
+            if body["status"] == "archived":
+                raise Problem(409, "EDITION_ARCHIVED")
+            current = body.get("distances", [])
+            if any(d.get("informedBy") != "runner" for d in current):
+                raise Problem(409, "DISTANCE_NOT_ADDABLE")
+            for existing in current:
+                if Decimal(str(existing["kilometers"])) == km:
+                    return body  # ja informada: nada a gravar
+            if len(current) >= self.MAX_RUNNER_DISTANCES:
+                raise Problem(409, "DISTANCE_LIMIT_REACHED")
+            payload = {k: v for k, v in body.items() if k in ImportEdition.model_fields}
+            payload["distances"] = [*current, entry]
+            payload["distancesOptional"] = True
+            actor_runner = RunnerDistanceActor("runner:" + actor.subject)
+            try:
+                return CatalogImporter(self, allow_system=True).put(
+                    payload,
+                    expected_version=body["version"],
+                    origin="https://corredor.runpass.invalid/distancia",
+                    actor=actor_runner,
+                )
+            except Problem as problem:
+                if problem.code not in ("VERSION_CONFLICT", "CATALOG_VERSION_CONFLICT"):
+                    raise
+        raise Problem(409, "VERSION_CONFLICT")
+
 
 class ImportDistance(Input):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,100}$")
     kilometers: Decimal
     label: str | None = Field(default=None, min_length=1)
     medalImageReference: str | None = Field(default=None, min_length=1)
+    # Distancia informada por um corredor (nao pela fonte): aparece como "informada" e nao e dado conferido.
+    informedBy: Literal["runner"] | None = None
 
     @field_validator("kilometers", mode="before")
     @classmethod
@@ -371,7 +413,9 @@ class ImportEdition(Input):
     # Proveniencia: de onde veio e com que identificador na fonte.
     sourceCode: str | None = Field(default=None, pattern=r"^[a-z0-9_-]{2,40}$")
     sourceExternalId: str | None = Field(default=None, min_length=1, max_length=200)
-    distances: list[ImportDistance] = Field(min_length=1)
+    distances: list[ImportDistance] = Field(default_factory=list)
+    # So as descobertas do catalogo entram sem distancia (o corredor informa ao se inscrever).
+    distancesOptional: bool = False
     description: str | None = None
     organizerName: str | None = None
     organizerId: str | None = None
@@ -442,6 +486,8 @@ class ImportEdition(Input):
 
     @model_validator(mode="after")
     def unique_distances(self):
+        if not self.distances and not self.distancesOptional:
+            raise ValueError("At least one distance required")
         if len({d.id for d in self.distances}) != len(self.distances):
             raise ValueError("Duplicate distance ID")
         if self.imageCredit and not self.imageReference:
@@ -474,6 +520,13 @@ class AutoImportActor:
 
     subject = "system:auto-import"
     token_digest = ""
+
+
+class RunnerDistanceActor(AutoImportActor):
+    """Ator da distancia informada por um corredor: registra a pessoa na auditoria, sem poder de operador."""
+
+    def __init__(self, subject):
+        self.subject = subject
 
 
 class CatalogImporter:
@@ -526,7 +579,7 @@ class CatalogImporter:
         ):
             raise Problem(422, "INVALID_VERSION")
         authorization = self._authorization(actor, synthetic)
-        body = model.model_dump(exclude_none=True, exclude={"archived"})
+        body = model.model_dump(exclude_none=True, exclude={"archived", "distancesOptional"})
         version = expected_version + 1
         body["version"] = version
         body["status"] = "archived" if model.archived else "past"

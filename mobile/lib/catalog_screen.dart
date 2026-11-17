@@ -132,6 +132,9 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
     'Esta corrida não está mais no catálogo. Volte à lista e escolha outra.',
   'EDITION_ARCHIVED' => 'Esta edição está arquivada e não aceita novos registros. Escolha outra corrida.',
   'EDITION_CHANGED' => 'O cadastro desta corrida foi atualizado depois que você abriu a tela. Volte à lista e abra a corrida de novo.',
+  'INVALID_DISTANCE' => 'Informe uma distância entre 0,1 e 1000 km.',
+  'DISTANCE_NOT_ADDABLE' => 'Esta corrida já tem distâncias oficiais. Escolha uma delas.',
+  'DISTANCE_LIMIT_REACHED' => 'Esta corrida já tem o máximo de distâncias informadas por corredores.',
   'DISTANCE_NOT_IN_EDITION' => 'Esta distância foi removida da corrida. Volte e escolha uma das distâncias atuais.',
   'PARTICIPATION_EXISTS' => 'Você já tem um registro nesta corrida (só é permitido um por edição). Abra o registro existente para continuar.',
   'VERSION_CONFLICT' => 'Este registro foi alterado em outro lugar (outro aparelho ou outra tela). Feche e abra de novo antes de editar.',
@@ -670,9 +673,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
     final archived = edition['status'] == 'archived';
     final lines = [
       '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
-      (edition['distances'] as List)
-          .map((d) => '${d['kilometers']} km')
-          .join(' · '),
+      (edition['distances'] as List).isEmpty
+          ? 'Distância ainda não informada'
+          : (edition['distances'] as List)
+                .map((d) => '${d['kilometers']} km')
+                .join(' · '),
       if (archived)
         'Arquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}',
       if (scoreOf(edition) != null)
@@ -2057,8 +2062,69 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
+  /// Corrida que veio sem distância: a pessoa informa o km ao se inscrever e ele passa a valer para a corrida.
+  Future<void> addDistance() async {
+    final controller = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Qual a distância?'),
+        content: TextField(
+          key: const Key('add-distance-field'),
+          controller: controller,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: 'Distância em km', hintText: 'Ex.: 10'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('Cancelar')),
+          FilledButton(
+            key: const Key('add-distance-confirm'),
+            onPressed: () => Navigator.pop(dialog, controller.text.trim()),
+            child: const Text('Informar'),
+          ),
+        ],
+      ),
+    );
+    if (text == null || text.isEmpty || !mounted) return;
+    try {
+      final result = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/distances',
+        method: 'POST',
+        body: {'kilometers': text.replaceAll(',', '.')},
+      );
+      if (!mounted) return;
+      setState(() {
+        edition = result;
+        error = null;
+        final list = (result['distances'] as List? ?? const []).cast<Map>();
+        final km = double.tryParse(text.replaceAll(',', '.'));
+        for (final d in list) {
+          if (km != null && ((d['kilometers'] as num) - km).abs() < 0.0001) {
+            selectedDistance = d['id'] as String;
+          }
+        }
+      });
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = catalogError(issue));
+    } on Exception {
+      if (mounted) {
+        setState(() => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.');
+      }
+    }
+  }
+
   Widget distanceSelector(Map<String, dynamic> body) {
     final archived = body['status'] == 'archived';
+    final distances = body['distances'] as List;
+    if (distances.isEmpty && !archived) {
+      return OutlinedButton.icon(
+        key: const Key('add-distance'),
+        onPressed: addDistance,
+        icon: const Icon(Icons.straighten),
+        label: const Text('Informar a distância desta corrida'),
+      );
+    }
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -2067,7 +2133,7 @@ class _EditionScreenState extends State<EditionScreen> {
       ),
       child: Row(
         children: [
-          for (final distance in body['distances'] as List)
+          for (final distance in distances)
             Expanded(
               child: InkWell(
                 borderRadius: BorderRadius.circular(11),

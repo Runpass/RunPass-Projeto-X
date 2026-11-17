@@ -51,7 +51,6 @@ export const MENSAGENS = {
   CSV_SCHEMA_INVALID: 'O arquivo não tem as colunas esperadas (data, nome e cidade, no mínimo).',
   CSV_TOO_LARGE: 'O arquivo é grande demais (máximo 2 MB).',
   CSV_TOO_MANY_ROWS: 'O arquivo tem linhas demais (máximo 5.000).',
-  DISTANCE_REQUIRED: 'Esta prova não tem distância. Sem ela o catálogo não aceita a corrida.',
   DISCOVERY_NOT_FOUND: 'Essa prova não existe mais. Atualize a lista.',
   DISCOVERY_ALREADY_IMPORTED: 'Essa prova já foi para o catálogo.',
   DISCOVERY_NOT_PROMOTABLE: 'Essa prova já foi importada ou rejeitada.',

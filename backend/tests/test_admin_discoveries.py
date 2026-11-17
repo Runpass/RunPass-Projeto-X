@@ -188,13 +188,13 @@ class DiscoveryTests(unittest.TestCase):
             synthetic=True,
         )
         sim = self.disc.promote_bulk(limit=10, dry_run=True)
-        self.assertEqual((sim["processed"], sim["counts"]["created"]), (3, 2))
+        self.assertEqual((sim["processed"], sim["counts"]["created"]), (4, 3))
         self.assertEqual(self.disc.list(status="imported")["matching"], 0)  # simulacao nao grava
         real = self.disc.promote_bulk(limit=10)
-        self.assertEqual((real["counts"]["created"], real["counts"]["needs_review"]), (2, 1))
-        self.assertEqual(self.disc.list(status="imported")["matching"], 2)
+        self.assertEqual((real["counts"]["created"], real["counts"]["needs_review"]), (3, 1))
+        self.assertEqual(self.disc.list(status="imported")["matching"], 3)
         sem = next(i for i in self.disc.list()["items"] if not i["distancesKm"])
-        self.assertEqual(sem["status"], "new")  # sem distancia nunca promove
+        self.assertEqual(sem["status"], "imported")  # sem distancia tambem entra
         again = self.disc.promote_bulk(limit=10)
         self.assertEqual(again["processed"], 0)  # nada e tentado de novo
         for i in self.disc.list(status="imported")["items"]:

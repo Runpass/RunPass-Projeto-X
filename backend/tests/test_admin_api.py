@@ -2106,11 +2106,11 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual((lista["matching"], lista["summary"]["total"]), (2, 2))
         com = next(i for i in lista["items"] if i["distancesKm"])
         sem = next(i for i in lista["items"] if not i["distancesKm"])
-        # sem distancia nao promove
+        # sem distancia tambem promove (a edicao entra sem distancia; o corredor informa ao se inscrever)
         r = self.client.post(
             f"/admin/discoveries/{sem['id']}/promote", json={"version": sem["version"]}, headers=h
         )
-        self.assertEqual((r.status_code, r.json()["code"]), (422, "DISTANCE_REQUIRED"))
+        self.assertEqual((r.status_code, r.json()["status"]), (200, "created"))
         # simulacao nao cria; promover de verdade cria a corrida e marca importada
         sim = self.client.post(
             f"/admin/discoveries/{com['id']}/promote", json={"version": com["version"]}, headers=h
