@@ -28,6 +28,21 @@ class AdminEntryTests(unittest.TestCase):
         disc.ingest.assert_called_once_with([{"name": "x"}], "api", "lote-1")
         api.assert_not_called()
 
+    def test_evento_de_promocao_em_lote_simula_por_padrao_e_nao_chama_a_api(self):
+        disc = mock.Mock()
+        disc.promote_bulk.return_value = {"processed": 0}
+        with (
+            mock.patch.object(admin_entry, "_discoveries", return_value=disc),
+            mock.patch.object(admin_entry, "_admin") as api,
+        ):
+            admin_entry.handler({"discoveryPromote": {}}, None)
+            admin_entry.handler({"discoveryPromote": {"limit": 9999, "dryRun": False}}, None)
+        self.assertEqual(
+            [c.kwargs for c in disc.promote_bulk.call_args_list],
+            [{"limit": 40, "dry_run": True}, {"limit": 200, "dry_run": False}],
+        )
+        api.assert_not_called()
+
     def test_ingestao_so_vale_como_objeto_e_so_no_evento_do_lambda(self):
         for event in ({"discoveryIngest": True}, {"discoveryIngest": "x"}, {"body": "{}"}):
             api = mock.Mock(return_value={"statusCode": 200})

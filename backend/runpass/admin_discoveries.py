@@ -19,11 +19,13 @@ import csv
 import hashlib
 import io
 import re
+import time
 import unicodedata
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from .admin_users import audit
+from .catalog import AutoImportActor
 from .catalog_import import MAX_BYTES, import_rows, rows_to_results, slug
 from .service import Problem
 from .store import Conflict, Unavailable
@@ -49,6 +51,13 @@ CSV_COLUMNS = {  # nome no CSV -> campo
     "trecho": "excerpt",
     "regiao_consultada": "region",
 }
+
+
+class DiscoveryBulkActor(AutoImportActor):
+    """Ator da promocao em lote pedida pelo dono (sem pessoa e sem MFA). So vale por evento IAM do Lambda do
+    portal e em um importador `allow_system`; nunca por HTTP."""
+
+    subject = "system:discovery-bulk"
 
 
 def _fold(text):
@@ -335,7 +344,7 @@ class DiscoveryStore:
         )
         return _public(key[2], {**new, "_rev": item["_rev"] + 1})
 
-    def promote(self, actor, discovery_id_, version, dry_run=True):
+    def promote(self, actor, discovery_id_, version, dry_run=True, allow_system=False):
         """Cria a corrida no catalogo pelo importador de sempre. Simulacao por padrao."""
         if self.catalog is None:
             raise Unavailable()
@@ -367,6 +376,7 @@ class DiscoveryStore:
             origin=f"https://descobertas.runpass.invalid/{discovery_id_}",
             source_code=SOURCE_CODE,
             dry_run=dry_run,
+            allow_system=allow_system,
         )
         entry = report["rows"][0]
         outcome = {"dryRun": dry_run, "status": entry["status"], "editionId": entry.get("id")}
@@ -389,3 +399,37 @@ class DiscoveryStore:
                 self.clock,
             )
         return outcome
+
+    def promote_bulk(self, limit=40, max_seconds=20, dry_run=False):
+        """Promove em lote as provas `new` ou `reviewed` com distancia, pelo importador de sempre (so cria prova
+        nova; parecida ou de outra origem vai para revisao e fica anotada). Cada rodada processa ate `limit`
+        provas ou `max_seconds`. Uma prova ja tentada (`bulkOutcome`) nao e tentada de novo."""
+        if self.catalog is None:
+            raise Unavailable()
+        actor, started = DiscoveryBulkActor(), time.monotonic()
+        counts = {"created": 0, "needs_review": 0, "unchanged": 0, "updated": 0, "error": 0}
+        remaining, done = 0, 0
+        for sk, item in sorted(self._all(), key=lambda r: r[0]):
+            if item["status"] not in ("new", "reviewed") or not item.get("distancesKm"):
+                continue
+            if item.get("bulkOutcome"):
+                continue
+            if done >= limit or time.monotonic() - started > max_seconds:
+                remaining += 1
+                continue
+            done += 1
+            key = (*PARTITION, sk)
+            try:
+                out = self.promote(
+                    actor, sk.rsplit("#", 1)[1], item["_rev"], dry_run=dry_run, allow_system=True
+                )
+            except Problem as problem:
+                counts["error"] += 1
+                if not dry_run:
+                    self._put(key, item, {**item, "bulkOutcome": "error:" + problem.code})
+                continue
+            counts[out["status"] if out["status"] in counts else "error"] += 1
+            if not dry_run and out["status"] != "created":
+                current = self.store.get(key)
+                self._put(key, current, {**current, "bulkOutcome": out["status"]})
+        return {"dryRun": dry_run, "processed": done, "counts": counts, "remaining": remaining}

@@ -149,7 +149,8 @@ def _auto_import(service, catalog, media):
 def create_discovery_aws(settings: AwsSettings, dynamodb_client):
     """Ingestao da esteira do catalogo (evento IAM do Lambda do portal, nunca HTTP)."""
     service = _identity_service(settings, dynamodb_client)
-    return DiscoveryStore(service.store, time.time)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    return DiscoveryStore(service.store, time.time, catalog)
 
 
 def create_auto_import_aws(settings: AwsSettings, dynamodb_client, s3_client, report_bucket):

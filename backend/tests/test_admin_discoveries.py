@@ -160,6 +160,55 @@ class DiscoveryTests(unittest.TestCase):
         self.assertTrue(all(isinstance(d, Decimal) for d in gravados[0]["distancesKm"]))
         self.assertEqual(self.disc.list()["items"][0]["distancesKm"], [5.0, 10.5, 21.0975])
 
+    def test_promocao_em_lote_cria_so_com_distancia_nao_repete_e_manda_parecida_para_revisao(self):
+        from runpass.catalog import CatalogImporter
+
+        self.disc.ingest(
+            [
+                item("[FICTICIA] Lote A", "2027-04-04", "Campinas"),
+                item("[FICTICIA] Lote B", "2027-04-05", "Santos", distances=[]),
+                item("[FICTICIA] Lote C", "2027-04-06", "Jundiai"),
+                item("[FICTICIA] Parecida", "2027-04-07", "Sorocaba"),
+            ],
+            "api",
+            "l1",
+        )
+        # prova parecida ja publicada por outra origem no mesmo dia: o importador manda para revisao
+        CatalogImporter(self.catalog).put(
+            {
+                "id": "outra-origem-parecida",
+                "name": "[FICTICIA] Parecida",
+                "date": "2027-04-07",
+                "city": "Sorocaba",
+                "state": "SP",
+                "distances": [{"id": "5k", "kilometers": 5}],
+            },
+            expected_version=0,
+            origin="https://exemplo.invalid/outra",
+            synthetic=True,
+        )
+        sim = self.disc.promote_bulk(limit=10, dry_run=True)
+        self.assertEqual((sim["processed"], sim["counts"]["created"]), (3, 2))
+        self.assertEqual(self.disc.list(status="imported")["matching"], 0)  # simulacao nao grava
+        real = self.disc.promote_bulk(limit=10)
+        self.assertEqual((real["counts"]["created"], real["counts"]["needs_review"]), (2, 1))
+        self.assertEqual(self.disc.list(status="imported")["matching"], 2)
+        sem = next(i for i in self.disc.list()["items"] if not i["distancesKm"])
+        self.assertEqual(sem["status"], "new")  # sem distancia nunca promove
+        again = self.disc.promote_bulk(limit=10)
+        self.assertEqual(again["processed"], 0)  # nada e tentado de novo
+        for i in self.disc.list(status="imported")["items"]:
+            self.assertTrue(self.catalog._edition(i["editionId"]))
+
+    def test_promocao_em_lote_respeita_o_limite_e_diz_quanto_falta(self):
+        self.disc.ingest(
+            [item(f"[FICTICIA] L{i}", f"2027-05-{i + 1:02d}", "Campinas") for i in range(5)],
+            "api",
+            "l1",
+        )
+        r = self.disc.promote_bulk(limit=2)
+        self.assertEqual((r["processed"], r["remaining"], r["counts"]["created"]), (2, 3, 2))
+
     def test_id_e_estavel_sem_acento_e_caixa(self):
         self.assertEqual(
             discovery_id("2026-12-06", "Corrida São José", "Jundiaí"),

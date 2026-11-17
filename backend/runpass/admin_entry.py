@@ -90,6 +90,13 @@ def _discoveries():
 
 
 def handler(event, context):
+    # Promocao em lote (decisao do dono): so evento IAM, nunca HTTP.
+    if isinstance(event, dict) and isinstance(event.get("discoveryPromote"), dict):
+        pedido = event["discoveryPromote"]
+        return _discoveries().promote_bulk(
+            limit=max(1, min(int(pedido.get("limit", 40)), 200)),
+            dry_run=bool(pedido.get("dryRun", True)),
+        )
     # Ingestao pela esteira do catalogo: evento do Lambda (so IAM), nunca uma rota HTTP publica.
     if isinstance(event, dict) and isinstance(event.get("discoveryIngest"), dict):
         pedido = event["discoveryIngest"]
