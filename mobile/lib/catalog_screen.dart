@@ -3729,6 +3729,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   DateTime? editionDate;
   String? editionName; // nome da corrida, mostrado embaixo da foto
   Map<String, dynamic>? review;
+
+  /// Concluída sem avaliação (REVIEW_NOT_FOUND): dá para avaliar agora na própria tela.
+  bool noReview = false;
   List<Map<String, dynamic>> distances = const [];
   String? distanceId;
   // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
@@ -3745,6 +3748,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     'valueForMoney': 0,
   };
   bool get ratingsComplete => ratings.values.every((v) => v >= 1);
+
+  /// Nenhuma nota dada: a avaliação é opcional, e a participação pode concluir para avaliar depois.
+  bool get ratingsEmpty => ratings.values.every((v) => v == 0);
+
+  /// A avaliação vale tudo ou nada: as 8 notas ou nenhuma.
+  bool get ratingsValid => ratingsComplete || ratingsEmpty;
 
   /// Tem foto de publicação: o rascunho traz a referência; a publicação do Feed só diz que existe.
   bool get hasPostPhoto =>
@@ -3849,6 +3858,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             if (value is num) ratings[key] = value.toInt();
           }
           comment.text = result['comment'] as String? ?? '';
+          noReview = false;
+        });
+      }
+    } on IdentityIssue catch (issue) {
+      // Concluída sem avaliação: a pessoa pode avaliar agora (PUT com expectedVersion 0).
+      if (mounted) {
+        setState(() {
+          review = null;
+          noReview = issue.code == 'REVIEW_NOT_FOUND';
         });
       }
     } on Exception {
@@ -4072,6 +4090,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
 
   /// A avaliação mudou em relação ao que já foi enviado (notas ou comentário).
   bool get reviewDirty {
+    if (noReview) return !ratingsEmpty;
     final current = review;
     final saved = current?['ratings'];
     // Sem uma avaliação enviada para comparar, não há o que regravar.
@@ -4113,7 +4132,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   /// Avaliação editada aqui mesmo, na tela da medalha (sem abrir outra): grava as 8 notas e o comentário.
   Future<bool> saveReviewInline() async {
     final current = review;
-    if (current == null || !ratingsComplete) {
+    if ((current == null && !noReview) || !ratingsComplete) {
       setState(
         () => message = 'Dê uma nota de 1 a 5 estrelas em todos os critérios.',
       );
@@ -4128,11 +4147,13 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         '/participations/${Uri.encodeComponent(draft['id'] as String)}/review',
         method: 'PUT',
         body: {
-          'expectedVersion': current['version'],
+          // 0 cria a avaliação de quem concluiu sem avaliar; depois, a versão atual.
+          'expectedVersion': current == null ? 0 : current['version'],
           'ratings': Map<String, int>.from(ratings),
           if (comment.text.trim().isNotEmpty) 'comment': comment.text.trim(),
         },
       );
+      noReview = false;
       message = 'Avaliação atualizada.';
       return true;
     } on IdentityIssue catch (issue) {
@@ -4543,6 +4564,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       );
       return;
     }
+    if (!ratingsValid) {
+      setState(
+        () => message = 'Dê nota aos 8 critérios ou deixe todos em branco para avaliar depois.',
+      );
+      return;
+    }
     // Vai publicar no feed: mostra a prévia e só segue se a pessoa confirmar.
     if (publishToFeed &&
         (!await confirmPostPreview(context, postPreview()) || !mounted)) {
@@ -4563,7 +4590,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         body: {
           'expectedVersion': draft['version'],
           'declaredCompleted': true,
-          'ratings': ratings,
+          // Avaliação opcional: sem notas, conclui sem avaliação (a pessoa avalia depois).
+          if (ratingsComplete) 'ratings': ratings,
           'medalImageReference': imageReference,
           'publishToFeed': publishToFeed,
           if (publishToFeed) 'postImageReference': postImageReference,
@@ -4571,16 +4599,19 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             'postText': postText.text.trim(),
           if (publishToFeed && tagged.isNotEmpty)
             'taggedUserIds': [for (final p in tagged) p['id']],
-          if (comment.text.isNotEmpty) 'comment': comment.text,
+          if (ratingsComplete && comment.text.isNotEmpty)
+            'comment': comment.text,
         },
       );
       if (mounted) {
         message = 'Participação concluída. Avaliação e medalha foram salvas.';
         // Ao concluir, leva a pessoa para a coleção de medalhas, onde a conquista aparece.
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Participação concluída. Avaliação e medalha foram salvas.',
+              ratingsComplete
+                  ? 'Participação concluída. Avaliação e medalha foram salvas.'
+                  : 'Participação concluída. Você pode avaliar depois, na tela da medalha.',
             ),
           ),
         );
@@ -4997,12 +5028,18 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               style: TextStyle(fontWeight: FontWeight.w700),
             ),
             ...raceDataFields(saveLabel: null),
-            if (review != null) ...[
+            if (review != null || noReview) ...[
               const Divider(height: 32),
               const Text(
                 'Minha avaliação',
                 style: TextStyle(fontWeight: FontWeight.w700),
               ),
+              if (noReview)
+                Text(
+                  'Você ainda não avaliou esta corrida. Dê nota aos 8 critérios e toque em Salvar dados, ou deixe para depois.',
+                  key: const Key('no-review-hint'),
+                  style: TextStyle(color: context.muted, fontSize: 12),
+                ),
               SameRatingPicker(
                 onPick: (n) => setState(() {
                   for (final key in ratings.keys.toList()) {
@@ -5115,8 +5152,13 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           if (draft['state'] == 'draft' && !upcoming) ...[
             const Divider(height: 32),
             const Text(
-              'Avaliação obrigatória',
+              'Avaliação (opcional)',
               style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            Text(
+              'Dê nota aos 8 critérios ou deixe em branco e avalie depois.',
+              key: const Key('rating-optional-hint'),
+              style: TextStyle(color: context.muted, fontSize: 12),
             ),
             SameRatingPicker(
               onPick: (n) => setState(() {
@@ -5199,17 +5241,18 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                   key: Key('needs-photo-hint'),
                 ),
               ),
-            if (!ratingsComplete)
+            if (!ratingsValid)
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
                 child: Text(
-                  'Dê uma nota de 1 a 5 estrelas em todos os critérios para concluir.',
+                  'Dê nota aos 8 critérios ou deixe todos em branco para avaliar depois.',
+                  key: Key('ratings-partial-hint'),
                 ),
               ),
             FilledButton(
               onPressed:
                   saving ||
-                      !ratingsComplete ||
+                      !ratingsValid ||
                       imageReference == null ||
                       (publishToFeed && postImageReference == null)
                   ? null

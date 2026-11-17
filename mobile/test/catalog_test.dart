@@ -555,23 +555,20 @@ void main() {
       final list = find.byType(Scrollable).first;
       final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
-      // Estrelas comecam vazias: sem notas, concluir fica desabilitado.
-      expect(
-        find.text(
-          'Dê uma nota de 1 a 5 estrelas em todos os critérios para concluir.',
-        ),
-        findsOneWidget,
-      );
+      // A avaliação é opcional: sem notas, concluir já está habilitado (avalia depois).
+      expect(find.byKey(const Key('ratings-partial-hint')), findsNothing);
       expect(
         tester
             .widget<FilledButton>(
               find.widgetWithText(FilledButton, 'Concluir participação'),
             )
             .onPressed,
-        isNull,
+        isNotNull,
       );
+      // Notas pela metade (7 de 8): tudo ou nada, então concluir fica desabilitado e avisa.
       await rateAll(tester, skip: 'Segurança');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      expect(find.byKey(const Key('ratings-partial-hint')), findsOneWidget);
       expect(
         tester
             .widget<FilledButton>(

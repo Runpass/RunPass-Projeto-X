@@ -69,6 +69,7 @@ class _PendingParticipationScreenState
   }
 
   bool get ratingsComplete => ratings.values.every((v) => v >= 1);
+  bool get ratingsEmpty => ratings.values.every((v) => v == 0);
 
   Future<void> pickPostPhoto() async {
     setState(() {
@@ -127,8 +128,9 @@ class _PendingParticipationScreenState
       message = 'O tempo deve ser como 1:30:00 e a colocação um número inteiro maior que zero.';
       return null;
     }
-    if (!ratingsComplete) {
-      message = 'Dê uma nota de 1 a 5 estrelas em todos os critérios.';
+    // Avaliação opcional: as 8 notas ou nenhuma (avalia depois).
+    if (!ratingsComplete && !ratingsEmpty) {
+      message = 'Dê nota aos 8 critérios ou deixe todos em branco para avaliar depois.';
       return null;
     }
     if (publish && postImageReference == null) {
@@ -139,8 +141,9 @@ class _PendingParticipationScreenState
       'timeSeconds': ?seconds,
       'placement': ?place,
       if (bib.text.trim().isNotEmpty) 'bibNumber': bib.text.trim(),
-      'ratings': Map<String, int>.from(ratings),
-      if (comment.text.trim().isNotEmpty) 'comment': comment.text.trim(),
+      if (ratingsComplete) 'ratings': Map<String, int>.from(ratings),
+      if (ratingsComplete && comment.text.trim().isNotEmpty)
+        'comment': comment.text.trim(),
       'publishToFeed': publish,
       if (publish) 'postImageReference': postImageReference,
       if (publish && postText.text.trim().isNotEmpty)
@@ -211,7 +214,14 @@ class _PendingParticipationScreenState
           ),
         ),
         const Divider(height: 32),
-        const Text('Avaliação', style: TextStyle(fontWeight: FontWeight.w700)),
+        const Text(
+          'Avaliação (opcional)',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const Text(
+          'Dê nota aos 8 critérios ou deixe em branco e avalie depois.',
+          key: Key('rating-optional-hint'),
+        ),
         SameRatingPicker(
           onPick: (n) => setState(() {
             for (final key in ratings.keys.toList()) {

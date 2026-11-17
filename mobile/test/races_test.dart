@@ -509,7 +509,7 @@ void main() {
       expect(find.byType(EditionScreen), findsNothing);
       // Tempo e distância (km) para preencher, avaliação, e a foto do post é opcional (aparece ao publicar).
       expect(find.byKey(const Key('time-field')), findsOneWidget);
-      expect(find.text('Avaliação obrigatória'), findsOneWidget);
+      expect(find.text('Avaliação (opcional)'), findsOneWidget);
       final list = find.byType(Scrollable).first;
       final publish = find.byKey(const Key('publish-to-feed'));
       await tester.scrollUntilVisible(publish, 200, scrollable: list);

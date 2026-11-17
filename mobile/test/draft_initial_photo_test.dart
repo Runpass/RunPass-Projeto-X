@@ -189,7 +189,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Avaliação obrigatória'), findsOneWidget);
+      expect(find.text('Avaliação (opcional)'), findsOneWidget);
       expect(find.text('Comentário (opcional)'), findsOneWidget);
       expect(find.byKey(const Key('needs-photo-hint')), findsOneWidget);
       expect(
