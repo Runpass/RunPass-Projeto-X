@@ -678,36 +678,51 @@ class ParticipationTests(unittest.TestCase):
         self.assertEqual(social.edition_participants(reader, "synthetic-sp-2025")["items"], [])
         self.assertEqual(social.edition_participants(reader, "synthetic-sp-2024", "5k")["total"], 0)
 
-    def test_edition_photos_only_runner_photos_of_published_participations(self):
+    def test_edition_photos_only_post_photos_of_published_participations(self):
         social = SocialService(self.identity)
         reader = self.admit("reader")
         self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 0)
-        _, with_photo = self.finish("owner", 5)
-        _, unpublished = self.finish("plain", 4)  # nao publicou: a foto nao e publica
+        _, with_post = self.finish("owner", 5)
+        _, medal_only = self.finish("plain", 4)  # publicada, mas so com a foto da medalha
 
-        def publish(subject, pid, value):
+        def change(subject, pid, **fields):
             key = ("history", "USER#" + subject, "P#" + pid + "#PART")
             part = self.store.get(key)
-            self.store.commit({key: part}, {key: {**part, "publishToFeed": value}})
+            self.store.commit({key: part}, {key: {**part, **fields}})
 
-        publish("owner", with_photo, True)
+        post_ref = "img_" + "a" * 64
+        # Foto de postagem sem publicar: nao entra.
+        change("owner", with_post, postImageReference=post_ref)
+        self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 0)
+        # Publicada com foto de postagem: entra, e so ela.
+        change("owner", with_post, publishToFeed=True)
+        change("plain", medal_only, publishToFeed=True)
         page = social.edition_photos(reader, "synthetic-sp-2024")
         self.assertEqual(page["total"], 1)
-        self.assertEqual([i["participationId"] for i in page["items"]], [with_photo])
+        self.assertEqual([i["participationId"] for i in page["items"]], [with_post])
         self.assertEqual(page["items"][0]["author"]["username"], "owner")
         self.assertEqual(page["items"][0]["distanceId"], "10k")
         self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024", "5k")["total"], 0)
         self.assertEqual(social.edition_photos(reader, "synthetic-sp-2025")["items"], [])
-        # Medalha padrao do catalogo (sem foto propria) nunca entra, mesmo publicada.
-        publish("plain", unpublished, True)
-        plain_key = ("history", "USER#plain", "P#" + unpublished + "#MEDAL")
-        plain = self.store.get(plain_key)
-        self.store.commit({plain_key: plain}, {plain_key: {**plain, "imageOrigin": "catalog"}})
-        self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 1)
-        # Despublicada: some para os outros, mas o dono continua vendo a propria.
-        publish("owner", with_photo, False)
+        # A foto da medalha nunca vale: mesmo com origem do corredor, sem foto de postagem fica de fora.
+        self.assertNotIn(medal_only, [i["participationId"] for i in page["items"]])
+        # Despublicada: some para todos, inclusive para o dono.
+        change("owner", with_post, publishToFeed=False)
         self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 0)
-        self.assertEqual(social.edition_photos(self.actor, "synthetic-sp-2024")["total"], 1)
+        self.assertEqual(social.edition_photos(self.actor, "synthetic-sp-2024")["total"], 0)
+
+    def test_review_summary_accepts_decimal_ratings_like_dynamodb_returns(self):
+        # O DynamoDB devolve numeros como Decimal. Antes, Decimal + float quebrava a aba Avaliacoes (TypeError).
+        from decimal import Decimal
+
+        social = SocialService(self.identity)
+        ratings = {c: Decimal(5) for c in SocialService.CRITERIA}
+        poor = {c: Decimal(3) for c in SocialService.CRITERIA}
+        summary = social._review_summary([{"ratings": ratings}, {"ratings": poor}])
+        self.assertEqual(summary["reviewCount"], 2)
+        self.assertEqual(summary["average"], 4.0)
+        self.assertEqual(summary["byCriterion"]["kit"], 4.0)
+        self.assertEqual(summary["recommendPercent"], 50)
 
     def test_edition_carries_the_public_score_only_when_there_are_reviews(self):
         reader = self.admit("reader")
@@ -930,6 +945,15 @@ class ParticipationApiTests(unittest.TestCase):
         self.assertEqual(
             client.get("/me/participations?state=draft", headers=headers).json()["items"][0]["id"],
             participation_id,
+        )
+        plain = client.get("/me/participations?state=draft", headers=headers).json()["items"][0]
+        self.assertNotIn("edition", plain)
+        expanded = client.get("/me/participations?state=draft&expand=edition", headers=headers)
+        self.assertEqual(expanded.status_code, 200, expanded.text)
+        self.assertEqual(expanded.json()["items"][0]["edition"]["id"], "synthetic-sp-2024")
+        self.assertIn("distances", expanded.json()["items"][0]["edition"])
+        self.assertEqual(
+            client.get("/me/participations?expand=outra", headers=headers).status_code, 422
         )
         image_key = ("operations", "USER#runner", "IMAGE#img-http")
         store.commit(

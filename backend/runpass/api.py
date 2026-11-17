@@ -458,10 +458,25 @@ def create_app(
         state: str | None = Query(None, pattern=r"^(draft|completed)$"),
         limit: int = Query(20, ge=1, le=100),
         cursor: str | None = Query(None, min_length=1, max_length=8192),
+        expand: str | None = Query(None, pattern=r"^edition$"),
     ):
         if participations is None:
             raise Unavailable()
-        return participations.list(actor, state, limit, cursor)
+        page = participations.list(actor, state, limit, cursor)
+        if expand == "edition" and catalog is not None:
+            # Uma chamada em vez de uma por medalha: a prateleira do app mostrava totais e ordem diferentes
+            # a cada carga quando parte das chamadas simultaneas era recusada.
+            cache = {}
+            for item in page["items"]:
+                edition_id = item.get("editionId")
+                if edition_id not in cache:
+                    try:
+                        cache[edition_id] = catalog.detail(actor, edition_id)
+                    except Exception:  # edicao arquivada ou removida: o item segue sem ela
+                        cache[edition_id] = None
+                if cache[edition_id] is not None:
+                    item["edition"] = cache[edition_id]
+        return page
 
     @app.post("/participations/{id}/publish", operation_id="publishParticipation")
     def publish_participation(

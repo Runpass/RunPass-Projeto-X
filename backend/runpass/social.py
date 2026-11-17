@@ -749,24 +749,23 @@ class SocialService:
         return result
 
     def edition_photos(self, actor, edition_id, distance_id=None, limit=30, cursor=None):
-        """Fotos de medalha que os corredores publicaram para a edicao, mais recentes primeiro.
+        """Fotos de POSTAGEM que os corredores publicaram para a edicao, mais recentes primeiro.
 
-        Mesma regra de `may_view_photo` (publicacao de conta ativa) e so entra quem enviou a
-        propria foto (origem `runner`), nunca a arte padrao do catalogo. `total` conta as fotos
-        visiveis para o leitor. Assume volume pequeno na beta (como o feed publico)."""
+        So entra participacao publicada no feed (conta ativa) que tem foto de postagem propria
+        (`postImageReference`): nunca a foto da medalha nem a arte padrao do catalogo. A imagem de cada
+        item e `GET /participations/{id}/post-image`. `total` conta as fotos visiveis para o leitor.
+        Assume volume pequeno na beta (como o feed publico)."""
         self.identity.authorize(actor, admitted=True)
         after = _cursor_decode(cursor) if cursor else None
         done = self._edition_completions(edition_id, distance_id)
         done.sort(key=lambda r: (r[0].get("completedAt", ""), r[0]["id"]), reverse=True)
         visible = []
         for part, _, profile in done:
+            if not part.get("publishToFeed") or not part.get("postImageReference"):
+                continue
             if not self.may_view_photo(self.store.get, actor, part["owner"], part):
                 continue
-            medal = self.store.get(
-                ("history", "USER#" + part["owner"], "P#" + part["id"] + "#MEDAL")
-            )
-            if medal and medal.get("imageOrigin") == "runner":
-                visible.append((part, profile))
+            visible.append((part, profile))
         window = [
             r
             for r in visible
@@ -830,12 +829,16 @@ class SocialService:
         count = len(reviews)
         if not count:
             return {"reviewCount": 0, "average": None, "recommendPercent": None, "byCriterion": {}}
-        sums = {c: sum(r["ratings"][c] for r in reviews) for c in self.CRITERIA}
+
+        # O DynamoDB devolve numeros como Decimal; as notas sao inteiras de 1 a 5. Somar Decimal com o
+        # float de arredondamento (1e-9) derrubava a aba Avaliacoes da corrida (500 em producao do DEV).
+        def grade(review, criterion):
+            return int(review["ratings"][criterion])
+
+        sums = {c: sum(grade(r, c) for r in reviews) for c in self.CRITERIA}
         total = sum(sums.values())
         liked = sum(
-            1
-            for r in reviews
-            if sum(r["ratings"][c] for c in self.CRITERIA) / 8 >= self.RECOMMEND_FROM
+            1 for r in reviews if sum(grade(r, c) for c in self.CRITERIA) / 8 >= self.RECOMMEND_FROM
         )
         return {
             "reviewCount": count,
