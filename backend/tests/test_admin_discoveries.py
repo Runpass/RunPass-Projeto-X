@@ -147,6 +147,19 @@ class DiscoveryTests(unittest.TestCase):
             self.disc.decide(self.op, "0" * 16, 1, "review")
         self.assertEqual(ctx.exception.code, "DISCOVERY_NOT_FOUND")
 
+    def test_distancias_sao_gravadas_como_decimal_porque_o_dynamodb_nao_aceita_float(self):
+        from decimal import Decimal
+
+        self.disc.ingest([item(distances=[5, 10.5, 21.0975])], "api", "l1")
+        gravados = [
+            v
+            for k, v in self.store.items.items()
+            if k[0] == "operations" and k[2].startswith("DISC#")
+        ]
+        self.assertEqual(len(gravados), 1)
+        self.assertTrue(all(isinstance(d, Decimal) for d in gravados[0]["distancesKm"]))
+        self.assertEqual(self.disc.list()["items"][0]["distancesKm"], [5.0, 10.5, 21.0975])
+
     def test_id_e_estavel_sem_acento_e_caixa(self):
         self.assertEqual(
             discovery_id("2026-12-06", "Corrida São José", "Jundiaí"),

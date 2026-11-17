@@ -21,6 +21,7 @@ import io
 import re
 import unicodedata
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 from .admin_users import audit
 from .catalog_import import MAX_BYTES, import_rows, rows_to_results, slug
@@ -87,7 +88,7 @@ def _distances(value):
             raise ValueError(f"distancia invalida: {part!r}") from error
         if not 0 < km <= 1000:
             raise ValueError("distancia fora do limite")
-        out.append(km)
+        out.append(Decimal(str(km)))  # o DynamoDB nao aceita float
     return list(dict.fromkeys(out))
 
 
@@ -132,7 +133,7 @@ def _public(sk, item):
         "state": item["state"],
         "venue": item.get("venue"),
         "organizer": item.get("organizer"),
-        "distancesKm": item.get("distancesKm") or [],
+        "distancesKm": [float(d) for d in item.get("distancesKm") or []],
         "sourceUrl": item.get("sourceUrl"),
         "excerpt": item.get("excerpt"),
         "region": item.get("region"),
@@ -351,7 +352,7 @@ class DiscoveryStore:
             "event_date": item["date"],
             "city": item["city"],
             "state": item["state"],
-            "distances_km": "|".join(f"{d:g}" for d in item["distancesKm"]),
+            "distances_km": "|".join(f"{float(d):g}" for d in item["distancesKm"]),
             "registration_status": "unknown",
             "event_status": "scheduled",
             "organizer_name": item.get("organizer") or "",
