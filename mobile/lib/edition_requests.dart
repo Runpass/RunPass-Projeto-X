@@ -152,8 +152,9 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
     fields = {
       'name': TextEditingController(text: start('name')),
       'date': TextEditingController(text: requestDateToDisplay(start('date'))),
-      'city': TextEditingController(text: start('city', 'São Paulo')),
-      'state': TextEditingController(text: start('state', 'SP')),
+      // Sem cidade informada, o campo fica vazio e a pessoa escolhe: nunca um valor padrão inventado.
+      'city': TextEditingController(text: start('city')),
+      'state': TextEditingController(text: start('state')),
       'distanceKm': TextEditingController(text: start('distanceKm')),
       'officialUrl': TextEditingController(
         text: correcting ? '' : start('officialUrl'),
@@ -224,6 +225,9 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
                 builder: (_) => PendingParticipationScreen(
                   gateway: widget.gateway,
                   raceName: text('name'),
+                  distanceLabel: text('distanceKm').isEmpty
+                      ? null
+                      : '${text('distanceKm')} km',
                 ),
               ),
             );
@@ -562,7 +566,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
               correcting
                   ? 'Corrigir e reenviar'
                   : (widget.medalPhoto != null
-                        ? 'Concluir cadastro da medalha'
+                        ? 'Continuar: dados da participação'
                         : 'Enviar pedido'),
             ),
           ),

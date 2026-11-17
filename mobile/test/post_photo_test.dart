@@ -181,6 +181,18 @@ void main() {
       expect(tester.widget<FilledButton>(finishButton).onPressed, isNotNull);
       await tester.tap(finishButton);
       await tester.pumpAndSettle();
+      // Antes de publicar, a prévia: voltar e editar não conclui nada; confirmar conclui.
+      expect(find.byKey(const Key('post-preview')), findsOneWidget);
+      expect(find.byKey(const Key('post-preview-photo')), findsOneWidget);
+      expect(find.text('Que corrida!'), findsWidgets);
+      await tester.tap(find.byKey(const Key('post-preview-back')));
+      await tester.pumpAndSettle();
+      expect(b.completion, isNull);
+      await tester.ensureVisible(finishButton);
+      await tester.tap(finishButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('post-preview-confirm')));
+      await tester.pumpAndSettle();
       expect(b.uploads, 2); // duas fotos, dois envios
       expect(b.completion?['medalImageReference'], 'img_medal');
       expect(b.completion?['postImageReference'], 'img_post');

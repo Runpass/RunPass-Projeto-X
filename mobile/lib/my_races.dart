@@ -559,22 +559,89 @@ String formatKilometers(double km) => km == km.roundToDouble()
 
 String distanceLabel(double km) => '${km.round()}K';
 
-/// Edition details by id. A lookup that fails is left out of the result.
+/// Limita quantas chamadas rodam ao mesmo tempo. A conta do DEV aceita poucas execucoes simultaneas
+/// (cota de 10 para todas as funcoes): uma chamada por medalha, todas juntas, faz parte falhar e a
+/// prateleira muda de ordem, de nome e de total a cada volta.
+class _Gate {
+  final int limit;
+  _Gate(this.limit);
+  int _running = 0;
+  final _waiting = <Completer<void>>[];
+
+  Future<T> run<T>(Future<T> Function() job) async {
+    while (_running >= limit) {
+      final turn = Completer<void>();
+      _waiting.add(turn);
+      await turn.future;
+    }
+    _running++;
+    try {
+      return await job();
+    } finally {
+      _running--;
+      if (_waiting.isNotEmpty) _waiting.removeAt(0).complete();
+    }
+  }
+}
+
+final _editionGate = _Gate(4);
+final _photoGate = _Gate(4);
+
+/// Falhas que passam sozinhas: vale tentar de novo. As demais (404, imagem inexistente) nao.
+bool isTransientFailure(Object error) =>
+    error is IdentityIssue &&
+    (error.code == 'SERVICE_UNAVAILABLE' ||
+        error.code == 'DEPENDENCY_UNAVAILABLE');
+
+/// Dados da corrida guardados por alguns minutos: a prateleira nao pergunta tudo de novo a cada volta
+/// e, se uma chamada falhar, continua valendo o ultimo dado conhecido.
+final Map<String, ({Map<String, dynamic> data, DateTime at})> _editionCache =
+    {};
+const _editionCacheTtl = Duration(minutes: 10);
+
+/// Filtro e ordem escolhidos na prateleira; sobrevivem a troca de aba (a tela e recriada).
+MedalGrouping _lastMedalGrouping = MedalGrouping.all;
+bool _lastMedalNewestFirst = true;
+
+/// Zera o que a prateleira guarda entre telas. Usado ao sair da conta e nos testes.
+void clearMedalCaches() {
+  _editionCache.clear();
+  _photoLinks.clear();
+  _lastMedalGrouping = MedalGrouping.all;
+  _lastMedalNewestFirst = true;
+}
+
+/// Edition details by id. Chamadas em no maximo 4 por vez, com ate 3 tentativas nas falhas passageiras.
+/// Se continuar falhando, vale o ultimo dado guardado; sem ele, a corrida fica fora do resultado.
 Future<Map<String, Map<String, dynamic>>> loadEditions(
   IdentityGateway gateway,
   Iterable<String> ids,
 ) async {
   final editions = <String, Map<String, dynamic>>{};
+  final now = DateTime.now();
   await Future.wait([
     for (final id in ids.toSet())
       () async {
-        try {
-          editions[id] = await gateway.request(
-            '/editions/${Uri.encodeComponent(id)}',
-          );
-        } on Exception {
-          // The caller still shows the item, only without edition details.
+        final cached = _editionCache[id];
+        if (cached != null && now.difference(cached.at) < _editionCacheTtl) {
+          editions[id] = cached.data;
+          return;
         }
+        for (var attempt = 1; attempt <= 3; attempt++) {
+          try {
+            final data = await _editionGate.run(
+              () => gateway.request('/editions/${Uri.encodeComponent(id)}'),
+            );
+            _editionCache[id] = (data: data, at: DateTime.now());
+            editions[id] = data;
+            return;
+          } on Exception catch (error) {
+            if (!isTransientFailure(error) || attempt == 3) break;
+            await gateway.sleeper(Duration(milliseconds: 400 * attempt));
+          }
+        }
+        // Sem resposta: usa o ultimo dado conhecido, se houver.
+        if (cached != null) editions[id] = cached.data;
       }(),
   ]);
   return editions;
@@ -667,7 +734,15 @@ class _SignedPhotoState extends State<SignedPhoto> {
     }
   }
 
-  Future<void> load() async {
+  Timer? _retry;
+
+  @override
+  void dispose() {
+    _retry?.cancel();
+    super.dispose();
+  }
+
+  Future<void> load([int attempt = 1]) async {
     final endpoint = widget.endpoint;
     if (endpoint == null) return;
     final cached = _photoLinks[endpoint];
@@ -676,19 +751,31 @@ class _SignedPhotoState extends State<SignedPhoto> {
       return;
     }
     try {
-      final reply = await widget.gateway.request(endpoint);
-      final link = reply['url'];
-      final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
-      if (link is String && link.startsWith('https://')) {
-        _photoLinks[endpoint] = (
-          url: link,
-          expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
-              .subtract(const Duration(seconds: 30)),
-        );
-        if (mounted) setState(() => url = link);
+      final reply = await _photoGate.run(
+        () => widget.gateway.request(endpoint),
+      );
+      _applyLink(endpoint, reply);
+    } on Exception catch (error) {
+      // Sem foto ou sem rede: fica o fallback. Falha passageira (cota do servidor): tenta de novo, ate 3 vezes.
+      if (isTransientFailure(error) && attempt < 3 && mounted) {
+        _retry?.cancel();
+        _retry = Timer(Duration(milliseconds: 500 * attempt), () {
+          if (mounted && widget.endpoint == endpoint) load(attempt + 1);
+        });
       }
-    } on Exception {
-      // Sem foto ou sem rede: fica o fallback.
+    }
+  }
+
+  void _applyLink(String endpoint, Map<String, dynamic> reply) {
+    final link = reply['url'];
+    final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
+    if (link is String && link.startsWith('https://')) {
+      _photoLinks[endpoint] = (
+        url: link,
+        expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
+            .subtract(const Duration(seconds: 30)),
+      );
+      if (mounted) setState(() => url = link);
     }
   }
 
@@ -798,27 +885,57 @@ String decimalPt(num value) => value.toStringAsFixed(1).replaceAll('.', ',');
 /// Edition lookups that fail leave the record without edition details.
 Future<List<RaceRecord>> loadMyRaces(IdentityGateway gateway) async {
   final completed = <Map<String, dynamic>>[];
+  final embedded = <String, Map<String, dynamic>>{};
   String? cursor;
   var pages = 0;
   do {
+    // `expand=edition`: o servidor devolve a corrida junto de cada participacao, em vez de uma chamada por
+    // medalha. Servidor antigo ignora o parametro e o app busca as corridas uma a uma, como antes.
     final page = await gateway.request(
       '/me/participations',
-      query: {'state': 'completed', 'limit': '100', 'cursor': ?cursor},
+      query: {
+        'state': 'completed',
+        'limit': '100',
+        'expand': 'edition',
+        'cursor': ?cursor,
+      },
     );
-    completed.addAll(
-      (page['items'] as List? ?? const []).cast<Map<String, dynamic>>().where(
-        (item) => item['state'] == 'completed',
-      ),
-    );
+    for (final item in (page['items'] as List? ?? const [])) {
+      final map = Map<String, dynamic>.from(item as Map);
+      if (map['state'] != 'completed') continue;
+      final edition = map.remove('edition');
+      if (edition is Map) {
+        embedded['${map['editionId']}'] = Map<String, dynamic>.from(edition);
+        _editionCache['${map['editionId']}'] = (
+          data: embedded['${map['editionId']}']!,
+          at: DateTime.now(),
+        );
+      }
+      completed.add(map);
+    }
     cursor = page['nextCursor'] as String?;
   } while (cursor != null && ++pages < 5);
-  final editions = await loadEditions(gateway, [
-    for (final p in completed) p['editionId'] as String,
-  ]);
+  final missing = [
+    for (final p in completed)
+      if (!embedded.containsKey(p['editionId'])) p['editionId'] as String,
+  ];
+  final fetched = missing.isEmpty
+      ? const <String, Map<String, dynamic>>{}
+      : await loadEditions(gateway, missing);
+  final editions = {...fetched, ...embedded};
   final records = [
     for (final p in completed) RaceRecord(p, editions[p['editionId']]),
   ];
-  records.sort((a, b) => (b.date ?? '').compareTo(a.date ?? ''));
+  // Mais recente primeiro; na mesma data, a conclusao mais recente e, por fim, o id: a ordem nunca varia.
+  records.sort((a, b) {
+    final byDate = (b.date ?? '').compareTo(a.date ?? '');
+    if (byDate != 0) return byDate;
+    final byDone = '${b.participation['completedAt'] ?? ''}'.compareTo(
+      '${a.participation['completedAt'] ?? ''}',
+    );
+    if (byDone != 0) return byDone;
+    return '${a.participation['id']}'.compareTo('${b.participation['id']}');
+  });
   return records;
 }
 
@@ -1173,16 +1290,66 @@ String loadError(Object error) => error is IdentityIssue
     ? catalogError(error)
     : 'Não foi possível carregar seus dados. Tente novamente.';
 
+/// Toque na medalha em Medalhas: abre as opções para ajustar a MEDALHA (foto, modelo, legenda e, dali, os dados da
+/// corrida e a avaliação), no mesmo formato da edição da publicação. A publicação em si não é mexida aqui.
 Future<void> openMedal(
   BuildContext context,
   IdentityGateway gateway,
   RaceRecord race,
 ) => Navigator.of(context).push<void>(
   MaterialPageRoute<void>(
-    builder: (_) =>
-        ParticipationDraftScreen(gateway: gateway, initial: race.participation),
+    builder: (_) => ParticipationDraftScreen(
+      gateway: gateway,
+      initial: race.participation,
+      medalMode: true,
+    ),
   ),
 );
+
+/// Abre "Personalizar medalha" (modelo, foto da prateleira e legenda) a partir da tela da participação e grava
+/// o que mudou. Devolve a participação atualizada, ou nulo se a pessoa cancelou ou não deu para salvar.
+Future<Map<String, dynamic>?> editMedalInfo(
+  BuildContext context,
+  IdentityGateway gateway,
+  RaceRecord race, {
+  ImageBytesFetcher fetchDisplayPhoto = fetchImageBytes,
+  MedalCropOpener openCropScreen = openMedalCropScreen,
+}) async {
+  final result = await showModalBottomSheet<Map<String, dynamic>>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheet) => _MedalEditSheet(
+      gateway: gateway,
+      race: race,
+      fetchDisplayPhoto: fetchDisplayPhoto,
+      openCropScreen: openCropScreen,
+      allowDelete: false,
+    ),
+  );
+  if (result == null || !context.mounted) return null;
+  final id = race.participation['id'] as String;
+  try {
+    final updated = await gateway.request(
+      '/participations/${Uri.encodeComponent(id)}',
+      method: 'PATCH',
+      body: {'expectedVersion': race.participation['version'], ...result},
+    );
+    if (result.containsKey('medalDisplayImageReference')) {
+      forgetMedalDisplayImage(id);
+    }
+    return updated;
+  } on Exception {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível salvar a medalha. Tente de novo.'),
+        ),
+      );
+    }
+    return null;
+  }
+}
 
 String readableEditionName(String editionId) {
   final match = RegExp(r'^pedido-(.+)-\d{4}-\d{2}-\d{2}-[^-]+$')
@@ -1544,8 +1711,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late Future<List<Map<String, dynamic>>> pendingMedals = loadPendingMedals(
     widget.gateway,
   );
-  MedalGrouping grouping = MedalGrouping.all;
-  bool newestFirst = true;
+  MedalGrouping grouping = _lastMedalGrouping;
+  bool newestFirst = _lastMedalNewestFirst;
   bool _applying = false;
 
   @override
@@ -1913,14 +2080,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   /// Nome atual da corrida (a equipe pode ter corrigido depois do pedido): vale o do catálogo.
   Future<String?> _currentName(String editionId) =>
       _editionNames.putIfAbsent(editionId, () async {
-        try {
-          final edition = await widget.gateway.request(
-            '/editions/${Uri.encodeComponent(editionId)}',
-          );
-          return edition['name'] as String?;
-        } on Exception {
-          return null;
-        }
+        final found = await loadEditions(widget.gateway, [editionId]);
+        return found[editionId]?['name'] as String?;
       });
 
   void _reloadShelf() {
@@ -2414,7 +2575,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     child: ChoiceChip(
       label: Text(label),
       selected: grouping == value,
-      onSelected: (_) => setState(() => grouping = value),
+      onSelected: (_) => setState(() => grouping = _lastMedalGrouping = value),
       showCheckmark: false,
     ),
   );
@@ -2443,6 +2604,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             }
             final data = snapshot.data!;
             final stats = RaceStats.of(data);
+            final missing = data.where((r) => r.edition == null).length;
             return ListView(
               key: const Key('medals-list'),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
@@ -2513,6 +2675,33 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                     ),
                   ),
                 ),
+                if (missing > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      key: const Key('medals-incomplete'),
+                      children: [
+                        Expanded(
+                          child: Text(
+                            missing == 1
+                                ? 'Uma corrida não carregou agora; os totais podem estar incompletos.'
+                                : '$missing corridas não carregaram agora; os totais podem estar incompletos.',
+                            style: TextStyle(
+                              color: context.muted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          key: const Key('medals-retry'),
+                          onPressed: () => setState(() {
+                            races = loadMyRaces(widget.gateway);
+                          }),
+                          child: const Text('Tentar de novo'),
+                        ),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 6),
                 Row(
                   children: [
@@ -2528,14 +2717,19 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                               fontSize: 17,
                             ),
                           ),
-                          const SizedBox(width: 10),
-                          _addTile(),
+                          // Sem medalhas, o convite grande ja tem o botao de adicionar: um so controle.
+                          if (data.isNotEmpty) ...[
+                            const SizedBox(width: 10),
+                            _addTile(),
+                          ],
                         ],
                       ),
                     ),
                     TextButton.icon(
-                      onPressed: () =>
-                          setState(() => newestFirst = !newestFirst),
+                      onPressed: () => setState(
+                        () =>
+                            newestFirst = _lastMedalNewestFirst = !newestFirst,
+                      ),
                       icon: const Icon(Icons.swap_vert, size: 18),
                       label: Text(
                         newestFirst ? 'Mais recentes' : 'Mais antigas',
@@ -2562,11 +2756,15 @@ class _MedalEditSheet extends StatefulWidget {
   final RaceRecord race;
   final ImageBytesFetcher fetchDisplayPhoto;
   final MedalCropOpener openCropScreen;
+
+  /// Sem o "Excluir medalha": a tela da participação já tem o seu "Excluir participação".
+  final bool allowDelete;
   const _MedalEditSheet({
     required this.gateway,
     required this.race,
     this.fetchDisplayPhoto = fetchImageBytes,
     this.openCropScreen = openMedalCropScreen,
+    this.allowDelete = true,
   });
 
   @override
@@ -2665,10 +2863,17 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
     displayImageTouched = true;
   });
 
+  String? _customLegend(String typed, RaceRecord race) {
+    final text = _blankToNull(typed);
+    return text == null || text == race.name || text == 'Corrida' ? null : text;
+  }
+
   void save() {
     Navigator.pop<Map<String, dynamic>>(context, {
       'medalFrameId': frameId,
-      'medalDescription': _blankToNull(description.text),
+      // A legenda só é guardada quando a pessoa a mudou de fato. O campo já vem preenchido com o nome da
+      // corrida; se a corrida não carregou, esse nome era só "Corrida", e guardá-lo fixava um nome genérico.
+      'medalDescription': _customLegend(description.text, widget.race),
       // Cidade, UF e ano nao sao mais personalizaveis aqui: sempre vem do
       // catalogo da corrida (RaceRecord.medalCity/medalState/medalYear ja
       // caem para o catalogo quando a participacao nao tem valor proprio).
@@ -2815,16 +3020,17 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            TextButton.icon(
-              key: const Key('medal-delete'),
-              onPressed: confirmDelete,
-              icon: const Icon(Icons.delete_outline, color: Colors.red),
-              label: const Text(
-                'Excluir medalha',
-                style: TextStyle(color: Colors.red),
+            if (widget.allowDelete) const SizedBox(height: 8),
+            if (widget.allowDelete)
+              TextButton.icon(
+                key: const Key('medal-delete'),
+                onPressed: confirmDelete,
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                label: const Text(
+                  'Excluir medalha',
+                  style: TextStyle(color: Colors.red),
+                ),
               ),
-            ),
           ],
         ),
       ),

@@ -124,6 +124,13 @@ void main() {
     );
     await tester.tap(find.text('abrir'));
     await tester.pumpAndSettle();
+    // Ao abrir, ninguém é sugerido: só aparecem pessoas depois de digitar o nome.
+    expect(find.byKey(const Key('tag-option-u2')), findsNothing);
+    expect(find.byKey(const Key('tag-empty')), findsOneWidget);
+    expect(find.textContaining('Digite o nome'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('tag-search')), 'be');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('tag-empty')), findsNothing);
     await tester.tap(find.byKey(const Key('tag-option-u2')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('tag-chip-u2')), findsOneWidget);
@@ -131,4 +138,45 @@ void main() {
     await tester.pumpAndSettle();
     expect(result?.map((p) => p['id']), ['u2']);
   });
+
+  testWidgets(
+    'não chama a lista de sugestões e só busca com 2 letras ou mais',
+    (tester) async {
+      final paths = <String>[];
+      final g = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          paths.add('${uri.path}?${uri.query}');
+          return const JsonReply(200, {'items': []});
+        },
+      );
+      await g.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => pickTaggedPeople(context, g, const []),
+              child: const Text('abrir'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('tag-search')), 'b');
+      await tester.pumpAndSettle();
+      expect(paths, isEmpty); // nem ao abrir, nem com 1 letra
+      await tester.enterText(find.byKey(const Key('tag-search')), 'be');
+      await tester.pumpAndSettle();
+      expect(paths.single, startsWith('/profiles?'));
+      expect(paths.any((p) => p.contains('suggestions')), isFalse);
+    },
+  );
 }

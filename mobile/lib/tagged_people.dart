@@ -47,7 +47,7 @@ class _TagPickerState extends State<_TagPicker> {
     super.dispose();
   }
 
-  /// Sem texto: sugestões (quem eu sigo e conhecidos). Com texto: a busca por nome ou usuário.
+  /// Sem texto: nada (não sugere ninguém). Com 2 letras ou mais: a busca por nome ou usuário.
   Future<void> load() async {
     final text = query.text.trim();
     setState(() {
@@ -55,15 +55,16 @@ class _TagPickerState extends State<_TagPicker> {
       error = null;
     });
     try {
-      final page = text.length >= 2
-          ? await widget.gateway.request(
-              '/profiles',
-              query: {'q': text, 'limit': '30'},
-            )
-          : await widget.gateway.request(
-              '/profiles/suggestions',
-              query: {'limit': '20'},
-            );
+      // Sem sugestões: só aparecem pessoas depois que o nome é digitado (2 letras ou mais).
+      if (text.length < 2) {
+        if (!mounted) return;
+        setState(() => shown = const []);
+        return;
+      }
+      final page = await widget.gateway.request(
+        '/profiles',
+        query: {'q': text, 'limit': '30'},
+      );
       if (!mounted) return;
       setState(() {
         shown = (page['items'] as List? ?? const [])
@@ -136,7 +137,15 @@ class _TagPickerState extends State<_TagPicker> {
                 : error != null
                 ? Center(child: Text(error!))
                 : shown.isEmpty
-                ? const Center(child: Text('Ninguém encontrado.'))
+                ? Center(
+                    child: Text(
+                      query.text.trim().length < 2
+                          ? 'Digite o nome ou @usuário para buscar pessoas.'
+                          : 'Ninguém encontrado.',
+                      key: const Key('tag-empty'),
+                      textAlign: TextAlign.center,
+                    ),
+                  )
                 : ListView(
                     children: [
                       for (final person in shown)

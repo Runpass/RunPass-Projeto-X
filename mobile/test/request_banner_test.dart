@@ -83,6 +83,13 @@ Future<void> fill(WidgetTester tester) async {
   await type('name', 'Corrida do Banner');
   await type('date', '14/03/2027');
   await type('distanceKm', '10');
+  // A cidade nao vem pronta: a pessoa escolhe na roda (aqui, o primeiro estado e a primeira cidade).
+  final location = find.byKey(const Key('request-location'));
+  await tester.ensureVisible(location);
+  await tester.tap(location);
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('location-done')));
+  await tester.pumpAndSettle();
 }
 
 Future<void> submit(WidgetTester tester) async {
@@ -197,7 +204,7 @@ void main() {
         find.byKey(const Key('request-banner')),
         findsOneWidget,
       ); // banner segue opcional
-      expect(find.text('Concluir cadastro da medalha'), findsOneWidget);
+      expect(find.text('Continuar: dados da participação'), findsOneWidget);
       await submit(tester);
       expect(s.calls, [
         'POST /uploads',
