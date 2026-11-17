@@ -10,6 +10,7 @@ import 'catalog_screen.dart' show timeAgo;
 import 'edition_requests.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
+import 'undo_delete.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
 
@@ -615,11 +616,29 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   /// Deslizar para a esquerda apaga o aviso.
   Future<void> dismiss(Map<String, dynamic> item) async {
-    setState(() => items?.remove(item));
+    final list = items;
+    final index = list?.indexOf(item) ?? -1;
     try {
-      await widget.gateway.request(
-        '/me/notifications/${Uri.encodeComponent(item['id'] as String)}',
-        method: 'DELETE',
+      // Some na hora, com "Desfazer"; o DELETE só vai ao servidor depois da janela.
+      await deleteWithUndo(
+        context,
+        id: item['id'] as String,
+        message: 'Aviso apagado.',
+        hide: () => setState(() => items?.remove(item)),
+        restore: () {
+          if (mounted) {
+            setState(
+              () => items?.insert(
+                index < 0 ? 0 : index.clamp(0, items!.length),
+                item,
+              ),
+            );
+          }
+        },
+        perform: () => widget.gateway.request(
+          '/me/notifications/${Uri.encodeComponent(item['id'] as String)}',
+          method: 'DELETE',
+        ),
       );
     } on Exception {
       if (mounted) {

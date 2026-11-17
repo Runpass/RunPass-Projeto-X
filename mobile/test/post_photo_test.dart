@@ -155,16 +155,18 @@ void main() {
       await tester.scrollUntilVisible(finishButton, 200, scrollable: list);
       expect(tester.widget<FilledButton>(finishButton).onPressed, isNotNull);
       expect(find.byKey(const Key('select-post-photo')), findsNothing);
-      // Marcou publicar: pede a outra foto e o botão desabilita até ela existir.
+      // Marcou publicar: a foto da medalha já vira a foto do post (envio próprio, referência diferente)...
       final publish = find.byKey(const Key('publish-to-feed'));
       await tester.scrollUntilVisible(publish, -200, scrollable: list);
       await tester.tap(publish);
       await tester.pumpAndSettle();
+      expect(b.uploads, 2);
       expect(find.byKey(const Key('select-post-photo')), findsOneWidget);
-      expect(find.byKey(const Key('post-photo-hint')), findsOneWidget);
+      expect(find.byKey(const Key('post-photo-ok')), findsOneWidget);
+      expect(find.byKey(const Key('use-medal-for-post')), findsOneWidget);
       await tester.scrollUntilVisible(finishButton, 200, scrollable: list);
-      expect(tester.widget<FilledButton>(finishButton).onPressed, isNull);
-      // Envia a foto da publicação (segundo envio, referência diferente da medalha).
+      expect(tester.widget<FilledButton>(finishButton).onPressed, isNotNull);
+      // ...e a pessoa pode escolher outra foto para o post (terceiro envio).
       await tester.scrollUntilVisible(
         find.byKey(const Key('select-post-photo')),
         -200,
@@ -193,9 +195,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-preview-confirm')));
       await tester.pumpAndSettle();
-      expect(b.uploads, 2); // duas fotos, dois envios
+      expect(
+        b.uploads,
+        3,
+      ); // medalha, cópia da medalha para o post e a outra foto escolhida
       expect(b.completion?['medalImageReference'], 'img_medal');
-      expect(b.completion?['postImageReference'], 'img_post');
+      expect(b.completion?['postImageReference'], isNot('img_medal'));
       expect(b.completion?['postText'], 'Que corrida!');
       expect(b.completion?['publishToFeed'], isTrue);
     },

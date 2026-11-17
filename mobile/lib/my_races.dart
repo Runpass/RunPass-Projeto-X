@@ -22,6 +22,7 @@ import 'post_card.dart' show FeedEntry, PostCard, PostThumb, entryFromPost;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 import 'settings.dart';
+import 'undo_delete.dart';
 
 /// "15/03/1995 • 18 anos", so quando GET /me devolve birthDate (so para o proprio
 /// titular; nunca em perfil publico). Nulo se ausente ou mal formatada.
@@ -903,6 +904,9 @@ Future<List<RaceRecord>> loadMyRaces(IdentityGateway gateway) async {
     for (final item in (page['items'] as List? ?? const [])) {
       final map = Map<String, dynamic>.from(item as Map);
       if (map['state'] != 'completed') continue;
+      if (pendingDeletions.contains(map['id'])) {
+        continue; // exclusão em espera (janela do "Desfazer")
+      }
       final edition = map.remove('edition');
       if (edition is Map) {
         embedded['${map['editionId']}'] = Map<String, dynamic>.from(edition);
@@ -1820,29 +1824,45 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     }
   }
 
-  /// Exclui a medalha: a participação some das medalhas e de "Minhas corridas" (a corrida segue no catálogo).
+  /// Exclui a medalha com "Desfazer": ela some na hora e a exclusão só vai ao servidor depois da janela.
   Future<void> deleteMedal(RaceRecord race) async {
     final id = race.participation['id'] as String;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(id)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${race.participation['version']}'},
+      final done = await deleteWithUndo(
+        context,
+        id: id,
+        message: 'Medalha excluída. Ela também saiu de Minhas corridas.',
+        hide: () => setState(() {
+          races = loadMyRaces(widget.gateway);
+        }),
+        restore: () {
+          if (mounted) {
+            setState(() {
+              races = loadMyRaces(widget.gateway);
+            });
+          }
+        },
+        perform: () async {
+          await widget.gateway.request(
+            '/participations/${Uri.encodeComponent(id)}',
+            method: 'DELETE',
+            query: {'expectedVersion': '${race.participation['version']}'},
+          );
+          forgetMedalDisplayImage(id);
+        },
       );
-      forgetMedalDisplayImage(id);
-      if (!mounted) return;
-      setState(() {
-        races = loadMyRaces(widget.gateway);
-      });
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Medalha excluída. Ela também saiu de Minhas corridas.',
-          ),
-        ),
-      );
+      if (done && mounted) {
+        setState(() {
+          races = loadMyRaces(widget.gateway);
+        });
+      }
     } on Exception {
+      if (mounted) {
+        setState(() {
+          races = loadMyRaces(widget.gateway);
+        });
+      }
       messenger.showSnackBar(
         const SnackBar(
           content: Text('Não foi possível excluir a medalha. Tente de novo.'),
@@ -2244,19 +2264,29 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     if (sure != true || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await widget.gateway.request(
-        '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${request['version']}'},
+      final done = await deleteWithUndo(
+        context,
+        id: request['id'] as String,
+        message: 'Medalha excluída.',
+        hide: _reloadShelf,
+        restore: () {
+          if (mounted) _reloadShelf();
+        },
+        perform: () async {
+          await widget.gateway.request(
+            '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
+            method: 'DELETE',
+            query: {'expectedVersion': '${request['version']}'},
+          );
+          _pendingPhotos.remove(request['id']);
+        },
       );
-      _pendingPhotos.remove(request['id']);
-      _reloadShelf();
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Medalha excluída.')),
-      );
+      if (done && mounted) _reloadShelf();
     } on IdentityIssue catch (issue) {
+      if (mounted) _reloadShelf();
       messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
     } on Exception {
+      if (mounted) _reloadShelf();
       messenger.showSnackBar(
         const SnackBar(
           content: Text(

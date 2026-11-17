@@ -164,8 +164,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('edition-comment-delete-confirm')));
     await tester.pumpAndSettle();
-    expect(server.calls, contains('DELETE /edition-comments/b'));
+    // Some na hora, com "Desfazer"; o DELETE só vai depois da janela.
     expect(find.text('Meu comentário'), findsNothing);
+    expect(find.byKey(const Key('undo-delete')), findsOneWidget);
+    expect(server.calls.any((c) => c.startsWith('DELETE')), isFalse);
+    await tester.pump(const Duration(seconds: 7)); // fecha a janela do Desfazer
+    await tester.pumpAndSettle();
+    expect(server.calls, contains('DELETE /edition-comments/b'));
     expect(find.byKey(const Key('edition-comments-empty')), findsOneWidget);
   });
 

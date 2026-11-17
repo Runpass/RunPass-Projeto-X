@@ -1009,6 +1009,15 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('medal-delete-confirm')));
       await tester.pumpAndSettle();
+      // Some na hora, com "Desfazer"; a exclusao so vai ao servidor depois da janela.
+      expect(find.byKey(const Key('medal-edit-p1')), findsNothing);
+      expect(find.textContaining('saiu de Minhas corridas'), findsOneWidget);
+      expect(find.byKey(const Key('undo-delete')), findsOneWidget);
+      expect(calls.any((c) => c.startsWith('DELETE')), isFalse);
+      await tester.pump(
+        const Duration(seconds: 7),
+      ); // fecha a janela do Desfazer
+      await tester.pumpAndSettle();
       expect(
         calls
             .where(
@@ -1017,8 +1026,6 @@ void main() {
             .length,
         1,
       );
-      expect(find.byKey(const Key('medal-edit-p1')), findsNothing);
-      expect(find.textContaining('saiu de Minhas corridas'), findsOneWidget);
     },
   );
 
@@ -1344,14 +1351,20 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('pending-delete-confirm')));
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pending-medal-r9')), findsNothing);
+      expect(find.text('Medalha excluída.'), findsOneWidget);
+      expect(find.byKey(const Key('undo-delete')), findsOneWidget);
+      expect(calls.any((c) => c.startsWith('DELETE')), isFalse);
+      await tester.pump(
+        const Duration(seconds: 7),
+      ); // fecha a janela do Desfazer
+      await tester.pumpAndSettle();
       expect(
         calls
             .where((c) => c == 'DELETE /edition-requests/r9?expectedVersion=1')
             .length,
         1,
       );
-      expect(find.byKey(const Key('pending-medal-r9')), findsNothing);
-      expect(find.text('Medalha excluída.'), findsOneWidget);
     },
   );
 
@@ -1573,6 +1586,37 @@ void main() {
       }
     },
   );
+
+  testWidgets('excluir medalha e desfazer: nada é enviado e a medalha volta', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final calls = <String>[];
+    final gateway = await shelfGateway(published: false, calls: calls);
+    await tester.pumpWidget(
+      MaterialApp(home: MedalCollectionScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('medal-edit-p1')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('medal-delete')));
+    await tester.tap(find.byKey(const Key('medal-delete')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('medal-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('medal-edit-p1')), findsNothing); // escondida
+    await tester.tap(find.byKey(const Key('undo-delete')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 7));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('medal-edit-p1')), findsOneWidget); // voltou
+    expect(
+      calls.any((c) => c.startsWith('DELETE')),
+      isFalse,
+    ); // e nada foi enviado
+  });
 
   testWidgets(
     'opções da medalha: salvar a legenda grava só a legenda e continua na tela; "dados" abre a tela dos dados',

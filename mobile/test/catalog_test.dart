@@ -845,19 +845,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Excluir participação').last);
     await tester.pumpAndSettle();
-    // Depois de excluir volta para a lista de medalhas, com aviso.
+    // Volta para a lista de medalhas na hora, com "Desfazer"; o DELETE só vai depois da janela.
     expect(find.byType(MedalCollectionScreen), findsOneWidget);
     expect(find.textContaining('Participação excluída'), findsOneWidget);
-    // Depois do DELETE a lista de medalhas faz suas próprias consultas.
-    expect(
-      calls
-          .sublist(0, calls.indexOf('DELETE /participations/done-1') + 1)
-          .where((c) => !c.endsWith('/image')),
-      [
-        'GET /participations/done-1/review', // minha avaliação ao abrir (já editável na mesma tela)
-        'DELETE /participations/done-1',
-      ],
-    );
+    expect(find.byKey(const Key('undo-delete')), findsOneWidget);
+    expect(calls.contains('DELETE /participations/done-1'), isFalse);
+    await tester.pump(const Duration(seconds: 7)); // fecha a janela do Desfazer
+    await tester.pumpAndSettle();
+    // O DELETE foi enviado uma vez, so depois da janela do Desfazer.
+    expect(calls.where((c) => c == 'DELETE /participations/done-1').length, 1);
   });
 
   testWidgets(

@@ -153,8 +153,10 @@ class _TagPickerState extends State<_TagPicker> {
                           key: Key('tag-option-${person['id']}'),
                           value: isChosen(person),
                           onChanged: (_) => toggle(person),
-                          secondary: const CircleAvatar(
-                            child: Icon(Icons.person_outline),
+                          secondary: ProfileAvatar(
+                            gateway: widget.gateway,
+                            profile: person,
+                            radius: 20,
                           ),
                           title: Text('${person['displayName'] ?? ''}'),
                           subtitle: Text('@${person['username'] ?? ''}'),
@@ -188,24 +190,31 @@ class TaggedLink extends StatelessWidget {
   final IdentityGateway gateway;
   final String postId;
   final List<Map<String, dynamic>> tagged;
+
+  /// Na minha publicação o ícone é um atalho para marcar alguém (abre o seletor de pessoas direto); nas dos outros
+  /// abre a lista de quem foi marcado.
+  final VoidCallback? onTag;
   const TaggedLink({
     super.key,
     required this.gateway,
     required this.postId,
     required this.tagged,
+    this.onTag,
   });
 
   @override
   Widget build(BuildContext context) => Tooltip(
-    message: 'Pessoas marcadas',
+    message: onTag != null ? 'Marcar pessoas' : 'Pessoas marcadas',
     child: InkWell(
       key: Key('post-tagged-$postId'),
-      onTap: () => showTaggedPeople(context, gateway, tagged),
+      onTap: onTag ?? () => showTaggedPeople(context, gateway, tagged),
       child: Row(
         children: [
           const Icon(Icons.local_offer_outlined),
-          const SizedBox(width: 6),
-          Text('${tagged.length}'),
+          if (tagged.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Text('${tagged.length}'),
+          ],
         ],
       ),
     ),
@@ -231,7 +240,7 @@ Future<void> showTaggedPeople(
             ListTile(
               key: Key('tagged-${person['id']}'),
               contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+              leading: ProfileAvatar(gateway: gateway, profile: person),
               title: Text('${person['displayName'] ?? ''}'),
               subtitle: Text('@${person['username'] ?? ''}'),
               onTap: () {

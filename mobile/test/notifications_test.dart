@@ -247,6 +247,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Pessoa c curtiu sua publicação.'), findsNothing);
     expect(find.text('Pedidos de amizade (1)'), findsOneWidget);
+    expect(find.byKey(const Key('undo-delete')), findsOneWidget);
+    expect(calls.any((c) => c.startsWith('DELETE')), isFalse);
+    await tester.pump(const Duration(seconds: 7)); // fecha a janela do Desfazer
+    await tester.pumpAndSettle();
     expect(calls, contains('DELETE /me/notifications/like%3Ac%3Ap1%3A2026'));
   });
 

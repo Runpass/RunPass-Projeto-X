@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'catalog_screen.dart';
 import 'identity_gateway.dart';
+import 'undo_delete.dart';
 import 'location_picker.dart';
 import 'pending_participation.dart';
 import 'profile_photo.dart';
@@ -657,20 +658,36 @@ class _MyEditionRequestsScreenState extends State<MyEditionRequestsScreen> {
     );
     if (sure != true || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
+    final index = items.indexWhere((e) => e['id'] == request['id']);
     try {
-      await widget.gateway.request(
-        '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${request['version']}'},
-      );
-      if (!mounted) return;
-      setState(() => items.removeWhere((e) => e['id'] == request['id']));
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Solicitação excluída.')),
+      // Some na hora, com "Desfazer"; a exclusão só vai ao servidor depois da janela.
+      await deleteWithUndo(
+        context,
+        id: request['id'] as String,
+        message: 'Solicitação excluída.',
+        hide: () =>
+            setState(() => items.removeWhere((e) => e['id'] == request['id'])),
+        restore: () {
+          if (mounted) {
+            setState(
+              () => items.insert(
+                index < 0 ? 0 : index.clamp(0, items.length),
+                request,
+              ),
+            );
+          }
+        },
+        perform: () => widget.gateway.request(
+          '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
+          method: 'DELETE',
+          query: {'expectedVersion': '${request['version']}'},
+        ),
       );
     } on IdentityIssue catch (issue) {
+      if (mounted) load();
       messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
     } on Exception {
+      if (mounted) load();
       messenger.showSnackBar(
         const SnackBar(
           content: Text(

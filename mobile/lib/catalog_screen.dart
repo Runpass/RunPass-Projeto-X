@@ -19,6 +19,7 @@ import 'identity_gateway.dart';
 import 'location_picker.dart';
 import 'my_races.dart';
 import 'post_preview.dart';
+import 'undo_delete.dart';
 import 'notifications.dart';
 import 'organizer_post.dart';
 import 'pending_requests.dart' show loadProvisionalBanner;
@@ -2797,19 +2798,42 @@ class _EditionScreenState extends State<EditionScreen> {
       ),
     );
     if (sure != true || !mounted) return;
+    final index = comments.indexWhere((c) => c['id'] == comment['id']);
     try {
-      await widget.gateway.request(
-        '/edition-comments/${Uri.encodeComponent(comment['id'] as String)}',
-        method: 'DELETE',
+      // Some na hora, com "Desfazer"; o DELETE só vai ao servidor depois da janela.
+      await deleteWithUndo(
+        context,
+        id: comment['id'] as String,
+        message: 'Comentário apagado.',
+        hide: () => setState(
+          () => comments.removeWhere((c) => c['id'] == comment['id']),
+        ),
+        restore: () {
+          if (mounted) {
+            setState(
+              () => comments.insert(
+                index < 0 ? 0 : index.clamp(0, comments.length),
+                comment,
+              ),
+            );
+          }
+        },
+        perform: () => widget.gateway.request(
+          '/edition-comments/${Uri.encodeComponent(comment['id'] as String)}',
+          method: 'DELETE',
+        ),
       );
-      if (mounted) {
-        setState(() => comments.removeWhere((c) => c['id'] == comment['id']));
-      }
     } on Exception {
       if (mounted) {
-        setState(
-          () => commentsError = 'Não foi possível apagar agora. Tente de novo.',
-        );
+        setState(() {
+          commentsError = 'Não foi possível apagar agora. Tente de novo.';
+          if (!comments.any((c) => c['id'] == comment['id'])) {
+            comments.insert(
+              index < 0 ? 0 : index.clamp(0, comments.length),
+              comment,
+            );
+          }
+        });
       }
     }
   }
@@ -3676,6 +3700,9 @@ class ParticipationDraftScreen extends StatefulWidget {
   /// no mesmo formato da edição da publicação, sem mexer no post.
   final bool medalMode;
 
+  /// Baixa uma imagem pelo link assinado (foto da medalha para usar no post). Trocável nos testes.
+  final ImageBytesFetcher medalPhotoFetcher;
+
   /// Baixa a foto atual da publicação para ajustar o tamanho, e abre o recorte. Trocáveis nos testes.
   final Future<List<int>?> Function(
     IdentityGateway gateway,
@@ -3699,6 +3726,7 @@ class ParticipationDraftScreen extends StatefulWidget {
     this.postPhotoSelector,
     this.fromPost = false,
     this.medalMode = false,
+    this.medalPhotoFetcher = fetchImageBytes,
     this.postPhotoLoader = loadPostPhotoBytes,
     this.postPhotoCropper = cropPostPhoto,
     this.initialPhoto,
@@ -4188,6 +4216,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     final result = await widget.gateway.uploadImage(bytes, contentType);
     if (result['state'] == 'valid') {
       imageReference = result['imageReference'] as String;
+      medalPhotoBytes = bytes;
       pendingUploadId = null;
       message = 'Foto validada e privada. Ainda não foi publicada.';
     } else if (result['state'] == 'failed') {
@@ -4261,6 +4290,162 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
 
   /// Última foto de publicação enviada nesta tela, usada só na prévia.
   List<int>? postPhotoBytes;
+
+  /// Foto da medalha desta tela (a enviada agora ou a baixada), para poder usá-la também como foto do post.
+  List<int>? medalPhotoBytes;
+
+  /// A foto da medalha pode ser a foto do post: é enviada de novo como uma imagem própria da publicação (o servidor
+  /// pede que a foto do post seja outra imagem, e depois ela pode ser trocada sem mexer na da medalha).
+  Future<void> useMedalPhotoForPost() async {
+    var bytes = medalPhotoBytes;
+    if (bytes == null) {
+      bytes = await loadMedalBytes();
+      if (bytes == null) {
+        if (mounted) {
+          setState(
+            () => message = 'Não consegui carregar a foto da medalha. Escolha outra foto para o post.',
+          );
+        }
+        return;
+      }
+      medalPhotoBytes = bytes;
+    }
+    setState(() {
+      uploadingPost = true;
+      message = null;
+    });
+    try {
+      final reference = await uploadPostBytes(bytes);
+      if (reference != null) {
+        postImageReference = reference;
+        message = 'A foto da medalha será a foto do post. Você pode trocá-la quando quiser.';
+      }
+    } on IdentityIssue catch (issue) {
+      if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) {
+        message =
+            'Não foi possível usar a foto da medalha agora. Tente de novo.';
+      }
+    } finally {
+      if (mounted) setState(() => uploadingPost = false);
+    }
+  }
+
+  /// Painel "Publicar no feed" da tela da medalha (medalha concluída que ainda não foi publicada).
+  bool publishPanelOpen = false;
+
+  bool get isPublished => draft['publishToFeed'] == true;
+
+  Future<void> openPublishPanel() async {
+    setState(() => publishPanelOpen = !publishPanelOpen);
+    // A foto da medalha já vem como a do post; a pessoa pode escolher outra.
+    if (publishPanelOpen && postImageReference == null && !uploadingPost) {
+      await useMedalPhotoForPost();
+    }
+  }
+
+  /// Publica agora uma medalha concluída que ficou sem publicação: mostra a prévia e envia foto, texto e marcados.
+  Future<void> publishNow() async {
+    if (postImageReference == null) {
+      setState(
+        () => message = 'Escolha a foto da publicação ou use a da medalha.',
+      );
+      return;
+    }
+    final profile = navProfileOf(widget.gateway);
+    final confirmed = await confirmPostPreview(
+      context,
+      PostPreviewData(
+        authorName: (profile?['displayName'] as String?) ?? 'Você',
+        username: (profile?['username'] as String?) ?? '',
+        raceName: editionName ?? 'Sua corrida',
+        details: '',
+        text: postText.text,
+        tagged: [
+          for (final person in tagged)
+            if ('${person['username'] ?? ''}'.isNotEmpty)
+              '${person['username']}',
+        ],
+        photo: postPhotoBytes,
+      ),
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      saving = true;
+      message = null;
+    });
+    try {
+      draft = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(draft['id'] as String)}/publish',
+        method: 'POST',
+        body: {
+          'expectedVersion': draft['version'],
+          'postImageReference': postImageReference,
+          if (postText.text.trim().isNotEmpty) 'postText': postText.text.trim(),
+          if (tagged.isNotEmpty)
+            'taggedUserIds': [for (final p in tagged) p['id']],
+        },
+      );
+      publishPanelOpen = false;
+      photoRevision++;
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Publicado no feed.')));
+      }
+    } on IdentityIssue catch (issue) {
+      message = catalogError(issue);
+    } on Exception {
+      message = 'Não foi possível publicar agora. Tente de novo.';
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  /// Já publicada: abre a mesma tela de edição da publicação (trocar a foto, o texto e as marcações).
+  Future<void> editPublication() async {
+    final id = draft['id'];
+    if (id is! String) return;
+    var initial = Map<String, dynamic>.from(draft);
+    try {
+      final post = await widget.gateway.request(
+        '/posts/${Uri.encodeComponent(id)}',
+      );
+      initial['taggedProfiles'] = (post['tagged'] as List? ?? const []);
+    } on Exception {
+      if (mounted) {
+        setState(
+          () =>
+              message = 'Não consegui abrir a publicação agora. Tente de novo.',
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: initial,
+          fromPost: true,
+        ),
+      ),
+    );
+  }
+
+  /// Baixa a foto da medalha já enviada (participação concluída), para usá-la como foto do post.
+  Future<List<int>?> loadMedalBytes() async {
+    final id = draft['id'];
+    if (id is! String) return null;
+    try {
+      final link = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}/image',
+      );
+      return await widget.medalPhotoFetcher(link['url'] as String);
+    } on Exception {
+      return null;
+    }
+  }
 
   /// Rascunho excluído: o que estava guardado não deve voltar.
   bool discarded = false;
@@ -4685,44 +4870,57 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    setState(() {
-      saving = true;
-      message = null;
-    });
     final wasDraft = draft['state'] == 'draft';
+    final id = draft['id'] as String;
+    final version = draft['version'];
+    final gateway = widget.gateway;
+    final navigator = Navigator.of(context);
+    // Vai embora da tela na hora (ela deixa de existir) e a exclusão só é enviada depois da janela do "Desfazer".
+    final messenger = ScaffoldMessenger.of(context);
+    final target = MaterialPageRoute<void>(
+      builder: (_) => wasDraft
+          ? CatalogScreen(gateway: gateway)
+          : MedalCollectionScreen(gateway: gateway),
+    );
+    final deletion = deleteWithUndo(
+      context,
+      id: id,
+      message: wasDraft
+          ? 'Rascunho excluído.'
+          : 'Participação excluída. Ela já não aparece nas suas medalhas.',
+      hide: () {},
+      restore: () {
+        // Desfeito: nada foi enviado. O rascunho guardado volta e a lista recarrega.
+        navigator.pushAndRemoveUntil(
+          MaterialPageRoute<void>(
+            builder: (_) => wasDraft
+                ? CatalogScreen(gateway: gateway)
+                : MedalCollectionScreen(gateway: gateway),
+          ),
+          (route) => route.isFirst,
+        );
+      },
+      perform: () async {
+        await gateway.request(
+          '/participations/${Uri.encodeComponent(id)}',
+          method: 'DELETE',
+          query: {'expectedVersion': '$version'},
+        );
+        forgetDraftForm(id);
+      },
+    );
+    // Volta para a lista de onde a pessoa veio, em vez de ficar numa tela sem saída.
+    navigator.pushAndRemoveUntil(target, (route) => route.isFirst);
     try {
-      await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(draft['id'] as String)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${draft['version']}'},
-      );
-      discarded = true;
-      forgetDraftForm(draft['id'] as String);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+      await deletion;
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
           content: Text(
-            wasDraft ? 'Rascunho excluído.' : 'Participação excluída. Ela já não aparece nas suas medalhas; a limpeza dos dados continua em segundo plano.',
+            'Não foi possível excluir agora. Verifique a internet e tente de novo; nada foi alterado.',
           ),
         ),
       );
-      // Volta para a lista de onde a pessoa veio, em vez de ficar numa tela sem saída.
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(
-          builder: (_) => wasDraft
-              ? CatalogScreen(gateway: widget.gateway)
-              : MedalCollectionScreen(gateway: widget.gateway),
-        ),
-        (route) => route.isFirst,
-      );
-    } on IdentityIssue catch (issue) {
-      if (mounted) message = catalogError(issue);
-    } on Exception {
-      if (mounted) {
-        message = 'Não foi possível excluir agora. Verifique a internet e tente de novo; nada foi alterado.';
-      }
-    } finally {
-      if (mounted) setState(() => saving = false);
     }
   }
 
@@ -4827,6 +5025,62 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           icon: const Icon(Icons.edit_note_rounded),
           label: const Text('Alterar dados da corrida e avaliação'),
         ),
+        const SizedBox(height: 8),
+        // Publicação: quem não publicou ao cadastrar pode publicar agora (com a foto da medalha ou outra);
+        // quem já publicou edita a publicação (foto, texto, marcados).
+        if (isPublished)
+          OutlinedButton.icon(
+            key: const Key('edit-publication'),
+            onPressed: saving || uploading ? null : editPublication,
+            icon: const Icon(Icons.campaign_outlined),
+            label: const Text('Editar publicação no feed'),
+          )
+        else
+          OutlinedButton.icon(
+            key: const Key('publish-from-medal'),
+            onPressed: saving || uploading || uploadingPost
+                ? null
+                : openPublishPanel,
+            icon: const Icon(Icons.campaign_outlined),
+            label: Text(
+              publishPanelOpen ? 'Fechar publicação' : 'Publicar no feed',
+            ),
+          ),
+        if (!isPublished && publishPanelOpen) ...[
+          const SizedBox(height: 8),
+          Text(
+            postImageReference == null
+                ? (uploadingPost
+                      ? 'Preparando a foto da publicação...'
+                      : 'Escolha a foto da publicação ou use a da medalha.')
+                : 'A foto da medalha será a foto do post. Você pode trocar por outra.',
+            key: const Key('publish-panel-hint'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('select-post-photo'),
+            onPressed: saving || uploadingPost ? null : selectPostPhoto,
+            icon: const Icon(Icons.add_photo_alternate_outlined),
+            label: const Text('Escolher outra foto'),
+          ),
+          const SizedBox(height: 8),
+          tagButton(saveNow: false),
+          TextField(
+            key: const Key('post-text-field'),
+            controller: postText,
+            maxLength: 500,
+            minLines: 1,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              labelText: 'Texto da publicação (opcional)',
+            ),
+          ),
+          FilledButton(
+            key: const Key('publish-now'),
+            onPressed: saving || uploadingPost ? null : publishNow,
+            child: Text(saving ? 'Publicando...' : 'Publicar'),
+          ),
+        ],
         const SizedBox(height: 16),
         TextField(
           key: const Key('medal-legend-edit'),
@@ -5192,8 +5446,16 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             CheckboxListTile(
               key: const Key('publish-to-feed'),
               value: publishToFeed,
-              onChanged: (value) =>
-                  setState(() => publishToFeed = value ?? false),
+              onChanged: (value) {
+                setState(() => publishToFeed = value ?? false);
+                // Sem outra foto, a da medalha é a do post (já vem escolhida; dá para trocar).
+                if (publishToFeed &&
+                    postImageReference == null &&
+                    medalPhotoBytes != null &&
+                    !uploadingPost) {
+                  useMedalPhotoForPost();
+                }
+              },
               title: const Text('Publicar esta conquista no feed'),
             ),
             if (publishToFeed) ...[
@@ -5212,13 +5474,22 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               ),
               if (postImageReference != null)
                 const Text(
-                  'Foto da publicação validada (separada da medalha).',
+                  'Foto da publicação validada. Ela é uma cópia: trocar a foto do post não muda a da medalha.',
                   key: Key('post-photo-ok'),
                 )
               else
                 const Text(
-                  'Escolha outra foto para a publicação no feed; a da medalha não vai para o feed.',
+                  'Escolha a foto da publicação ou use a da medalha.',
                   key: Key('post-photo-hint'),
+                ),
+              if (medalPhotoBytes != null)
+                OutlinedButton.icon(
+                  key: const Key('use-medal-for-post'),
+                  onPressed: saving || uploadingPost
+                      ? null
+                      : useMedalPhotoForPost,
+                  icon: const Icon(Icons.workspace_premium_outlined),
+                  label: const Text('Usar a foto da medalha no post'),
                 ),
               tagButton(saveNow: false),
               const SizedBox(height: 8),

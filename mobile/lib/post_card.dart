@@ -425,6 +425,42 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
+  /// Atalho do ícone de marcar (só na minha publicação): abre o seletor de pessoas e grava as marcações.
+  Future<void> tagPeople() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final picked = await pickTaggedPeople(
+      context,
+      widget.gateway,
+      entry.tagged,
+    );
+    if (picked == null || !mounted) return;
+    final participation = entry.race.participation;
+    try {
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent('${participation['id']}')}',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': participation['version'],
+          'taggedUserIds': [for (final p in picked) p['id']],
+        },
+      );
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Marcações salvas.')),
+      );
+      widget.onChanged?.call();
+    } on IdentityIssue catch (issue) {
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível salvar as marcações agora. Tente de novo.',
+          ),
+        ),
+      );
+    }
+  }
+
   /// Foto do autor: abre o perfil (de outra pessoa, com o botao de seguir).
   Future<void> openProfile() async {
     final id = entry.authorProfile?['id'] as String?;
@@ -827,24 +863,39 @@ class _PostCardState extends State<PostCard> {
                   ),
                 ),
                 // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
-                if (entry.tagged.isNotEmpty && entry.postId != null) ...[
+                // Na minha publicação o ícone aparece sempre e é um atalho para marcar alguém.
+                if ((entry.tagged.isNotEmpty || entry.mine) &&
+                    entry.postId != null) ...[
                   const SizedBox(width: 22),
                   TaggedLink(
                     gateway: widget.gateway,
                     postId: entry.postId!,
                     tagged: entry.tagged,
+                    onTag: entry.mine ? tagPeople : null,
                   ),
                 ],
+                const SizedBox(width: 12),
                 const Spacer(),
-                InkWell(
-                  key: Key('share-${entry.race.participation['id']}'),
-                  onTap: share,
-                  child: const Row(
-                    children: [
-                      Icon(Icons.ios_share, size: 20),
-                      SizedBox(width: 6),
-                      Text('Compartilhar'),
-                    ],
+                Flexible(
+                  child: InkWell(
+                    key: Key('share-${entry.race.participation['id']}'),
+                    onTap: share,
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.ios_share, size: 20),
+                        SizedBox(width: 6),
+                        // Em cartão estreito (com o ícone de marcar, que agora aparece também sem marcados),
+                        // o texto encurta em vez de estourar a linha.
+                        Flexible(
+                          child: Text(
+                            'Compartilhar',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],

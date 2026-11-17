@@ -328,13 +328,42 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('request-delete-confirm')));
       await tester.pumpAndSettle();
+      // Some na hora, com "Desfazer"; o DELETE só vai depois da janela.
+      expect(find.byKey(const Key('request-r-pending')), findsNothing);
+      expect(find.byKey(const Key('request-r-approved')), findsOneWidget);
+      expect(find.text('Solicitação excluída.'), findsOneWidget);
+      expect(find.byKey(const Key('undo-delete')), findsOneWidget);
+      expect(s.calls.any((c) => c.startsWith('DELETE')), isFalse);
+      await tester.pump(
+        const Duration(seconds: 7),
+      ); // fecha a janela do Desfazer
+      await tester.pumpAndSettle();
       expect(
         s.calls.where((c) => c == 'DELETE /edition-requests/r-pending').length,
         1,
       );
+    },
+  );
+
+  testWidgets(
+    'excluir solicitação e desfazer: volta para a lista e nada é enviado',
+    (tester) async {
+      final s = await setup(mine: [listed('pending'), listed('approved')]);
+      await tester.pumpWidget(
+        MaterialApp(home: MyEditionRequestsScreen(gateway: s.gateway)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('request-delete-r-pending')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('request-delete-confirm')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('request-r-pending')), findsNothing);
-      expect(find.byKey(const Key('request-r-approved')), findsOneWidget);
-      expect(find.text('Solicitação excluída.'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('undo-delete')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('request-r-pending')), findsOneWidget);
+      expect(s.calls.any((c) => c.startsWith('DELETE')), isFalse);
     },
   );
 
