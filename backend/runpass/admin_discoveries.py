@@ -73,6 +73,10 @@ def discovery_id(day, name, city):
     return hashlib.sha256(f"{day}|{_fold(name)}|{_fold(city)}".encode()).hexdigest()[:16]
 
 
+def discovery_id_of(item):
+    return discovery_id(item["date"], item["name"], item["city"])
+
+
 def _sk(day, name, city):
     return f"{PREFIX}{day[:7]}#{day}#{discovery_id(day, name, city)}"
 
@@ -397,6 +401,63 @@ class DiscoveryStore:
                 self.clock,
             )
         return outcome
+
+    def complete_edition(self, item):
+        """Dado faltante de uma corrida JA no catalogo (veio desta esteira): completa so o que falta, a partir do que
+        a busca achou. Nunca troca dado que ja existe, nem apaga distancia que um corredor usou; a distancia
+        de fonte confirma (tira a marca de corredor) a que tem o mesmo km e acrescenta as que faltam."""
+        from .catalog import CatalogImporter, ImportEdition
+        from .catalog_import import distance_entry, parse_km
+
+        if self.catalog is None:
+            raise Unavailable()
+        edition_id = item.get("editionId")
+        body = self.catalog._edition(edition_id) if edition_id else None
+        if body is None or body.get("sourceCode") != SOURCE_CODE or body["status"] == "archived":
+            return "skipped"
+        payload = {k: v for k, v in body.items() if k in ImportEdition.model_fields}
+        changes = []
+        current = body.get("distances", [])
+        informed = [d for d in current if d.get("informedBy") == "runner"]
+        if item.get("distancesKm") and (not current or informed):
+            merged = {Decimal(str(d["kilometers"])): dict(d) for d in current}
+            for km in item["distancesKm"]:
+                km = parse_km(f"{float(km):g}")
+                if km in merged:
+                    merged[km].pop("informedBy", None)  # a fonte confirmou o valor do corredor
+                else:
+                    merged[km] = distance_entry(km)
+            ordered = [merged[k] for k in sorted(merged)]
+            if ordered != current:
+                payload["distances"] = ordered
+                changes.append("distances")
+        for field, key in (("organizerName", "organizer"), ("venue", "venue")):
+            if not body.get(field) and item.get(key):
+                payload[field] = item[key]
+                changes.append(field)
+        if not changes:
+            return "unchanged"
+        payload["distancesOptional"] = True
+        try:
+            CatalogImporter(self.catalog, allow_system=True).put(
+                payload,
+                expected_version=body["version"],
+                origin=f"https://descobertas.runpass.invalid/{discovery_id_of(item)}",
+                actor=DiscoveryBulkActor(),
+            )
+        except Problem:
+            return "error"
+        audit(
+            self.store,
+            DiscoveryBulkActor.subject,
+            "discovery.complete",
+            {"editionId": edition_id, "fields": changes},
+            self.clock,
+        )
+        return "completed"
+
+    def find(self, day, name, city):
+        return self.store.get((*PARTITION, _sk(day, name, city)))
 
     def promote_bulk(self, limit=40, max_seconds=20, dry_run=False):
         """Promove em lote as provas `new` ou `reviewed` com distancia, pelo importador de sempre (so cria prova

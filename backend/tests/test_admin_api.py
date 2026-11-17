@@ -1511,6 +1511,29 @@ class AdminApiTests(unittest.TestCase):
         sem_dias = {k: v for k, v in self.corpo_agendamento().items() if k != "days"}
         self.assertEqual(self.client.post(url, json=sem_dias, headers=h).status_code, 422)
 
+    def test_agendamento_mensal_so_com_dias_do_mes_e_mostra_a_proxima_execucao(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/schedules"
+        corpo = {"name": "mensal", "kind": "mensal", "monthDays": [3, 1, 2], "time": "03:00"}
+        r = self.client.post(url, json=corpo, headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        feito = self.sched.created[-1]
+        self.assertEqual(feito["ScheduleExpression"], "cron(0 3 1,2,3 * ? *)")
+        import json as _json
+
+        self.assertEqual(_json.loads(feito["Target"]["Input"]), {"mensal": {"meses": 3}})
+        for ruim in (
+            {"monthDays": [29]},
+            {"monthDays": [0]},
+            {"monthDays": [1, 1]},
+            {"monthDays": None, "days": ["MON"]},  # mensal nao aceita dias da semana
+            {"kind": "semanal"},  # os demais tipos nao aceitam dias do mes
+        ):
+            antes = len(self.sched.created)
+            r = self.client.post(url, json={**corpo, "name": "mensal-2", **ruim}, headers=h)
+            self.assertIn(r.status_code, (400, 422), ruim)
+            self.assertEqual(len(self.sched.created), antes, ruim)
+
     def test_criar_agendamento_respeita_o_teto_e_audita(self):
         h = self.auth(token("op"))
         url = "/admin/catalog/schedules"

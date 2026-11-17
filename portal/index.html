@@ -51,11 +51,9 @@
       <nav class="abas" role="tablist">
         <button role="tab" id="aba-pedidos" data-aba="pedidos" aria-selected="true">Pedidos de corrida</button>
         <button role="tab" id="aba-catalogo" data-aba="catalogo" aria-selected="false">Atualizar catálogo</button>
-        <button role="tab" id="aba-fontes" data-aba="fontes" aria-selected="false">Fontes de coleta</button>
         <button role="tab" id="aba-descobertas" data-aba="descobertas" aria-selected="false">Provas descobertas</button>
         <button role="tab" id="aba-cadastros" data-aba="cadastros" aria-selected="false">Cadastros no app</button>
         <button role="tab" id="aba-banners" data-aba="banners" aria-selected="false">Banners</button>
-        <button role="tab" id="aba-divergencias" data-aba="divergencias" aria-selected="false">Divergências</button>
         <button role="tab" id="aba-qualidade" data-aba="qualidade" aria-selected="false">Qualidade da busca</button>
         <button role="tab" id="aba-custos" data-aba="custos" aria-selected="false">Custos</button>
         <button role="tab" id="aba-operadores" data-aba="operadores" aria-selected="false">Operadores</button>
@@ -76,8 +74,15 @@
       <section id="sec-catalogo" data-sec="catalogo" hidden>
         <div class="barra"><h1>Atualizar o catálogo</h1></div>
         <p class="ajuda">Dispara a rotina do catálogo agora. Ela usa a cota da OpenAI e roda em segundo plano (alguns minutos). Só um disparo a cada 10 minutos. Com o importe automático desligado nada é publicado: o resultado vai para revisão.</p>
-        <nav class="subabas" role="tablist" data-subabas="catalogo"><button type="button" role="tab" data-sub-alvo="importe" aria-selected="true">Importe automático</button><button type="button" role="tab" data-sub-alvo="rodar" aria-selected="false">Rodar agora</button><button type="button" role="tab" data-sub-alvo="agenda" aria-selected="false">Agendamentos</button><button type="button" role="tab" data-sub-alvo="execucoes" aria-selected="false">Execuções</button></nav>
-        <div data-sub="importe">
+        <nav class="subabas" role="tablist" data-subabas="catalogo"><button type="button" role="tab" data-sub-alvo="mensal" aria-selected="true">Atualização mensal</button><button type="button" role="tab" data-sub-alvo="importe" aria-selected="false">Importe automático</button><button type="button" role="tab" data-sub-alvo="rodar" aria-selected="false">Rodar agora</button><button type="button" role="tab" data-sub-alvo="agenda" aria-selected="false">Agendamentos</button><button type="button" role="tab" data-sub-alvo="execucoes" aria-selected="false">Execuções</button></nav>
+        <div data-sub="mensal">
+        <article class="cartao" id="atualizacao-mensal">
+          <h2>Atualização mensal</h2>
+          <p class="ajuda">Uma vez por mês a rotina procura <strong>provas novas</strong> dos próximos 3 meses em todas as regiões do estado e <strong>completa dados faltantes</strong> (distância, organizador, local) das corridas que já estão no catálogo, sem trocar o que já existe. O resultado é aplicado no catálogo e cada aplicação fica no histórico abaixo.</p>
+          <div id="mensal-corpo"></div>
+        </article>
+        </div>
+        <div data-sub="importe" hidden>
         <article class="cartao" id="importe-automatico">
           <h2>Importe automático</h2>
           <p class="ajuda">Depois de cada busca ou enriquecimento, o portal importa e <strong>publica sozinho</strong> as corridas do relatório que passam em todas as travas. O que não passa fica para a sua revisão. Desligado por padrão.</p>
@@ -143,18 +148,6 @@
         <div id="banners-publicados"></div>
         </div>
       </section>
-      <section id="sec-fontes" data-sec="fontes" hidden>
-        <div class="barra">
-          <h1>Fontes de coleta</h1>
-          <div class="acoes">
-            <button id="carregar-candidatas" type="button" class="sec">Carregar fontes candidatas</button>
-            <button id="atualizar-fontes" type="button" class="sec">Atualizar</button>
-          </div>
-        </div>
-        <p class="ajuda">Organizadores, plataformas e calendários de onde a rotina pode ler corridas. Toda fonte nasce <strong>pendente e desativada</strong> e só coleta depois de verificada (site oficial, robots.txt, termos e API ou feed conferidos) e ativada. Mudar o site de uma fonte derruba a verificação. Esta tela só cadastra; ela não acessa os sites.</p>
-        <div id="fontes"></div>
-        <div id="fonte-nova"></div>
-      </section>
       <section id="sec-descobertas" data-sec="descobertas" hidden>
         <div class="barra">
           <h1>Provas descobertas</h1>
@@ -170,17 +163,6 @@
           <label>Busca <input id="descobertas-busca" type="search" maxlength="80" placeholder="nome ou cidade"></label>
         </div>
         <div id="descobertas"></div>
-      </section>
-      <section id="sec-divergencias" data-sec="divergencias" hidden>
-        <div class="barra">
-          <h1>Divergências da rotina</h1>
-          <div class="acoes">
-            <button id="baixar-aceitas" type="button" class="sec">Baixar CSV das aceitas</button>
-            <button id="atualizar-divergencias" type="button" class="sec">Atualizar</button>
-          </div>
-        </div>
-        <p class="ajuda">Provas em que a rotina não decidiu sozinha, e as "nada encontrado". Aceitar exige a distância e a fonte com um trecho curto; reprovar descarta a prova. Em "nada encontrado": se existe informação útil, aceite e informe os dados (conta como o que a rotina deixou de achar); se não existe, descarte. Aceitar não publica nada no catálogo: baixe o CSV das aceitas, confira e importe com o <code>import-csv</code>.</p>
-        <div id="divergencias"></div>
       </section>
       <section id="sec-qualidade" data-sec="qualidade" hidden>
         <div class="barra">

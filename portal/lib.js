@@ -132,6 +132,7 @@ export const PERMISSOES = {
 };
 
 export const MODOS_CATALOGO = {
+  mensal: 'Atualização mensal (provas novas e dados faltantes)',
   semanal: 'Rotina semanal (séries conhecidas)',
   simulacao: 'Simulação (não grava nada)',
   enriquecer: 'Enriquecer provas do último calendário',
@@ -318,6 +319,7 @@ export const DIAS_SEMANA = [
 ];
 
 export const TIPOS_AGENDAMENTO = {
+  mensal: 'Atualização mensal (provas novas e dados faltantes)',
   semanal: 'Pesquisa semanal (pedidos e séries)',
   calendario: 'Calendário da Prefeitura',
   enriquecer: 'Enriquecimento das provas do calendário',
@@ -325,6 +327,24 @@ export const TIPOS_AGENDAMENTO = {
 };
 
 export const MAX_PROVAS_POR_EXECUCAO = 25;
+
+/** "Dias 1, 2 e 3 de cada mês às 03:00" (agendamento mensal); vazio se não houver dias. */
+export function quandoMensal(dias, horario) {
+  if (!Array.isArray(dias) || !dias.length || !horario) return '';
+  const lista = [...dias].sort((a, b) => a - b).map(String);
+  const texto = lista.length > 1 ? `${lista.slice(0, -1).join(', ')} e ${lista[lista.length - 1]}` : lista[0];
+  return `Dia${lista.length > 1 ? 's' : ''} ${texto} de cada mês às ${horario}`;
+}
+
+/** Dias do mês digitados ("1, 2, 3") -> lista de inteiros de 1 a 28; lança Error com texto para a pessoa. */
+export function listaDiasMes(texto) {
+  const partes = String(texto || '').split(/[\s,;]+/).filter(Boolean);
+  const dias = partes.map(Number);
+  if (!dias.length || dias.length > 5) throw new Error('Informe de 1 a 5 dias do mês (ex.: 1, 2, 3).');
+  if (dias.some((d) => !Number.isInteger(d) || d < 1 || d > 28)) throw new Error('Os dias do mês vão de 1 a 28.');
+  if (new Set(dias).size !== dias.length) throw new Error('Há dia repetido.');
+  return dias.sort((a, b) => a - b);
+}
 
 /** "Seg, Qui às 06:00" (dias MON...) ou "20/11/2026 às 06:00" (execução única, `data` AAAA-MM-DD); vazio se não for nenhum. */
 export function quandoTexto(dias, horario, data = null) {
@@ -402,11 +422,9 @@ export function textoRevocacao(n) {
 export const ABAS = {
   pedidos: ['Pedidos de corrida', 'catalog_admin'],
   catalogo: ['Atualizar catálogo', 'catalog_admin'],
-  fontes: ['Fontes de coleta', 'catalog_admin'],
   descobertas: ['Provas descobertas', 'catalog_admin'],
   cadastros: ['Cadastros no app', 'user_admin'],
   banners: ['Banners', 'catalog_admin'],
-  divergencias: ['Divergências', 'catalog_admin'],
   qualidade: ['Qualidade da busca', 'catalog_admin'],
   custos: ['Custos', 'cost_read'],
   operadores: ['Operadores', 'user_admin'],
@@ -428,6 +446,7 @@ export function lerPrefs(texto) {
 export function abaInicial(preferida, permissoes) {
   const pode = (nome) => ABAS[nome] && permissoes.includes(ABAS[nome][1]);
   if (preferida && pode(preferida)) return preferida;
+  if (pode('catalogo')) return 'catalogo';
   if (pode('pedidos')) return 'pedidos';
   if (pode('cadastros')) return 'cadastros';
   if (pode('custos')) return 'custos';

@@ -198,6 +198,7 @@ def create_admin_app(
     quality_live=None,
     auto_import=None,
     discoveries=None,
+    monthly=None,
 ):
     """`site` = dict(directory=Path, region=str, client_id=str) para servir a pagina pela propria API."""
     app = FastAPI(
@@ -494,6 +495,7 @@ def create_admin_app(
 
     class ScheduleBody(BaseModel):
         model_config = ConfigDict(extra="forbid")
+        monthDays: list[int] | None = Field(default=None, max_length=5)
         name: str | None = Field(default=None, max_length=40)
         kind: str | None = Field(default=None, max_length=20)
         days: list[str] | None = Field(default=None, max_length=7)
@@ -893,11 +895,12 @@ def create_admin_app(
         actor = need(op, "catalog_admin").subject
         if schedules is None:
             raise Unavailable()
+        when = (payload.days, payload.date, payload.monthDays)
         if (
             not payload.name
             or not payload.kind
             or payload.time is None
-            or (payload.days is None) == (payload.date is None)
+            or sum(v is not None for v in when) != 1
         ):
             raise Problem(422, "INVALID_INPUT")
         return schedules.create(
@@ -911,6 +914,7 @@ def create_admin_app(
             payload.max or 25,
             payload.meses or 3,
             payload.date,
+            payload.monthDays,
         )
 
     @app.put("/admin/catalog/schedules/{name}")
@@ -928,6 +932,7 @@ def create_admin_app(
             payload.max,
             payload.meses,
             payload.date,
+            payload.monthDays,
         )
 
     @app.delete("/admin/catalog/schedules/{name}")
@@ -936,6 +941,31 @@ def create_admin_app(
         if schedules is None:
             raise Unavailable()
         return schedules.delete(actor, name)
+
+    class MonthlyConfig(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        enabled: bool
+
+    @app.get("/admin/catalog/monthly")
+    def monthly_status(op: Operator):
+        need(op, "catalog_admin")
+        if monthly is None:
+            raise Unavailable()
+        return monthly.history()
+
+    @app.put("/admin/catalog/monthly")
+    def monthly_config(payload: MonthlyConfig, op: Operator):
+        actor = need(op, "catalog_admin").subject
+        if monthly is None:
+            raise Unavailable()
+        return monthly.set_enabled(actor, payload.enabled)
+
+    @app.post("/admin/catalog/monthly/run")
+    def monthly_run(op: Operator):
+        actor = need(op, "catalog_admin").subject
+        if monthly is None:
+            raise Unavailable()
+        return monthly.run("manual", actor, force=True)
 
     @app.post("/admin/catalog/run", status_code=202)
     def start_run(payload: CatalogRun, op: Operator):
