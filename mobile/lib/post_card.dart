@@ -876,25 +876,19 @@ class _PostCardState extends State<PostCard> {
                 ],
                 const SizedBox(width: 12),
                 const Spacer(),
-                Flexible(
+                Semantics(
+                  label: 'Compartilhar',
+                  button: true,
                   child: InkWell(
                     key: Key('share-${entry.race.participation['id']}'),
                     onTap: share,
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.ios_share, size: 20),
-                        SizedBox(width: 6),
-                        // Em cartão estreito (com o ícone de marcar, que agora aparece também sem marcados),
-                        // o texto encurta em vez de estourar a linha.
-                        Flexible(
-                          child: Text(
-                            'Compartilhar',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
+                    customBorder: const CircleBorder(),
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Tooltip(
+                        message: 'Compartilhar',
+                        child: Icon(Icons.ios_share, size: 22),
+                      ),
                     ),
                   ),
                 ),
