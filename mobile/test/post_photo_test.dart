@@ -601,4 +601,50 @@ void main() {
       expect(shelfPhotoRequests(), greaterThan(first));
     },
   );
+
+  testWidgets(
+    'nova postagem: busca a corrida pelo nome, sem acento e em qualquer ordem',
+    (tester) async {
+      tall(tester);
+      final (gateway, b) = await setup();
+      b.participations = [
+        for (final (id, edition) in [('c1', 'E1'), ('c2', 'E2')])
+          {
+            'id': id,
+            'editionId': edition,
+            'distanceId': '5k',
+            'state': 'completed',
+            'version': 1,
+            'publishToFeed': true,
+            'completedAt': '2026-10-01T10:00:00Z',
+          },
+      ];
+      await tester.pumpWidget(
+        MaterialApp(home: NewPostScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('new-post-search')),
+        'e2 CÓRRIDA',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-post-race-c1')), findsNothing);
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('new-post-search')),
+        'maratona',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-post-search-empty')), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('new-post-search')), '');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-post-race-c1')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+    },
+  );
+
+  test('foldName tira acento e caixa', () {
+    expect(foldName('  São   Silvestre '), 'sao silvestre');
+    expect(foldName('Corrida Ç'), 'corrida c');
+  });
 }
