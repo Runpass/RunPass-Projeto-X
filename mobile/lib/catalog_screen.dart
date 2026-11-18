@@ -938,15 +938,19 @@ class _CatalogScreenState extends State<CatalogScreen> {
     // erro parado até a pessoa tocar em "Tentar novamente".
     if (error != null && transient && !autoRetried && mounted) {
       autoRetried = true;
+      setState(() => retryPending = true);
       final retryMore = more;
       Future<void>.delayed(autoRetryDelay, () {
-        if (mounted && error != null && !loading) load(more: retryMore);
+        if (!mounted) return;
+        retryPending = false;
+        if (error != null && !loading) load(more: retryMore);
       });
     }
   }
 
   /// Uma nova tentativa automática por falha passageira (zera quando uma carga dá certo).
   bool autoRetried = false;
+  bool retryPending = false;
   bool transient = false;
   static const autoRetryDelay = Duration(seconds: 3);
 
@@ -1050,7 +1054,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: 'Nome da corrida',
-                prefixIcon: const Icon(Icons.search_rounded),
+                // Busca aberta: o X fica no lugar da lupa e fecha a busca.
+                prefixIcon: IconButton(
+                  key: const Key('catalog-search-toggle'),
+                  tooltip: 'Fechar a busca',
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: toggleSearch,
+                ),
                 suffixIcon: IconButton(
                   key: const Key('catalog-name-search-go'),
                   tooltip: 'Buscar',
@@ -1071,39 +1081,42 @@ class _CatalogScreenState extends State<CatalogScreen> {
             const SizedBox(height: 8),
           ],
           // Mesmo espaço (12) entre "Minhas solicitações", o público e o ano.
-          if (error != null) ...[
+          // Falha passageira com nova tentativa automática em curso: espera em silêncio, sem mensagem.
+          if (error != null && retryPending)
+            const Center(child: CircularProgressIndicator())
+          else if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
             TextButton(
               onPressed: loading ? null : () => load(more: nextCursor != null),
               child: const Text('Tentar novamente'),
             ),
           ],
-          // Lupa: busca por nome (as corridas fora dos próximos 20 dias aparecem por ela).
-          Row(
-            children: [
-              IconButton(
-                key: const Key('catalog-search-toggle'),
-                tooltip: showFilters
-                    ? 'Fechar a busca'
-                    : 'Buscar corridas por nome',
-                icon: Icon(
-                  showFilters ? Icons.close_rounded : Icons.search_rounded,
+          // Lupa: busca por nome (as corridas fora dos próximos 20 dias aparecem por ela). Aberta, vira o X do campo.
+          if (!showFilters)
+            Row(
+              children: [
+                IconButton(
+                  key: const Key('catalog-search-toggle'),
+                  tooltip: 'Buscar corridas por nome',
+                  icon: const Icon(Icons.search_rounded),
+                  onPressed: toggleSearch,
                 ),
-                onPressed: toggleSearch,
-              ),
-            ],
-          ),
+              ],
+            ),
           const SizedBox(height: 8),
           if (loading) const Center(child: CircularProgressIndicator()),
-          if (!loading && error == null && items.isEmpty)
+          // Ao abrir (lista dos próximos 20 dias) não há mensagem; só a busca explica quando não acha nada.
+          if (!loading && error == null && items.isEmpty && !upcomingWindow)
             Text(
               nextCursor == null
-                  ? (upcomingWindow
-                        ? 'Nenhuma corrida nos próximos 20 dias. Busque pelo nome (lupa) para ver outras datas.'
-                        : 'Nenhuma corrida encontrada com esses filtros.')
+                  ? 'Nenhuma corrida encontrada com esses filtros.'
                   : 'Nenhuma corrida nesta página. Continue a busca.',
             ),
-          if (!loading && error == null && items.isEmpty && nextCursor == null)
+          if (!loading &&
+              error == null &&
+              items.isEmpty &&
+              nextCursor == null &&
+              !upcomingWindow)
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton(
