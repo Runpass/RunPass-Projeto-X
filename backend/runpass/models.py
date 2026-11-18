@@ -336,6 +336,26 @@ class WebLookupRequest(Input):
     state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
 
 
+class CreateExtraPost(Input):
+    participationId: Annotated[str, Field(min_length=1, max_length=100)]
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
+
+
+class PatchExtraPost(Input):
+    expectedVersion: Annotated[int, Field(ge=1)]
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
+
+
 class EditionRequestFields(Input):
     """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
     (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""

@@ -18,12 +18,14 @@ from .models import (
     CompleteParticipation,
     CreateComment,
     CreateEditionComment,
+    CreateExtraPost,
     CreateParticipation,
     CreateProfile,
     EditComment,
     EditionRequestFields,
     Eligibility,
     PatchEditionRequest,
+    PatchExtraPost,
     PatchParticipation,
     PatchProfile,
     PublishParticipation,
@@ -639,6 +641,43 @@ def create_app(
         scope: str = Query("all", pattern="^(all|friends|network)$"),
     ):
         return friends().feed(actor, limit, cursor, scope)
+
+    @app.get("/me/posts", operation_id="listMyPosts")
+    def my_posts(actor: Actor):
+        """Minhas publicações (a de cada corrida e as extras), para o perfil."""
+        return friends().my_posts(actor)
+
+    @app.post("/posts", status_code=201, operation_id="createExtraPost")
+    def create_extra_post(body: CreateExtraPost, actor: Actor, idempotency_key: IdempotencyKey):
+        """Outra publicação de uma corrida que eu já concluí (várias por corrida)."""
+        if participations is None:
+            raise Unavailable()
+        return participations.create_extra_post(
+            actor, idempotency_key, body.model_dump(exclude_none=True)
+        )
+
+    # Nao usa PATCH /posts/{id}: o contrato reserva essa rota para a visibilidade do post.
+    @app.patch("/posts/{id}/extra", operation_id="patchExtraPost")
+    def patch_extra_post(
+        id: str, body: PatchExtraPost, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if participations is None:
+            raise Unavailable()
+        return participations.update_extra_post(
+            actor, id, idempotency_key, body.model_dump(exclude_unset=True)
+        )
+
+    @app.delete("/posts/{id}", operation_id="deleteExtraPost")
+    def delete_extra_post(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        if participations is None:
+            raise Unavailable()
+        return participations.delete_extra_post(actor, id, idempotency_key)
+
+    @app.get("/posts/{id}/image", operation_id="getExtraPostImage")
+    def extra_post_image(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.extra_post_image(actor, id)
 
     @app.get("/posts/{id}", operation_id="getPost")
     def get_post(id: str, actor: Actor):
