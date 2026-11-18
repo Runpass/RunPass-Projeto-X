@@ -507,14 +507,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
   final Set<int> knownYears = {};
 
   /// Ordem da lista: 'date' (padrão) ou 'rating'. Cada ícone liga a sua ordem; tocar de novo inverte.
-  String sortBy = 'date';
+  final String sortBy = 'date';
 
   /// Quantas corridas aparecem na tela por vez ("Carregar mais" mostra mais 20).
   static const pageSize = 20;
   int visibleCount = pageSize;
 
   /// Direção: em data, mais recentes primeiro; em avaliação, melhores primeiro.
-  bool descending = true;
+  final bool descending = false; // sempre da mais antiga para a mais nova
 
   /// Visualização escolhida (lista ou grade) e colunas da grade; ficam neste aparelho.
   CatalogViewMode viewMode = CatalogViewMode.list;
@@ -839,39 +839,20 @@ class _CatalogScreenState extends State<CatalogScreen> {
     return list;
   }
 
-  void sortByDate() => setState(() {
-    if (sortBy == 'date') {
-      descending = !descending;
-    } else {
-      sortBy = 'date';
-      descending = true;
+  /// Abre/fecha a busca por nome; ao fechar com busca ativa, volta à lista padrão.
+  void toggleSearch() {
+    if (showFilters && (activeFilters.isNotEmpty || phrase.text.isNotEmpty)) {
+      phrase.clear();
+      for (final controller in fields.values) {
+        controller.clear();
+      }
+      fields['year']!.text = upcomingFilter;
+      registration = null;
+      registrationEpoch++;
+      load();
     }
-  });
-
-  void sortByRating() => setState(() {
-    if (sortBy == 'rating') {
-      descending = !descending;
-    } else {
-      sortBy = 'rating';
-      descending = true;
-    }
-  });
-
-  /// Ícone de ordenação: o símbolo da ordem e, só na ordem ativa, a seta da direção.
-  Widget sortGlyph(IconData base, {required bool active}) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(base, size: 20),
-      if (active)
-        Icon(
-          descending
-              ? Icons.arrow_downward_rounded
-              : Icons.arrow_upward_rounded,
-          size: 16,
-          semanticLabel: descending ? 'Ordem decrescente' : 'Ordem crescente',
-        ),
-    ],
-  );
+    setState(() => showFilters = !showFilters);
+  }
 
   /// Ordenar por data precisa do conjunto todo: carrega as próximas páginas (até 500 corridas).
   Future<void> loadRest() async {
@@ -1062,26 +1043,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
               builder: (_) => AgendaScreen(gateway: widget.gateway),
             ),
           ),
-        ),
-        IconButton(
-          key: const Key('catalog-search-toggle'),
-          visualDensity: VisualDensity.compact,
-          tooltip: showFilters ? 'Fechar a busca' : 'Buscar corridas',
-          icon: Icon(showFilters ? Icons.close_rounded : Icons.search_rounded),
-          onPressed: () {
-            if (showFilters &&
-                (activeFilters.isNotEmpty || phrase.text.isNotEmpty)) {
-              // Ao fechar a busca, volta a lista completa (a frase e os filtros saem junto).
-              phrase.clear();
-              for (final controller in fields.values) {
-                controller.clear();
-              }
-              registration = null;
-              registrationEpoch++;
-              load();
-            }
-            setState(() => showFilters = !showFilters);
-          },
         ),
         NotificationBell(gateway: widget.gateway),
         const SizedBox(width: 8),
@@ -1307,83 +1268,60 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
-          // A ordem da lista e a visualização (lista ou grade, até 3 colunas).
+          // Ícones da lista: calendário (filtra por data), lupa (busca por nome) e, à direita, lista/grade
+          // (até 3 colunas). A ordem é sempre da corrida mais antiga para a mais nova.
           Row(
             children: [
-              const Spacer(),
-              IconButton(
-                key: const Key('catalog-sort-rating'),
-                tooltip: sortBy != 'rating'
-                    ? 'Ordenar por avaliação'
-                    : (descending
-                          ? 'Melhores avaliações primeiro (toque para inverter)'
-                          : 'Piores avaliações primeiro (toque para inverter)'),
-                isSelected: sortBy == 'rating',
-                icon: sortGlyph(
-                  sortBy == 'rating'
-                      ? Icons.star_rounded
-                      : Icons.star_border_rounded,
-                  active: sortBy == 'rating',
-                ),
-                onPressed: loading ? null : sortByRating,
+              PopupMenuButton<String>(
+                key: const Key('catalog-date-filter'),
+                tooltip: 'Filtrar por data',
+                icon: const Icon(Icons.calendar_today_rounded),
+                enabled: !loading,
+                initialValue: fields['year']!.text,
+                onSelected: (value) {
+                  setState(() => fields['year']!.text = value);
+                  load();
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: upcomingFilter,
+                    child: Text('Próximos 20 dias'),
+                  ),
+                  const PopupMenuItem(value: '', child: Text('Todos os anos')),
+                  for (final y in filterYears(null, {
+                    ...knownYears,
+                    ?selectedYear,
+                  }))
+                    PopupMenuItem(value: '$y', child: Text('$y')),
+                ],
               ),
               IconButton(
-                key: const Key('catalog-sort'),
-                tooltip: sortBy != 'date'
-                    ? 'Ordenar por data'
-                    : (descending
-                          ? 'Mais recentes primeiro (toque para inverter)'
-                          : 'Mais antigas primeiro (toque para inverter)'),
-                isSelected: sortBy == 'date',
-                icon: sortGlyph(
-                  Icons.calendar_today_rounded,
-                  active: sortBy == 'date',
+                key: const Key('catalog-search-toggle'),
+                tooltip: showFilters
+                    ? 'Fechar a busca'
+                    : 'Buscar corridas por nome',
+                icon: Icon(
+                  showFilters ? Icons.close_rounded : Icons.search_rounded,
                 ),
-                onPressed: loading ? null : sortByDate,
+                onPressed: toggleSearch,
+              ),
+              Expanded(
+                child: Text(
+                  switch (fields['year']!.text) {
+                    upcomingFilter => 'Próximos 20 dias',
+                    '' => 'Todos os anos',
+                    final year => year,
+                  },
+                  key: const Key('catalog-date-label'),
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: context.muted),
+                ),
               ),
               CatalogViewMenu(
                 value: viewMode,
                 onChanged: chooseViewMode,
                 columns: gridColumns,
                 onColumnsChanged: chooseGridColumns,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              // Ano em uma lista (o ano filtra na hora: é a forma de escolher a data).
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  key: ValueKey('filter-year-$registrationEpoch'),
-                  initialValue: fields['year']!.text,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Ano',
-                    prefixIcon: Icon(Icons.calendar_today_rounded, size: 18),
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: upcomingFilter,
-                      child: Text('Próximos 20 dias'),
-                    ),
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('Todos os anos'),
-                    ),
-                    for (final y in filterYears(null, {
-                      ...knownYears,
-                      ?selectedYear,
-                    }))
-                      DropdownMenuItem(value: '$y', child: Text('$y')),
-                  ],
-                  onChanged: loading
-                      ? null
-                      : (value) {
-                          setState(() => fields['year']!.text = value ?? '');
-                          load();
-                        },
-                ),
               ),
             ],
           ),

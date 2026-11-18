@@ -1901,7 +1901,7 @@ void main() {
   });
 
   testWidgets(
-    'o ícone de data alterna entre decrescente e crescente, começando em decrescente',
+    'a lista vem sempre da corrida mais antiga para a mais nova, sem ícones de ordem',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -1910,9 +1910,9 @@ void main() {
         if (uri.path == '/editions') {
           return JsonReply(200, {
             'items': [
+              {...entry('C'), 'id': 'EC', 'date': '2026-05-01'},
               {...entry('A'), 'id': 'EA', 'date': '2024-05-01'},
               {...entry('B'), 'id': 'EB', 'date': '2025-05-01'},
-              {...entry('C'), 'id': 'EC', 'date': '2026-05-01'},
             ],
           });
         }
@@ -1924,21 +1924,11 @@ void main() {
       await tester.pumpAndSettle();
       double top(String text) =>
           tester.getTopLeft(find.textContaining(text)).dy;
-      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
-      expect(top('Corrida C') < top('Corrida B'), isTrue);
-      expect(top('Corrida B') < top('Corrida A'), isTrue);
-      await tester.tap(find.byKey(const Key('catalog-sort')));
-      await tester.pumpAndSettle();
-      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
       expect(top('Corrida A') < top('Corrida B'), isTrue);
       expect(top('Corrida B') < top('Corrida C'), isTrue);
-      await tester.tap(find.byKey(const Key('catalog-sort')));
-      await tester.pumpAndSettle();
-      expect(top('Corrida C') < top('Corrida A'), isTrue);
-      // Só ícones: sem seletor nem rótulo de ordenação; o ano é um filtro à parte.
-      expect(find.text('Ordenar por'), findsNothing);
-      expect(find.byKey(const Key('filter-year-0')), findsOneWidget);
-      expect(find.byKey(const Key('catalog-sort-rating')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-sort')), findsNothing);
+      expect(find.byKey(const Key('catalog-sort-rating')), findsNothing);
+      expect(find.byKey(const Key('catalog-date-filter')), findsOneWidget);
     },
   );
 
@@ -2127,47 +2117,38 @@ void priorityOrderTests() {
       List<String> order() =>
           (['A', 'B', 'C', 'D', 'E', 'F']
             ..sort((a, b) => top(a).compareTo(top(b))));
-      // Padrão: da data mais recente para a mais antiga, sem pôr as minhas (D corri, C inscrito, B e F desejo) na frente.
-      expect(order(), ['A', 'E', 'F', 'B', 'C', 'D']);
-      await tester.tap(find.byKey(const Key('catalog-sort')));
-      await tester.pumpAndSettle();
-      // Crescente: a ordem inteira inverte.
+      // Da mais antiga para a mais nova, sem pôr as minhas (D corri, C inscrito, B e F desejo) na frente.
       expect(order(), ['D', 'C', 'B', 'F', 'E', 'A']);
     },
   );
 }
 
 void defaultOrderTests() {
-  testWidgets(
-    'por padrão a lista vem da data mais recente para a mais antiga',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 3000);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final limits = <String?>[];
-      final gateway = await signed((uri, method, headers, body) async {
-        if (uri.path == '/editions') {
-          limits.add(uri.queryParameters['limit']);
-          return JsonReply(200, {
-            'items': [
-              {...entry('A'), 'id': 'EA', 'date': '2024-05-01'},
-              {...entry('B'), 'id': 'EB', 'date': '2026-05-01'},
-            ],
-          });
-        }
-        return const JsonReply(200, {'items': []});
-      });
-      await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
-      );
-      await tester.pumpAndSettle();
-      expect(limits.first, '100');
-      double top(String text) =>
-          tester.getTopLeft(find.textContaining(text)).dy;
-      expect(top('Corrida B') < top('Corrida A'), isTrue);
-      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
-    },
-  );
+  testWidgets('por padrão a lista vem da data mais antiga para a mais nova', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final limits = <String?>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/editions') {
+        limits.add(uri.queryParameters['limit']);
+        return JsonReply(200, {
+          'items': [
+            {...entry('A'), 'id': 'EA', 'date': '2024-05-01'},
+            {...entry('B'), 'id': 'EB', 'date': '2026-05-01'},
+          ],
+        });
+      }
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
+    await tester.pumpAndSettle();
+    expect(limits.first, '100');
+    double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
+    expect(top('Corrida A') < top('Corrida B'), isTrue);
+  });
 }
 
 void ratingTests() {
@@ -2183,67 +2164,8 @@ void ratingTests() {
     if (score != null) 'runScore': {'value': score, 'reviewCount': reviews},
   };
 
-  Future<void> openList(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(800, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final gateway = await signed((uri, method, headers, body) async {
-      if (uri.path == '/editions') {
-        return JsonReply(200, {
-          'items': [
-            rated('A', '2026-05-01', score: 3.5, reviews: 4),
-            rated('B', '2024-05-01', score: 4.8, reviews: 9),
-            rated('C', '2026-09-01'),
-            rated('D', '2025-05-01', score: 4.8, reviews: 20),
-          ],
-        });
-      }
-      return const JsonReply(200, {'items': []});
-    });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
-    await tester.pumpAndSettle();
-  }
-
-  List<String> order(WidgetTester tester) {
-    final tops = {
-      for (final id in ['A', 'B', 'C', 'D'])
-        id: find.textContaining('Corrida $id').evaluate().isEmpty
-            ? null
-            : tester.getTopLeft(find.textContaining('Corrida $id').first).dy,
-    };
-    final shown = tops.entries.where((e) => e.value != null).toList()
-      ..sort((a, b) => a.value!.compareTo(b.value!));
-    return [for (final e in shown) e.key];
-  }
-
   testWidgets(
-    'a estrela ordena por avaliação, inverte ao tocar de novo e a data '
-    'volta ao padrão',
-    (tester) async {
-      await openList(tester);
-      expect(order(tester), ['C', 'A', 'D', 'B']); // padrão: data, mais recente
-      await tester.tap(find.byKey(const Key('catalog-sort-rating')));
-      await tester.pumpAndSettle();
-      // melhor primeiro; empate (D e B, 4,8) por nº de avaliações; sem nota por último
-      expect(order(tester), ['D', 'B', 'A', 'C']);
-      expect(find.byIcon(Icons.star_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
-      await tester.tap(find.byKey(const Key('catalog-sort-rating')));
-      await tester.pumpAndSettle();
-      // pior primeiro; quem não tem nota continua por último
-      expect(order(tester), ['A', 'D', 'B', 'C']);
-      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
-      // o ícone de data devolve a ordem por data, mais recente primeiro
-      await tester.tap(find.byKey(const Key('catalog-sort')));
-      await tester.pumpAndSettle();
-      expect(order(tester), ['C', 'A', 'D', 'B']);
-      expect(find.byIcon(Icons.star_border_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'os ícones de ordem e a visualização ficam na mesma linha, em ordem',
+    'calendário e lupa ficam na mesma linha, nessa ordem, e o + no topo',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -2257,24 +2179,34 @@ void ratingTests() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      final sortDate = tester.getRect(find.byKey(const Key('catalog-sort')));
-      final sortStar = tester.getRect(
-        find.byKey(const Key('catalog-sort-rating')),
+      final calendar = tester.getRect(
+        find.byKey(const Key('catalog-date-filter')),
+      );
+      final search = tester.getRect(
+        find.byKey(const Key('catalog-search-toggle')),
       );
       final viewMenu = tester.getRect(
         find.byKey(const Key('catalog-view-mode')),
       );
-      expect(sortDate.center.dy, closeTo(sortStar.center.dy, 1));
-      expect(viewMenu.center.dy, closeTo(sortStar.center.dy, 1));
-      // Ordem dos ícones: avaliações, data e, por último, lista/grade.
-      expect(sortDate.left, greaterThan(sortStar.left));
-      expect(viewMenu.left, greaterThan(sortDate.left));
+      expect(search.center.dy, closeTo(calendar.center.dy, 1));
+      expect(viewMenu.center.dy, closeTo(calendar.center.dy, 1));
+      expect(
+        search.left,
+        greaterThan(calendar.left),
+      ); // calendário, depois a lupa
+      expect(viewMenu.left, greaterThan(search.left));
+      // O "+" (pedir cadastro) fica na barra do topo, com a agenda e os avisos.
+      final bar = tester.getRect(find.byType(AppBar));
+      for (final key in ['catalog-request-new', 'catalog-agenda']) {
+        expect(
+          bar.contains(tester.getCenter(find.byKey(Key(key)))),
+          isTrue,
+          reason: key,
+        );
+      }
       // Não existe mais o filtro de público (adultos/kids).
       expect(find.text('Kids'), findsNothing);
       expect(find.text('Adultos'), findsNothing);
-      // O ano é uma lista logo abaixo.
-      final year = tester.getRect(find.byKey(const ValueKey('filter-year-0')));
-      expect(year.top, greaterThan(sortStar.bottom));
     },
   );
 
@@ -2296,13 +2228,13 @@ void ratingTests() {
     expect(calls.last['dateFrom'], upcomingRange().from);
     expect(calls.last['dateTo'], upcomingRange().to);
     expect(calls.last.containsKey('audience'), isFalse);
-    await tester.tap(find.byKey(const ValueKey('filter-year-0')));
+    await tester.tap(find.byKey(const Key('catalog-date-filter')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('2026').last);
     await tester.pumpAndSettle();
     expect(calls.last['dateFrom'], '2026-01-01');
     expect(calls.last['dateTo'], '2026-12-31');
-    await tester.tap(find.byKey(const ValueKey('filter-year-0')));
+    await tester.tap(find.byKey(const Key('catalog-date-filter')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Todos os anos').last);
     await tester.pumpAndSettle();

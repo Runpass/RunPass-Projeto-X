@@ -487,14 +487,13 @@ void main() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      final box = find.byKey(const ValueKey('filter-year-0'));
+      final box = find.byKey(const Key('catalog-date-filter'));
       await tester.ensureVisible(box);
       await tester.tap(box);
       await tester.pumpAndSettle();
       for (final year in ['2029', '2019', '2024']) {
         expect(find.text(year), findsWidgets, reason: 'ano $year na lista');
       }
-      // escolher um ano antigo filtra por ele e o ano continua disponível depois
       await tester.tap(find.text('2019').last);
       await tester.pumpAndSettle();
       expect(find.text('2019'), findsWidgets);
@@ -839,6 +838,13 @@ void searchTests() {
   }
 
   Future<void> pick(WidgetTester tester, String field, String option) async {
+    if (field == 'filter-year') {
+      await tester.tap(find.byKey(const Key('catalog-date-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(option).last);
+      await tester.pumpAndSettle();
+      return;
+    }
     final box = find.byKey(ValueKey('$field-0'));
     await tester.ensureVisible(box);
     await tester.tap(box);
@@ -948,10 +954,7 @@ void searchTests() {
     expect(calls.last['dateFrom'], upcomingRange().from);
     expect(calls.last['dateTo'], upcomingRange().to);
     expect(find.text('Todos os estados e cidades'), findsOneWidget);
-    final year = tester.widget<DropdownButtonFormField<String>>(
-      find.byKey(const ValueKey('filter-year-1')),
-    );
-    expect(year.initialValue, upcomingFilter);
+    expect(find.text('Próximos 20 dias'), findsWidgets);
   });
 
   testWidgets(
@@ -966,13 +969,12 @@ void searchTests() {
       expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
       expect(find.byTooltip('Pedir cadastro da corrida'), findsOneWidget);
       expect(find.byTooltip('Minhas solicitações'), findsOneWidget);
-      // Ícones na barra, junto da agenda, da lupa e dos avisos (não são mais botões de texto no corpo).
+      // Ícones na barra, junto da agenda e dos avisos (não são mais botões de texto no corpo).
       final bar = tester.getRect(find.byType(AppBar));
       for (final key in [
         'catalog-request-new',
         'catalog-request-mine',
         'catalog-agenda',
-        'catalog-search-toggle',
       ]) {
         expect(
           bar.contains(tester.getCenter(find.byKey(Key(key)))),
