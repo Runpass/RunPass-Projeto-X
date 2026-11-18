@@ -459,14 +459,7 @@ List<int> filterYears([DateTime? now, Iterable<int> extra = const []]) {
 class CatalogScreen extends StatefulWidget {
   final IdentityGateway gateway;
 
-  /// Só para testes: mantém a paginação do servidor (20 por página, "Carregar mais", sem reordenar).
-  /// Em uso normal a lista carrega as páginas e ordena por data no aparelho.
-  final bool serverPaging;
-  const CatalogScreen({
-    super.key,
-    required this.gateway,
-    this.serverPaging = false,
-  });
+  const CatalogScreen({super.key, required this.gateway});
   @override
   State<CatalogScreen> createState() => _CatalogScreenState();
 }
@@ -497,16 +490,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   /// Anos das corridas já vistas (qualquer busca), para o filtro de ano alcançar todas as datas do catálogo.
   final Set<int> knownYears = {};
-
-  /// Ordem da lista: 'date' (padrão) ou 'rating'. Cada ícone liga a sua ordem; tocar de novo inverte.
-  final String sortBy = 'date';
-
-  /// Quantas corridas aparecem na tela por vez ("Carregar mais" mostra mais 20).
-  static const pageSize = 20;
-  int visibleCount = pageSize;
-
-  /// Direção: em data, mais recentes primeiro; em avaliação, melhores primeiro.
-  final bool descending = false; // sempre da mais antiga para a mais nova
 
   /// Visualização escolhida (lista ou grade) e colunas da grade; ficam neste aparelho.
   CatalogViewMode viewMode = CatalogViewMode.list;
@@ -580,7 +563,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   /// Corpo da lista conforme a visualização escolhida.
   List<Widget> editionViews() {
-    final shown = widget.serverPaging ? view : view.take(visibleCount).toList();
+    final shown = items;
     switch (viewMode) {
       case CatalogViewMode.list:
         return [for (final edition in shown) editionCard(edition)];
@@ -793,9 +776,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
     super.dispose();
   }
 
-  /// Itens por página da busca atual. O cursor do servidor é amarrado aos filtros (inclui o limite),
-  /// então o limite não pode mudar no meio de uma busca.
-  late String pageLimit = widget.serverPaging ? '20' : '100';
+  /// Corridas por página: o servidor já devolve na ordem da mais antiga para a mais nova e o "Carregar mais"
+  /// pede a próxima página (o cursor é amarrado aos filtros, inclusive o limite).
+  static const pageLimit = '20';
 
   static num? scoreOf(Map<String, dynamic> edition) {
     final raw = (edition['runScore'] as Map?)?['value'];
@@ -805,49 +788,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
   static int reviewsOf(Map<String, dynamic> edition) =>
       ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
 
-  /// Itens na ordem escolhida pelos ícones: por padrão, as mais recentes primeiro (as minhas não passam mais
-  /// na frente). Por data ou por avaliação (cada ícone inverte a direção) e, em empate, por nº de avaliações
-  /// e pelo nome. Corrida sem avaliação fica sempre por último na ordem por avaliação.
-  List<Map<String, dynamic>> get view {
-    final list = [...items];
-    if (widget.serverPaging) return list;
-    list.sort((a, b) {
-      if (sortBy == 'rating') {
-        final sa = scoreOf(a);
-        final sb = scoreOf(b);
-        if ((sa == null) != (sb == null)) return sa == null ? 1 : -1;
-        if (sa != null && sb != null && sa != sb) {
-          return descending ? sb.compareTo(sa) : sa.compareTo(sb);
-        }
-        final byReviews = reviewsOf(b).compareTo(reviewsOf(a));
-        if (byReviews != 0) return byReviews;
-      }
-      final byDate = (a['date'] as String).compareTo(b['date'] as String);
-      final byName = '${a['name']}'.compareTo('${b['name']}');
-      if (byDate == 0) return byName;
-      return sortBy == 'date' && !descending ? byDate : -byDate;
-    });
-    return list;
-  }
-
   /// Abre/fecha a busca por nome; ao fechar com busca ativa, volta à lista padrão.
   void toggleSearch() {
     final hadName = fields['q']!.text.trim().isNotEmpty;
     fields['q']!.clear();
     setState(() => showFilters = !showFilters);
     if (showFilters == false && hadName) load();
-  }
-
-  /// Ordenar por data precisa do conjunto todo: carrega as próximas páginas (até 500 corridas).
-  Future<void> loadRest() async {
-    var pages = 0;
-    while (mounted &&
-        !widget.serverPaging &&
-        nextCursor != null &&
-        pages++ < 5) {
-      await load(more: true);
-      if (error != null) return;
-    }
   }
 
   Future<void> load({bool more = false}) async {
@@ -870,10 +816,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 'dateTo': upcomingRange().to,
               },
             };
-      visibleCount = pageSize;
       items.clear();
       nextCursor = null;
-      pageLimit = widget.serverPaging ? '20' : '100';
     }
     setState(() {
       loading = true;
@@ -904,7 +848,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
-    if (!more && error == null) await loadRest();
   }
 
   void openMyRequests() => Navigator.of(context).push(
@@ -1088,14 +1031,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
               ),
             ),
           ...editionViews(),
-          if (!widget.serverPaging && view.length > visibleCount)
+          if (nextCursor != null)
             TextButton(
               key: const Key('catalog-show-more'),
-              onPressed: () => setState(() => visibleCount += pageSize),
-              child: const Text('Carregar mais'),
-            ),
-          if (widget.serverPaging && nextCursor != null)
-            TextButton(
               onPressed: loading ? null : () => load(more: true),
               child: const Text('Carregar mais'),
             ),

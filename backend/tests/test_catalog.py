@@ -48,6 +48,29 @@ class CatalogTests(unittest.TestCase):
         self.actor = self.admit("runner")
         seed_synthetic(self.catalog, FIXTURE)
 
+    def test_lista_le_em_lote_e_guarda_versoes_na_memoria(self):
+        calls = {"get": 0, "batch": 0, "commit": 0}
+        get, batch, commit = self.store.get, self.store.batch_get, self.store.commit
+        self.store.get = lambda k: (calls.__setitem__("get", calls["get"] + 1), get(k))[1]
+        self.store.batch_get = lambda ks: (
+            calls.__setitem__("batch", calls["batch"] + 1),
+            batch(ks),
+        )[1]
+        self.store.commit = lambda e, w: (
+            calls.__setitem__("commit", calls["commit"] + 1),
+            commit(e, w),
+        )[1]
+        filters = CatalogFilters(limit=20)
+        first = self.catalog.list(self.actor, filters)["items"]
+        self.assertTrue(first)
+        # 1 chamada em lote para HEAD, 1 para versoes novas e 1 para notas: nao cresce com o numero de corridas.
+        self.assertLessEqual(calls["batch"], 3)
+        self.assertEqual(calls["commit"], 0)  # leitura sem transacao
+        calls["batch"] = 0
+        again = self.catalog.list(self.actor, filters)["items"]
+        self.assertEqual(again, first)
+        self.assertLessEqual(calls["batch"], 2)  # versoes ja estao na memoria: so HEAD e notas
+
     def admit(self, sub):
         actor = Principal(sub, True)
         self.identity.create_profile(actor, "create", {"username": sub, "displayName": sub})
