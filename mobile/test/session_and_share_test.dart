@@ -241,6 +241,42 @@ void main() {
       },
     );
 
+    testWidgets(
+      'a imagem do post é capturada da tela, com uma faixa a mais embaixo para o logo',
+      (tester) async {
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Center(
+              child: RepaintBoundary(
+                key: key,
+                child: const SizedBox(
+                  width: 200,
+                  height: 100,
+                  child: ColoredBox(color: Colors.orange),
+                ),
+              ),
+            ),
+          ),
+        );
+        Uint8List? png;
+        await tester.runAsync(() async {
+          png = await capturePostWithLogo(
+            key,
+            background: Colors.black,
+            dark: true,
+          );
+        });
+        expect(png, isNotNull);
+        final image = await tester.runAsync(() async {
+          final codec = await ui.instantiateImageCodec(png!);
+          return (await codec.getNextFrame()).image;
+        });
+        expect(image!.width, 600); // 200 x 3
+        expect(image.height, greaterThan(300)); // 100 x 3 + faixa do logo
+      },
+    );
+
     testWidgets('se o anexo falhar, tenta so com o texto', (tester) async {
       tester.view.physicalSize = const Size(800, 2400);
       tester.view.devicePixelRatio = 1;

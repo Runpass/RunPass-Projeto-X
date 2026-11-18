@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'catalog_screen.dart';
-import 'catalog_views.dart';
 import 'edition_cards.dart';
-import 'grid_columns.dart';
 import 'identity_gateway.dart';
 import 'runpass_theme.dart';
 
@@ -55,12 +53,6 @@ class _AgendaScreenState extends State<AgendaScreen> {
   bool loading = true;
   String? error;
 
-  /// Visualização das corridas (lista ou grade) e colunas da grade; ficam neste aparelho.
-  static const _modeKey = 'agenda-view-mode';
-  static const _columnsKey = 'agenda-grid-columns';
-  CatalogViewMode viewMode = CatalogViewMode.list;
-  int gridColumns = 2;
-
   /// Agenda com calendário (padrão) ou só a lista das corridas, da mais antiga para a mais nova.
   static const _calendarKey = 'agenda-show-calendar';
   bool showCalendar = true;
@@ -73,8 +65,6 @@ class _AgendaScreenState extends State<AgendaScreen> {
   }
 
   Future<void> loadViewPreferences() async {
-    final mode = await CatalogViewMode.read(_modeKey);
-    final columns = await GridColumns.read(_columnsKey, fallback: 2);
     var calendar = true;
     try {
       calendar =
@@ -84,8 +74,6 @@ class _AgendaScreenState extends State<AgendaScreen> {
     }
     if (mounted) {
       setState(() {
-        viewMode = mode;
-        gridColumns = columns;
         showCalendar = calendar;
       });
     }
@@ -432,44 +420,21 @@ class _AgendaScreenState extends State<AgendaScreen> {
     ),
   );
 
-  /// Mesmo cartão da tela Corridas: em lista (largura toda) ou em grade.
+  /// Mesmo cartão compacto da tela Corridas (só lista): miniatura, quando e onde, nome e distâncias.
   Widget tile(Map<String, dynamic> plan, String status) {
     final edition = {
       ...Map<String, dynamic>.from(plan['edition'] as Map),
       'id': plan['editionId'],
     };
     final today = DateTime.now().toIso8601String().substring(0, 10);
-    final date = edition['date'] as String;
-    final passed = date.compareTo(today) < 0;
-    final distances = [
-      for (final d in (edition['distances'] as List? ?? const []))
-        '${(d as Map)['kilometers']} km',
-    ].join(' · ');
-    final key = Key('agenda-${plan['editionId']}');
-    if (viewMode == CatalogViewMode.grid) {
-      return EditionGridCard(
-        key: key,
-        gateway: widget.gateway,
-        edition: edition,
-        columns: gridColumns,
-        subtitle:
-            '${displayDate(date)} · ${edition['city']}/${edition['state']}',
-        shortDate: displayDate(date).substring(0, 5),
-        onTap: () => openPlan(plan),
-        overlay: planMenu(plan, status),
-      );
-    }
-    return EditionListCard(
-      key: key,
+    final passed = (edition['date'] as String).compareTo(today) < 0;
+    return EditionCompactCard(
+      key: Key('agenda-${plan['editionId']}'),
       gateway: widget.gateway,
       edition: edition,
-      lines: [
-        '${displayDate(date)} · ${edition['city']}/${edition['state']}',
-        if (distances.isNotEmpty) distances,
-        if (passed) 'Já aconteceu',
-      ],
+      rating: passed ? 'Já aconteceu' : null,
       onTap: () => openPlan(plan),
-      overlay: planMenu(plan, status),
+      trailing: planMenu(plan, status),
     );
   }
 
@@ -525,18 +490,6 @@ class _AgendaScreenState extends State<AgendaScreen> {
                           setState(() => selectedDay[status] = null),
                       child: const Text('Ver o mês'),
                     ),
-                  CatalogViewMenu(
-                    value: viewMode,
-                    columns: gridColumns,
-                    onChanged: (mode) {
-                      setState(() => viewMode = mode);
-                      mode.write(_modeKey);
-                    },
-                    onColumnsChanged: (n) {
-                      setState(() => gridColumns = n);
-                      GridColumns.write(_columnsKey, n);
-                    },
-                  ),
                 ],
               ),
             ),
@@ -562,19 +515,7 @@ class _AgendaScreenState extends State<AgendaScreen> {
                 key: Key('agenda-empty-$status'),
               ),
             ),
-          if (viewMode == CatalogViewMode.grid && items.isNotEmpty)
-            GridView.count(
-              key: Key('agenda-grid-$status'),
-              crossAxisCount: gridColumns,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-              childAspectRatio: gridCardAspectRatio(gridColumns),
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              children: [for (final plan in items) tile(plan, status)],
-            )
-          else
-            for (final plan in items) tile(plan, status),
+          for (final plan in items) tile(plan, status),
         ],
       ),
     );

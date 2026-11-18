@@ -390,28 +390,6 @@ void main() {
     },
   );
 
-  testWidgets('na agenda, Grade põe as corridas lado a lado e a escolha vale '
-      'depois', (tester) async {
-    await openCalendar(tester, calendarPlans());
-    expect(find.byKey(const Key('agenda-grid-wanted')), findsNothing);
-    await tester.tap(find.byKey(const Key('catalog-view-mode')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('catalog-view-grid')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('agenda-grid-wanted')), findsOneWidget);
-    expect(
-      tester.getTopLeft(find.byKey(const Key('agenda-EA'))).dy,
-      tester.getTopLeft(find.byKey(const Key('agenda-EC'))).dy,
-    );
-    expect(
-      find.byKey(const Key('grid-columns-2')),
-      findsNothing,
-    ); // só no menu aberto
-    await tester.tap(find.byKey(const Key('catalog-view-mode')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('grid-columns-2')), findsOneWidget);
-  });
-
   testWidgets(
     'a agenda pode ficar só em lista, sem o calendário, com as corridas '
     'da mais antiga para a mais nova',
@@ -924,4 +902,38 @@ void raceArtTests() {
     };
     expect(distinct.length > 1, isTrue);
   });
+
+  testWidgets(
+    'a agenda mostra as corridas no mesmo cartão compacto da tela Corridas, só em lista',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/me/race-plans') {
+          return JsonReply(200, {
+            'items': [
+              {
+                'editionId': 'EA',
+                'status': 'registered',
+                'version': 1,
+                'edition': {...upcoming('A'), 'id': 'EA'},
+              },
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: AgendaScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      if (find.byKey(const Key('agenda-layout-toggle')).evaluate().isNotEmpty) {
+        await tester.tap(find.byKey(const Key('agenda-layout-toggle')));
+        await tester.pumpAndSettle();
+      }
+      expect(find.byKey(const Key('compact-card-EA')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-view-mode')), findsNothing);
+    },
+  );
 }
