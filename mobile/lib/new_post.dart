@@ -10,8 +10,8 @@ import 'profile_photo.dart' show PhotoZoomScreen;
 import 'tagged_people.dart';
 import 'runpass_theme.dart';
 
-/// Nova postagem (o "+" da Home): publica no feed uma corrida que eu já concluí e ainda não publiquei,
-/// com uma foto própria (qualquer foto, separada da foto da medalha) e um texto. A corrida pode ser outra:
+/// Nova postagem (o "+" da Home): publica no feed uma corrida que eu já concluí (também mais de uma vez,
+/// com outras fotos), com uma foto própria (qualquer foto, separada da foto da medalha) e um texto. A corrida pode ser outra:
 /// "Adicionar outra corrida" usa o mesmo fluxo da medalha (corrida do catálogo ou pedido de cadastro) e, ao voltar,
 /// ela aparece na lista para publicar.
 class NewPostScreen extends StatefulWidget {
@@ -37,13 +37,9 @@ class NewPostScreen extends StatefulWidget {
 class _NewPostScreenState extends State<NewPostScreen> {
   late Future<List<RaceRecord>> races = loadPublishable();
 
-  Future<List<RaceRecord>> loadPublishable() => loadMyRaces(widget.gateway)
-      .then(
-        (all) => [
-          for (final race in all)
-            if (race.participation['publishToFeed'] != true) race,
-        ],
-      );
+  /// Todas as corridas que concluí: a ainda não publicada ganha a publicação dela; a já publicada ganha mais
+  /// uma (outra foto da mesma corrida), sem pedir medalha.
+  Future<List<RaceRecord>> loadPublishable() => loadMyRaces(widget.gateway);
 
   /// Corrida que não está na lista: usa o fluxo da medalha (escolhe no catálogo ou pede o cadastro).
   Future<void> addOtherRace() async {
@@ -148,11 +144,17 @@ class _NewPostScreenState extends State<NewPostScreen> {
       message = null;
     });
     try {
+      final already = race.participation['publishToFeed'] == true;
       await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(race.participation['id'] as String)}/publish',
+        already
+            ? '/posts'
+            : '/participations/${Uri.encodeComponent(race.participation['id'] as String)}/publish',
         method: 'POST',
         body: {
-          'expectedVersion': race.participation['version'],
+          if (already)
+            'participationId': race.participation['id']
+          else
+            'expectedVersion': race.participation['version'],
           'postImageReference': reference,
           if (text.text.trim().isNotEmpty) 'postText': text.text.trim(),
           if (tagged.isNotEmpty)
@@ -241,6 +243,8 @@ class _NewPostScreenState extends State<NewPostScreen> {
                     [
                       if (race.date != null) displayDate(race.date!),
                       if (race.place.isNotEmpty) race.place,
+                      if (race.participation['publishToFeed'] == true)
+                        'já no feed: vira mais uma publicação',
                     ].join(' · '),
                   ),
                   onTap: () => setState(() {

@@ -1969,13 +1969,13 @@ void main() {
               ],
             });
           }
-          final post = {
-            'p1': ('a', '2026-09-02T10:00:00Z'),
-            'p2': ('b', '2025-05-02T10:00:00Z'),
-          }[uri.pathSegments.last];
-          if (uri.path.startsWith('/posts/') && post != null) {
-            final (editionId, publishedAt) = post;
-            return JsonReply(200, {
+          Map<String, dynamic> postFor(String id) {
+            final (editionId, publishedAt) = {
+              'p1': ('a', '2026-09-02T10:00:00Z'),
+              'p2': ('b', '2025-05-02T10:00:00Z'),
+            }[id]!;
+            final uri = Uri.parse('https://api.example/posts/$id');
+            return {
               'id': uri.pathSegments.last,
               'author': {
                 'id': 'eu',
@@ -1993,6 +1993,19 @@ void main() {
               'commentCount': 0,
               'likeCount': 0,
               'likedByMe': false,
+            };
+          }
+
+          if (uri.path.startsWith('/posts/') &&
+              ['p1', 'p2'].contains(uri.pathSegments.last)) {
+            return JsonReply(200, postFor(uri.pathSegments.last));
+          }
+          if (uri.path == '/me/posts') {
+            // Todas as minhas publicações numa chamada (inclui as extras), mais recente primeiro.
+            return JsonReply(200, {
+              'items': [
+                for (final id in ['p1', 'p2']) postFor(id),
+              ],
             });
           }
           final match = editions[uri.pathSegments.last];
@@ -2011,7 +2024,7 @@ void main() {
       expect(find.byKey(const Key('my-post-p1')), findsOneWidget);
       expect(find.byKey(const Key('my-post-p2')), findsOneWidget);
       expect(find.byKey(const Key('my-post-p3')), findsNothing);
-      expect(paths, containsAll(['/posts/p1', '/posts/p2']));
+      expect(paths, contains('/me/posts')); // uma chamada só, com as extras
       // Mais recente primeiro: p1 (set/2026) antes de p2 (mai/2025), na mesma linha.
       final p1 = tester.getTopLeft(find.byKey(const Key('my-post-p1')));
       final p2 = tester.getTopLeft(find.byKey(const Key('my-post-p2')));

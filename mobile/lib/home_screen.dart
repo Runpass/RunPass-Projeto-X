@@ -181,7 +181,10 @@ Future<FeedLoad> loadFeed(
   for (final post in posts) {
     final participation = post['participation'] as Map? ?? const {};
     // Removida há pouco (a exclusão ainda termina no servidor): não volta na recarga.
-    if (pendingDeletions.contains(participation['id'])) continue;
+    if (pendingDeletions.contains(participation['id']) ||
+        pendingDeletions.contains(post['id'])) {
+      continue;
+    }
     posted.add(participation['id'] as String? ?? '');
     entries.add(
       entryFromPost(post, editions[participation['editionId']], myId),

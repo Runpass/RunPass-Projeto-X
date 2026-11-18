@@ -33,6 +33,11 @@ class FeedEntry {
   int likes, comments;
   bool liked;
 
+  /// Publicação extra (outra foto da mesma corrida): foto, edição e remoção são da publicação, não da
+  /// participação.
+  final bool extra;
+  final int? version;
+
   FeedEntry({
     required this.postId,
     required this.author,
@@ -49,7 +54,19 @@ class FeedEntry {
     this.likes = 0,
     this.comments = 0,
     this.liked = false,
+    this.extra = false,
+    this.version,
   });
+
+  /// Endereço da foto: a da publicação extra, a da publicação ou a da medalha.
+  String? get photoEndpoint {
+    if (extra && postId != null) {
+      return '/posts/${Uri.encodeComponent(postId!)}/image';
+    }
+    final id = race.participation['id'] as String?;
+    if (id == null) return null;
+    return '/participations/${Uri.encodeComponent(id)}/${race.hasPostImage ? 'post-image' : 'image'}';
+  }
 }
 
 /// Monta o cartao a partir de uma publicacao da API.
@@ -83,6 +100,8 @@ FeedEntry entryFromPost(
     likes: (post['likeCount'] as num?)?.toInt() ?? 0,
     comments: (post['commentCount'] as num?)?.toInt() ?? 0,
     liked: post['likedByMe'] == true,
+    extra: post['extra'] == true,
+    version: (post['version'] as num?)?.toInt(),
   );
 }
 
@@ -445,7 +464,53 @@ class _PostCardState extends State<PostCard> {
   bool removed = false;
 
   /// Editar a minha publicação: abre a participação concluída (tempo, foto, avaliação e comentário).
+  /// Publicação extra: edita só o texto (a foto e a corrida ficam).
+  Future<void> editExtra() async {
+    final controller = TextEditingController(text: entry.comment ?? '');
+    final text = await showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Editar publicação'),
+        content: TextField(
+          key: const Key('extra-post-text'),
+          controller: controller,
+          maxLength: 500,
+          minLines: 1,
+          maxLines: 4,
+          decoration: const InputDecoration(labelText: 'Texto da publicação'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('extra-post-save'),
+            onPressed: () => Navigator.pop(dialog, controller.text.trim()),
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (text == null || !mounted || entry.postId == null) return;
+    try {
+      await widget.gateway.request(
+        '/posts/${Uri.encodeComponent(entry.postId!)}/extra',
+        method: 'PATCH',
+        body: {'expectedVersion': entry.version ?? 1, 'postText': text},
+      );
+      soon('Publicação atualizada.');
+      widget.onChanged?.call();
+    } on IdentityIssue catch (issue) {
+      soon(catalogError(issue));
+    } on Exception {
+      soon('Não foi possível salvar agora.');
+    }
+  }
+
   Future<void> editMine() async {
+    if (entry.extra) return editExtra();
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ParticipationDraftScreen(
@@ -463,7 +528,51 @@ class _PostCardState extends State<PostCard> {
 
   /// Remover a minha publicação: a publicação nasce da participação concluída, então remover exclui a
   /// participação (e a medalha dela), depois de confirmar.
+  /// Publicação extra: remove só ela (a corrida, a medalha e a outra publicação continuam).
+  Future<void> removeExtra() async {
+    final id = entry.postId;
+    if (id == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remover esta publicação?'),
+        content: const Text(
+          'Só esta publicação sai do feed. A corrida, a medalha e as outras publicações continuam.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('post-remove-cancel'),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('post-remove-confirm'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remover'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.gateway.request(
+        '/posts/${Uri.encodeComponent(id)}',
+        method: 'DELETE',
+      );
+      pendingDeletions.add(id);
+      if (!mounted) return;
+      setState(() => removed = true);
+      soon('Publicação removida.');
+      widget.onRemoved?.call();
+    } on IdentityIssue catch (issue) {
+      soon(catalogError(issue));
+    } on Exception {
+      soon('Não foi possível remover agora. Nada foi alterado.');
+    }
+  }
+
   Future<void> removeMine() async {
+    if (entry.extra) return removeExtra();
     final participation = entry.race.participation;
     final id = participation['id'] as String?;
     if (id == null) return;
@@ -519,15 +628,24 @@ class _PostCardState extends State<PostCard> {
     );
     if (picked == null || !mounted) return;
     final participation = entry.race.participation;
+    final ids = [for (final p in picked) p['id']];
     try {
-      await widget.gateway.request(
-        '/participations/${Uri.encodeComponent('${participation['id']}')}',
-        method: 'PATCH',
-        body: {
-          'expectedVersion': participation['version'],
-          'taggedUserIds': [for (final p in picked) p['id']],
-        },
-      );
+      if (entry.extra && entry.postId != null) {
+        await widget.gateway.request(
+          '/posts/${Uri.encodeComponent(entry.postId!)}/extra',
+          method: 'PATCH',
+          body: {'expectedVersion': entry.version ?? 1, 'taggedUserIds': ids},
+        );
+      } else {
+        await widget.gateway.request(
+          '/participations/${Uri.encodeComponent('${participation['id']}')}',
+          method: 'PATCH',
+          body: {
+            'expectedVersion': participation['version'],
+            'taggedUserIds': ids,
+          },
+        );
+      }
       messenger.showSnackBar(
         const SnackBar(content: Text('Marcações salvas.')),
       );
@@ -592,13 +710,11 @@ class _PostCardState extends State<PostCard> {
   /// Bytes da foto da medalha pelo link assinado; sem foto, sem rede ou demora, retorna nulo
   /// (o cartao e montado sem foto nesse caso, nao se compartilha a foto crua sozinha).
   Future<Uint8List?> _fetchPhotoBytes() async {
-    final id = entry.race.participation['id'] as String?;
-    if (id == null) return null;
+    final endpoint = entry.photoEndpoint;
+    if (endpoint == null) return null;
     try {
       final reply = await widget.gateway
-          .request(
-            '/participations/${Uri.encodeComponent(id)}/${entry.race.hasPostImage ? 'post-image' : 'image'}',
-          )
+          .request(endpoint)
           .timeout(const Duration(seconds: 6));
       final url = Uri.tryParse(reply['url'] as String? ?? '');
       if (url == null || url.scheme != 'https') return null;
@@ -855,6 +971,7 @@ class _PostCardState extends State<PostCard> {
                     key: Key('post-photo-${entry.postId}'),
                     gateway: widget.gateway,
                     participationId: entry.race.participation['id'] as String?,
+                    endpoint: entry.extra ? entry.photoEndpoint : null,
                     size: 72,
                     usePostImage: entry.race.hasPostImage,
                     // Sempre a foto inteira, sem cortar (a da publicação e a da medalha).
@@ -1052,6 +1169,7 @@ class PostThumb extends StatelessWidget {
                 MedalPhoto(
                   gateway: gateway,
                   participationId: entry.race.participation['id'] as String?,
+                  endpoint: entry.extra ? entry.photoEndpoint : null,
                   size: 40,
                   usePostImage: entry.race.hasPostImage,
                 ),

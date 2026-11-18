@@ -811,10 +811,14 @@ class MedalPhoto extends StatelessWidget {
 
   /// Muda quando a foto foi trocada: força recarregar o link (a lista reaproveita o estado da foto).
   final int revision;
+
+  /// Endereço da foto quando não é da participação (ex.: publicação extra, `/posts/{id}/image`).
+  final String? endpoint;
   const MedalPhoto({
     super.key,
     required this.gateway,
     required this.participationId,
+    this.endpoint,
     this.size = 46,
     this.fit = BoxFit.cover,
     this.useDisplayImage = false,
@@ -825,13 +829,15 @@ class MedalPhoto extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SignedPhoto(
     key: ValueKey(
-      'medal-photo-$participationId-$useDisplayImage-$usePostImage',
+      'medal-photo-$participationId-$useDisplayImage-$usePostImage-$endpoint',
     ),
     gateway: gateway,
-    endpoint: participationId == null
-        ? null
-        : '/participations/${Uri.encodeComponent(participationId!)}/'
-              '${usePostImage ? 'post-image' : (useDisplayImage ? 'display-image' : 'image')}',
+    endpoint:
+        endpoint ??
+        (participationId == null
+            ? null
+            : '/participations/${Uri.encodeComponent(participationId!)}/'
+                  '${usePostImage ? 'post-image' : (useDisplayImage ? 'display-image' : 'image')}'),
     fallback: MedalArt(size: size),
     fit: fit,
   );
@@ -3092,27 +3098,24 @@ Future<List<FeedEntry>> loadMyPosts(
   List<RaceRecord> races,
   String? myId,
 ) async {
-  final published =
-      [
-        for (final race in races)
-          if (race.participation['publishToFeed'] == true) race,
-      ]..sort(
-        (a, b) => (b.participation['completedAt'] as String? ?? '').compareTo(
-          a.participation['completedAt'] as String? ?? '',
-        ),
-      );
-  final entries = <FeedEntry>[];
-  for (final race in published) {
-    final id = race.participation['id'] as String?;
-    if (id == null) continue;
-    try {
-      final post = await gateway.request('/posts/${Uri.encodeComponent(id)}');
-      entries.add(entryFromPost(post, race.edition, myId));
-    } on Exception {
-      // Uma publicacao que falhar ao carregar simplesmente nao aparece na lista.
-    }
+  // Todas as minhas publicações numa chamada: a de cada corrida e as extras (outras fotos da mesma corrida).
+  final editions = {
+    for (final race in races) '${race.participation['id']}': race.edition,
+  };
+  try {
+    final page = await gateway.request('/me/posts');
+    return [
+      for (final post in (page['items'] as List? ?? const []).cast<Map>())
+        if (!pendingDeletions.contains(post['id']))
+          entryFromPost(
+            Map<String, dynamic>.from(post),
+            editions['${(post['participation'] as Map?)?['id']}'],
+            myId,
+          ),
+    ];
+  } on Exception {
+    return const [];
   }
-  return entries;
 }
 
 class RunnerProfileScreen extends StatefulWidget {
