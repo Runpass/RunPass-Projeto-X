@@ -3136,9 +3136,30 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
 
   late Future<ProfileData> data = load();
 
-  Future<void> changePhoto(Map<String, dynamic> profile) async {
+  /// Toque na foto: amplia em formato de medalha, com alterar e remover.
+  Future<void> viewPhoto(Map<String, dynamic> profile) async {
+    final action = await openProfilePhoto(
+      context,
+      gateway: widget.gateway,
+      profile: profile,
+      editable: true,
+    );
+    if (action == null || !mounted) return;
+    if (action == ProfilePhotoAction.remove) {
+      await changePhoto(profile, preset: PhotoChoice.remove);
+    } else {
+      final choice = await askPhotoChoice(context);
+      if (choice == null || !mounted) return;
+      await changePhoto(profile, preset: choice);
+    }
+  }
+
+  Future<void> changePhoto(
+    Map<String, dynamic> profile, {
+    PhotoChoice? preset,
+  }) async {
     final hasPhoto = profile['photoReference'] != null;
-    final choice = await askPhotoChoice(context, canRemove: hasPhoto);
+    final choice = preset ?? await askPhotoChoice(context, canRemove: hasPhoto);
     if (choice == null || !mounted) return;
     try {
       String? reference;
@@ -3431,11 +3452,12 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              MedalAvatar(
-                radius: 46,
+              GestureDetector(
+                key: const Key('open-profile-photo'),
+                onTap: () => viewPhoto(profile),
                 child: ProfileAvatar(
                   key: ValueKey('avatar-${profile['photoReference']}'),
-                  radius: 40,
+                  radius: 46,
                   gateway: widget.gateway,
                   profile: profile,
                 ),

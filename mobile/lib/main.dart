@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'identity_gateway.dart';
 import 'catalog_screen.dart';
+import 'friends.dart' show MedalAvatar;
 import 'biometrics.dart';
 import 'home_screen.dart';
 import 'location_picker.dart';
@@ -1024,21 +1025,24 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                 key: const Key('choose-photo'),
                                 customBorder: const CircleBorder(),
                                 onTap: busy ? null : choosePhoto,
-                                child: CircleAvatar(
+                                child: MedalAvatar(
                                   radius: 64,
-                                  backgroundColor: context.softFill,
-                                  backgroundImage: chosenPhoto == null
-                                      ? null
-                                      : MemoryImage(
-                                          Uint8List.fromList(chosenPhoto!),
-                                        ),
-                                  child: chosenPhoto == null
-                                      ? const Icon(
-                                          Icons.add_a_photo_outlined,
-                                          size: 40,
-                                          color: runPassOrange,
-                                        )
-                                      : null,
+                                  child: CircleAvatar(
+                                    radius: MedalAvatar.innerRadius(64),
+                                    backgroundColor: context.softFill,
+                                    backgroundImage: chosenPhoto == null
+                                        ? null
+                                        : MemoryImage(
+                                            Uint8List.fromList(chosenPhoto!),
+                                          ),
+                                    child: chosenPhoto == null
+                                        ? const Icon(
+                                            Icons.add_a_photo_outlined,
+                                            size: 40,
+                                            color: runPassOrange,
+                                          )
+                                        : null,
+                                  ),
                                 ),
                               ),
                             ),

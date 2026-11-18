@@ -2,6 +2,7 @@ import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/material.dart';
 
+import 'friends.dart' show ProfileAvatar;
 import 'runpass_theme.dart';
 
 /// O que aparece na prévia da publicação: o mesmo que vai para o Feed.
@@ -73,9 +74,7 @@ Future<bool> confirmPostPreview(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           ListTile(
-                            leading: const CircleAvatar(
-                              child: Icon(Icons.person_outline),
-                            ),
+                            leading: const ProfileAvatar(radius: 20),
                             title: Text(
                               data.authorName,
                               key: const Key('post-preview-author'),
