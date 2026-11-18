@@ -376,6 +376,43 @@ void main() {
   );
 
   testWidgets(
+    'ao tocar na medalha aparece a foto da medalha; a da publicação só vem pela publicação',
+    (tester) async {
+      tall(tester);
+      const medal = {
+        'id': 'c1',
+        'editionId': 'E1',
+        'distanceId': '5k',
+        'state': 'completed',
+        'version': 4,
+        'hasPostImage': true,
+      };
+      final (gateway, b) = await setup();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(gateway: gateway, initial: medal),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(b.calls, contains('GET /participations/c1/image'));
+      expect(b.calls, isNot(contains('GET /participations/c1/post-image')));
+      b.calls.clear();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            key: const Key('da-publicacao'),
+            gateway: gateway,
+            initial: medal,
+            fromPost: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(b.calls, contains('GET /participations/c1/post-image'));
+    },
+  );
+
+  testWidgets(
     'sair e voltar ao rascunho mantém a foto e o texto da publicação',
     (tester) async {
       tall(tester);

@@ -4186,9 +4186,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                     gateway: widget.gateway,
                     participationId: draft['id'] as String?,
                     size: 72,
-                    // Com foto de publicação, é ela que aparece (também em Medalhas, junto das avaliações).
-                    usePostImage: hasPostPhoto,
-                    fit: hasPostPhoto ? BoxFit.contain : BoxFit.cover,
+                    // Ao tocar numa medalha (Medalhas) aparece a foto da MEDALHA; a da publicação só aparece quando
+                    // a tela foi aberta pela publicação.
+                    usePostImage: widget.fromPost && hasPostPhoto,
+                    fit: widget.fromPost && hasPostPhoto
+                        ? BoxFit.contain
+                        : BoxFit.cover,
                   ),
                 ),
               ),
