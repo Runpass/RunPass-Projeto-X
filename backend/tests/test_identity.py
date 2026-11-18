@@ -37,6 +37,18 @@ class ServiceTests(unittest.TestCase):
         )
         self.actor = Principal("u1", True)
 
+    def test_authorize_e_so_leitura_sem_transacao_mas_continua_barrando_conta_indisponivel(self):
+        self.create("u1")
+        commits = []
+        original = self.store.commit
+        self.store.commit = lambda expected, writes: (commits.append(1), original(expected, writes))
+        self.service.authorize(self.actor)  # conta ativa: confere e nao grava nem abre transacao
+        self.assertEqual(commits, [])
+        # sem perfil/admissao, quando exigida, segue barrando
+        with self.assertRaises(Problem) as caught:
+            self.service.authorize(Principal("ninguem", True), admitted=True)
+        self.assertEqual(caught.exception.code, "BETA_ADMISSION_REQUIRED")
+
     def create(self, subject, username=None):
         actor = Principal(subject, True)
         self.service.create_profile(
