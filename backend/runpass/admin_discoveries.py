@@ -25,7 +25,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from .admin_users import audit
-from .catalog import AutoImportActor
+from .catalog import AutoImportActor, name_core
 from .catalog_import import MAX_BYTES, import_rows, rows_to_results, slug
 from .service import Problem
 from .store import Conflict, Unavailable
@@ -176,6 +176,15 @@ class DiscoveryStore:
         except Conflict as error:
             raise Problem(409, "VERSION_CONFLICT") from error
 
+    def _same_day_twin(self, data):
+        prefix = f"{PREFIX}{data['date'][:7]}#{data['date']}#"
+        rows, _ = self.store.query(*PARTITION, prefix=prefix, limit=200)
+        core, city = name_core(data["name"]), _fold(data["city"])
+        for sk, item in rows:
+            if name_core(item["name"]) == core and _fold(item["city"]) == city:
+                return (*PARTITION, sk), item
+        return None
+
     def ingest(self, items, origin, batch_id, actor="catalog-pipeline"):
         """Mescla um lote. Devolve contadores e ate 20 erros (sem texto da fonte)."""
         if origin not in ORIGINS:
@@ -196,6 +205,12 @@ class DiscoveryStore:
                 continue
             key = (*PARTITION, _sk(data["date"], data["name"], data["city"]))
             current = self.store.get(key)
+            if current is None:
+                # Mesma prova escrita de outro jeito ("Pace Run 2026" x "2ª Pace Run") no mesmo dia e cidade: junta
+                # na que ja existe em vez de criar outra.
+                twin = self._same_day_twin(data)
+                if twin is not None:
+                    key, current = twin
             if current is None:
                 new = {
                     **data,
