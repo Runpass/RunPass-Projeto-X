@@ -14,7 +14,6 @@ import 'grid_columns.dart';
 import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
-import 'location_picker.dart';
 import 'my_races.dart';
 import 'notifications.dart';
 import 'organizer_post.dart';
@@ -474,24 +473,17 @@ class CatalogScreen extends StatefulWidget {
 
 class _CatalogScreenState extends State<CatalogScreen> {
   final fields = {
-    for (final key in ['namePrefix', 'city', 'state', 'distanceKm', 'year'])
+    for (final key in ['q', 'city', 'state', 'year'])
       key: TextEditingController(text: key == 'year' ? upcomingFilter : ''),
   };
-  final form = GlobalKey<FormState>();
   // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
-  final phrase = TextEditingController();
-  Map<String, dynamic>? searchInfo;
   final items = <Map<String, dynamic>>[];
   Map<String, Map<String, dynamic>> mine = {};
   // Situação da pessoa em cada corrida (desejada ou inscrita): edição -> `wanted` | `registered`.
   Map<String, String> plans = {};
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
-  // Situacao das inscricoes (filtro): nulo = qualquer.
-  String? registration;
-  int registrationEpoch =
-      0; // recria o seletor ao limpar (reset() devolveria o valor antigo)
   bool loading = false;
   bool showFilters = false;
 
@@ -499,7 +491,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// mostra as outras.
   bool get upcomingWindow =>
       fields['year']!.text == upcomingFilter &&
-      fields['namePrefix']!.text.trim().isEmpty;
+      fields['q']!.text.trim().isEmpty;
 
   int? get selectedYear => int.tryParse(fields['year']!.text);
 
@@ -795,7 +787,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   @override
   void dispose() {
-    phrase.dispose();
     for (final controller in fields.values) {
       controller.dispose();
     }
@@ -841,17 +832,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   /// Abre/fecha a busca por nome; ao fechar com busca ativa, volta à lista padrão.
   void toggleSearch() {
-    if (showFilters && (activeFilters.isNotEmpty || phrase.text.isNotEmpty)) {
-      phrase.clear();
-      for (final controller in fields.values) {
-        controller.clear();
-      }
-      fields['year']!.text = upcomingFilter;
-      registration = null;
-      registrationEpoch++;
-      load();
-    }
+    final hadName = fields['q']!.text.trim().isNotEmpty;
+    fields['q']!.clear();
     setState(() => showFilters = !showFilters);
+    if (showFilters == false && hadName) load();
   }
 
   /// Ordenar por data precisa do conjunto todo: carrega as próximas páginas (até 500 corridas).
@@ -866,18 +850,18 @@ class _CatalogScreenState extends State<CatalogScreen> {
     }
   }
 
-  void onPhraseChanged(String text) => setState(() {});
-
   Future<void> load({bool more = false}) async {
     if (loading) return;
-    final sentence = phrase.text.trim();
     if (!more) {
-      activeFilters = sentence.isNotEmpty
-          ? {}
+      final name = fields['q']!.text.trim();
+      // Busca por nome vale para o catálogo todo; sem nome, a lista é da cidade do perfil e dos próximos 20 dias
+      // (ou do ano escolhido no calendário).
+      activeFilters = name.isNotEmpty
+          ? {'q': name}
           : {
-              for (final entry in fields.entries)
-                if (entry.value.text.trim().isNotEmpty && entry.key != 'year')
-                  entry.key: entry.value.text.trim(),
+              for (final key in ['city', 'state'])
+                if (fields[key]!.text.trim().isNotEmpty)
+                  key: fields[key]!.text.trim(),
               if (yearRange(fields['year']!.text) case final range?) ...{
                 'dateFrom': range.from,
                 'dateTo': range.to,
@@ -885,9 +869,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 'dateFrom': upcomingRange().from,
                 'dateTo': upcomingRange().to,
               },
-              'registrationStatus': ?registration,
             };
-      searchInfo = null;
       visibleCount = pageSize;
       items.clear();
       nextCursor = null;
@@ -898,26 +880,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
       error = null;
     });
     try {
-      final bySentence = !more && sentence.isNotEmpty;
       final page = await widget.gateway.request(
-        bySentence ? '/editions/search' : '/editions',
-        query: bySentence
-            ? {'phrase': sentence, 'limit': '20'}
-            : {
-                ...activeFilters,
-                'limit': pageLimit,
-                if (more && nextCursor != null) 'cursor': nextCursor!,
-              },
+        '/editions',
+        query: {
+          ...activeFilters,
+          'limit': pageLimit,
+          if (more && nextCursor != null) 'cursor': nextCursor!,
+        },
       );
       if (!mounted) return;
-      if (bySentence) {
-        // As proximas paginas usam GET /editions com os filtros que o servidor resolveu.
-        searchInfo = Map<String, dynamic>.from(page['search'] as Map);
-        activeFilters = {
-          for (final e in (searchInfo!['filters'] as Map).entries)
-            e.key as String: '${e.value}',
-        };
-      }
       final known = items.map((e) => e['id']).toSet();
       for (final entry
           in (page['items'] as List).cast<Map<String, dynamic>>()) {
@@ -948,7 +919,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
         builder: (_) => EditionRequestFormScreen(
           gateway: widget.gateway,
           prefill: {
-            if (phrase.text.trim().isNotEmpty) 'name': phrase.text.trim(),
+            if (fields['q']!.text.trim().isNotEmpty)
+              'name': fields['q']!.text.trim(),
             if ((fields['city']?.text.trim() ?? '').isNotEmpty)
               'city': fields['city']!.text.trim(),
           },
@@ -963,56 +935,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
       );
     }
   }
-
-  void clearSearch() {
-    if (loading) return;
-    phrase.clear();
-    // Primeiro o reset do formulário (ele devolve ao seletor o valor antigo e dispara o onChanged);
-    // só depois limpo os campos, para o último valor valer.
-    form.currentState?.reset();
-    for (final controller in fields.values) {
-      controller.clear();
-    }
-    fields['year']!.text = upcomingFilter;
-    setState(() {
-      registration = null;
-      registrationEpoch++;
-    });
-    load();
-  }
-
-  /// Há algum filtro além do nome? Se houver, o nome deixa de ser obrigatório.
-  bool get hasOtherFilter =>
-      fields['distanceKm']!.text.trim().isNotEmpty ||
-      (fields['year']!.text.trim().isNotEmpty &&
-          fields['year']!.text != upcomingFilter) ||
-      fields['state']!.text.trim().isNotEmpty ||
-      fields['city']!.text.trim().isNotEmpty ||
-      registration != null;
-
-  Widget filter(
-    String key,
-    String label, {
-    String? Function(String)? validate,
-    int? maxLength,
-    String? hint,
-    bool required = false,
-  }) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: TextFormField(
-      controller: fields[key],
-      maxLength: maxLength,
-      decoration: InputDecoration(labelText: label, helperText: hint),
-      keyboardType: key == 'distanceKm'
-          ? const TextInputType.numberWithOptions(decimal: true)
-          : TextInputType.text,
-      validator: (value) => value == null || value.trim().isEmpty
-          ? (required && !hasOtherFilter
-                ? 'Informe o nome da corrida ou escolha outro filtro.'
-                : null)
-          : validate?.call(value.trim()),
-    ),
-  );
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -1053,214 +975,45 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Descreva a corrida: só aparece ao tocar na lupa.
-          if (showFilters)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: TextField(
-                key: const Key('catalog-phrase'),
-                controller: phrase,
-                maxLength: 200,
-                buildCounter: (
-                  _, {
-                  required currentLength,
-                  required isFocused,
-                  maxLength,
-                }) => null,
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) {
-                  load();
-                },
-                onChanged: onPhraseChanged,
-                decoration: InputDecoration(
-                  labelText: 'Descreva a corrida',
-                  hintText: 'Ex.: meia maratona em abril',
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  suffixIcon: phrase.text.isEmpty
-                      ? null
-                      : IconButton(
-                          key: const Key('catalog-phrase-clear'),
-                          tooltip: 'Limpar a frase',
-                          icon: const Icon(Icons.close_rounded),
-                          onPressed: loading
-                              ? null
-                              : () {
-                                  phrase.clear();
-                                  load();
-                                },
-                        ),
+          // Busca por nome (só aparece ao tocar na lupa) e, se não achar, pedir o cadastro da corrida.
+          if (showFilters) ...[
+            TextField(
+              key: const Key('catalog-name-search'),
+              controller: fields['q'],
+              autofocus: true,
+              maxLength: 160,
+              buildCounter: (
+                _, {
+                required currentLength,
+                required isFocused,
+                maxLength,
+              }) => null,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => load(),
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Nome da corrida',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: IconButton(
+                  key: const Key('catalog-name-search-go'),
+                  tooltip: 'Buscar',
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                  onPressed: loading ? null : load,
                 ),
               ),
             ),
-          if (showFilters)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Form(
-                  key: form,
-                  child: Column(
-                    children: [
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Encontre sua próxima conquista',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 18,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Se houver uma frase acima, estes filtros são ignorados.',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      filter(
-                        'namePrefix',
-                        'Nome da corrida',
-                        maxLength: 160,
-                        hint: 'Obrigatório se você não escolher estado, ano, distância ou inscrições',
-                        required: true,
-                      ),
-                      // Mesmo seletor do editar perfil: lista fechada de estado e cidade, sem digitar.
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: InkWell(
-                          key: const Key('filter-location'),
-                          onTap: () async {
-                            final picked = await pickBrLocation(
-                              context,
-                              initialUf: fields['state']!.text.isEmpty
-                                  ? null
-                                  : fields['state']!.text,
-                              initialCity: fields['city']!.text.isEmpty
-                                  ? null
-                                  : fields['city']!.text,
-                            );
-                            if (picked != null && mounted) {
-                              setState(() {
-                                fields['state']!.text = picked.$1;
-                                fields['city']!.text = picked.$2;
-                              });
-                            }
-                          },
-                          child: InputDecorator(
-                            decoration: InputDecoration(
-                              labelText: 'Estado e cidade (opcional)',
-                              suffixIcon: fields['city']!.text.isEmpty
-                                  ? const Icon(Icons.expand_more)
-                                  : IconButton(
-                                      key: const Key('filter-location-clear'),
-                                      tooltip: 'Limpar estado e cidade',
-                                      icon: const Icon(Icons.close_rounded),
-                                      onPressed: () => setState(() {
-                                        fields['state']!.text = '';
-                                        fields['city']!.text = '';
-                                      }),
-                                    ),
-                            ),
-                            child: Text(
-                              fields['city']!.text.isEmpty
-                                  ? 'Todos os estados e cidades'
-                                  : '${fields['state']!.text} - ${fields['city']!.text}',
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Wrap(
-                          spacing: 8,
-                          children: [
-                            for (final km in const ['5', '10', '21', '42'])
-                              ChoiceChip(
-                                key: Key('km-chip-$km'),
-                                label: Text('$km km'),
-                                selected: fields['distanceKm']!.text == km,
-                                onSelected: (picked) => setState(
-                                  () => fields['distanceKm']!.text = picked
-                                      ? km
-                                      : '',
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      filter(
-                        'distanceKm',
-                        'Distância em km (opcional)',
-                        hint: 'Ex.: 5, 10, 21 ou 42',
-                        validate: (value) {
-                          final km = double.tryParse(value);
-                          return km != null && km.isFinite && km > 0
-                              ? null
-                              : 'Informe uma distância positiva, usando ponto para decimais.';
-                        },
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: DropdownButtonFormField<String?>(
-                          key: ValueKey(
-                            'filter-registration-$registrationEpoch',
-                          ),
-                          initialValue: registration,
-                          decoration: const InputDecoration(
-                            labelText: 'Inscrições',
-                          ),
-                          items: const [
-                            DropdownMenuItem(
-                              value: null,
-                              child: Text('Qualquer situação'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'open',
-                              child: Text('Abertas'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'closed',
-                              child: Text('Encerradas'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'sold_out',
-                              child: Text('Esgotadas'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'unknown',
-                              child: Text('Não informada'),
-                            ),
-                          ],
-                          onChanged: (value) =>
-                              setState(() => registration = value),
-                        ),
-                      ),
-                      FilledButton(
-                        onPressed: loading
-                            ? null
-                            : () {
-                                // Com uma frase acima, o formulário é ignorado: nada a validar.
-                                if (phrase.text.trim().isEmpty &&
-                                    !(form.currentState?.validate() ?? true)) {
-                                  return;
-                                }
-                                load();
-                              },
-                        child: const Text('Buscar'),
-                      ),
-                      const SizedBox(height: 8),
-                      OutlinedButton(
-                        onPressed: loading ? null : clearSearch,
-                        child: const Text('Limpar busca'),
-                      ),
-                    ],
-                  ),
-                ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('catalog-request-from-search'),
+                onPressed: loading ? null : requestRace,
+                icon: const Icon(Icons.add_circle_outline),
+                label: const Text('Não encontrou? Incluir uma corrida'),
               ),
             ),
+            const SizedBox(height: 8),
+          ],
           // Mesmo espaço (12) entre "Minhas solicitações", o público e o ano.
-          if (showFilters) const SizedBox(height: 12),
           if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
             TextButton(
@@ -1305,18 +1058,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
                 onPressed: toggleSearch,
               ),
-              Expanded(
-                child: Text(
-                  switch (fields['year']!.text) {
-                    upcomingFilter => 'Próximos 20 dias',
-                    '' => 'Todos os anos',
-                    final year => year,
-                  },
-                  key: const Key('catalog-date-label'),
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: context.muted),
-                ),
-              ),
+              const Spacer(),
               CatalogViewMenu(
                 value: viewMode,
                 onChanged: chooseViewMode,

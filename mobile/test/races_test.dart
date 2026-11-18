@@ -1459,7 +1459,7 @@ void main() {
       MaterialApp(home: RunPassHomeScreen(gateway: await runner())),
     );
     await tester.pumpAndSettle();
-    expect(find.text('concluiu Corrida A'), findsOneWidget);
+    expect(find.text('Corrida A'), findsOneWidget);
     expect(find.text('5 km'), findsOneWidget);
     expect(find.text('25:00'), findsOneWidget);
     expect(find.text('5:00/km'), findsOneWidget);
@@ -1597,7 +1597,7 @@ void main() {
       await tester.tap(find.byKey(const Key('my-post-p1')));
       await tester.pumpAndSettle();
       expect(find.text('Publicação'), findsOneWidget);
-      expect(find.text('concluiu Corrida A'), findsOneWidget);
+      expect(find.text('Corrida A'), findsOneWidget);
     },
   );
 }

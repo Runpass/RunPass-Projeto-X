@@ -471,8 +471,10 @@ void main() {
     'o filtro de ano alcança corridas cadastradas fora da faixa padrão',
     (tester) async {
       big(tester);
+      Map<String, String>? last;
       final gateway = await signed((uri, method, headers, body) async {
         if (uri.path == '/editions') {
+          last = uri.queryParameters;
           return JsonReply(200, {
             'items': [
               upcoming('A', date: '2019-05-01'),
@@ -496,7 +498,10 @@ void main() {
       }
       await tester.tap(find.text('2019').last);
       await tester.pumpAndSettle();
-      expect(find.text('2019'), findsWidgets);
+      expect(
+        last?['dateFrom'],
+        '2019-01-01',
+      ); // escolher o ano antigo filtra por ele
     },
   );
 
@@ -514,12 +519,12 @@ void main() {
       );
       await tester.pumpAndSettle();
       final before = calls.length;
-      // A frase só aparece ao tocar na lupa.
-      expect(find.byKey(const Key('catalog-phrase')), findsNothing);
+      // O campo de nome só aparece ao tocar na lupa.
+      expect(find.byKey(const Key('catalog-name-search')), findsNothing);
       await tester.tap(find.byKey(const Key('catalog-search-toggle')));
       await tester.pumpAndSettle();
       await tester.enterText(
-        find.byKey(const Key('catalog-phrase')),
+        find.byKey(const Key('catalog-name-search')),
         'circuito',
       );
       await tester.pump(const Duration(milliseconds: 600));
@@ -836,126 +841,6 @@ void searchTests() {
     await tester.pumpAndSettle();
     return calls;
   }
-
-  Future<void> pick(WidgetTester tester, String field, String option) async {
-    if (field == 'filter-year') {
-      await tester.tap(find.byKey(const Key('catalog-date-filter')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(option).last);
-      await tester.pumpAndSettle();
-      return;
-    }
-    final box = find.byKey(ValueKey('$field-0'));
-    await tester.ensureVisible(box);
-    await tester.tap(box);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(option).last);
-    await tester.pumpAndSettle();
-  }
-
-  Future<void> pickLocation(WidgetTester tester) async {
-    // Mesmo seletor do editar perfil; aceitar o padrão escolhe o primeiro da lista (Acre / Acrelândia).
-    final field = find.byKey(const Key('filter-location'));
-    await tester.ensureVisible(field);
-    await tester.tap(field);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('location-done')));
-    await tester.pumpAndSettle();
-  }
-
-  testWidgets('só o nome é obrigatório; estado e cidade e ano são seletores', (
-    tester,
-  ) async {
-    final calls = await openForm(tester);
-    final before = calls.length;
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Informe o nome da corrida ou escolha outro filtro.'),
-      findsOneWidget,
-    );
-    expect(calls.length, before, reason: 'sem nome nada é enviado');
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Nome da corrida'),
-      'meia',
-    );
-    await pickLocation(tester);
-    await pick(tester, 'filter-year', '2026');
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(calls.last['namePrefix'], 'meia');
-    expect(calls.last['state'], 'AC');
-    expect(calls.last['city'], 'Acrelândia');
-    expect(calls.last['dateFrom'], '2026-01-01');
-    expect(calls.last['dateTo'], '2026-12-31');
-    expect(
-      calls.last.containsKey('distanceKm'),
-      isFalse,
-    ); // distância e o resto são opcionais
-  });
-
-  testWidgets('com outro filtro o nome deixa de ser obrigatório', (
-    tester,
-  ) async {
-    final calls = await openForm(tester);
-    await pick(tester, 'filter-year', '2026');
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Informe o nome da corrida ou escolha outro filtro.'),
-      findsNothing,
-    );
-    expect(calls.last.containsKey('namePrefix'), isFalse);
-    expect(calls.last['dateFrom'], '2026-01-01');
-    expect(calls.last['dateTo'], '2026-12-31');
-  });
-
-  testWidgets('atalhos de km preenchem a distância e a busca a envia', (
-    tester,
-  ) async {
-    final calls = await openForm(tester);
-    final chip = find.byKey(const Key('km-chip-10'));
-    await tester.ensureVisible(chip);
-    await tester.tap(chip);
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(TextFormField, '10'), findsOneWidget);
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(calls.last['distanceKm'], '10');
-    expect(calls.last.containsKey('namePrefix'), isFalse);
-    // tocar de novo no atalho selecionado limpa a distância
-    await tester.ensureVisible(chip);
-    await tester.tap(chip);
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(TextFormField, '10'), findsNothing);
-  });
-
-  testWidgets('limpar a busca zera UF e ano nos seletores', (tester) async {
-    final calls = await openForm(tester);
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Nome da corrida'),
-      'meia',
-    );
-    await pickLocation(tester);
-    await pick(tester, 'filter-year', '2025');
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(calls.last['state'], 'AC');
-    await tester.ensureVisible(find.text('Limpar busca'));
-    await tester.tap(find.text('Limpar busca'));
-    await tester.pumpAndSettle();
-    expect(calls.last.containsKey('state'), isFalse);
-    // Sem filtro, volta ao padrão: só as corridas dos próximos 20 dias.
-    expect(calls.last['dateFrom'], upcomingRange().from);
-    expect(calls.last['dateTo'], upcomingRange().to);
-    expect(find.text('Todos os estados e cidades'), findsOneWidget);
-    expect(find.text('Próximos 20 dias'), findsWidgets);
-  });
 
   testWidgets(
     'pedir cadastro e minhas solicitações são ícones na barra superior',
