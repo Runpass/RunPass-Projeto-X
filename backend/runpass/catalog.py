@@ -30,6 +30,83 @@ def normalized(value):
     )
 
 
+# Palavras que nao contam no "nucleo" do nome nem viram chave de busca.
+NAME_STOPWORDS = frozenset(
+    "de da do das dos e a o as os em na no nas nos para por com the of and".split()
+)
+_ROMAN = re.compile(r"^[ivx]{2,6}$", re.IGNORECASE)
+_LETTERS = re.compile(r"[^\W\d_]+")
+
+
+def title_case(name):
+    """Padrao de escrita dos nomes: iniciais maiusculas e o resto minusculo ("3ª Corrida Contra a Polio").
+    Preposicoes e artigos ficam minusculos (exceto no inicio); numerais romanos e o "K" de distancia (10K) ficam
+    maiusculos; ordinais (3ª, 2º) e trechos entre colchetes ficam como estao."""
+    words = (name or "").split()
+    out = []
+    for index, word in enumerate(words):
+        if word.startswith("[") and word.endswith("]"):
+            out.append(word)
+            continue
+        lower = word.lower()
+        if 0 < index < len(words) - 1 and lower in NAME_STOPWORDS:
+            out.append(lower)
+            continue
+        if re.fullmatch(r"\d+(\.\d+)?k", lower):
+            out.append(lower[:-1] + "K")
+            continue
+        if re.fullmatch(r"\d+[ªºa-z]*", lower):
+            out.append(lower)
+            continue
+
+        def fix(match, word=word):
+            part = match.group(0)
+            after_apostrophe = match.start() > 0 and word[match.start() - 1] in "'’"
+            if after_apostrophe and len(part) <= 2:
+                return part.lower()  # Women's, Int'l
+            if _ROMAN.match(part):
+                return part.upper()
+            return part[:1].upper() + part[1:].lower()
+
+        out.append(_LETTERS.sub(fix, word))
+    return " ".join(out)
+
+
+def name_words(name):
+    """Palavras do nome para a busca: sem acento e caixa, sem pontuacao e sem preposicoes."""
+    words = re.split(r"[^0-9a-z]+", normalized(name or ""))
+    return [w for w in dict.fromkeys(words) if len(w) >= 2 and w not in NAME_STOPWORDS]
+
+
+def name_core(name):
+    """Nucleo do nome para achar a mesma prova escrita de outro jeito no mesmo dia: sem ano, sem "edicao" (e o
+    numero dela), sem o ordinal do inicio, sem "corrida"/"run" e sem preposicoes ("2ª Pace Run - Edição 2026" e
+    "Pace Run" tem o mesmo nucleo). Numeros no meio do nome continuam ("4ª Etapa", "9 Km" sao outra prova)."""
+    words = [w for w in re.split(r"[^0-9a-z]+", normalized(name or "")) if w]
+    ordinal = re.compile(r"\d{1,3}(a|o)?")
+    while words and ordinal.fullmatch(words[0]):
+        words = words[1:]  # "3ª Corrida..." / "15 Night Run..."
+    ignore = NAME_STOPWORDS | {"corrida", "run", "e", "ficticia"}
+    kept = []
+    for i, w in enumerate(words):
+        nxt = words[i + 1] if i + 1 < len(words) else ""
+        prev = words[i - 1] if i > 0 else ""
+        if w in ("edicao", "ed") or re.fullmatch(r"(19|20)\d\d", w):
+            continue
+        if ordinal.fullmatch(w) and (nxt in ("edicao", "ed") or prev in ("edicao", "ed")):
+            continue  # "2ª Edição" / "Edição 3"
+        if w not in ignore:
+            kept.append(w)
+    # Nome so de palavras genericas ("Corrida 2026"): compara o nome inteiro, nunca um nucleo vazio.
+    return " ".join(kept) or " ".join(words) or normalized(name or "")
+
+
+def name_without_year(name):
+    """Nome exato sem o ano e sem pontuacao: a mesma prova com data diferente ("... 2026" em 14 e 15/03)."""
+    words = re.split(r"[^0-9a-z]+", normalized(name or ""))
+    return " ".join(w for w in words if w and not re.fullmatch(r"(19|20)\d\d", w))
+
+
 KIDS_WORDS = re.compile(r"\b(kids?|infantil|infantis|mirim|crianca|criancas)\b")
 
 
@@ -276,8 +353,81 @@ class CatalogService:
             raise Problem(404, "EDITION_NOT_FOUND")
         return result
 
+    MAX_WORD_ROWS = 3000
+
+    def _search_by_words(self, actor, filters, cursor):
+        """Busca por nome pelo indice de palavras: le so as corridas que tem a palavra mais longa digitada, confere
+        todas as palavras e os demais filtros, e ordena: as proximas primeiro (da mais perto para a mais longe) e
+        depois as que ja passaram (da mais recente para a mais antiga). None se a busca nao tem palavra util."""
+        words = name_words(filters.q)
+        if not words or max(len(w) for w in words) < 3:
+            return None
+        key = max(words, key=len)
+        rows, after = [], None
+        while len(rows) < self.MAX_WORD_ROWS:
+            page, after = self.store.query(
+                "catalog", WORD_INDEX + key[:3], prefix=key, after=after, limit=500
+            )
+            rows += page
+            if after is None:
+                break
+        ids = list(dict.fromkeys(row["editionId"] for _, row in rows))
+        bodies = self._bodies(ids)
+        today = self.identity.clock().astimezone(ZoneInfo("America/Sao_Paulo")).date().isoformat()
+        found = []
+        for body in bodies.values():
+            if body is None:
+                continue
+            name_text = normalized(body["name"])
+            if not all(word in name_text for word in filters.q.split()):
+                continue
+            if filters.city and normalized(body["city"]) != filters.city:
+                continue
+            if filters.state and body["state"] != filters.state:
+                continue
+            if filters.distanceKm is not None and not any(
+                Decimal(str(d["kilometers"])) == filters.distanceKm for d in body["distances"]
+            ):
+                continue
+            if filters.audience and is_kids(body["name"]) != (filters.audience == "kids"):
+                continue
+            if (
+                filters.registrationStatus
+                and body.get("registrationStatus", "unknown") != filters.registrationStatus
+            ):
+                continue
+            day = date.fromisoformat(body["date"])
+            if (filters.dateFrom and day < filters.dateFrom) or (
+                filters.dateTo and day > filters.dateTo
+            ):
+                continue
+            found.append(body)
+        upcoming = sorted(
+            (b for b in found if b["date"] >= today), key=lambda b: (b["date"], b["id"])
+        )
+        past = sorted(
+            (b for b in found if b["date"] < today),
+            key=lambda b: (b["date"], b["id"]),
+            reverse=True,
+        )
+        ordered = upcoming + past
+        try:
+            start = int(self.codec.read(cursor, actor, filters)) if cursor else 0
+        except ValueError as error:
+            raise Problem(422, "INVALID_CURSOR") from error
+        items = ordered[start : start + filters.limit]
+        self.identity.authorize(actor, admitted=True)
+        result = {"items": items}
+        if start + filters.limit < len(ordered):
+            result["nextCursor"] = self.codec.issue(actor, filters, str(start + filters.limit))
+        return result
+
     def list(self, actor, filters, cursor=None):
         self.identity.authorize(actor, admitted=True)
+        if filters.q and not filters.namePrefix and filters.radiusKm is None:
+            result = self._search_by_words(actor, filters, cursor)
+            if result is not None:
+                return result
         pk, query = filters.plan()
         after = self.codec.read(cursor, actor, filters) if cursor else None
         items, seen, evaluated, more = [], set(), 0, True
@@ -476,6 +626,12 @@ class ImportEdition(Input):
             raise ValueError("Nonblank text required")
         return value
 
+    @field_validator("name")
+    @classmethod
+    def standard_name(cls, value):
+        # Padrao de escrita do catalogo: iniciais maiusculas e o resto minusculo (vale para toda entrada).
+        return title_case(value.strip())
+
     @field_validator("date")
     @classmethod
     def day(cls, value):
@@ -533,6 +689,9 @@ class ImportEdition(Input):
         return self
 
 
+WORD_INDEX = "CAT#W#"
+
+
 def index_rows(body, version):
     rows = {}
     kms = ["ANY", *sorted({distance(d["kilometers"]) for d in body["distances"]})]
@@ -547,6 +706,13 @@ def index_rows(body, version):
                     if len(pk.encode()) > 2048 or len(sk.encode()) > 1024:
                         raise Problem(422, "CATALOG_KEY_TOO_LARGE")
                     rows[("catalog", pk, sk)] = {"editionId": body["id"], "version": version}
+    # Busca por nome: uma linha por palavra, agrupada pelas 3 primeiras letras (a busca le so o grupo da palavra
+    # mais longa digitada, em vez de percorrer o catalogo inteiro).
+    for word in name_words(body["name"]):
+        pk = f"{WORD_INDEX}{word[:3]}"
+        sk = f"{word}#{body['date']}#{body['id']}#{version}"
+        if len(sk.encode()) <= 1024:
+            rows[("catalog", pk, sk)] = {"editionId": body["id"], "version": version}
     return rows
 
 

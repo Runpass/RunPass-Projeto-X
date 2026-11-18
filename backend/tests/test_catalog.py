@@ -12,7 +12,14 @@ from fastapi.testclient import TestClient
 from jsonschema import RefResolver
 from openapi_schema_validator import OAS30Validator
 from runpass.api import create_app
-from runpass.catalog import CatalogFilters, CatalogImporter, CatalogService, seed_synthetic
+from runpass.catalog import (
+    CatalogFilters,
+    CatalogImporter,
+    CatalogService,
+    name_core,
+    seed_synthetic,
+    title_case,
+)
 from runpass.identity import AuthFailure, Principal
 from runpass.service import IdentityService, Problem
 from runpass.store import DynamoStore, MemoryStore, Unavailable
@@ -47,6 +54,56 @@ class CatalogTests(unittest.TestCase):
         self.importer = CatalogImporter(self.catalog)
         self.actor = self.admit("runner")
         seed_synthetic(self.catalog, FIXTURE)
+
+    def test_padrao_de_escrita_dos_nomes(self):
+        self.assertEqual(title_case("3 CORRIDA CONTRA A POLIO"), "3 Corrida Contra a Polio")
+        self.assertEqual(
+            title_case("xv meia maratona de são paulo 21k"), "XV Meia Maratona de São Paulo 21K"
+        )
+        self.assertEqual(title_case("2ª pace run - edição 2026"), "2ª Pace Run - Edição 2026")
+        self.assertEqual(title_case("[FICTICIA] corrida A"), "[FICTICIA] Corrida A")
+        self.assertEqual(title_case("VENUS WOMEN'S HALF"), "Venus Women's Half")
+        self.assertEqual(title_case("corrida d'água"), "Corrida D'Água")
+        # Toda entrada no catalogo passa pelo padrao.
+        self.put(edition("ed-caixa", name="CORRIDA DO SOLDADO", date="2026-12-06"))
+        self.assertEqual(self.catalog.detail(self.actor, "ed-caixa")["name"], "Corrida do Soldado")
+
+    def test_nucleo_do_nome_acha_a_mesma_prova_escrita_de_outro_jeito(self):
+        self.assertEqual(name_core("Pace Run - 2ª Edição"), name_core("2ª Pace Run 2026"))
+        self.assertEqual(
+            name_core("3 CORRIDA CONTRA POLIO"), name_core("3ª Corrida Contra a Pólio")
+        )
+        self.assertNotEqual(name_core("Corrida Kids do Parque"), name_core("Corrida do Parque"))
+        # numeros no meio do nome sao outra prova
+        self.assertNotEqual(
+            name_core("Campeonato Santista - 4ª Etapa"), name_core("Campeonato Santista - 5ª Etapa")
+        )
+        self.assertNotEqual(
+            name_core("Corrida Mãe Aparecida — 4 Km"), name_core("Corrida Mãe Aparecida — 9 Km")
+        )
+        self.assertEqual(name_core("Corrida 2026"), "corrida 2026")  # nunca vazio
+
+    def test_busca_por_palavra_traz_proximas_primeiro_depois_as_passadas_e_pagina(self):
+        for i, day in enumerate(
+            ["2026-12-20", "2026-11-05", "2025-05-01", "2027-01-10", "2026-10-01"]
+        ):
+            self.put(edition(f"ed-sil-{i}", name=f"Corrida Silvestre Teste {i}", date=day))
+        self.put(edition("ed-outra", name="Outra Prova", date="2026-12-01"))
+        first = self.catalog.list(self.actor, CatalogFilters(q="silvestre", limit=3))
+        # hoje e 28/10/2026: proximas (11/05, 12/20, 2027) e depois as passadas (10/01, 2025)
+        self.assertEqual(
+            [i["date"] for i in first["items"]], ["2026-11-05", "2026-12-20", "2027-01-10"]
+        )
+        rest = self.catalog.list(
+            self.actor, CatalogFilters(q="silvestre", limit=3), first["nextCursor"]
+        )
+        self.assertEqual([i["date"] for i in rest["items"]], ["2026-10-01", "2025-05-01"])
+        self.assertNotIn("nextCursor", rest)
+        # todas as palavras precisam estar no nome; parte da palavra tambem vale
+        two = self.catalog.list(self.actor, CatalogFilters(q="silv teste 3", limit=10))["items"]
+        self.assertEqual([i["id"] for i in two], ["ed-sil-3"])
+        with self.assertRaises(Problem):
+            self.catalog.list(self.actor, CatalogFilters(q="silvestre", limit=3), "x" * 20)
 
     def test_lista_le_em_lote_e_guarda_versoes_na_memoria(self):
         calls = {"get": 0, "batch": 0, "commit": 0}

@@ -145,12 +145,12 @@ class CatalogImportTests(unittest.TestCase):
 
     def test_changed_content_publishes_next_version(self):
         self.run_csv(dry_run=False)
-        changed = CSV.replace("Corrida Exemplo 2027", "Corrida Exemplo 2027 (nova edicao)")
+        changed = CSV.replace("Corrida Exemplo 2027", "Corrida Exemplo 2027 (Nova Edicao)")
         report = self.run_csv(changed, dry_run=False)
         self.assertEqual(report["counts"]["updated"], 1)
         edition = self.catalog.detail(self.actor, "csv-sp-example-001")
         self.assertEqual(
-            (edition["version"], edition["name"]), (2, "Corrida Exemplo 2027 (nova edicao)")
+            (edition["version"], edition["name"]), (2, "Corrida Exemplo 2027 (Nova Edicao)")
         )
 
     def test_bad_rows_are_reported_one_by_one_and_good_rows_still_load(self):
@@ -184,7 +184,7 @@ class CatalogImportTests(unittest.TestCase):
         CatalogImporter(self.catalog).put(
             {
                 "id": "csv-sp-example-001",
-                "name": "Corrida cadastrada por admin",
+                "name": "Corrida Cadastrada por Admin",
                 "date": "2027-05-16",
                 "city": "São Paulo",
                 "state": "SP",
@@ -201,7 +201,7 @@ class CatalogImportTests(unittest.TestCase):
         )
         self.assertEqual(
             self.catalog.detail(self.actor, "csv-sp-example-001")["name"],
-            "Corrida cadastrada por admin",
+            "Corrida Cadastrada por Admin",
         )
 
     def test_possible_duplicate_across_sources_goes_to_review_without_merge(self):

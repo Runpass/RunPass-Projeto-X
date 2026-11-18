@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from .catalog import CatalogImporter, ImportEdition, normalized
+from .catalog import CatalogImporter, ImportEdition, name_core, normalized
 from .operator_admin import _already_loaded
 from .service import Problem, stamp
 
@@ -161,7 +161,7 @@ def rows_to_results(rows, source_code, allow_no_distance=False):
 
 
 def _same_day_candidates(catalog, day, payload):
-    """Editions ja publicadas no mesmo dia com mesmo nome e cidade (outro id)."""
+    """Edicoes ja publicadas no mesmo dia e cidade com o mesmo nucleo de nome (outro id)."""
     found = []
     rows, _ = catalog.store.query(
         "catalog", DATE_INDEX, lower=day + "#", upper=day + "#\U0010ffff", limit=500
@@ -171,7 +171,10 @@ def _same_day_candidates(catalog, day, payload):
         if (
             body
             and body["id"] != payload["id"]
-            and normalized(body["name"]) == normalized(payload["name"])
+            and body["status"] != "archived"
+            # Mesmo nucleo do nome (sem ano, "edicao", ordinal, acento e caixa): "Pace Run - 2ª Edição" e
+            # "2ª Pace Run" no mesmo dia e cidade sao a mesma prova.
+            and name_core(body["name"]) == name_core(payload["name"])
             and normalized(body["city"]) == normalized(payload["city"])
         ):
             found.append(body["id"])
