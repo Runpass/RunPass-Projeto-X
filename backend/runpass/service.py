@@ -53,7 +53,7 @@ class IdentityService:
         ).hexdigest()
         return ("erasure", "ERASURE#v1#" + digest, "CONTROL")
 
-    def transact(self, principal, operation, key, body, work, admitted=False):
+    def transact(self, principal, operation, key, body, work, admitted=False, snapshot=True):
         if principal.audience != "runner":
             raise Problem(403, "RUNNER_REQUIRED")
         fingerprint = hashlib.sha256(
@@ -109,6 +109,10 @@ class IdentityService:
                         "expiresAt": int((now + timedelta(days=7)).timestamp()),
                     },
                 )
+            if not writes and not snapshot:
+                # Leitura pura (so confere a conta): sem transacao. Transacao em cima da mesma conta a cada
+                # chamada fazia as chamadas simultaneas de uma pessoa se travarem (TransactionConflict).
+                return result
             try:
                 self.store.commit(expected, writes)
                 return result
@@ -169,11 +173,12 @@ class IdentityService:
         write(pointer, {"sharedKeys": shared_keys(new)})
 
     def authorize(self, principal, admitted=False):
-        # A read-only optimistic transaction makes account/erasure checks one atomic boundary.
+        # Conferencia de leitura (conta ativa, sem exclusao em curso, admissao): leituras consistentes, sem
+        # transacao, para chamadas simultaneas da mesma pessoa nao entrarem em conflito entre si.
         def check(read, write, account, now, replay):
             return None, {}
 
-        self.transact(principal, "authorize", None, {}, check, admitted)
+        self.transact(principal, "authorize", None, {}, check, admitted, snapshot=False)
 
     def create_profile(self, principal, key, payload):
         if not principal.verified_email:
