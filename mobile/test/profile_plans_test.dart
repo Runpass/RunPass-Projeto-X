@@ -47,7 +47,7 @@ Future<IdentityGateway> gatewayWith(List<Map<String, dynamic>> plans) async {
 
 void main() {
   testWidgets(
-    'Quero correr mostra desejadas e inscritas da agenda, 3 por linha',
+    'Quero correr mostra desejadas e inscritas da agenda, uma por linha',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -68,18 +68,17 @@ void main() {
       expect(find.text('Inscritas'), findsOneWidget);
       Offset at(String id) =>
           tester.getTopLeft(find.byKey(Key('plan-$id'), skipOffstage: false));
-      // Da mais proxima para a mais distante: a, b, c na 1a linha; d na 2a.
-      expect(at('a').dy, at('b').dy);
-      expect(at('b').dy, at('c').dy);
-      expect(at('a').dx, lessThan(at('b').dx));
-      expect(at('b').dx, lessThan(at('c').dx));
-      expect(at('d').dy, greaterThan(at('a').dy));
+      // Só lista, no cartão compacto: da mais próxima para a mais distante, uma por linha.
+      expect(at('b').dy, greaterThan(at('a').dy));
+      expect(at('c').dy, greaterThan(at('b').dy));
+      expect(at('d').dy, greaterThan(at('c').dy));
+      expect(at('a').dx, at('b').dx);
       expect(
         find.byKey(const Key('plan-r'), skipOffstage: false),
         findsOneWidget,
       );
       expect(find.text('Ver agenda'), findsNothing);
-      // Mesmo degradê dos cards de corrida do catálogo.
+      // Mesma arte padrão dos cartões da tela Corridas.
       expect(
         find.byKey(const Key('race-art'), skipOffstage: false),
         findsNWidgets(5),
@@ -173,51 +172,6 @@ void main() {
     },
   );
 
-  testWidgets('escolher o número de colunas muda a grade da agenda e vale '
-      'depois de reabrir', (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    tester.view.physicalSize = const Size(800, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final gateway = await gatewayWith([
-      plan('a', 'wanted', '2027-01-10'),
-      plan('b', 'wanted', '2027-02-10'),
-      plan('c', 'wanted', '2027-03-10'),
-      plan('d', 'wanted', '2027-04-10'),
-    ]);
-    Future<void> openProfile() async {
-      await tester.pumpWidget(
-        MaterialApp(
-          key: UniqueKey(),
-          home: RunnerProfileScreen(gateway: gateway),
-        ),
-      );
-      await tester.pumpAndSettle();
-    }
-
-    double top(String id) =>
-        tester.getTopLeft(find.byKey(Key('plan-$id'), skipOffstage: false)).dy;
-    await openProfile();
-    expect(top('a'), top('c')); // padrão: 3 por linha
-    expect(top('d'), greaterThan(top('a')));
-
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const Key('view-menu-plans')),
-        matching: find.byKey(const Key('catalog-view-mode')),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('grid-columns-2')));
-    await tester.pumpAndSettle();
-    expect(top('a'), top('b')); // agora 2 por linha
-    expect(top('c'), greaterThan(top('a')));
-
-    await openProfile(); // reabrir: a escolha ficou guardada
-    expect(top('a'), top('b'));
-    expect(top('c'), greaterThan(top('a')));
-  });
-
   testWidgets('sem corridas na agenda aparece a mensagem de vazio', (
     tester,
   ) async {
@@ -232,50 +186,21 @@ void main() {
     expect(find.byKey(const Key('no-plans')), findsOneWidget);
   });
 
-  testWidgets('no perfil, Lista mostra os mesmos cartões da tela Corridas, um '
-      'por linha', (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    tester.view.physicalSize = const Size(800, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final gateway = await gatewayWith([
-      plan('a', 'wanted', '2027-01-10'),
-      plan('b', 'wanted', '2027-02-10'),
-    ]);
-    await tester.pumpWidget(
-      MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
-    );
-    await tester.pumpAndSettle();
-    Offset at(String id) =>
-        tester.getTopLeft(find.byKey(Key('plan-$id'), skipOffstage: false));
-    expect(at('a').dy, at('b').dy); // padrão: grade
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const Key('view-menu-plans')),
-        matching: find.byKey(const Key('catalog-view-mode')),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('catalog-view-list')));
-    await tester.pumpAndSettle();
-    expect(at('b').dy, greaterThan(at('a').dy)); // um por linha
-    expect(at('a').dx, at('b').dx);
-  });
-
-  testWidgets('perfil: Quero correr e Minhas publicações têm um só menu de '
-      'lista/grade cada, sem botão de grade duplicado', (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    tester.view.physicalSize = const Size(800, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final gateway = await gatewayWith([plan('a', 'wanted', '2027-01-10')]);
-    await tester.pumpWidget(
-      MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('view-menu-plans')), findsOneWidget);
-    expect(find.byKey(const Key('view-menu-posts')), findsOneWidget);
-    expect(find.byKey(const Key('grid-columns')), findsNothing);
-    expect(find.byIcon(Icons.grid_view_rounded), findsNWidgets(2));
-  });
+  testWidgets(
+    'perfil: Quero correr é só lista; Minhas publicações mantém lista e grade',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await gatewayWith([plan('a', 'wanted', '2027-01-10')]);
+      await tester.pumpWidget(
+        MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('view-menu-plans')), findsNothing);
+      expect(find.byKey(const Key('view-menu-posts')), findsOneWidget);
+      expect(find.byKey(const Key('compact-card-a')), findsOneWidget);
+    },
+  );
 }
