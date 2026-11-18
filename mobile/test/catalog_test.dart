@@ -1065,6 +1065,10 @@ void main() {
   testWidgets(
     'a race that has not happened yet stays as a draft without photo or rating',
     (tester) async {
+      // Tela alta: com o campo de pace, o aviso fica mais abaixo na lista.
+      tester.view.physicalSize = const Size(800, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       var completed = false;
       final gateway = await draftGateway('2999-01-01', (_) => completed = true);
       await tester.pumpWidget(

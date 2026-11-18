@@ -426,6 +426,20 @@ class ParticipationTests(unittest.TestCase):
                 (error.exception.status, error.exception.code), (404, "PARTICIPATION_NOT_FOUND")
             )
 
+    def test_pace_opcional_entra_no_cadastro_e_pode_ser_alterado_ou_apagado(self):
+        draft = self.service.create(
+            self.actor, "pace", self.payload(timeSeconds=3000, paceSecondsPerKm=300)
+        )
+        self.assertEqual(draft["paceSecondsPerKm"], 300)
+        changed = self.service.patch(
+            self.actor, draft["id"], "pace-2", {"expectedVersion": 1, "paceSecondsPerKm": 330}
+        )
+        self.assertEqual(changed["paceSecondsPerKm"], 330)
+        cleared = self.service.patch(
+            self.actor, draft["id"], "pace-3", {"expectedVersion": 2, "paceSecondsPerKm": None}
+        )
+        self.assertNotIn("paceSecondsPerKm", cleared)
+
     def test_patch_clears_optional_fields_and_rejects_stale_version(self):
         draft = self.service.create(
             self.actor, "create", self.payload(timeSeconds=3600, placement=5, bibNumber=" 42 ")

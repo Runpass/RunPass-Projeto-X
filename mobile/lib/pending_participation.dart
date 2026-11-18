@@ -37,6 +37,7 @@ class PendingParticipationScreen extends StatefulWidget {
 class _PendingParticipationScreenState
     extends State<PendingParticipationScreen> {
   final time = TextEditingController();
+  final pace = TextEditingController();
   final placement = TextEditingController();
   final bib = TextEditingController();
   final comment = TextEditingController();
@@ -61,6 +62,7 @@ class _PendingParticipationScreenState
   @override
   void dispose() {
     time.dispose();
+    pace.dispose();
     placement.dispose();
     bib.dispose();
     comment.dispose();
@@ -120,6 +122,11 @@ class _PendingParticipationScreenState
   /// Monta o mapa no formato do pedido; devolve nulo (com a mensagem) se algo faltar ou estiver inválido.
   Map<String, dynamic>? collect() {
     final seconds = parseDuration(time.text);
+    final paceSeconds = parsePace(pace.text);
+    if (paceSeconds == -1) {
+      message = 'O pace deve ser em minutos e segundos por km, como 5:30.';
+      return null;
+    }
     final place = placement.text.trim().isEmpty
         ? null
         : int.tryParse(placement.text.trim());
@@ -139,6 +146,7 @@ class _PendingParticipationScreenState
     }
     return {
       'timeSeconds': ?seconds,
+      'paceSecondsPerKm': ?paceSeconds,
       'placement': ?place,
       if (bib.text.trim().isNotEmpty) 'bibNumber': bib.text.trim(),
       if (ratingsComplete) 'ratings': Map<String, int>.from(ratings),
@@ -199,6 +207,16 @@ class _PendingParticipationScreenState
         const SizedBox(height: 16),
         DurationField(controller: time),
         const SizedBox(height: 8),
+        TextField(
+          key: const Key('pending-pace'),
+          controller: pace,
+          keyboardType: TextInputType.datetime,
+          decoration: const InputDecoration(
+            labelText: 'Pace (opcional)',
+            hintText: 'Ex.: 5:30',
+            suffixText: 'min/km',
+          ),
+        ),
         TextField(
           key: const Key('pending-placement'),
           controller: placement,

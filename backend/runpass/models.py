@@ -106,6 +106,8 @@ class CreateParticipation(Input):
     editionId: Annotated[str, Field(min_length=1, max_length=100)]
     distanceId: Annotated[str, Field(min_length=1, max_length=100)]
     timeSeconds: Annotated[int, Field(ge=1)] | None = None
+    # Pace (ritmo) opcional em segundos por km: de 1:00/km a 60:00/km.
+    paceSecondsPerKm: Annotated[int, Field(ge=60, le=3600)] | None = None
     placement: Annotated[int, Field(ge=1)] | None = None
     bibNumber: Annotated[str, Field(max_length=40)] | None = None
 
@@ -122,6 +124,8 @@ class PatchParticipation(Input):
     editionId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     distanceId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     timeSeconds: Annotated[int, Field(ge=1)] | None = None
+    # Pace (ritmo) opcional em segundos por km: de 1:00/km a 60:00/km.
+    paceSecondsPerKm: Annotated[int, Field(ge=60, le=3600)] | None = None
     placement: Annotated[int, Field(ge=1)] | None = None
     bibNumber: Annotated[str, Field(max_length=40)] | None = None
     showTime: bool | None = None
@@ -301,6 +305,8 @@ class PendingParticipation(Input):
     dono ve) e o app os aplica quando a equipe aprova a corrida, para a pessoa nao preencher de novo."""
 
     timeSeconds: Annotated[int, Field(ge=1)] | None = None
+    # Pace (ritmo) opcional em segundos por km: de 1:00/km a 60:00/km.
+    paceSecondsPerKm: Annotated[int, Field(ge=60, le=3600)] | None = None
     placement: Annotated[int, Field(ge=1)] | None = None
     bibNumber: Annotated[str, Field(max_length=40)] | None = None
     ratings: ReviewRatings | None = None
@@ -322,6 +328,12 @@ class PendingParticipation(Input):
 
 class AddDistance(Input):
     kilometers: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
+
+
+class WebLookupRequest(Input):
+    name: Annotated[str, Field(min_length=3, max_length=160)]
+    city: Annotated[str, Field(max_length=100)] | None = None
+    state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
 
 
 class EditionRequestFields(Input):

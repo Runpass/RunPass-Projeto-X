@@ -7,18 +7,16 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
-import 'catalog_views.dart';
 import 'edition_cards.dart';
 import 'edit_profile.dart';
 import 'edition_requests.dart' show MyEditionRequestsScreen;
 import 'friends.dart';
-import 'grid_columns.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
 import 'medal_scan.dart';
 import 'pending_medals.dart';
 import 'notifications.dart';
-import 'post_card.dart' show FeedEntry, PostCard, PostThumb, entryFromPost;
+import 'post_card.dart' show FeedEntry, PostThumb, entryFromPost;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 import 'settings.dart';
@@ -3133,36 +3131,8 @@ class RunnerProfileScreen extends StatefulWidget {
 }
 
 class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
-  static const _gridKey = 'grid-columns-profile';
-  int gridColumns = GridColumns.standard;
-
-  /// Minhas publicações: grade de miniaturas (padrão) ou lista com as publicações inteiras, como no início.
-  static const _postViewKey = 'profile-posts-view-mode';
-  CatalogViewMode postView = CatalogViewMode.grid;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadGridColumns();
-    CatalogViewMode.read(_postViewKey, CatalogViewMode.grid).then((mode) {
-      if (mounted) setState(() => postView = mode);
-    });
-  }
-
-  void _loadGridColumns() => GridColumns.read(_gridKey).then((n) {
-    if (mounted) {
-      setState(() {
-        gridColumns = n;
-      });
-    }
-  });
-
-  void _setGridColumns(int n) {
-    setState(() {
-      gridColumns = n;
-    });
-    GridColumns.write(_gridKey, n);
-  }
+  /// Minhas publicações: sempre em grade de 3 miniaturas (tocar abre a publicação inteira).
+  static const postColumns = 3;
 
   late Future<ProfileData> data = load();
 
@@ -3712,49 +3682,18 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                     planGrid('wanted', result.plans),
                     planGrid('registered', result.plans),
                   ],
-                  sectionTitle(
-                    'Minhas publicações',
-                    trailing: CatalogViewMenu(
-                      key: const Key('view-menu-posts'),
-                      value: postView,
-                      columns: gridColumns,
-                      onChanged: (mode) {
-                        setState(() => postView = mode);
-                        mode.write(_postViewKey);
-                      },
-                      onColumnsChanged: _setGridColumns,
-                    ),
-                  ),
+                  sectionTitle('Minhas publicações'),
                   if (myPosts.isEmpty)
                     const Text(
                       'Suas corridas publicadas aparecerão aqui.',
                       key: Key('no-my-posts'),
-                    )
-                  else if (postView == CatalogViewMode.list)
-                    Column(
-                      key: const Key('my-posts-list'),
-                      children: [
-                        for (final entry in myPosts)
-                          PostCard(
-                            key: Key('my-post-card-${entry.postId}'),
-                            gateway: widget.gateway,
-                            entry: entry,
-                            onChanged: () {
-                              if (mounted) {
-                                setState(() {
-                                  data = load();
-                                });
-                              }
-                            },
-                          ),
-                      ],
                     )
                   else
                     // Miniaturas, 3 por linha; tocar abre a publicação inteira.
                     GridView.count(
                       padding: EdgeInsets.zero,
                       key: const Key('my-posts-grid'),
-                      crossAxisCount: gridColumns,
+                      crossAxisCount: postColumns,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       mainAxisSpacing: 6,

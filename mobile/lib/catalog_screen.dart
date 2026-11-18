@@ -92,6 +92,16 @@ String longDate(String value) {
 }
 
 /// Motivo curto pelo qual uma edição saiu de circulação (campo `archivedReason` da API).
+/// Pace "5:30" (min:s por km) -> 330. Vazio = nulo; formato inválido ou fora de 1:00 a 60:00 = -1.
+int? parsePace(String value) {
+  final text = value.trim().replaceAll(RegExp(r'\s*/\s*km$'), '');
+  if (text.isEmpty) return null;
+  final match = RegExp(r'^(\d{1,2}):([0-5]\d)$').firstMatch(text);
+  if (match == null) return -1;
+  final seconds = int.parse(match[1]!) * 60 + int.parse(match[2]!);
+  return seconds >= 60 && seconds <= 3600 ? seconds : -1;
+}
+
 /// Aceita "1:30:00", "45:10" ou segundos puros. Vazio vira null; inválido ou zero vira -1.
 int? parseDuration(String value) {
   final text = value.trim();
@@ -3504,7 +3514,7 @@ class ParticipationDraftScreen extends StatefulWidget {
 
 class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   late Map<String, dynamic> draft;
-  late final TextEditingController time, placement, bib;
+  late final TextEditingController time, pace, placement, bib;
   late final TextEditingController comment;
   String? message;
   bool saving = false, uploading = false;
@@ -3564,6 +3574,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     final seconds = draft['timeSeconds'];
     time = TextEditingController(
       text: seconds is num ? formatDuration(seconds.toInt()) : '',
+    );
+    final paceSeconds = draft['paceSecondsPerKm'];
+    pace = TextEditingController(
+      text: paceSeconds is num
+          ? formatPace(paceSeconds).replaceAll('/km', '')
+          : '',
     );
     placement = TextEditingController(
       text: draft['placement']?.toString() ?? '',
@@ -3707,6 +3723,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       forgetDraftForm(draft['id'] as String);
     }
     time.dispose();
+    pace.dispose();
     placement.dispose();
     bib.dispose();
     comment.dispose();
@@ -3741,6 +3758,17 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       ),
     DurationField(controller: time, enabled: !saving),
     TextField(
+      key: const Key('pace-field'),
+      controller: pace,
+      enabled: !saving,
+      keyboardType: TextInputType.datetime,
+      decoration: const InputDecoration(
+        labelText: 'Pace (opcional)',
+        hintText: 'Ex.: 5:30',
+        suffixText: 'min/km',
+      ),
+    ),
+    TextField(
       controller: placement,
       keyboardType: TextInputType.number,
       decoration: const InputDecoration(labelText: 'Colocação (opcional)'),
@@ -3767,15 +3795,24 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     bool onlyIfChanged = false,
   }) async {
     final seconds = parseDuration(time.text), place = positive(placement.text);
+    final paceSeconds = parsePace(pace.text);
     if (seconds == -1 || place == -1 || bib.text.length > 40) {
       setState(
         () => message = 'O tempo deve ser como 1:30:00 (ou só segundos), a colocação um número inteiro maior que zero e o número de peito ter no máximo 40 caracteres.',
       );
       return false;
     }
+    if (paceSeconds == -1) {
+      setState(
+        () => message =
+            'O pace deve ser em minutos e segundos por km, como 5:30.',
+      );
+      return false;
+    }
     final newBib = bib.text.trim().isEmpty ? null : bib.text.trim();
     if (onlyIfChanged &&
         seconds == draft['timeSeconds'] &&
+        paceSeconds == draft['paceSecondsPerKm'] &&
         place == draft['placement'] &&
         newBib == draft['bibNumber'] &&
         (distanceId == null || distanceId == draft['distanceId'])) {
@@ -3792,6 +3829,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         body: {
           'expectedVersion': draft['version'],
           'timeSeconds': seconds,
+          'paceSecondsPerKm': paceSeconds,
           'placement': place,
           'bibNumber': bib.text.trim().isEmpty ? null : bib.text.trim(),
           if (distanceId != null && distanceId != draft['distanceId'])

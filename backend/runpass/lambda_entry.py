@@ -82,6 +82,21 @@ def _natural_search():
     return NaturalSearch(LambdaSearchInvoker(client, name))
 
 
+def _web_lookup():
+    """Procura na web (Pedir cadastro): mesma Lambda de busca do catalogo, com prazo maior (a API corta em 29 s).
+    Desligada por padrao (usa a API da OpenAI e custa por busca): so liga com RUNPASS_WEB_LOOKUP=on."""
+    name = os.environ.get("RUNPASS_CATALOG_SEARCH_FUNCTION")
+    if not name or os.environ.get("RUNPASS_WEB_LOOKUP", "").strip().lower() != "on":
+        return None
+    from botocore.config import Config
+
+    client = _boto_client(
+        "lambda",
+        config=Config(connect_timeout=2, read_timeout=26, retries={"max_attempts": 1}),
+    )
+    return LambdaSearchInvoker(client, name)
+
+
 @lru_cache(maxsize=1)
 def _api():
     from mangum import Mangum
@@ -92,6 +107,7 @@ def _api():
         _boto_client("cognito-idp"),
         S3BlobStore(_s3_client(), os.environ["RUNPASS_MEDAL_BUCKET"]),
         _natural_search(),
+        _web_lookup(),
     )
     return Mangum(app, lifespan="off")
 
