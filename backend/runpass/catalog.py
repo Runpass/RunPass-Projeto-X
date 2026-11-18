@@ -59,8 +59,11 @@ def title_case(name):
             out.append(lower)
             continue
 
-        def fix(match):
+        def fix(match, word=word):
             part = match.group(0)
+            after_apostrophe = match.start() > 0 and word[match.start() - 1] in "'’"
+            if after_apostrophe and len(part) <= 2:
+                return part.lower()  # Women's, Int'l
             if _ROMAN.match(part):
                 return part.upper()
             return part[:1].upper() + part[1:].lower()

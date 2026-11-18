@@ -62,6 +62,8 @@ class CatalogTests(unittest.TestCase):
         )
         self.assertEqual(title_case("2ª pace run - edição 2026"), "2ª Pace Run - Edição 2026")
         self.assertEqual(title_case("[FICTICIA] corrida A"), "[FICTICIA] Corrida A")
+        self.assertEqual(title_case("VENUS WOMEN'S HALF"), "Venus Women's Half")
+        self.assertEqual(title_case("corrida d'água"), "Corrida D'Água")
         # Toda entrada no catalogo passa pelo padrao.
         self.put(edition("ed-caixa", name="CORRIDA DO SOLDADO", date="2026-12-06"))
         self.assertEqual(self.catalog.detail(self.actor, "ed-caixa")["name"], "Corrida do Soldado")
