@@ -16,7 +16,6 @@ import 'grid_columns.dart';
 import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
-import 'location_picker.dart';
 import 'my_races.dart';
 import 'post_preview.dart';
 import 'undo_delete.dart';
@@ -137,6 +136,11 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
     'Esta corrida não está mais no catálogo. Volte à lista e escolha outra.',
   'EDITION_ARCHIVED' => 'Esta edição está arquivada e não aceita novos registros. Escolha outra corrida.',
   'EDITION_CHANGED' => 'O cadastro desta corrida foi atualizado depois que você abriu a tela. Volte à lista e abra a corrida de novo.',
+  'INVALID_DISTANCE' => 'Informe uma distância entre 0,1 e 1000 km.',
+  'DISTANCE_NOT_ADDABLE' =>
+    'Esta corrida já tem distâncias oficiais. Escolha uma delas.',
+  'DISTANCE_LIMIT_REACHED' =>
+    'Esta corrida já tem o máximo de distâncias informadas por corredores.',
   'DISTANCE_NOT_IN_EDITION' => 'Esta distância foi removida da corrida. Volte e escolha uma das distâncias atuais.',
   'PARTICIPATION_EXISTS' => 'Você já tem um registro nesta corrida (só é permitido um por edição). Abra o registro existente para continuar.',
   'VERSION_CONFLICT' => 'Este registro foi alterado em outro lugar (outro aparelho ou outra tela). Feche e abra de novo antes de editar.',
@@ -430,6 +434,23 @@ class _EditionCoverState extends State<EditionCover> {
   return (from: '$year-01-01', to: '$year-12-31');
 }
 
+/// Valor do filtro de ano que mostra só as corridas dos próximos [upcomingDays] dias (o padrão da lista).
+const upcomingFilter = 'next';
+const upcomingDays = 20;
+
+String _isoDay(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+/// Janela de hoje até daqui a [upcomingDays] dias.
+({String from, String to}) upcomingRange([DateTime? now]) {
+  final today = now ?? DateTime.now();
+  final day = DateTime(today.year, today.month, today.day);
+  return (
+    from: _isoDay(day),
+    to: _isoDay(day.add(const Duration(days: upcomingDays))),
+  );
+}
+
 /// Anos oferecidos no filtro: do próximo ano até 2024, do mais recente para o mais antigo.
 List<int> filterYears([DateTime? now, Iterable<int> extra = const []]) {
   // A faixa padrão vai do próximo ano até 2024; corridas cadastradas com data fora dela (mais antigas ou mais
@@ -447,58 +468,37 @@ List<int> filterYears([DateTime? now, Iterable<int> extra = const []]) {
 class CatalogScreen extends StatefulWidget {
   final IdentityGateway gateway;
 
-  /// Só para testes: mantém a paginação do servidor (20 por página, "Carregar mais", sem reordenar).
-  /// Em uso normal a lista carrega as páginas e ordena por data no aparelho.
-  final bool serverPaging;
-  const CatalogScreen({
-    super.key,
-    required this.gateway,
-    this.serverPaging = false,
-  });
+  const CatalogScreen({super.key, required this.gateway});
   @override
   State<CatalogScreen> createState() => _CatalogScreenState();
 }
 
 class _CatalogScreenState extends State<CatalogScreen> {
   final fields = {
-    for (final key in [
-      'namePrefix',
-      'city',
-      'state',
-      'distanceKm',
-      'year',
-      'audience',
-    ])
-      key: TextEditingController(),
+    for (final key in ['q', 'city', 'state', 'year'])
+      key: TextEditingController(text: key == 'year' ? upcomingFilter : ''),
   };
-  final form = GlobalKey<FormState>();
   // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
-  final phrase = TextEditingController();
-  Map<String, dynamic>? searchInfo;
   final items = <Map<String, dynamic>>[];
   Map<String, Map<String, dynamic>> mine = {};
   // Situação da pessoa em cada corrida (desejada ou inscrita): edição -> `wanted` | `registered`.
   Map<String, String> plans = {};
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
-  // Situacao das inscricoes (filtro): nulo = qualquer.
-  String? registration;
-  int registrationEpoch =
-      0; // recria o seletor ao limpar (reset() devolveria o valor antigo)
   bool loading = false;
   bool showFilters = false;
+
+  /// Padrão da lista: só as corridas dos próximos 20 dias. Escolher um ano, "Todos os anos" ou buscar por um nome
+  /// mostra as outras.
+  bool get upcomingWindow =>
+      fields['year']!.text == upcomingFilter &&
+      fields['q']!.text.trim().isEmpty;
 
   int? get selectedYear => int.tryParse(fields['year']!.text);
 
   /// Anos das corridas já vistas (qualquer busca), para o filtro de ano alcançar todas as datas do catálogo.
   final Set<int> knownYears = {};
-
-  /// Ordem da lista: 'date' (padrão) ou 'rating'. Cada ícone liga a sua ordem; tocar de novo inverte.
-  String sortBy = 'date';
-
-  /// Direção: em data, mais recentes primeiro; em avaliação, melhores primeiro.
-  bool descending = true;
 
   /// Visualização escolhida (lista ou grade) e colunas da grade; ficam neste aparelho.
   CatalogViewMode viewMode = CatalogViewMode.list;
@@ -507,14 +507,33 @@ class _CatalogScreenState extends State<CatalogScreen> {
   @override
   void initState() {
     super.initState();
-    load();
+    start();
     loadMine();
     loadViewPreferences();
   }
 
+  /// Primeira carga: se o perfil tem cidade, a lista abre nela (dá para trocar ou limpar em "Estado e cidade").
+  Future<void> start() async {
+    try {
+      final me = await widget.gateway.request('/me');
+      final city = (me['city'] as String?)?.trim() ?? '';
+      final state = (me['state'] as String?)?.trim() ?? '';
+      if (city.isNotEmpty && state.isNotEmpty && mounted) {
+        fields['city']!.text = city;
+        fields['state']!.text = state;
+      }
+    } on Exception {
+      // Sem perfil ou sem conexão: abre com todas as cidades.
+    }
+    if (mounted) await load();
+  }
+
   Future<void> loadViewPreferences() async {
     final mode = await CatalogViewMode.read();
-    final columns = await GridColumns.read('catalog-grid-columns', fallback: 2);
+    final columns = (await GridColumns.read(
+      'catalog-grid-columns',
+      fallback: 2,
+    )).clamp(2, 3);
     if (mounted) {
       setState(() {
         viewMode = mode;
@@ -553,7 +572,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   /// Corpo da lista conforme a visualização escolhida.
   List<Widget> editionViews() {
-    final shown = view;
+    final shown = items;
     switch (viewMode) {
       case CatalogViewMode.list:
         return [for (final edition in shown) editionCard(edition)];
@@ -679,9 +698,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
     final archived = edition['status'] == 'archived';
     final lines = [
       '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
-      (edition['distances'] as List)
-          .map((d) => '${d['kilometers']} km')
-          .join(' · '),
+      (edition['distances'] as List).isEmpty
+          ? 'Distância ainda não informada'
+          : (edition['distances'] as List)
+                .map((d) => '${d['kilometers']} km')
+                .join(' · '),
       if (archived)
         'Arquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}',
       if (scoreOf(edition) != null)
@@ -758,16 +779,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   @override
   void dispose() {
-    phrase.dispose();
     for (final controller in fields.values) {
       controller.dispose();
     }
     super.dispose();
   }
 
-  /// Itens por página da busca atual. O cursor do servidor é amarrado aos filtros (inclui o limite),
-  /// então o limite não pode mudar no meio de uma busca.
-  late String pageLimit = widget.serverPaging ? '20' : '100';
+  /// Corridas por página: o servidor já devolve na ordem da mais antiga para a mais nova e o "Carregar mais"
+  /// pede a próxima página (o cursor é amarrado aos filtros, inclusive o limite).
+  static const pageLimit = '20';
 
   static num? scoreOf(Map<String, dynamic> edition) {
     final raw = (edition['runScore'] as Map?)?['value'];
@@ -777,125 +797,52 @@ class _CatalogScreenState extends State<CatalogScreen> {
   static int reviewsOf(Map<String, dynamic> edition) =>
       ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
 
-  /// Itens na ordem escolhida pelos ícones: por padrão, as mais recentes primeiro (as minhas não passam mais
-  /// na frente). Por data ou por avaliação (cada ícone inverte a direção) e, em empate, por nº de avaliações
-  /// e pelo nome. Corrida sem avaliação fica sempre por último na ordem por avaliação.
-  List<Map<String, dynamic>> get view {
-    final list = [...items];
-    if (widget.serverPaging) return list;
-    list.sort((a, b) {
-      if (sortBy == 'rating') {
-        final sa = scoreOf(a);
-        final sb = scoreOf(b);
-        if ((sa == null) != (sb == null)) return sa == null ? 1 : -1;
-        if (sa != null && sb != null && sa != sb) {
-          return descending ? sb.compareTo(sa) : sa.compareTo(sb);
-        }
-        final byReviews = reviewsOf(b).compareTo(reviewsOf(a));
-        if (byReviews != 0) return byReviews;
-      }
-      final byDate = (a['date'] as String).compareTo(b['date'] as String);
-      final byName = '${a['name']}'.compareTo('${b['name']}');
-      if (byDate == 0) return byName;
-      return sortBy == 'date' && !descending ? byDate : -byDate;
-    });
-    return list;
+  /// Abre/fecha a busca por nome; ao fechar com busca ativa, volta à lista padrão.
+  void toggleSearch() {
+    final hadName = fields['q']!.text.trim().isNotEmpty;
+    fields['q']!.clear();
+    setState(() => showFilters = !showFilters);
+    if (showFilters == false && hadName) load();
   }
-
-  void sortByDate() => setState(() {
-    if (sortBy == 'date') {
-      descending = !descending;
-    } else {
-      sortBy = 'date';
-      descending = true;
-    }
-  });
-
-  void sortByRating() => setState(() {
-    if (sortBy == 'rating') {
-      descending = !descending;
-    } else {
-      sortBy = 'rating';
-      descending = true;
-    }
-  });
-
-  /// Ícone de ordenação: o símbolo da ordem e, só na ordem ativa, a seta da direção.
-  Widget sortGlyph(IconData base, {required bool active}) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(base, size: 20),
-      if (active)
-        Icon(
-          descending
-              ? Icons.arrow_downward_rounded
-              : Icons.arrow_upward_rounded,
-          size: 16,
-          semanticLabel: descending ? 'Ordem decrescente' : 'Ordem crescente',
-        ),
-    ],
-  );
-
-  /// Ordenar por data precisa do conjunto todo: carrega as próximas páginas (até 500 corridas).
-  Future<void> loadRest() async {
-    var pages = 0;
-    while (mounted &&
-        !widget.serverPaging &&
-        nextCursor != null &&
-        pages++ < 5) {
-      await load(more: true);
-      if (error != null) return;
-    }
-  }
-
-  void onPhraseChanged(String text) => setState(() {});
 
   Future<void> load({bool more = false}) async {
     if (loading) return;
-    final sentence = phrase.text.trim();
     if (!more) {
-      activeFilters = sentence.isNotEmpty
-          ? {}
+      final name = fields['q']!.text.trim();
+      // Busca por nome vale para o catálogo todo; sem nome, a lista é da cidade do perfil e dos próximos 20 dias
+      // (ou do ano escolhido no calendário).
+      activeFilters = name.isNotEmpty
+          ? {'q': name}
           : {
-              for (final entry in fields.entries)
-                if (entry.value.text.trim().isNotEmpty && entry.key != 'year')
-                  entry.key: entry.value.text.trim(),
+              for (final key in ['city', 'state'])
+                if (fields[key]!.text.trim().isNotEmpty)
+                  key: fields[key]!.text.trim(),
               if (yearRange(fields['year']!.text) case final range?) ...{
                 'dateFrom': range.from,
                 'dateTo': range.to,
+              } else if (upcomingWindow) ...{
+                'dateFrom': upcomingRange().from,
+                'dateTo': upcomingRange().to,
               },
-              'registrationStatus': ?registration,
             };
-      searchInfo = null;
       items.clear();
       nextCursor = null;
-      pageLimit = widget.serverPaging ? '20' : '100';
     }
     setState(() {
       loading = true;
       error = null;
     });
+    transient = false;
     try {
-      final bySentence = !more && sentence.isNotEmpty;
       final page = await widget.gateway.request(
-        bySentence ? '/editions/search' : '/editions',
-        query: bySentence
-            ? {'phrase': sentence, 'limit': '20'}
-            : {
-                ...activeFilters,
-                'limit': pageLimit,
-                if (more && nextCursor != null) 'cursor': nextCursor!,
-              },
+        '/editions',
+        query: {
+          ...activeFilters,
+          'limit': pageLimit,
+          if (more && nextCursor != null) 'cursor': nextCursor!,
+        },
       );
       if (!mounted) return;
-      if (bySentence) {
-        // As proximas paginas usam GET /editions com os filtros que o servidor resolveu.
-        searchInfo = Map<String, dynamic>.from(page['search'] as Map);
-        activeFilters = {
-          for (final e in (searchInfo!['filters'] as Map).entries)
-            e.key as String: '${e.value}',
-        };
-      }
       final known = items.map((e) => e['id']).toSet();
       for (final entry
           in (page['items'] as List).cast<Map<String, dynamic>>()) {
@@ -904,15 +851,34 @@ class _CatalogScreenState extends State<CatalogScreen> {
         if (year != null && year >= 1990 && year <= 2100) knownYears.add(year);
       }
       nextCursor = page['nextCursor'] as String?;
+      autoRetried = false;
     } on IdentityIssue catch (issue) {
       if (mounted) error = catalogError(issue);
+      transient = const {
+        'SERVICE_UNAVAILABLE',
+        'CONCURRENT_RETRY_REQUIRED',
+      }.contains(issue.code);
     } on Exception {
       if (mounted) error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.';
+      transient = true;
     } finally {
       if (mounted) setState(() => loading = false);
     }
-    if (!more && error == null) await loadRest();
+    // Falha passageira (serviço sobrecarregado ou rede): a tela tenta de novo sozinha uma vez, em vez de deixar o
+    // erro parado até a pessoa tocar em "Tentar novamente".
+    if (error != null && transient && !autoRetried && mounted) {
+      autoRetried = true;
+      final retryMore = more;
+      Future<void>.delayed(autoRetryDelay, () {
+        if (mounted && error != null && !loading) load(more: retryMore);
+      });
+    }
   }
+
+  /// Uma nova tentativa automática por falha passageira (zera quando uma carga dá certo).
+  bool autoRetried = false;
+  bool transient = false;
+  static const autoRetryDelay = Duration(seconds: 3);
 
   void openMyRequests() => Navigator.of(context).push(
     MaterialPageRoute<void>(
@@ -926,7 +892,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
         builder: (_) => EditionRequestFormScreen(
           gateway: widget.gateway,
           prefill: {
-            if (phrase.text.trim().isNotEmpty) 'name': phrase.text.trim(),
+            if (fields['q']!.text.trim().isNotEmpty)
+              'name': fields['q']!.text.trim(),
             if ((fields['city']?.text.trim() ?? '').isNotEmpty)
               'city': fields['city']!.text.trim(),
           },
@@ -941,55 +908,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
       );
     }
   }
-
-  void clearSearch() {
-    if (loading) return;
-    phrase.clear();
-    // Primeiro o reset do formulário (ele devolve ao seletor o valor antigo e dispara o onChanged);
-    // só depois limpo os campos, para o último valor valer.
-    form.currentState?.reset();
-    for (final controller in fields.values) {
-      controller.clear();
-    }
-    setState(() {
-      registration = null;
-      registrationEpoch++;
-    });
-    load();
-  }
-
-  /// Há algum filtro além do nome? Se houver, o nome deixa de ser obrigatório.
-  bool get hasOtherFilter =>
-      fields['distanceKm']!.text.trim().isNotEmpty ||
-      fields['year']!.text.trim().isNotEmpty ||
-      fields['audience']!.text.trim().isNotEmpty ||
-      fields['state']!.text.trim().isNotEmpty ||
-      fields['city']!.text.trim().isNotEmpty ||
-      registration != null;
-
-  Widget filter(
-    String key,
-    String label, {
-    String? Function(String)? validate,
-    int? maxLength,
-    String? hint,
-    bool required = false,
-  }) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: TextFormField(
-      controller: fields[key],
-      maxLength: maxLength,
-      decoration: InputDecoration(labelText: label, helperText: hint),
-      keyboardType: key == 'distanceKm'
-          ? const TextInputType.numberWithOptions(decimal: true)
-          : TextInputType.text,
-      validator: (value) => value == null || value.trim().isEmpty
-          ? (required && !hasOtherFilter
-                ? 'Informe o nome da corrida ou escolha outro filtro.'
-                : null)
-          : validate?.call(value.trim()),
-    ),
-  );
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -1021,26 +939,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           ),
         ),
-        IconButton(
-          key: const Key('catalog-search-toggle'),
-          visualDensity: VisualDensity.compact,
-          tooltip: showFilters ? 'Fechar a busca' : 'Buscar corridas',
-          icon: Icon(showFilters ? Icons.close_rounded : Icons.search_rounded),
-          onPressed: () {
-            if (showFilters &&
-                (activeFilters.isNotEmpty || phrase.text.isNotEmpty)) {
-              // Ao fechar a busca, volta a lista completa (a frase e os filtros saem junto).
-              phrase.clear();
-              for (final controller in fields.values) {
-                controller.clear();
-              }
-              registration = null;
-              registrationEpoch++;
-              load();
-            }
-            setState(() => showFilters = !showFilters);
-          },
-        ),
         NotificationBell(gateway: widget.gateway),
         const SizedBox(width: 8),
       ],
@@ -1050,214 +948,45 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Descreva a corrida: só aparece ao tocar na lupa.
-          if (showFilters)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: TextField(
-                key: const Key('catalog-phrase'),
-                controller: phrase,
-                maxLength: 200,
-                buildCounter: (
-                  _, {
-                  required currentLength,
-                  required isFocused,
-                  maxLength,
-                }) => null,
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) {
-                  load();
-                },
-                onChanged: onPhraseChanged,
-                decoration: InputDecoration(
-                  labelText: 'Descreva a corrida',
-                  hintText: 'Ex.: meia maratona em abril',
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  suffixIcon: phrase.text.isEmpty
-                      ? null
-                      : IconButton(
-                          key: const Key('catalog-phrase-clear'),
-                          tooltip: 'Limpar a frase',
-                          icon: const Icon(Icons.close_rounded),
-                          onPressed: loading
-                              ? null
-                              : () {
-                                  phrase.clear();
-                                  load();
-                                },
-                        ),
+          // Busca por nome (só aparece ao tocar na lupa) e, se não achar, pedir o cadastro da corrida.
+          if (showFilters) ...[
+            TextField(
+              key: const Key('catalog-name-search'),
+              controller: fields['q'],
+              autofocus: true,
+              maxLength: 160,
+              buildCounter: (
+                _, {
+                required currentLength,
+                required isFocused,
+                maxLength,
+              }) => null,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => load(),
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Nome da corrida',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: IconButton(
+                  key: const Key('catalog-name-search-go'),
+                  tooltip: 'Buscar',
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                  onPressed: loading ? null : load,
                 ),
               ),
             ),
-          if (showFilters)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Form(
-                  key: form,
-                  child: Column(
-                    children: [
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Encontre sua próxima conquista',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 18,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Se houver uma frase acima, estes filtros são ignorados.',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      filter(
-                        'namePrefix',
-                        'Nome da corrida',
-                        maxLength: 160,
-                        hint: 'Obrigatório se você não escolher estado, ano, distância ou inscrições',
-                        required: true,
-                      ),
-                      // Mesmo seletor do editar perfil: lista fechada de estado e cidade, sem digitar.
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: InkWell(
-                          key: const Key('filter-location'),
-                          onTap: () async {
-                            final picked = await pickBrLocation(
-                              context,
-                              initialUf: fields['state']!.text.isEmpty
-                                  ? null
-                                  : fields['state']!.text,
-                              initialCity: fields['city']!.text.isEmpty
-                                  ? null
-                                  : fields['city']!.text,
-                            );
-                            if (picked != null && mounted) {
-                              setState(() {
-                                fields['state']!.text = picked.$1;
-                                fields['city']!.text = picked.$2;
-                              });
-                            }
-                          },
-                          child: InputDecorator(
-                            decoration: InputDecoration(
-                              labelText: 'Estado e cidade (opcional)',
-                              suffixIcon: fields['city']!.text.isEmpty
-                                  ? const Icon(Icons.expand_more)
-                                  : IconButton(
-                                      key: const Key('filter-location-clear'),
-                                      tooltip: 'Limpar estado e cidade',
-                                      icon: const Icon(Icons.close_rounded),
-                                      onPressed: () => setState(() {
-                                        fields['state']!.text = '';
-                                        fields['city']!.text = '';
-                                      }),
-                                    ),
-                            ),
-                            child: Text(
-                              fields['city']!.text.isEmpty
-                                  ? 'Todos os estados e cidades'
-                                  : '${fields['state']!.text} - ${fields['city']!.text}',
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Wrap(
-                          spacing: 8,
-                          children: [
-                            for (final km in const ['5', '10', '21', '42'])
-                              ChoiceChip(
-                                key: Key('km-chip-$km'),
-                                label: Text('$km km'),
-                                selected: fields['distanceKm']!.text == km,
-                                onSelected: (picked) => setState(
-                                  () => fields['distanceKm']!.text = picked
-                                      ? km
-                                      : '',
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      filter(
-                        'distanceKm',
-                        'Distância em km (opcional)',
-                        hint: 'Ex.: 5, 10, 21 ou 42',
-                        validate: (value) {
-                          final km = double.tryParse(value);
-                          return km != null && km.isFinite && km > 0
-                              ? null
-                              : 'Informe uma distância positiva, usando ponto para decimais.';
-                        },
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: DropdownButtonFormField<String?>(
-                          key: ValueKey(
-                            'filter-registration-$registrationEpoch',
-                          ),
-                          initialValue: registration,
-                          decoration: const InputDecoration(
-                            labelText: 'Inscrições',
-                          ),
-                          items: const [
-                            DropdownMenuItem(
-                              value: null,
-                              child: Text('Qualquer situação'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'open',
-                              child: Text('Abertas'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'closed',
-                              child: Text('Encerradas'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'sold_out',
-                              child: Text('Esgotadas'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'unknown',
-                              child: Text('Não informada'),
-                            ),
-                          ],
-                          onChanged: (value) =>
-                              setState(() => registration = value),
-                        ),
-                      ),
-                      FilledButton(
-                        onPressed: loading
-                            ? null
-                            : () {
-                                // Com uma frase acima, o formulário é ignorado: nada a validar.
-                                if (phrase.text.trim().isEmpty &&
-                                    !(form.currentState?.validate() ?? true)) {
-                                  return;
-                                }
-                                load();
-                              },
-                        child: const Text('Buscar'),
-                      ),
-                      const SizedBox(height: 8),
-                      OutlinedButton(
-                        onPressed: loading ? null : clearSearch,
-                        child: const Text('Limpar busca'),
-                      ),
-                    ],
-                  ),
-                ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('catalog-request-from-search'),
+                onPressed: loading ? null : requestRace,
+                icon: const Icon(Icons.add_circle_outline),
+                label: const Text('Não encontrou? Incluir uma corrida'),
               ),
             ),
+            const SizedBox(height: 8),
+          ],
           // Mesmo espaço (12) entre "Minhas solicitações", o público e o ano.
-          if (showFilters) const SizedBox(height: 12),
           if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
             TextButton(
@@ -1265,107 +994,49 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
-          // Público (todas, adultos ou kids) e, no espaço livre ao lado, a ordem da lista.
+          // Ícones da lista: calendário (filtra por data), lupa (busca por nome) e, à direita, lista/grade
+          // (até 3 colunas). A ordem é sempre da corrida mais antiga para a mais nova.
           Row(
             children: [
-              // Público: todas, só adultas ou só kids (kids = nome com Kids/Infantil/Mirim).
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: SegmentedButton<String>(
-                      key: ValueKey('filter-audience-$registrationEpoch'),
-                      showSelectedIcon: false,
-                      segments: const [
-                        ButtonSegment(value: '', label: Text('Todas')),
-                        ButtonSegment(value: 'adult', label: Text('Adultos')),
-                        ButtonSegment(value: 'kids', label: Text('Kids')),
-                      ],
-                      selected: {fields['audience']!.text},
-                      onSelectionChanged: loading
-                          ? null
-                          : (value) {
-                              setState(
-                                () => fields['audience']!.text = value.first,
-                              );
-                              load();
-                            },
-                    ),
+              PopupMenuButton<String>(
+                key: const Key('catalog-date-filter'),
+                tooltip: 'Filtrar por data',
+                icon: const Icon(Icons.calendar_today_rounded),
+                enabled: !loading,
+                initialValue: fields['year']!.text,
+                onSelected: (value) {
+                  setState(() => fields['year']!.text = value);
+                  load();
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: upcomingFilter,
+                    child: Text('Próximos 20 dias'),
                   ),
-                ),
+                  const PopupMenuItem(value: '', child: Text('Todos os anos')),
+                  for (final y in filterYears(null, {
+                    ...knownYears,
+                    ?selectedYear,
+                  }))
+                    PopupMenuItem(value: '$y', child: Text('$y')),
+                ],
               ),
               IconButton(
-                key: const Key('catalog-sort-rating'),
-                tooltip: sortBy != 'rating'
-                    ? 'Ordenar por avaliação'
-                    : (descending
-                          ? 'Melhores avaliações primeiro (toque para inverter)'
-                          : 'Piores avaliações primeiro (toque para inverter)'),
-                isSelected: sortBy == 'rating',
-                icon: sortGlyph(
-                  sortBy == 'rating'
-                      ? Icons.star_rounded
-                      : Icons.star_border_rounded,
-                  active: sortBy == 'rating',
+                key: const Key('catalog-search-toggle'),
+                tooltip: showFilters
+                    ? 'Fechar a busca'
+                    : 'Buscar corridas por nome',
+                icon: Icon(
+                  showFilters ? Icons.close_rounded : Icons.search_rounded,
                 ),
-                onPressed: loading ? null : sortByRating,
+                onPressed: toggleSearch,
               ),
-              IconButton(
-                key: const Key('catalog-sort'),
-                tooltip: sortBy != 'date'
-                    ? 'Ordenar por data'
-                    : (descending
-                          ? 'Mais recentes primeiro (toque para inverter)'
-                          : 'Mais antigas primeiro (toque para inverter)'),
-                isSelected: sortBy == 'date',
-                icon: sortGlyph(
-                  Icons.calendar_today_rounded,
-                  active: sortBy == 'date',
-                ),
-                onPressed: loading ? null : sortByDate,
-              ),
+              const Spacer(),
               CatalogViewMenu(
                 value: viewMode,
                 onChanged: chooseViewMode,
                 columns: gridColumns,
                 onColumnsChanged: chooseGridColumns,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              // Ano no mesmo padrão do seletor de público (Todas/Adultos/Kids), mas com a lista
-              // de anos, que rola para o lado quando não cabe.
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SegmentedButton<String>(
-                    key: ValueKey('filter-year-$registrationEpoch'),
-                    showSelectedIcon: false,
-                    segments: [
-                      const ButtonSegment(
-                        value: '',
-                        label: Text('Todos'),
-                        icon: Icon(Icons.calendar_today_rounded, size: 16),
-                      ),
-                      for (final y in filterYears(null, {
-                        ...knownYears,
-                        ?selectedYear,
-                      }))
-                        ButtonSegment(value: '$y', label: Text('$y')),
-                    ],
-                    selected: {fields['year']!.text},
-                    // O ano filtra na hora: é a única forma de escolher a data.
-                    onSelectionChanged: loading
-                        ? null
-                        : (value) {
-                            setState(() => fields['year']!.text = value.first);
-                            load();
-                          },
-                  ),
-                ),
               ),
             ],
           ),
@@ -1375,7 +1046,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
           if (!loading && error == null && items.isEmpty)
             Text(
               nextCursor == null
-                  ? 'Nenhuma corrida encontrada com esses filtros.'
+                  ? (upcomingWindow
+                        ? 'Nenhuma corrida nos próximos 20 dias com esses filtros. Escolha "Todos os anos" ou um ano para ver as outras, ou troque a cidade.'
+                        : 'Nenhuma corrida encontrada com esses filtros.')
                   : 'Nenhuma corrida nesta página. Continue a busca.',
             ),
           if (!loading && error == null && items.isEmpty && nextCursor == null)
@@ -1390,6 +1063,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
           ...editionViews(),
           if (nextCursor != null)
             TextButton(
+              key: const Key('catalog-show-more'),
               onPressed: loading ? null : () => load(more: true),
               child: const Text('Carregar mais'),
             ),
@@ -2066,8 +1740,77 @@ class _EditionScreenState extends State<EditionScreen> {
     );
   }
 
+  /// Corrida que veio sem distância: a pessoa informa o km ao se inscrever e ele passa a valer para a corrida.
+  Future<void> addDistance() async {
+    final controller = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Qual a distância?'),
+        content: TextField(
+          key: const Key('add-distance-field'),
+          controller: controller,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: 'Distância em km',
+            hintText: 'Ex.: 10',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('add-distance-confirm'),
+            onPressed: () => Navigator.pop(dialog, controller.text.trim()),
+            child: const Text('Informar'),
+          ),
+        ],
+      ),
+    );
+    if (text == null || text.isEmpty || !mounted) return;
+    try {
+      final result = await widget.gateway.request(
+        '/editions/${Uri.encodeComponent(widget.editionId)}/distances',
+        method: 'POST',
+        body: {'kilometers': text.replaceAll(',', '.')},
+      );
+      if (!mounted) return;
+      setState(() {
+        edition = result;
+        error = null;
+        final list = (result['distances'] as List? ?? const []).cast<Map>();
+        final km = double.tryParse(text.replaceAll(',', '.'));
+        for (final d in list) {
+          if (km != null && ((d['kilometers'] as num) - km).abs() < 0.0001) {
+            selectedDistance = d['id'] as String;
+          }
+        }
+      });
+    } on IdentityIssue catch (issue) {
+      if (mounted) setState(() => error = catalogError(issue));
+    } on Exception {
+      if (mounted) {
+        setState(
+          () => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.',
+        );
+      }
+    }
+  }
+
   Widget distanceSelector(Map<String, dynamic> body) {
     final archived = body['status'] == 'archived';
+    final distances = body['distances'] as List;
+    if (distances.isEmpty && !archived) {
+      return OutlinedButton.icon(
+        key: const Key('add-distance'),
+        onPressed: addDistance,
+        icon: const Icon(Icons.straighten),
+        label: const Text('Informar a distância desta corrida'),
+      );
+    }
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -2076,7 +1819,7 @@ class _EditionScreenState extends State<EditionScreen> {
       ),
       child: Row(
         children: [
-          for (final distance in body['distances'] as List)
+          for (final distance in distances)
             Expanded(
               child: InkWell(
                 borderRadius: BorderRadius.circular(11),

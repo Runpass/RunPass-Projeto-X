@@ -109,6 +109,11 @@ class IdentityService:
                         "expiresAt": int((now + timedelta(days=7)).timestamp()),
                     },
                 )
+            if not writes:
+                # Operacao so de leitura (conferir a conta, listar, abrir): sem transacao. Uma transacao sobre a
+                # mesma conta a cada chamada fazia as chamadas simultaneas de uma pessoa se travarem
+                # (TransactionConflict, 503 e lentidao). As leituras ja sao consistentes item a item.
+                return result
             try:
                 self.store.commit(expected, writes)
                 return result
@@ -169,7 +174,8 @@ class IdentityService:
         write(pointer, {"sharedKeys": shared_keys(new)})
 
     def authorize(self, principal, admitted=False):
-        # A read-only optimistic transaction makes account/erasure checks one atomic boundary.
+        # Conferencia de leitura (conta ativa, sem exclusao em curso, admissao): leituras consistentes, sem
+        # transacao, para chamadas simultaneas da mesma pessoa nao entrarem em conflito entre si.
         def check(read, write, account, now, replay):
             return None, {}
 

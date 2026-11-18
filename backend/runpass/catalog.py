@@ -5,6 +5,7 @@ import json
 import math
 import re
 import unicodedata
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -183,55 +184,89 @@ class CatalogService:
     def __init__(self, identity, cursor_key):
         self.identity, self.store = identity, identity.store
         self.codec = CursorCodec(cursor_key, identity.clock, identity.environment)
+        self._versions = OrderedDict()
 
     def _head(self, edition_id):
         return self.store.get(("catalog", "EDITION#" + edition_id, "HEAD"))
 
-    def _edition(self, edition_id, expected_version=None):
-        for _ in range(5):
-            head = self._head(edition_id)
-            if not head or head.get("publicationState") != "approved":
-                return None
-            if expected_version is not None and head["version"] != expected_version:
-                return None
-            key = ("catalog", "EDITION#" + edition_id, "V#" + str(head["version"]))
-            version = self.store.get(key)
-            if not version:
+    MAX_CACHED_VERSIONS = 2000
+
+    def _remember(self, key, edition):
+        """Conteudo de uma versao (nunca muda depois de gravado): fica na memoria da Lambda."""
+        self._versions[key] = edition
+        self._versions.move_to_end(key)
+        while len(self._versions) > self.MAX_CACHED_VERSIONS:
+            self._versions.popitem(last=False)
+
+    def _bodies(self, edition_ids):
+        """{id: corpo atual ou None} lendo em lote (BatchGetItem): HEAD, versoes ainda nao vistas e notas.
+        A versao e imutavel, entao HEAD + versao dispensam transacao de conferencia."""
+        ids = list(dict.fromkeys(edition_ids))
+        heads = self.store.batch_get([("catalog", "EDITION#" + i, "HEAD") for i in ids])
+        current = {}
+        for i in ids:
+            head = heads[("catalog", "EDITION#" + i, "HEAD")]
+            if head and head.get("publicationState") == "approved":
+                current[i] = head
+        missing = [
+            (i, h["version"]) for i, h in current.items() if (i, h["version"]) not in self._versions
+        ]
+        fetched = (
+            self.store.batch_get([("catalog", "EDITION#" + i, "V#" + str(v)) for i, v in missing])
+            if missing
+            else {}
+        )
+        for i, v in missing:
+            item = fetched[("catalog", "EDITION#" + i, "V#" + str(v))]
+            if not item:
                 raise Problem(503, "CATALOG_INTEGRITY_FAILURE")
-            try:
-                self.store.commit(
-                    {("catalog", "EDITION#" + edition_id, "HEAD"): head, key: version}, {}
-                )
-            except Conflict:
-                continue
-            body = deepcopy(version["edition"])
+            self._remember((i, v), item["edition"])
+        scores = self._scores(list(current))
+        today = self.identity.clock().astimezone(ZoneInfo("America/Sao_Paulo")).date()
+        out = {i: None for i in ids}
+        for i, head in current.items():
+            body = deepcopy(self._versions[(i, head["version"])])
             body["version"] = head["version"]
-            today = self.identity.clock().astimezone(ZoneInfo("America/Sao_Paulo")).date()
             body["status"] = (
                 "archived"
                 if head["archived"]
                 else ("upcoming" if date.fromisoformat(body["date"]) > today else "past")
             )
-            score = self._score(edition_id)
-            if score:
-                body["runScore"] = score
-            return body
-        raise Problem(503, "CONCURRENT_RETRY_REQUIRED")
+            if scores.get(i):
+                body["runScore"] = scores[i]
+            out[i] = body
+        return out
 
-    def _score(self, edition_id):
-        """Nota publica da edicao (projecao ja calculada pelo consumidor); nunca inventa nota."""
+    def _edition(self, edition_id, expected_version=None):
+        body = self._bodies([edition_id])[edition_id]
+        if (
+            body is not None
+            and expected_version is not None
+            and body["version"] != expected_version
+        ):
+            return None
+        return body
+
+    def _scores(self, edition_ids):
+        """Notas publicas (projecao ja calculada pelo consumidor), em lote; nunca inventa nota."""
         try:
-            item = self.store.get(("projections", "EDITION#" + edition_id, "SCORE#current"))
+            items = self.store.batch_get(
+                [("projections", "EDITION#" + i, "SCORE#current") for i in edition_ids]
+            )
         except (KeyError, Unavailable):
             # Sem a tabela de projecoes ou sem leitura dela: a nota e opcional e nunca derruba a lista.
-            return None
-        if not item or not item.get("reviewCount"):
-            return None
-        value = Decimal(item["ratingSum"]) / Decimal(8 * item["reviewCount"])
-        return {
-            "value": float(value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)),
-            "reviewCount": int(item["reviewCount"]),
-        }
+            return {}
+        out = {}
+        for i in edition_ids:
+            item = items.get(("projections", "EDITION#" + i, "SCORE#current"))
+            if not item or not item.get("reviewCount"):
+                continue
+            value = Decimal(item["ratingSum"]) / Decimal(8 * item["reviewCount"])
+            out[i] = {
+                "value": float(value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)),
+                "reviewCount": int(item["reviewCount"]),
+            }
+        return out
 
     def detail(self, actor, edition_id):
         self.identity.authorize(actor, admitted=True)
@@ -254,11 +289,12 @@ class CatalogService:
                 limit=min(filters.limit - len(items), 500 - evaluated),
                 **query,
             )
+            bodies = self._bodies([row["editionId"] for _, row in rows])
             for sk, row in rows:
                 after = sk
                 evaluated += 1
-                body = self._edition(row["editionId"], row["version"])
-                if body is None or body["id"] in seen:
+                body = bodies[row["editionId"]]
+                if body is None or body["version"] != row["version"] or body["id"] in seen:
                     continue
                 if filters.namePrefix and not normalized(body["name"]).startswith(
                     filters.namePrefix
@@ -334,12 +370,54 @@ class CatalogService:
             raise Problem(422, "DISTANCE_NOT_IN_EDITION")
         return body
 
+    MAX_RUNNER_DISTANCES = 5
+
+    def add_runner_distance(self, actor, edition_id, kilometers):
+        """O corredor informa a distancia de uma corrida que veio sem ela (ou so com distancias de corredores).
+        Nunca mexe em distancia que veio de uma fonte, e acrescenta so uma por vez, marcada `informedBy`."""
+        from .catalog_import import distance_entry, parse_km
+
+        try:
+            km = parse_km(str(kilometers))
+        except ValueError as error:
+            raise Problem(422, "INVALID_DISTANCE") from error
+        entry = {**distance_entry(km), "informedBy": "runner"}
+        for _ in range(3):
+            body = self.detail(actor, edition_id)
+            if body["status"] == "archived":
+                raise Problem(409, "EDITION_ARCHIVED")
+            current = body.get("distances", [])
+            if any(d.get("informedBy") != "runner" for d in current):
+                raise Problem(409, "DISTANCE_NOT_ADDABLE")
+            for existing in current:
+                if Decimal(str(existing["kilometers"])) == km:
+                    return body  # ja informada: nada a gravar
+            if len(current) >= self.MAX_RUNNER_DISTANCES:
+                raise Problem(409, "DISTANCE_LIMIT_REACHED")
+            payload = {k: v for k, v in body.items() if k in ImportEdition.model_fields}
+            payload["distances"] = [*current, entry]
+            payload["distancesOptional"] = True
+            actor_runner = RunnerDistanceActor("runner:" + actor.subject)
+            try:
+                return CatalogImporter(self, allow_system=True).put(
+                    payload,
+                    expected_version=body["version"],
+                    origin="https://corredor.runpass.invalid/distancia",
+                    actor=actor_runner,
+                )
+            except Problem as problem:
+                if problem.code not in ("VERSION_CONFLICT", "CATALOG_VERSION_CONFLICT"):
+                    raise
+        raise Problem(409, "VERSION_CONFLICT")
+
 
 class ImportDistance(Input):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,100}$")
     kilometers: Decimal
     label: str | None = Field(default=None, min_length=1)
     medalImageReference: str | None = Field(default=None, min_length=1)
+    # Distancia informada por um corredor (nao pela fonte): aparece como "informada" e nao e dado conferido.
+    informedBy: Literal["runner"] | None = None
 
     @field_validator("kilometers", mode="before")
     @classmethod
@@ -371,7 +449,9 @@ class ImportEdition(Input):
     # Proveniencia: de onde veio e com que identificador na fonte.
     sourceCode: str | None = Field(default=None, pattern=r"^[a-z0-9_-]{2,40}$")
     sourceExternalId: str | None = Field(default=None, min_length=1, max_length=200)
-    distances: list[ImportDistance] = Field(min_length=1)
+    distances: list[ImportDistance] = Field(default_factory=list)
+    # So as descobertas do catalogo entram sem distancia (o corredor informa ao se inscrever).
+    distancesOptional: bool = False
     description: str | None = None
     organizerName: str | None = None
     organizerId: str | None = None
@@ -442,6 +522,8 @@ class ImportEdition(Input):
 
     @model_validator(mode="after")
     def unique_distances(self):
+        if not self.distances and not self.distancesOptional:
+            raise ValueError("At least one distance required")
         if len({d.id for d in self.distances}) != len(self.distances):
             raise ValueError("Duplicate distance ID")
         if self.imageCredit and not self.imageReference:
@@ -474,6 +556,13 @@ class AutoImportActor:
 
     subject = "system:auto-import"
     token_digest = ""
+
+
+class RunnerDistanceActor(AutoImportActor):
+    """Ator da distancia informada por um corredor: registra a pessoa na auditoria, sem poder de operador."""
+
+    def __init__(self, subject):
+        self.subject = subject
 
 
 class CatalogImporter:
@@ -526,7 +615,7 @@ class CatalogImporter:
         ):
             raise Problem(422, "INVALID_VERSION")
         authorization = self._authorization(actor, synthetic)
-        body = model.model_dump(exclude_none=True, exclude={"archived"})
+        body = model.model_dump(exclude_none=True, exclude={"archived", "distancesOptional"})
         version = expected_version + 1
         body["version"] = version
         body["status"] = "archived" if model.archived else "past"

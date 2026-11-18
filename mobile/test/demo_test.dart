@@ -96,18 +96,18 @@ void main() {
       expect(find.text('Encontre sua próxima conquista'), findsNothing);
       await tester.tap(find.text('Corridas'));
       await tester.pumpAndSettle();
-      expect(find.text('Encontre sua próxima conquista'), findsNothing);
+      expect(find.byKey(const Key('catalog-name-search')), findsNothing);
       await tester.tap(find.byKey(const Key('catalog-search-toggle')));
       await tester.pumpAndSettle();
-      expect(find.text('Encontre sua próxima conquista'), findsOneWidget);
-      // Ordem padrão: mais recentes primeiro; ícones de data e de avaliação e o filtro de ano na lista.
+      expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
+      // Calendário (filtro de data) na lista; sem ícones de ordem.
       await tester.scrollUntilVisible(
-        find.byKey(const Key('catalog-sort')),
+        find.byKey(const Key('catalog-date-filter')),
         300,
         scrollable: find.byType(Scrollable).first,
       );
-      expect(find.byKey(const Key('catalog-sort')), findsOneWidget);
-      expect(find.byKey(const Key('catalog-sort-rating')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-date-filter')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-sort')), findsNothing);
       await tester.tap(find.text('Início'));
       await tester.pumpAndSettle();
       // The demo feed carries fictional posts by other runners.

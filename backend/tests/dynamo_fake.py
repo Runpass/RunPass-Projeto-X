@@ -20,6 +20,15 @@ class FakeDynamoClient:
         row = self.rows.get(self._id(TableName, Key))
         return {"Item": row} if row else {}
 
+    def batch_get_item(self, RequestItems):
+        responses = {}
+        for table, spec in RequestItems.items():
+            for key in spec["Keys"]:
+                row = self.rows.get(self._id(table, key))
+                if row:
+                    responses.setdefault(table, []).append(row)
+        return {"Responses": responses, "UnprocessedKeys": {}}
+
     def query(self, TableName, ExpressionAttributeValues, Limit, ExclusiveStartKey=None, **_):
         values = ExpressionAttributeValues
         pk = values[":pk"]["S"]

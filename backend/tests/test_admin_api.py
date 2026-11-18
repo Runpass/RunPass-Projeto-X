@@ -11,6 +11,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from runpass.admin_api import MfaPolicy, admit_operator, create_admin_app
 from runpass.admin_banners import BannerAdmin
+from runpass.admin_discoveries import DiscoveryStore
 from runpass.admin_divergences import DivergenceReview
 from runpass.admin_sources import CANDIDATES, SourceRegistry
 from runpass.admin_users import AdminUsers, CatalogRunner, CatalogSchedules, next_run
@@ -327,6 +328,7 @@ class AdminApiTests(unittest.TestCase):
                 ),
                 divergences=DivergenceReview(self.store, self.s3, "relatorios", lambda: self.now),
                 sources=SourceRegistry(self.store, lambda: self.now),
+                discoveries=DiscoveryStore(self.store, lambda: self.now, self.catalog),
                 auto_import=AutoImport(
                     self.store,
                     self.catalog,
@@ -1509,6 +1511,29 @@ class AdminApiTests(unittest.TestCase):
         sem_dias = {k: v for k, v in self.corpo_agendamento().items() if k != "days"}
         self.assertEqual(self.client.post(url, json=sem_dias, headers=h).status_code, 422)
 
+    def test_agendamento_mensal_so_com_dias_do_mes_e_mostra_a_proxima_execucao(self):
+        h = self.auth(token("op"))
+        url = "/admin/catalog/schedules"
+        corpo = {"name": "mensal", "kind": "mensal", "monthDays": [3, 1, 2], "time": "03:00"}
+        r = self.client.post(url, json=corpo, headers=h)
+        self.assertEqual(r.status_code, 201, r.text)
+        feito = self.sched.created[-1]
+        self.assertEqual(feito["ScheduleExpression"], "cron(0 3 1,2,3 * ? *)")
+        import json as _json
+
+        self.assertEqual(_json.loads(feito["Target"]["Input"]), {"mensal": {"meses": 3}})
+        for ruim in (
+            {"monthDays": [29]},
+            {"monthDays": [0]},
+            {"monthDays": [1, 1]},
+            {"monthDays": None, "days": ["MON"]},  # mensal nao aceita dias da semana
+            {"kind": "semanal"},  # os demais tipos nao aceitam dias do mes
+        ):
+            antes = len(self.sched.created)
+            r = self.client.post(url, json={**corpo, "name": "mensal-2", **ruim}, headers=h)
+            self.assertIn(r.status_code, (400, 422), ruim)
+            self.assertEqual(len(self.sched.created), antes, ruim)
+
     def test_criar_agendamento_respeita_o_teto_e_audita(self):
         h = self.auth(token("op"))
         url = "/admin/catalog/schedules"
@@ -2068,6 +2093,88 @@ class AdminApiTests(unittest.TestCase):
         }
         corpo.update(extra)
         return corpo
+
+    # --- descobertas da esteira (staging no DynamoDB) -------------------------------------------
+
+    def csv_descobertas(self):
+        return (
+            "\ufeffdata;nome;cidade;uf;local;organizador;distancias_km;fonte_url;trecho;regiao_consultada\n"
+            "2027-03-14;[FICTICIA] Corrida Descoberta;Campinas;SP;Parque;Org;5|10;"
+            "https://exemplo.invalid/a;trecho curto;Campinas\n"
+            "2027-03-21;[FICTICIA] Sem Distancia;Santos;SP;;;;;;Baixada\n"
+        )
+
+    def test_descobertas_exigem_catalog_admin(self):
+        self.assertEqual(self.client.get("/admin/discoveries").status_code, 401)
+        r = self.client.get("/admin/discoveries", headers=self.auth(token("adm")))
+        self.assertEqual(r.status_code, 403)
+        r = self.client.post(
+            "/admin/discoveries/import", json={"csv": "x"}, headers=self.auth(token("adm"))
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_portal_importa_csv_lista_decide_e_promove_para_o_catalogo(self):
+        h = self.auth(token("op"))
+        r = self.client.post(
+            "/admin/discoveries/import", json={"csv": self.csv_descobertas()}, headers=h
+        )
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.json()["counts"]["created"], 2)
+        # o mesmo arquivo de novo nao duplica
+        r2 = self.client.post(
+            "/admin/discoveries/import", json={"csv": self.csv_descobertas()}, headers=h
+        )
+        self.assertEqual(r2.json()["counts"]["created"], 0)
+        lista = self.client.get("/admin/discoveries?month=2027-03", headers=h).json()
+        self.assertEqual((lista["matching"], lista["summary"]["total"]), (2, 2))
+        com = next(i for i in lista["items"] if i["distancesKm"])
+        sem = next(i for i in lista["items"] if not i["distancesKm"])
+        # sem distancia tambem promove (a edicao entra sem distancia; o corredor informa ao se inscrever)
+        r = self.client.post(
+            f"/admin/discoveries/{sem['id']}/promote", json={"version": sem["version"]}, headers=h
+        )
+        self.assertEqual((r.status_code, r.json()["status"]), (200, "created"))
+        # simulacao nao cria; promover de verdade cria a corrida e marca importada
+        sim = self.client.post(
+            f"/admin/discoveries/{com['id']}/promote", json={"version": com["version"]}, headers=h
+        ).json()
+        self.assertEqual((sim["dryRun"], sim["status"]), (True, "created"))
+        real = self.client.post(
+            f"/admin/discoveries/{com['id']}/promote",
+            json={"version": com["version"], "dryRun": False},
+            headers=h,
+        ).json()
+        self.assertEqual(real["status"], "created")
+        self.assertIsNotNone(self.catalog._edition(real["editionId"]))
+        depois = self.client.get("/admin/discoveries?status=imported", headers=h).json()["items"]
+        self.assertEqual([i["editionId"] for i in depois], [real["editionId"]])
+        # rejeitar a outra, com versao velha conflitando
+        r = self.client.post(
+            f"/admin/discoveries/{sem['id']}/decision",
+            json={"version": sem["version"] + 5, "decision": "reject"},
+            headers=h,
+        )
+        self.assertEqual(r.status_code, 409)
+        r = self.client.post(
+            f"/admin/discoveries/{sem['id']}/decision",
+            json={"version": sem["version"], "decision": "reject", "note": "nao e corrida"},
+            headers=h,
+        )
+        self.assertEqual((r.status_code, r.json()["status"]), (200, "rejected"))
+
+    def test_descobertas_validam_entrada_e_recusam_csv_fora_do_formato(self):
+        h = self.auth(token("op"))
+        r = self.client.post("/admin/discoveries/import", json={"csv": "a;b\n1;2\n"}, headers=h)
+        self.assertEqual((r.status_code, r.json()["code"]), (422, "CSV_SCHEMA_INVALID"))
+        self.assertEqual(
+            self.client.get("/admin/discoveries?status=zzz", headers=h).status_code, 422
+        )
+        self.assertEqual(
+            self.client.post(
+                "/admin/discoveries/xyz/promote", json={"version": 1}, headers=h
+            ).status_code,
+            422,
+        )
 
     def test_fontes_exigem_permissao_de_catalogo(self):
         self.assertEqual(

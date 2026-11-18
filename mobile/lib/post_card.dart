@@ -764,7 +764,7 @@ class _PostCardState extends State<PostCard> {
                     )
                   : null,
               child: Text(
-                'concluiu ${entry.title}',
+                entry.title,
                 style: const TextStyle(
                   fontWeight: FontWeight.w800,
                   fontSize: 17,

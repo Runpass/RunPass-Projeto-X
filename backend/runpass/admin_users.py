@@ -31,6 +31,7 @@ RUN_MODES = {
         "enriquecer": {"relatorio": "latest", "rodada": 1, "max": 10, "csv_semanal": "latest"}
     },
     "imagens": {"imagens": {"csv": "latest"}},
+    "mensal": {"mensal": {"meses": 3}},
 }
 
 
@@ -513,7 +514,7 @@ def next_run(expression, timezone_name, now, horizon_days=400):
     return None
 
 
-SCHEDULE_KINDS = ("semanal", "calendario", "enriquecer", "imagens")
+SCHEDULE_KINDS = ("mensal", "semanal", "calendario", "enriquecer", "imagens")
 SCHEDULE_DAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 SCHEDULE_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SCHEDULE_TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -523,6 +524,7 @@ MAX_PORTAL_SCHEDULES = (
 )
 MAX_ENRICH_PER_RUN = 25  # a Lambda tem 15 min e cada busca leva ~20 s
 SCHEDULE_LABELS = {
+    "mensal": "Atualizacao mensal: provas novas e dados faltantes",
     "semanal": "Pesquisa semanal dos pedidos e das series",
     "calendario": "Calendario da Prefeitura de SP",
     "enriquecer": "Enriquecimento das provas do calendario",
@@ -534,6 +536,10 @@ def schedule_input(kind, rodada=1, maximo=MAX_ENRICH_PER_RUN, meses=3):
     """Entrada da Lambda do catalogo para cada tipo da lista fechada (nunca texto livre vindo da tela)."""
     if kind == "semanal":
         return {}
+    if kind == "mensal":
+        if not 1 <= meses <= 6:
+            raise Problem(422, "INVALID_INPUT")
+        return {"mensal": {"meses": meses}}
     if kind == "calendario":
         if not 1 <= meses <= 6:
             raise Problem(422, "INVALID_INPUT")
@@ -564,7 +570,7 @@ def schedule_kind(payload):
         return "calendario"
     if len(payload) != 1:
         return None
-    return next((k for k in ("enriquecer", "imagens") if k in payload), None)
+    return next((k for k in ("mensal", "enriquecer", "imagens") if k in payload), None)
 
 
 def schedule_cron(days, at):
@@ -579,6 +585,32 @@ def schedule_cron(days, at):
     hour, minute = at.split(":")
     ordered = ",".join(d for d in SCHEDULE_DAYS if d in days)
     return f"cron({int(minute)} {int(hour)} ? * {ordered} *)"
+
+
+def schedule_monthly_cron(month_days, at):
+    """`cron(...)` de dias do mes (1 a 28) + horario (SP): a atualizacao mensal pode ter varias rodadas no inicio do
+    mes (cada uma retoma de onde a anterior parou)."""
+    if (
+        not month_days
+        or len(set(month_days)) != len(month_days)
+        or any(
+            not isinstance(d, int) or isinstance(d, bool) or not 1 <= d <= 28 for d in month_days
+        )
+        or not SCHEDULE_TIME.match(at or "")
+    ):
+        raise Problem(422, "INVALID_INPUT")
+    hour, minute = at.split(":")
+    return f"cron({int(minute)} {int(hour)} {','.join(str(d) for d in sorted(month_days))} * ? *)"
+
+
+def parse_monthly(expression):
+    """(dias do mes, 'HH:MM') de um cron mensal; (None, None) para qualquer outra forma."""
+    m = re.fullmatch(
+        r"cron\((\d{1,2}) (\d{1,2}) (\d{1,2}(?:,\d{1,2})*) \* \? \*\)", expression or ""
+    )
+    if not m:
+        return None, None
+    return [int(d) for d in m[3].split(",")], f"{int(m[2]):02d}:{int(m[1]):02d}"
 
 
 SCHEDULE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -639,12 +671,14 @@ class CatalogSchedules:
         if self.store is not None:
             audit(self.store, actor, action, detail, self.clock)
 
-    def _when(self, days, day, at):
-        """Expressao de dias da semana (repete) ou de uma data (uma vez); nunca as duas."""
+    def _when(self, days, day, at, month_days=None):
+        """Expressao de dias da semana (repete), de dias do mes (repete) ou de uma data (uma vez): so uma."""
+        if sum(v is not None and v != [] for v in (days, day, month_days)) != 1:
+            raise Problem(422, "INVALID_INPUT")
         if day is not None:
-            if days:
-                raise Problem(422, "INVALID_INPUT")
             return schedule_at(day, at, _now(self.clock))
+        if month_days is not None:
+            return schedule_monthly_cron(month_days, at)
         return schedule_cron(days, at)
 
     def create(
@@ -659,6 +693,7 @@ class CatalogSchedules:
         maximo=MAX_ENRICH_PER_RUN,
         meses=3,
         day=None,
+        month_days=None,
     ):
         if self.client is None or not self.role_arn or not self.function_arn:
             raise Unavailable()
@@ -666,7 +701,9 @@ class CatalogSchedules:
         if kind not in SCHEDULE_KINDS:
             raise Problem(422, "INVALID_INPUT")
         entry = schedule_input(kind, rodada, maximo, meses)
-        expression = self._when(days, day, at)
+        if (kind == "mensal") != (month_days is not None):
+            raise Problem(422, "INVALID_INPUT")  # mensal so com dias do mes; os demais nunca
+        expression = self._when(days, day, at, month_days)
         try:
             owned = self.client.list_schedules(NamePrefix=self.prefix + "portal-", MaxResults=50)
             if len(owned.get("Schedules", [])) >= MAX_PORTAL_SCHEDULES:
@@ -720,6 +757,7 @@ class CatalogSchedules:
         maximo=None,
         meses=None,
         day=None,
+        month_days=None,
     ):
         if self.client is None:
             raise Unavailable()
@@ -733,7 +771,7 @@ class CatalogSchedules:
         kind = schedule_kind(payload)
         changed_input = any(v is not None for v in (rodada, maximo, meses))
         if changed_input:
-            if kind not in ("enriquecer", "calendario"):
+            if kind not in ("enriquecer", "calendario", "mensal"):
                 raise Problem(422, "INVALID_INPUT")
             if kind == "enriquecer":
                 old = payload["enriquecer"]
@@ -742,16 +780,23 @@ class CatalogSchedules:
                     rodada if rodada is not None else int(old.get("rodada", 1)),
                     maximo if maximo is not None else int(old.get("max", MAX_ENRICH_PER_RUN)),
                 )
+            elif kind == "mensal":
+                new = schedule_input(
+                    kind,
+                    meses=meses if meses is not None else int(payload["mensal"].get("meses", 3)),
+                )
             else:
                 new = schedule_input(
                     kind, meses=meses if meses is not None else int(payload.get("meses", 3))
                 )
             target["Input"] = json.dumps(new)
         expression = current["ScheduleExpression"]
-        if (days is None and day is None) != (at is None):
+        if (days is None and day is None and month_days is None) != (at is None):
             raise Problem(422, "INVALID_INPUT")
         if at is not None:
-            expression = self._when(days, day, at)
+            if (kind == "mensal") != (month_days is not None):
+                raise Problem(422, "INVALID_INPUT")
+            expression = self._when(days, day, at, month_days)
         state = current.get("State", "ENABLED")
         if enabled is not None:
             state = "ENABLED" if enabled else "DISABLED"
@@ -824,7 +869,10 @@ class CatalogSchedules:
                 }
             elif kind == "calendario":
                 params = {"meses": payload.get("meses")}
+            elif kind == "mensal":
+                params = {"meses": payload["mensal"].get("meses")}
             days, at = parse_cron(d.get("ScheduleExpression"))
+            month_days, month_at = parse_monthly(d.get("ScheduleExpression"))
             day, at_once = parse_at(d.get("ScheduleExpression"))
             items.append(
                 {
@@ -836,7 +884,8 @@ class CatalogSchedules:
                     "kind": kind,
                     "params": params,
                     "days": days,
-                    "time": at or at_once,
+                    "monthDays": month_days,
+                    "time": at or month_at or at_once,
                     "date": day,
                     "createdByPortal": d["Name"].removeprefix(self.prefix).startswith("portal-"),
                 }

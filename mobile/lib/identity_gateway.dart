@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -271,6 +273,37 @@ class IdentityGateway {
   String? _pendingCommand;
   String? _pendingKey;
 
+  /// Chamadas à API ao mesmo tempo, no máximo. Abrir o app disparava centenas de uma vez e a AWS recusava o
+  /// excedente (503) quando a conta batia o limite de execuções simultâneas.
+  static const maxInFlight = 4;
+  int _inFlight = 0;
+  final Queue<Completer<void>> _waiting = Queue<Completer<void>>();
+  final Random _jitter = Random();
+
+  Future<T> _limited<T>(Future<T> Function() run) async {
+    if (_inFlight >= maxInFlight) {
+      final turn = Completer<void>();
+      _waiting.add(turn);
+      await turn.future; // a vaga é passada direto por quem terminou
+    } else {
+      _inFlight++;
+    }
+    try {
+      return await run();
+    } finally {
+      if (_waiting.isNotEmpty) {
+        _waiting.removeFirst().complete();
+      } else {
+        _inFlight--;
+      }
+    }
+  }
+
+  /// Espera antes de repetir uma leitura: cresce a cada tentativa e tem um pouco de acaso, para várias
+  /// chamadas recusadas juntas não voltarem todas no mesmo instante.
+  Duration _backoff(int attempt) =>
+      Duration(milliseconds: 400 * (1 << attempt) + _jitter.nextInt(300));
+
   IdentityGateway({
     required this.cognito,
     required this.api,
@@ -538,15 +571,37 @@ class IdentityGateway {
       }
       headers['Idempotency-Key'] = _pendingKey!;
     }
-    final result = await transport(
-      api.replace(
-        path: '${api.path.replaceFirst(RegExp(r'/$'), '')}$path',
-        queryParameters: query,
-      ),
-      method,
-      headers,
-      body,
+    final uri = api.replace(
+      path: '${api.path.replaceFirst(RegExp(r'/$'), '')}$path',
+      queryParameters: query,
     );
+    // Leitura (GET) recusada por sobrecarga ou sem resposta: tenta de novo até 2 vezes, com espera crescente.
+    // Escritas não repetem aqui (a tela decide).
+    late JsonReply result;
+    for (var attempt = 0; ; attempt++) {
+      final canRetry = method == 'GET' && attempt < 2;
+      try {
+        result = await _limited(() => transport(uri, method, headers, body));
+      } on IdentityIssue catch (issue) {
+        if (canRetry && issue.code == 'SERVICE_UNAVAILABLE') {
+          await sleeper(_backoff(attempt));
+          continue;
+        }
+        rethrow;
+      }
+      // Só falha de infraestrutura (o API Gateway/Lambda recusou por sobrecarga, sem o `code` da aplicação) ou
+      // quando o próprio servidor pede para repetir. Erro da aplicação volta direto para a tela.
+      final overloaded =
+          const {429, 502, 504}.contains(result.status) ||
+          (result.status == 503 &&
+              (result.body['code'] == null ||
+                  result.body['code'] == 'CONCURRENT_RETRY_REQUIRED'));
+      if (canRetry && overloaded) {
+        await sleeper(_backoff(attempt));
+        continue;
+      }
+      break;
+    }
     if (result.status == 401) {
       // O acesso vale 60 minutos; com "manter conectado" renova uma vez e repete a chamada.
       if (retry && _refreshToken != null) {

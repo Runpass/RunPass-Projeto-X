@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from .admin_api import MfaPolicy, create_admin_app, find_portal_dir
 from .admin_banners import BannerAdmin
 from .admin_costs import AwsCosts, OpenAiOrg, OpenAiUsage
+from .admin_discoveries import DiscoveryStore
 from .admin_divergences import DivergenceReview
 from .admin_sources import SourceRegistry
 from .admin_users import AdminUsers, CatalogRunner, CatalogSchedules
@@ -145,6 +146,31 @@ def _auto_import(service, catalog, media):
     return AutoImport(service.store, catalog, media["s3"], media["report_bucket"])
 
 
+def _monthly(service, clock, discoveries, media):
+    if not media or not media.get("report_bucket"):
+        return None
+    from .monthly_update import MonthlyUpdate
+
+    return MonthlyUpdate(service.store, discoveries, media["s3"], media["report_bucket"], clock)
+
+
+def create_monthly_aws(settings: AwsSettings, dynamodb_client, s3_client, report_bucket):
+    """Aplicacao da atualizacao mensal fora da API (junto do evento horario da funcao do portal)."""
+    from .monthly_update import MonthlyUpdate
+
+    service = _identity_service(settings, dynamodb_client)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    discoveries = DiscoveryStore(service.store, time.time, catalog)
+    return MonthlyUpdate(service.store, discoveries, s3_client, report_bucket, time.time)
+
+
+def create_discovery_aws(settings: AwsSettings, dynamodb_client):
+    """Ingestao da esteira do catalogo (evento IAM do Lambda do portal, nunca HTTP)."""
+    service = _identity_service(settings, dynamodb_client)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    return DiscoveryStore(service.store, time.time, catalog)
+
+
 def create_auto_import_aws(settings: AwsSettings, dynamodb_client, s3_client, report_bucket):
     """Importe automatico fora da API (evento agendado da funcao do portal). Desligado ate o portal ligar."""
     service = _identity_service(settings, dynamodb_client)
@@ -186,6 +212,7 @@ def create_admin_aws_app(
     )
     portal = find_portal_dir()
     clock = time.time
+    discoveries = DiscoveryStore(service.store, clock, catalog)
     return create_admin_app(
         service.store,
         catalog,
@@ -198,6 +225,8 @@ def create_admin_aws_app(
         banners=_banner_admin(service, catalog, clock, media),
         divergences=_divergences(service, clock, media),
         sources=SourceRegistry(service.store, clock),
+        discoveries=discoveries,
+        monthly=_monthly(service, clock, discoveries, media),
         quality_live=_quality_live(service, clock, media),
         auto_import=_auto_import(service, catalog, media),
         openai_org=OpenAiOrg(

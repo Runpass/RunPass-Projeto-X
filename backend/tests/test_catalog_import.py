@@ -53,6 +53,67 @@ class CatalogImportTests(unittest.TestCase):
     def listed(self, **filters):
         return self.catalog.list(self.actor, CatalogFilters(**filters))["items"]
 
+    # ---- distancia informada pelo corredor (corrida que veio sem distancia) ----
+    def _sem_distancia(self):
+        from runpass.catalog_import import rows_to_results
+
+        row = {
+            "source_external_id": "ficticia-sem-km-2027-05-16",
+            "name": "Corrida Sem Distancia [FICTICIA]",
+            "event_date": "2027-05-16",
+            "city": "Campinas",
+            "state": "SP",
+            "distances_km": "",
+        }
+        results = rows_to_results([row], "descobertas", allow_no_distance=True)
+        report = import_rows(
+            self.catalog,
+            None,
+            results,
+            origin=ORIGIN,
+            source_code="descobertas",
+            dry_run=False,
+            synthetic=True,
+        )
+        self.assertEqual(report["counts"]["created"], 1)
+        return report["rows"][0]["id"]
+
+    def test_csv_still_requires_distance(self):
+        bad = CSV.replace('"5;10;21,0975"', '""')
+        self.assertEqual(self.run_csv(bad)["counts"]["error"], 1)
+
+    def test_runner_adds_distance_to_edition_without_one(self):
+        edition_id = self._sem_distancia()
+        self.assertEqual(self.catalog.detail(self.actor, edition_id)["distances"], [])
+        body = self.catalog.add_runner_distance(self.actor, edition_id, "10")
+        self.assertEqual([d["kilometers"] for d in body["distances"]], [10])
+        self.assertEqual(body["distances"][0]["informedBy"], "runner")
+        self.assertEqual(body["version"], 2)
+        again = self.catalog.add_runner_distance(self.actor, edition_id, "10 km")
+        self.assertEqual(again["version"], 2)  # mesma distancia: nada novo
+        two = self.catalog.add_runner_distance(self.actor, edition_id, "5")
+        self.assertEqual(len(two["distances"]), 2)
+        found = self.listed(distanceKm="5")
+        self.assertIn(edition_id, [i["id"] for i in found])
+
+    def test_runner_cannot_touch_source_distances_or_send_bad_values(self):
+        with self.assertRaises(Problem) as caught:
+            self.catalog.add_runner_distance(self.actor, "synthetic-sp-2025", "7")
+        self.assertEqual(caught.exception.code, "DISTANCE_NOT_ADDABLE")
+        edition_id = self._sem_distancia()
+        for bad in ("0", "-3", "1001", "abc"):
+            with self.assertRaises(Problem) as caught:
+                self.catalog.add_runner_distance(self.actor, edition_id, bad)
+            self.assertEqual(caught.exception.code, "INVALID_DISTANCE")
+
+    def test_runner_distance_limit(self):
+        edition_id = self._sem_distancia()
+        for km in ("3", "5", "10", "15", "21"):
+            self.catalog.add_runner_distance(self.actor, edition_id, km)
+        with self.assertRaises(Problem) as caught:
+            self.catalog.add_runner_distance(self.actor, edition_id, "42")
+        self.assertEqual(caught.exception.code, "DISTANCE_LIMIT_REACHED")
+
     # ---- CSV: simulacao, importacao e idempotencia ----
     def test_dry_run_validates_and_writes_nothing(self):
         before = len(self.store.items)

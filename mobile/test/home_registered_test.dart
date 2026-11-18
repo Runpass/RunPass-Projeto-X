@@ -64,7 +64,7 @@ void main() {
       MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
     );
     await tester.pumpAndSettle();
-    expect(find.text('concluiu Corrida de Demonstração 01'), findsOneWidget);
+    expect(find.text('Corrida de Demonstração 01'), findsOneWidget);
   });
 
   testWidgets('rascunhos e corridas futuras não aparecem mais no Início', (
