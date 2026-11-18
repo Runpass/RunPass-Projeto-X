@@ -72,6 +72,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
     label: const Text('Adicionar outra corrida (do catálogo ou não)'),
   );
   RaceRecord? chosen;
+  String query = '';
   String? postImageReference, message;
   List<int>? preview;
   bool uploading = false, publishing = false;
@@ -227,7 +228,28 @@ class _NewPostScreenState extends State<NewPostScreen> {
               style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
             ),
             const SizedBox(height: 8),
-            for (final race in list)
+            TextField(
+              key: const Key('new-post-search'),
+              decoration: const InputDecoration(
+                hintText: 'Buscar corrida pelo nome',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              textInputAction: TextInputAction.search,
+              onChanged: (value) => setState(() => query = value),
+            ),
+            const SizedBox(height: 8),
+            if (filterRaces(list, query, keep: chosen).isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'Nenhuma corrida sua com esse nome.',
+                  key: const Key('new-post-search-empty'),
+                  style: TextStyle(color: context.muted),
+                ),
+              ),
+            for (final race in filterRaces(list, query, keep: chosen))
               Card(
                 key: Key('new-post-race-${race.participation['id']}'),
                 color: chosen == race
@@ -343,4 +365,33 @@ class _NewPostScreenState extends State<NewPostScreen> {
       },
     ),
   );
+}
+
+/// Minúsculas e sem acento, para a busca pelo nome achar "São" digitando "sao".
+String foldName(String text) {
+  const from = 'áàâãäéèêëíìîïóòôõöúùûüç';
+  const to = 'aaaaaeeeeiiiiooooouuuuc';
+  final lower = text.toLowerCase();
+  final out = StringBuffer();
+  for (final rune in lower.runes) {
+    final char = String.fromCharCode(rune);
+    final i = from.indexOf(char);
+    out.write(i < 0 ? char : to[i]);
+  }
+  return out.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+/// Corridas cujo nome tem todas as palavras digitadas, em qualquer ordem. A corrida escolhida fica
+/// sempre visível, para não sumir da tela enquanto a pessoa digita.
+List<RaceRecord> filterRaces(
+  List<RaceRecord> races,
+  String query, {
+  RaceRecord? keep,
+}) {
+  final words = foldName(query).split(' ').where((w) => w.isNotEmpty).toList();
+  if (words.isEmpty) return races;
+  return [
+    for (final race in races)
+      if (race == keep || words.every(foldName(race.name).contains)) race,
+  ];
 }
