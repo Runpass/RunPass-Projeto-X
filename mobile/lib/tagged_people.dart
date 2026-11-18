@@ -47,7 +47,7 @@ class _TagPickerState extends State<_TagPicker> {
     super.dispose();
   }
 
-  /// Sem texto: sugestões (quem eu sigo e conhecidos). Com texto: a busca por nome ou usuário.
+  /// Sem texto: nada (não sugere ninguém). Com 2 letras ou mais: a busca por nome ou usuário.
   Future<void> load() async {
     final text = query.text.trim();
     setState(() {
@@ -55,15 +55,16 @@ class _TagPickerState extends State<_TagPicker> {
       error = null;
     });
     try {
-      final page = text.length >= 2
-          ? await widget.gateway.request(
-              '/profiles',
-              query: {'q': text, 'limit': '30'},
-            )
-          : await widget.gateway.request(
-              '/profiles/suggestions',
-              query: {'limit': '20'},
-            );
+      // Sem sugestões: só aparecem pessoas depois que o nome é digitado (2 letras ou mais).
+      if (text.length < 2) {
+        if (!mounted) return;
+        setState(() => shown = const []);
+        return;
+      }
+      final page = await widget.gateway.request(
+        '/profiles',
+        query: {'q': text, 'limit': '30'},
+      );
       if (!mounted) return;
       setState(() {
         shown = (page['items'] as List? ?? const [])
@@ -136,7 +137,15 @@ class _TagPickerState extends State<_TagPicker> {
                 : error != null
                 ? Center(child: Text(error!))
                 : shown.isEmpty
-                ? const Center(child: Text('Ninguém encontrado.'))
+                ? Center(
+                    child: Text(
+                      query.text.trim().length < 2
+                          ? 'Digite o nome ou @usuário para buscar pessoas.'
+                          : 'Ninguém encontrado.',
+                      key: const Key('tag-empty'),
+                      textAlign: TextAlign.center,
+                    ),
+                  )
                 : ListView(
                     children: [
                       for (final person in shown)
@@ -144,8 +153,10 @@ class _TagPickerState extends State<_TagPicker> {
                           key: Key('tag-option-${person['id']}'),
                           value: isChosen(person),
                           onChanged: (_) => toggle(person),
-                          secondary: const CircleAvatar(
-                            child: Icon(Icons.person_outline),
+                          secondary: ProfileAvatar(
+                            gateway: widget.gateway,
+                            profile: person,
+                            radius: 20,
                           ),
                           title: Text('${person['displayName'] ?? ''}'),
                           subtitle: Text('@${person['username'] ?? ''}'),
@@ -179,24 +190,31 @@ class TaggedLink extends StatelessWidget {
   final IdentityGateway gateway;
   final String postId;
   final List<Map<String, dynamic>> tagged;
+
+  /// Na minha publicação o ícone é um atalho para marcar alguém (abre o seletor de pessoas direto); nas dos outros
+  /// abre a lista de quem foi marcado.
+  final VoidCallback? onTag;
   const TaggedLink({
     super.key,
     required this.gateway,
     required this.postId,
     required this.tagged,
+    this.onTag,
   });
 
   @override
   Widget build(BuildContext context) => Tooltip(
-    message: 'Pessoas marcadas',
+    message: onTag != null ? 'Marcar pessoas' : 'Pessoas marcadas',
     child: InkWell(
       key: Key('post-tagged-$postId'),
-      onTap: () => showTaggedPeople(context, gateway, tagged),
+      onTap: onTag ?? () => showTaggedPeople(context, gateway, tagged),
       child: Row(
         children: [
           const Icon(Icons.local_offer_outlined),
-          const SizedBox(width: 6),
-          Text('${tagged.length}'),
+          if (tagged.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Text('${tagged.length}'),
+          ],
         ],
       ),
     ),
@@ -222,7 +240,7 @@ Future<void> showTaggedPeople(
             ListTile(
               key: Key('tagged-${person['id']}'),
               contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+              leading: ProfileAvatar(gateway: gateway, profile: person),
               title: Text('${person['displayName'] ?? ''}'),
               subtitle: Text('@${person['username'] ?? ''}'),
               onTap: () {

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'catalog_screen.dart';
 import 'identity_gateway.dart';
+import 'undo_delete.dart';
 import 'location_picker.dart';
 import 'pending_participation.dart';
 import 'profile_photo.dart';
@@ -152,8 +153,9 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
     fields = {
       'name': TextEditingController(text: start('name')),
       'date': TextEditingController(text: requestDateToDisplay(start('date'))),
-      'city': TextEditingController(text: start('city', 'São Paulo')),
-      'state': TextEditingController(text: start('state', 'SP')),
+      // Sem cidade informada, o campo fica vazio e a pessoa escolhe: nunca um valor padrão inventado.
+      'city': TextEditingController(text: start('city')),
+      'state': TextEditingController(text: start('state')),
       'distanceKm': TextEditingController(text: start('distanceKm')),
       'officialUrl': TextEditingController(
         text: correcting ? '' : start('officialUrl'),
@@ -224,6 +226,9 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
                 builder: (_) => PendingParticipationScreen(
                   gateway: widget.gateway,
                   raceName: text('name'),
+                  distanceLabel: text('distanceKm').isEmpty
+                      ? null
+                      : '${text('distanceKm')} km',
                 ),
               ),
             );
@@ -562,7 +567,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
               correcting
                   ? 'Corrigir e reenviar'
                   : (widget.medalPhoto != null
-                        ? 'Concluir cadastro da medalha'
+                        ? 'Continuar: dados da participação'
                         : 'Enviar pedido'),
             ),
           ),
@@ -653,20 +658,36 @@ class _MyEditionRequestsScreenState extends State<MyEditionRequestsScreen> {
     );
     if (sure != true || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
+    final index = items.indexWhere((e) => e['id'] == request['id']);
     try {
-      await widget.gateway.request(
-        '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${request['version']}'},
-      );
-      if (!mounted) return;
-      setState(() => items.removeWhere((e) => e['id'] == request['id']));
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Solicitação excluída.')),
+      // Some na hora, com "Desfazer"; a exclusão só vai ao servidor depois da janela.
+      await deleteWithUndo(
+        context,
+        id: request['id'] as String,
+        message: 'Solicitação excluída.',
+        hide: () =>
+            setState(() => items.removeWhere((e) => e['id'] == request['id'])),
+        restore: () {
+          if (mounted) {
+            setState(
+              () => items.insert(
+                index < 0 ? 0 : index.clamp(0, items.length),
+                request,
+              ),
+            );
+          }
+        },
+        perform: () => widget.gateway.request(
+          '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
+          method: 'DELETE',
+          query: {'expectedVersion': '${request['version']}'},
+        ),
       );
     } on IdentityIssue catch (issue) {
+      if (mounted) load();
       messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
     } on Exception {
+      if (mounted) load();
       messenger.showSnackBar(
         const SnackBar(
           content: Text(

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'agenda.dart';
@@ -15,6 +17,8 @@ import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
+import 'post_preview.dart';
+import 'undo_delete.dart';
 import 'notifications.dart';
 import 'organizer_post.dart';
 import 'pending_requests.dart' show loadProvisionalBanner;
@@ -124,7 +128,8 @@ String archivedNotice(String? reason) {
 /// Toda mensagem diz o motivo e o que fazer em seguida.
 String catalogError(IdentityIssue issue) => switch (issue.code) {
   'INVALID_TOKEN' || 'ACCOUNT_UNAVAILABLE' => 'Sua sessão expirou ou a conta está indisponível. Volte à tela inicial e entre novamente.',
-  'BETA_ADMISSION_REQUIRED' => 'É necessário participar do período de avaliação para consultar as corridas.',
+  'BETA_ADMISSION_REQUIRED' =>
+    'Sua conta ainda não foi liberada para consultar as corridas.',
   'INVALID_CURSOR' => 'A busca ficou aberta por muito tempo e expirou. Toque em Buscar para começar de novo.',
   'INVALID_INPUT' || 'INVALID_FILTERS' => 'Algum campo está inválido (data, distância ou texto fora do limite). Confira os filtros e tente de novo.',
   'EDITION_NOT_FOUND' =>
@@ -173,6 +178,10 @@ void rememberNavProfile(IdentityGateway gateway, Map<String, dynamic> profile) {
   _navProfiles[gateway] = profile;
   _navProfileVersion.value++;
 }
+
+/// Perfil da pessoa logada, já conhecido pelo menu (nome e usuário), para a prévia da publicação.
+Map<String, dynamic>? navProfileOf(IdentityGateway gateway) =>
+    _navProfiles[gateway];
 
 void forgetNavProfile(IdentityGateway gateway) {
   _navProfiles.remove(gateway);
@@ -1266,8 +1275,8 @@ class _EditionScreenState extends State<EditionScreen> {
     }
   }
 
-  /// Fotos de medalha publicadas por quem concluiu a corrida (só as fotos próprias das
-  /// publicações públicas; nunca a arte padrão do catálogo).
+  /// Fotos de postagem publicadas por quem concluiu a corrida (só as fotos próprias das
+  /// publicações públicas; nunca a foto da medalha nem a arte padrão do catálogo).
   Future<void> loadPhotos() async {
     setState(() => loadingPhotos = true);
     try {
@@ -2532,19 +2541,42 @@ class _EditionScreenState extends State<EditionScreen> {
       ),
     );
     if (sure != true || !mounted) return;
+    final index = comments.indexWhere((c) => c['id'] == comment['id']);
     try {
-      await widget.gateway.request(
-        '/edition-comments/${Uri.encodeComponent(comment['id'] as String)}',
-        method: 'DELETE',
+      // Some na hora, com "Desfazer"; o DELETE só vai ao servidor depois da janela.
+      await deleteWithUndo(
+        context,
+        id: comment['id'] as String,
+        message: 'Comentário apagado.',
+        hide: () => setState(
+          () => comments.removeWhere((c) => c['id'] == comment['id']),
+        ),
+        restore: () {
+          if (mounted) {
+            setState(
+              () => comments.insert(
+                index < 0 ? 0 : index.clamp(0, comments.length),
+                comment,
+              ),
+            );
+          }
+        },
+        perform: () => widget.gateway.request(
+          '/edition-comments/${Uri.encodeComponent(comment['id'] as String)}',
+          method: 'DELETE',
+        ),
       );
-      if (mounted) {
-        setState(() => comments.removeWhere((c) => c['id'] == comment['id']));
-      }
     } on Exception {
       if (mounted) {
-        setState(
-          () => commentsError = 'Não foi possível apagar agora. Tente de novo.',
-        );
+        setState(() {
+          commentsError = 'Não foi possível apagar agora. Tente de novo.';
+          if (!comments.any((c) => c['id'] == comment['id'])) {
+            comments.insert(
+              index < 0 ? 0 : index.clamp(0, comments.length),
+              comment,
+            );
+          }
+        });
       }
     }
   }
@@ -2739,13 +2771,14 @@ class _EditionScreenState extends State<EditionScreen> {
   );
 
   /// Fotos postadas para a corrida, em grade de 3 por linha. Tocar abre a foto maior.
-  /// Minha foto desta corrida (participação concluída com foto), para aparecer mesmo antes da
-  /// lista pública carregar ou quando eu não a publiquei no feed.
+  /// Minha foto de POSTAGEM desta corrida (publicada, com foto própria), para aparecer antes da lista
+  /// pública carregar. A foto da medalha nunca entra aqui: a aba mostra o que os corredores postaram.
   Map<String, dynamic>? get _ownPhoto {
     final m = mine;
     if (m == null ||
         m['state'] != 'completed' ||
-        m['medalImageReference'] == null) {
+        m['publishToFeed'] != true ||
+        (m['postImageReference'] == null && m['hasPostImage'] != true)) {
       return null;
     }
     return {
@@ -2855,7 +2888,7 @@ class _EditionScreenState extends State<EditionScreen> {
     );
     Widget image({BoxFit fit = BoxFit.cover}) => SignedPhoto(
       gateway: widget.gateway,
-      endpoint: '/participations/${Uri.encodeComponent(id)}/image',
+      endpoint: '/participations/${Uri.encodeComponent(id)}/post-image',
       fallback: ColoredBox(
         color: context.panel,
         child: Icon(Icons.image_outlined, color: context.muted),
@@ -3244,6 +3277,42 @@ class MyReviewView extends StatelessWidget {
 }
 
 /// Nota de 1 a 5 estrelas para um critério, com o ícone do critério (como no mockup).
+/// Atalho para a avaliação: a pessoa escolhe UMA nota (1 a 5) e ela vale para os 8 critérios; depois ajusta o que
+/// quiser. A nota é sempre escolhida por ela (nunca um padrão), para a avaliação continuar sendo dela.
+class SameRatingPicker extends StatelessWidget {
+  final ValueChanged<int> onPick;
+  const SameRatingPicker({super.key, required this.onPick});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Dar a mesma nota para todos os critérios:',
+        style: TextStyle(color: context.muted),
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        children: [
+          for (var n = 1; n <= 5; n++)
+            ActionChip(
+              key: Key('same-rating-$n'),
+              avatar: const Icon(
+                Icons.star_rounded,
+                size: 18,
+                color: runPassGold,
+              ),
+              label: Text('$n'),
+              onPressed: () => onPick(n),
+            ),
+        ],
+      ),
+      const SizedBox(height: 8),
+    ],
+  );
+}
+
 class RatingInput extends StatelessWidget {
   final String label;
   final IconData icon;
@@ -3324,6 +3393,41 @@ Future<List<int>?> cropPostPhoto(BuildContext context, List<int> photo) =>
 /// Os testes limpam entre um e outro.
 final Map<String, Map<String, dynamic>> draftFormCache = {};
 
+/// O formulário do rascunho (notas, comentário, publicar, texto, pessoas marcadas) também é guardado NO APARELHO,
+/// para não se perder se o app for fechado. O servidor só guarda tempo, colocação, peito e a foto da medalha.
+const _draftFormPrefix = 'draft-form-';
+
+Future<void> persistDraftForm(String id, Map<String, dynamic> form) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('$_draftFormPrefix$id', jsonEncode(form));
+  } on Object {
+    // Sem onde guardar: o rascunho segue valendo só enquanto o app estiver aberto.
+  }
+}
+
+Future<Map<String, dynamic>?> readDraftForm(String id) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('$_draftFormPrefix$id');
+    if (raw == null) return null;
+    final decoded = jsonDecode(raw);
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+  } on Object {
+    return null;
+  }
+}
+
+Future<void> forgetDraftForm(String id) async {
+  draftFormCache.remove(id);
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_draftFormPrefix$id');
+  } on Object {
+    // Nada a apagar.
+  }
+}
+
 class ParticipationDraftScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> initial;
@@ -3334,6 +3438,13 @@ class ParticipationDraftScreen extends StatefulWidget {
 
   /// Aberta a partir da minha publicação no feed: a edição ajusta a foto da PUBLICAÇÃO (não a da medalha).
   final bool fromPost;
+
+  /// Aberta pelo toque na medalha em Medalhas: mostra as opções para ajustar a MEDALHA (foto, modelo, legenda, dados),
+  /// no mesmo formato da edição da publicação, sem mexer no post.
+  final bool medalMode;
+
+  /// Baixa uma imagem pelo link assinado (foto da medalha para usar no post). Trocável nos testes.
+  final ImageBytesFetcher medalPhotoFetcher;
 
   /// Baixa a foto atual da publicação para ajustar o tamanho, e abre o recorte. Trocáveis nos testes.
   final Future<List<int>?> Function(
@@ -3357,6 +3468,8 @@ class ParticipationDraftScreen extends StatefulWidget {
     this.photoSelector,
     this.postPhotoSelector,
     this.fromPost = false,
+    this.medalMode = false,
+    this.medalPhotoFetcher = fetchImageBytes,
     this.postPhotoLoader = loadPostPhotoBytes,
     this.postPhotoCropper = cropPostPhoto,
     this.initialPhoto,
@@ -3380,10 +3493,16 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   List<Map<String, dynamic>> tagged = [];
   bool uploadingPost = false;
   final postText = TextEditingController();
+  late final legend = TextEditingController(
+    text: draft['medalDescription'] as String? ?? '',
+  );
   bool declaredCompleted = false, publishToFeed = false;
   DateTime? editionDate;
   String? editionName; // nome da corrida, mostrado embaixo da foto
   Map<String, dynamic>? review;
+
+  /// Concluída sem avaliação (REVIEW_NOT_FOUND): dá para avaliar agora na própria tela.
+  bool noReview = false;
   List<Map<String, dynamic>> distances = const [];
   String? distanceId;
   // Mantem a foto validada e a avaliacao quando a pessoa volta para esta tela.
@@ -3400,6 +3519,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     'valueForMoney': 0,
   };
   bool get ratingsComplete => ratings.values.every((v) => v >= 1);
+
+  /// Nenhuma nota dada: a avaliação é opcional, e a participação pode concluir para avaliar depois.
+  bool get ratingsEmpty => ratings.values.every((v) => v == 0);
+
+  /// A avaliação vale tudo ou nada: as 8 notas ou nenhuma.
+  bool get ratingsValid => ratingsComplete || ratingsEmpty;
 
   /// Tem foto de publicação: o rascunho traz a referência; a publicação do Feed só diz que existe.
   bool get hasPostPhoto =>
@@ -3426,13 +3551,18 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     comment = TextEditingController();
     final saved = draftFormCache[draft['id']];
     if (saved != null && draft['state'] == 'draft') {
-      imageReference = saved['imageReference'] as String?;
-      declaredCompleted = saved['declaredCompleted'] == true;
-      publishToFeed = saved['publishToFeed'] == true;
-      postImageReference = saved['postImageReference'] as String?;
-      postText.text = saved['postText'] as String? ?? '';
-      comment.text = saved['comment'] as String? ?? '';
-      ratings.addAll(Map<String, int>.from(saved['ratings'] as Map));
+      applySavedForm(saved);
+    } else if (draft['state'] == 'draft' && draft['id'] is String) {
+      // App reaberto: o que foi guardado no aparelho volta.
+      readDraftForm(draft['id'] as String).then((form) {
+        if (form != null && mounted) setState(() => applySavedForm(form));
+      });
+    }
+    // Rascunho que já guardou a foto da medalha no servidor: ela volta sem pedir de novo.
+    if (draft['state'] == 'draft' &&
+        imageReference == null &&
+        draft['medalImageReference'] is String) {
+      imageReference = draft['medalImageReference'] as String;
     }
     loadEditionDate();
     if (draft['state'] == 'completed') loadReview();
@@ -3443,6 +3573,45 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
+  /// Devolve ao formulário o que foi guardado (na memória ou no aparelho).
+  void applySavedForm(Map<String, dynamic> saved) {
+    imageReference =
+        saved['imageReference'] as String? ??
+        draft['medalImageReference'] as String?;
+    declaredCompleted = saved['declaredCompleted'] == true;
+    publishToFeed = saved['publishToFeed'] == true;
+    postImageReference = saved['postImageReference'] as String?;
+    postText.text = saved['postText'] as String? ?? '';
+    comment.text = saved['comment'] as String? ?? '';
+    final savedRatings = saved['ratings'];
+    if (savedRatings is Map) {
+      for (final e in savedRatings.entries) {
+        if (ratings.containsKey(e.key) && e.value is num) {
+          ratings[e.key as String] = (e.value as num).toInt();
+        }
+      }
+    }
+    final people = saved['tagged'];
+    if (people is List) {
+      tagged = [
+        for (final p in people)
+          if (p is Map) Map<String, dynamic>.from(p),
+      ];
+    }
+  }
+
+  /// O formulário atual, como é guardado (memória e aparelho).
+  Map<String, dynamic> formSnapshot() => {
+    'imageReference': imageReference,
+    'declaredCompleted': declaredCompleted,
+    'publishToFeed': publishToFeed,
+    'postImageReference': postImageReference,
+    'postText': postText.text,
+    'comment': comment.text,
+    'ratings': Map<String, int>.from(ratings),
+    'tagged': tagged,
+  };
+
   Future<void> loadReview() async {
     final id = draft['id'];
     if (id is! String) return;
@@ -3450,7 +3619,27 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       final result = await widget.gateway.request(
         '/participations/${Uri.encodeComponent(id)}/review',
       );
-      if (mounted) setState(() => review = result);
+      if (mounted) {
+        setState(() {
+          review = result;
+          // Preenche o formulário de avaliação desta tela com o que já foi enviado.
+          final saved = (result['ratings'] as Map?) ?? const {};
+          for (final key in ratings.keys.toList()) {
+            final value = saved[key];
+            if (value is num) ratings[key] = value.toInt();
+          }
+          comment.text = result['comment'] as String? ?? '';
+          noReview = false;
+        });
+      }
+    } on IdentityIssue catch (issue) {
+      // Concluída sem avaliação: a pessoa pode avaliar agora (PUT com expectedVersion 0).
+      if (mounted) {
+        setState(() {
+          review = null;
+          noReview = issue.code == 'REVIEW_NOT_FOUND';
+        });
+      }
     } on Exception {
       if (mounted) setState(() => review = null);
     }
@@ -3489,24 +3678,19 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
 
   @override
   void dispose() {
-    if (draft['state'] == 'draft') {
-      draftFormCache[draft['id'] as String] = {
-        'imageReference': imageReference,
-        'declaredCompleted': declaredCompleted,
-        'publishToFeed': publishToFeed,
-        'postImageReference': postImageReference,
-        'postText': postText.text,
-        'comment': comment.text,
-        'ratings': Map<String, int>.from(ratings),
-      };
-    } else {
-      draftFormCache.remove(draft['id']);
+    if (draft['state'] == 'draft' && !discarded) {
+      final snapshot = formSnapshot();
+      draftFormCache[draft['id'] as String] = snapshot;
+      persistDraftForm(draft['id'] as String, snapshot);
+    } else if (draft['id'] is String) {
+      forgetDraftForm(draft['id'] as String);
     }
     time.dispose();
     placement.dispose();
     bib.dispose();
     comment.dispose();
     postText.dispose();
+    legend.dispose();
     super.dispose();
   }
 
@@ -3607,8 +3791,151 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
+  /// Fecha a tela depois de salvar, com o aviso na tela de trás (o aviso some junto com esta tela).
+  void backWith(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) navigator.pop<Map<String, dynamic>>(draft);
+  }
+
+  /// Salvou: vai para a tela de Medalhas, que abre nova e já com o dado atualizado. Aberta a partir de um
+  /// post do Feed, volta para a tela anterior (o Feed), e não para Medalhas.
+  void toMedals(String text) {
+    if (widget.fromPost) return backWith(text);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(
+        builder: (_) => MedalCollectionScreen(gateway: widget.gateway),
+      ),
+      (route) => false,
+    );
+  }
+
+  /// "Salvar como rascunho": grava no servidor o tempo, a colocação, o peito e a foto da medalha já validada,
+  /// e leva para Medalhas. Nada é publicado e a participação não é concluída; o resto (notas, comentário)
+  /// fica guardado no aparelho e volta quando o rascunho é aberto de novo.
+  Future<void> saveAsDraft() async {
+    final saved = await saveData(announce: false);
+    if (!saved || !mounted) return;
+    final reference = imageReference;
+    if (reference != null && reference != draft['medalImageReference']) {
+      setState(() {
+        saving = true;
+        message = null;
+      });
+      try {
+        draft = await widget.gateway.request(
+          '/participations/${Uri.encodeComponent(draft['id'] as String)}',
+          method: 'PATCH',
+          body: {
+            'expectedVersion': draft['version'],
+            'medalImageReference': reference,
+          },
+        );
+      } on IdentityIssue catch (issue) {
+        if (mounted) setState(() => message = catalogError(issue));
+        return;
+      } on Exception {
+        if (mounted) {
+          setState(
+            () => message =
+                'Não foi possível salvar o rascunho agora. Tente de novo.',
+          );
+        }
+        return;
+      } finally {
+        if (mounted) setState(() => saving = false);
+      }
+    }
+    if (!mounted) return;
+    // Notas, comentário e o resto do formulário ficam guardados neste aparelho.
+    final snapshot = formSnapshot();
+    draftFormCache[draft['id'] as String] = snapshot;
+    await persistDraftForm(draft['id'] as String, snapshot);
+    if (mounted) {
+      toMedals(
+        'Rascunho salvo. As notas e o comentário ficam neste aparelho. Nada foi publicado.',
+      );
+    }
+  }
+
+  /// A avaliação mudou em relação ao que já foi enviado (notas ou comentário).
+  bool get reviewDirty {
+    if (noReview) return !ratingsEmpty;
+    final current = review;
+    final saved = current?['ratings'];
+    // Sem uma avaliação enviada para comparar, não há o que regravar.
+    if (current == null || saved is! Map || saved.isEmpty) return false;
+    final changedRatings = ratings.entries.any((e) => saved[e.key] != e.value);
+    final savedComment = (current['comment'] as String?) ?? '';
+    return changedRatings || savedComment != comment.text.trim();
+  }
+
+  /// "Editar informações da medalha": abre o mesmo editor do lápis em Medalhas e atualiza esta tela.
+  Future<void> editMedalInfoNow() async {
+    final race = RaceRecord(
+      Map<String, dynamic>.from(draft),
+      editionName == null ? null : {'name': editionName},
+    );
+    final updated = await editMedalInfo(context, widget.gateway, race);
+    if (updated == null || !mounted) return;
+    setState(() {
+      draft = {...draft, ...updated};
+      photoRevision++;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Informações da medalha salvas.')),
+    );
+  }
+
   Future<void> save() async {
-    await saveData();
+    final completed = draft['state'] == 'completed';
+    final saved = await saveData(
+      announce: !completed,
+      onlyIfChanged: completed,
+    );
+    if (!saved || !mounted || !completed) return;
+    // "Salvar dados da corrida" grava também a avaliação, se foi mexida, e leva para Medalhas.
+    if (reviewDirty && !await saveReviewInline()) return;
+    if (mounted) toMedals('Dados da corrida salvos.');
+  }
+
+  /// Avaliação editada aqui mesmo, na tela da medalha (sem abrir outra): grava as 8 notas e o comentário.
+  Future<bool> saveReviewInline() async {
+    final current = review;
+    if ((current == null && !noReview) || !ratingsComplete) {
+      setState(
+        () => message = 'Dê uma nota de 1 a 5 estrelas em todos os critérios.',
+      );
+      return false;
+    }
+    setState(() {
+      saving = true;
+      message = null;
+    });
+    try {
+      review = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(draft['id'] as String)}/review',
+        method: 'PUT',
+        body: {
+          // 0 cria a avaliação de quem concluiu sem avaliar; depois, a versão atual.
+          'expectedVersion': current == null ? 0 : current['version'],
+          'ratings': Map<String, int>.from(ratings),
+          if (comment.text.trim().isNotEmpty) 'comment': comment.text.trim(),
+        },
+      );
+      noReview = false;
+      message = 'Avaliação atualizada.';
+      return true;
+    } on IdentityIssue catch (issue) {
+      message = catalogError(issue);
+      return false;
+    } on Exception {
+      message = 'Não foi possível salvar a avaliação agora. Tente de novo.';
+      return false;
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
   }
 
   /// Valida o tipo e envia a foto; a referência só vale depois da validação do servidor.
@@ -3632,6 +3959,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     final result = await widget.gateway.uploadImage(bytes, contentType);
     if (result['state'] == 'valid') {
       imageReference = result['imageReference'] as String;
+      medalPhotoBytes = bytes;
       pendingUploadId = null;
       message = 'Foto validada e privada. Ainda não foi publicada.';
     } else if (result['state'] == 'failed') {
@@ -3699,7 +4027,195 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       message = 'Escolha uma foto diferente da medalha para a publicação.';
       return null;
     }
+    postPhotoBytes = bytes; // para a prévia antes de publicar
     return reference;
+  }
+
+  /// Última foto de publicação enviada nesta tela, usada só na prévia.
+  List<int>? postPhotoBytes;
+
+  /// Foto da medalha desta tela (a enviada agora ou a baixada), para poder usá-la também como foto do post.
+  List<int>? medalPhotoBytes;
+
+  /// A foto da medalha pode ser a foto do post: é enviada de novo como uma imagem própria da publicação (o servidor
+  /// pede que a foto do post seja outra imagem, e depois ela pode ser trocada sem mexer na da medalha).
+  Future<void> useMedalPhotoForPost() async {
+    var bytes = medalPhotoBytes;
+    if (bytes == null) {
+      bytes = await loadMedalBytes();
+      if (bytes == null) {
+        if (mounted) {
+          setState(
+            () => message = 'Não consegui carregar a foto da medalha. Escolha outra foto para o post.',
+          );
+        }
+        return;
+      }
+      medalPhotoBytes = bytes;
+    }
+    setState(() {
+      uploadingPost = true;
+      message = null;
+    });
+    try {
+      final reference = await uploadPostBytes(bytes);
+      if (reference != null) {
+        postImageReference = reference;
+        message = 'A foto da medalha será a foto do post. Você pode trocá-la quando quiser.';
+      }
+    } on IdentityIssue catch (issue) {
+      if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) {
+        message =
+            'Não foi possível usar a foto da medalha agora. Tente de novo.';
+      }
+    } finally {
+      if (mounted) setState(() => uploadingPost = false);
+    }
+  }
+
+  /// Painel "Publicar no feed" da tela da medalha (medalha concluída que ainda não foi publicada).
+  bool publishPanelOpen = false;
+
+  bool get isPublished => draft['publishToFeed'] == true;
+
+  Future<void> openPublishPanel() async {
+    setState(() => publishPanelOpen = !publishPanelOpen);
+    // A foto da medalha já vem como a do post; a pessoa pode escolher outra.
+    if (publishPanelOpen && postImageReference == null && !uploadingPost) {
+      await useMedalPhotoForPost();
+    }
+  }
+
+  /// Publica agora uma medalha concluída que ficou sem publicação: mostra a prévia e envia foto, texto e marcados.
+  Future<void> publishNow() async {
+    if (postImageReference == null) {
+      setState(
+        () => message = 'Escolha a foto da publicação ou use a da medalha.',
+      );
+      return;
+    }
+    final profile = navProfileOf(widget.gateway);
+    final confirmed = await confirmPostPreview(
+      context,
+      PostPreviewData(
+        authorName: (profile?['displayName'] as String?) ?? 'Você',
+        username: (profile?['username'] as String?) ?? '',
+        raceName: editionName ?? 'Sua corrida',
+        details: '',
+        text: postText.text,
+        tagged: [
+          for (final person in tagged)
+            if ('${person['username'] ?? ''}'.isNotEmpty)
+              '${person['username']}',
+        ],
+        photo: postPhotoBytes,
+      ),
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      saving = true;
+      message = null;
+    });
+    try {
+      draft = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(draft['id'] as String)}/publish',
+        method: 'POST',
+        body: {
+          'expectedVersion': draft['version'],
+          'postImageReference': postImageReference,
+          if (postText.text.trim().isNotEmpty) 'postText': postText.text.trim(),
+          if (tagged.isNotEmpty)
+            'taggedUserIds': [for (final p in tagged) p['id']],
+        },
+      );
+      publishPanelOpen = false;
+      photoRevision++;
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Publicado no feed.')));
+      }
+    } on IdentityIssue catch (issue) {
+      message = catalogError(issue);
+    } on Exception {
+      message = 'Não foi possível publicar agora. Tente de novo.';
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  /// Já publicada: abre a mesma tela de edição da publicação (trocar a foto, o texto e as marcações).
+  Future<void> editPublication() async {
+    final id = draft['id'];
+    if (id is! String) return;
+    var initial = Map<String, dynamic>.from(draft);
+    try {
+      final post = await widget.gateway.request(
+        '/posts/${Uri.encodeComponent(id)}',
+      );
+      initial['taggedProfiles'] = (post['tagged'] as List? ?? const []);
+    } on Exception {
+      if (mounted) {
+        setState(
+          () =>
+              message = 'Não consegui abrir a publicação agora. Tente de novo.',
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: initial,
+          fromPost: true,
+        ),
+      ),
+    );
+  }
+
+  /// Baixa a foto da medalha já enviada (participação concluída), para usá-la como foto do post.
+  Future<List<int>?> loadMedalBytes() async {
+    final id = draft['id'];
+    if (id is! String) return null;
+    try {
+      final link = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}/image',
+      );
+      return await widget.medalPhotoFetcher(link['url'] as String);
+    } on Exception {
+      return null;
+    }
+  }
+
+  /// Rascunho excluído: o que estava guardado não deve voltar.
+  bool discarded = false;
+
+  /// O que vai aparecer no Feed: quem postou, a corrida, a distância e o tempo, o texto e as pessoas marcadas.
+  PostPreviewData postPreview() {
+    final profile = navProfileOf(widget.gateway);
+    final km = [
+      for (final d in distances)
+        if (d['id'] == distanceId) (d['kilometers'] as num?),
+    ].firstOrNull;
+    final seconds = parseDuration(time.text);
+    return PostPreviewData(
+      authorName: (profile?['displayName'] as String?) ?? 'Você',
+      username: (profile?['username'] as String?) ?? '',
+      raceName: editionName ?? 'Sua corrida',
+      details: [
+        if (km != null) distanceLabel(km.toDouble()),
+        if (seconds is int && seconds > 0) formatDuration(seconds),
+      ].join(' · '),
+      text: postText.text,
+      tagged: [
+        for (final person in tagged)
+          if ('${person['username'] ?? ''}'.isNotEmpty) '${person['username']}',
+      ],
+      photo: postPhotoBytes,
+    );
   }
 
   /// Grava (PATCH) a foto e/ou o texto da publicação já publicada.
@@ -3728,7 +4244,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     ),
   );
 
-  Future<void> patchPost(Map<String, dynamic> changes, String done) async {
+  Future<bool> patchPost(Map<String, dynamic> changes, String done) async {
     setState(() {
       saving = true;
       message = null;
@@ -3742,11 +4258,14 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       forgetPostPhoto(draft['id'] as String);
       photoRevision++;
       message = done;
+      return true;
     } on IdentityIssue catch (issue) {
       message = catalogError(issue);
+      return false;
     } on Exception {
       message =
           'Não foi possível salvar agora. A publicação anterior foi mantida.';
+      return false;
     } finally {
       if (mounted) setState(() => saving = false);
     }
@@ -3973,6 +4492,17 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       );
       return;
     }
+    if (!ratingsValid) {
+      setState(
+        () => message = 'Dê nota aos 8 critérios ou deixe todos em branco para avaliar depois.',
+      );
+      return;
+    }
+    // Vai publicar no feed: mostra a prévia e só segue se a pessoa confirmar.
+    if (publishToFeed &&
+        (!await confirmPostPreview(context, postPreview()) || !mounted)) {
+      return;
+    }
     // Sem "Salvar rascunho": o tempo, a colocação e o peito preenchidos são gravados ao concluir.
     if (!await saveData(announce: false, onlyIfChanged: true) || !mounted) {
       return;
@@ -3988,7 +4518,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         body: {
           'expectedVersion': draft['version'],
           'declaredCompleted': true,
-          'ratings': ratings,
+          // Avaliação opcional: sem notas, conclui sem avaliação (a pessoa avalia depois).
+          if (ratingsComplete) 'ratings': ratings,
           'medalImageReference': imageReference,
           'publishToFeed': publishToFeed,
           if (publishToFeed) 'postImageReference': postImageReference,
@@ -3996,16 +4527,19 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             'postText': postText.text.trim(),
           if (publishToFeed && tagged.isNotEmpty)
             'taggedUserIds': [for (final p in tagged) p['id']],
-          if (comment.text.isNotEmpty) 'comment': comment.text,
+          if (ratingsComplete && comment.text.isNotEmpty)
+            'comment': comment.text,
         },
       );
       if (mounted) {
         message = 'Participação concluída. Avaliação e medalha foram salvas.';
         // Ao concluir, leva a pessoa para a coleção de medalhas, onde a conquista aparece.
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Participação concluída. Avaliação e medalha foram salvas.',
+              ratingsComplete
+                  ? 'Participação concluída. Avaliação e medalha foram salvas.'
+                  : 'Participação concluída. Você pode avaliar depois, na tela da medalha.',
             ),
           ),
         );
@@ -4079,47 +4613,246 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    final wasDraft = draft['state'] == 'draft';
+    final id = draft['id'] as String;
+    final version = draft['version'];
+    final gateway = widget.gateway;
+    final navigator = Navigator.of(context);
+    // Vai embora da tela na hora (ela deixa de existir) e a exclusão só é enviada depois da janela do "Desfazer".
+    final messenger = ScaffoldMessenger.of(context);
+    final target = MaterialPageRoute<void>(
+      builder: (_) => wasDraft
+          ? CatalogScreen(gateway: gateway)
+          : MedalCollectionScreen(gateway: gateway),
+    );
+    final deletion = deleteWithUndo(
+      context,
+      id: id,
+      message: wasDraft
+          ? 'Rascunho excluído.'
+          : 'Participação excluída. Ela já não aparece nas suas medalhas.',
+      hide: () {},
+      restore: () {
+        // Desfeito: nada foi enviado. O rascunho guardado volta e a lista recarrega.
+        navigator.pushAndRemoveUntil(
+          MaterialPageRoute<void>(
+            builder: (_) => wasDraft
+                ? CatalogScreen(gateway: gateway)
+                : MedalCollectionScreen(gateway: gateway),
+          ),
+          (route) => route.isFirst,
+        );
+      },
+      perform: () async {
+        await gateway.request(
+          '/participations/${Uri.encodeComponent(id)}',
+          method: 'DELETE',
+          query: {'expectedVersion': '$version'},
+        );
+        forgetDraftForm(id);
+      },
+    );
+    // Volta para a lista de onde a pessoa veio, em vez de ficar numa tela sem saída.
+    navigator.pushAndRemoveUntil(target, (route) => route.isFirst);
+    try {
+      await deletion;
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível excluir agora. Verifique a internet e tente de novo; nada foi alterado.',
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Salva a legenda escrita aqui (vazia ou igual ao nome da corrida volta ao padrão).
+  Future<void> saveLegend() async {
+    final typed = legend.text.trim();
+    final custom = typed.isEmpty || typed == editionName ? null : typed;
     setState(() {
       saving = true;
       message = null;
     });
-    final wasDraft = draft['state'] == 'draft';
     try {
-      await widget.gateway.request(
+      draft = await widget.gateway.request(
         '/participations/${Uri.encodeComponent(draft['id'] as String)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${draft['version']}'},
+        method: 'PATCH',
+        body: {'expectedVersion': draft['version'], 'medalDescription': custom},
       );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            wasDraft ? 'Rascunho excluído.' : 'Participação excluída. Ela já não aparece nas suas medalhas; a limpeza dos dados continua em segundo plano.',
-          ),
-        ),
-      );
-      // Volta para a lista de onde a pessoa veio, em vez de ficar numa tela sem saída.
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(
-          builder: (_) => wasDraft
-              ? CatalogScreen(gateway: widget.gateway)
-              : MedalCollectionScreen(gateway: widget.gateway),
-        ),
-        (route) => route.isFirst,
-      );
+      forgetMedalDisplayImage(draft['id'] as String);
+      photoRevision++;
+      message = 'Legenda da medalha salva.';
     } on IdentityIssue catch (issue) {
-      if (mounted) message = catalogError(issue);
+      message = catalogError(issue);
     } on Exception {
-      if (mounted) {
-        message = 'Não foi possível excluir agora. Verifique a internet e tente de novo; nada foi alterado.';
-      }
+      message = 'Não foi possível salvar a legenda agora. Tente de novo.';
     } finally {
       if (mounted) setState(() => saving = false);
     }
   }
 
+  /// Opções para ajustar a medalha: o mesmo formato da edição da publicação (foto, texto, "alterar"), só que da medalha.
+  Widget medalOptionsView() => Scaffold(
+    appBar: AppBar(title: const RunPassWordmark(compact: true)),
+    bottomNavigationBar: runPassNavigation(
+      context,
+      widget.gateway,
+      1,
+      subScreen: true,
+    ),
+    body: ListView(
+      key: const Key('medal-options'),
+      padding: const EdgeInsets.all(24),
+      children: [
+        SizedBox(
+          height: 220,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: ColoredBox(
+              color: context.softFill,
+              child: MedalPhoto(
+                key: ValueKey('medal-photo-$photoRevision-options'),
+                gateway: widget.gateway,
+                participationId: draft['id'] as String?,
+                size: 72,
+                useDisplayImage: true,
+              ),
+            ),
+          ),
+        ),
+        if (editionName != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text(
+              editionName!,
+              key: const Key('race-name-under-photo'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+            ),
+          ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          key: const Key('change-medal-photo'),
+          onPressed: saving || uploading ? null : changeMedalPhoto,
+          icon: const Icon(Icons.photo_library_outlined),
+          label: Text(
+            uploading ? 'Enviando foto...' : 'Trocar a foto da medalha',
+          ),
+        ),
+        const SizedBox(height: 8),
+        // Posição da foto, modelo (forma e cor) e legenda: o mesmo editor do lápis em Medalhas.
+        OutlinedButton.icon(
+          key: const Key('edit-medal-info'),
+          onPressed: saving || uploading ? null : editMedalInfoNow,
+          icon: const Icon(Icons.tune_rounded),
+          label: const Text('Ajustar foto, modelo e legenda'),
+        ),
+        const SizedBox(height: 8),
+        // Os três botões das opções da medalha seguem o mesmo padrão (contornado, com ícone, largura total).
+        OutlinedButton.icon(
+          key: const Key('open-race-data'),
+          onPressed: saving || uploading
+              ? null
+              : () async {
+                  await Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ParticipationDraftScreen(
+                        gateway: widget.gateway,
+                        initial: Map<String, dynamic>.from(draft),
+                      ),
+                    ),
+                  );
+                },
+          icon: const Icon(Icons.edit_note_rounded),
+          label: const Text('Alterar dados da corrida e avaliação'),
+        ),
+        const SizedBox(height: 8),
+        // Publicação: quem não publicou ao cadastrar pode publicar agora (com a foto da medalha ou outra);
+        // quem já publicou edita a publicação (foto, texto, marcados).
+        if (isPublished)
+          OutlinedButton.icon(
+            key: const Key('edit-publication'),
+            onPressed: saving || uploading ? null : editPublication,
+            icon: const Icon(Icons.campaign_outlined),
+            label: const Text('Editar publicação no feed'),
+          )
+        else
+          OutlinedButton.icon(
+            key: const Key('publish-from-medal'),
+            onPressed: saving || uploading || uploadingPost
+                ? null
+                : openPublishPanel,
+            icon: const Icon(Icons.campaign_outlined),
+            label: Text(
+              publishPanelOpen ? 'Fechar publicação' : 'Publicar no feed',
+            ),
+          ),
+        if (!isPublished && publishPanelOpen) ...[
+          const SizedBox(height: 8),
+          Text(
+            postImageReference == null
+                ? (uploadingPost
+                      ? 'Preparando a foto da publicação...'
+                      : 'Escolha a foto da publicação ou use a da medalha.')
+                : 'A foto da medalha será a foto do post. Você pode trocar por outra.',
+            key: const Key('publish-panel-hint'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('select-post-photo'),
+            onPressed: saving || uploadingPost ? null : selectPostPhoto,
+            icon: const Icon(Icons.add_photo_alternate_outlined),
+            label: const Text('Escolher outra foto'),
+          ),
+          const SizedBox(height: 8),
+          tagButton(saveNow: false),
+          TextField(
+            key: const Key('post-text-field'),
+            controller: postText,
+            maxLength: 500,
+            minLines: 1,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              labelText: 'Texto da publicação (opcional)',
+            ),
+          ),
+          FilledButton(
+            key: const Key('publish-now'),
+            onPressed: saving || uploadingPost ? null : publishNow,
+            child: Text(saving ? 'Publicando...' : 'Publicar'),
+          ),
+        ],
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('medal-legend-edit'),
+          controller: legend,
+          maxLength: 80,
+          decoration: InputDecoration(
+            labelText: 'Legenda da medalha',
+            hintText: editionName,
+          ),
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            key: const Key('save-medal-legend'),
+            onPressed: saving ? null : saveLegend,
+            child: const Text('Salvar legenda da medalha'),
+          ),
+        ),
+        if (message != null)
+          Text(message!, key: const Key('medal-options-message')),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
+    if (draft['state'] == 'completed' && widget.medalMode) {
+      return medalOptionsView();
+    }
     if (draft['state'] == 'completed') {
       return Scaffold(
         appBar: AppBar(title: const RunPassWordmark(compact: true)),
@@ -4145,10 +4878,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                     gateway: widget.gateway,
                     participationId: draft['id'] as String?,
                     size: 72,
-                    // Ao tocar numa medalha (Medalhas) aparece a foto da MEDALHA; a da publicação só aparece quando
-                    // a tela foi aberta pela publicação.
-                    usePostImage: widget.fromPost && hasPostPhoto,
-                    fit: widget.fromPost && hasPostPhoto
+                    // No topo está a foto da MEDALHA. A da publicação só aparece aqui quando a tela foi aberta a
+                    // partir de um post do Feed; a foto do post tem a seção própria mais abaixo.
+                    usePostImage: hasPostPhoto && widget.fromPost,
+                    fit: hasPostPhoto && widget.fromPost
                         ? BoxFit.contain
                         : BoxFit.cover,
                   ),
@@ -4230,11 +4963,16 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                   key: const Key('save-post-text'),
                   onPressed: saving
                       ? null
-                      : () => patchPost({
-                          'postText': postText.text.trim().isEmpty
-                              ? null
-                              : postText.text.trim(),
-                        }, 'Texto da publicação salvo.'),
+                      : () async {
+                          final saved = await patchPost({
+                            'postText': postText.text.trim().isEmpty
+                                ? null
+                                : postText.text.trim(),
+                          }, 'Texto da publicação salvo.');
+                          if (saved && mounted) {
+                            backWith('Texto da publicação salvo.');
+                          }
+                        },
                   child: const Text('Salvar texto da publicação'),
                 ),
               ),
@@ -4247,8 +4985,17 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                   uploading ? 'Enviando foto...' : 'Trocar foto da medalha',
                 ),
               ),
+            if (!widget.fromPost) ...[
+              const SizedBox(height: 8),
+              // Modelo, posição da foto e legenda da medalha (a mesma tela do lápis em Medalhas).
+              OutlinedButton.icon(
+                key: const Key('edit-medal-info'),
+                onPressed: saving || uploading ? null : editMedalInfoNow,
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Editar informações da medalha'),
+              ),
+            ],
             const SizedBox(height: 12),
-            if (review != null) MyReviewView(review: review!),
             // Sem botão "Salvar visibilidade": cada chave grava ao ser alterada.
             SwitchListTile(
               key: const Key('show-time-switch'),
@@ -4277,22 +5024,50 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               'Meus dados desta corrida',
               style: TextStyle(fontWeight: FontWeight.w700),
             ),
-            ...raceDataFields(saveLabel: 'Salvar dados da corrida'),
-            OutlinedButton(
-              onPressed: saving
-                  ? null
-                  : () async {
-                      await Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => ReviewEditScreen(
-                            gateway: widget.gateway,
-                            participationId: draft['id'] as String,
-                          ),
-                        ),
-                      );
-                      if (mounted) loadReview();
-                    },
-              child: const Text('Editar avaliação'),
+            ...raceDataFields(saveLabel: null),
+            if (review != null || noReview) ...[
+              const Divider(height: 32),
+              const Text(
+                'Minha avaliação',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              if (noReview)
+                Text(
+                  'Você ainda não avaliou esta corrida. Dê nota aos 8 critérios e toque em Salvar dados, ou deixe para depois.',
+                  key: const Key('no-review-hint'),
+                  style: TextStyle(color: context.muted, fontSize: 12),
+                ),
+              SameRatingPicker(
+                onPick: (n) => setState(() {
+                  for (final key in ratings.keys.toList()) {
+                    ratings[key] = n;
+                  }
+                }),
+              ),
+              for (final (key, label, icon) in _EditionScreenState.criteria)
+                RatingInput(
+                  label: label,
+                  icon: icon,
+                  value: ratings[key] ?? 0,
+                  onChanged: saving
+                      ? null
+                      : (value) => setState(() => ratings[key] = value),
+                ),
+              TextField(
+                key: const Key('review-comment-inline'),
+                controller: comment,
+                maxLength: 2000,
+                decoration: const InputDecoration(
+                  labelText: 'Comentário (deixe vazio para remover)',
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            // Embaixo, só dois botões: salvar (dados e avaliação juntos) e excluir.
+            FilledButton(
+              key: const Key('save-data'),
+              onPressed: saving ? null : save,
+              child: Text(saving ? 'Salvando...' : 'Salvar dados da corrida'),
             ),
             TextButton(
               onPressed: saving ? null : deleteParticipation,
@@ -4353,11 +5128,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               ),
             )
           else ...[
-            OutlinedButton.icon(
-              onPressed: saving || uploading ? null : selectPhoto,
-              icon: const Icon(Icons.photo_library_outlined),
-              label: Text(uploading ? 'Enviando foto...' : 'Selecionar foto'),
-            ),
+            // A foto da medalha já foi escolhida no começo (Medalhas > "+"): com ela anexada, ou ainda sendo
+            // enviada, o botão não aparece. Ele só volta se não houver foto (corrida aberta sem medalha) ou o envio falhar.
+            if (imageReference == null &&
+                !(uploading && widget.initialPhoto != null))
+              OutlinedButton.icon(
+                onPressed: saving || uploading ? null : selectPhoto,
+                icon: const Icon(Icons.photo_library_outlined),
+                label: Text(uploading ? 'Enviando foto...' : 'Selecionar foto'),
+              ),
             if (imageReference != null)
               const Text('Imagem validada para uso na conclusão.'),
             if (pendingUploadId != null)
@@ -4370,8 +5149,20 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           if (draft['state'] == 'draft' && !upcoming) ...[
             const Divider(height: 32),
             const Text(
-              'Avaliação obrigatória',
+              'Avaliação (opcional)',
               style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            Text(
+              'Dê nota aos 8 critérios ou deixe em branco e avalie depois.',
+              key: const Key('rating-optional-hint'),
+              style: TextStyle(color: context.muted, fontSize: 12),
+            ),
+            SameRatingPicker(
+              onPick: (n) => setState(() {
+                for (final key in ratings.keys.toList()) {
+                  ratings[key] = n;
+                }
+              }),
             ),
             for (final (key, label, icon) in _EditionScreenState.criteria)
               RatingInput(
@@ -4398,8 +5189,16 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             CheckboxListTile(
               key: const Key('publish-to-feed'),
               value: publishToFeed,
-              onChanged: (value) =>
-                  setState(() => publishToFeed = value ?? false),
+              onChanged: (value) {
+                setState(() => publishToFeed = value ?? false);
+                // Sem outra foto, a da medalha é a do post (já vem escolhida; dá para trocar).
+                if (publishToFeed &&
+                    postImageReference == null &&
+                    medalPhotoBytes != null &&
+                    !uploadingPost) {
+                  useMedalPhotoForPost();
+                }
+              },
               title: const Text('Publicar esta conquista no feed'),
             ),
             if (publishToFeed) ...[
@@ -4418,13 +5217,22 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               ),
               if (postImageReference != null)
                 const Text(
-                  'Foto da publicação validada (separada da medalha).',
+                  'Foto da publicação validada. Ela é uma cópia: trocar a foto do post não muda a da medalha.',
                   key: Key('post-photo-ok'),
                 )
               else
                 const Text(
-                  'Escolha outra foto para a publicação no feed; a da medalha não vai para o feed.',
+                  'Escolha a foto da publicação ou use a da medalha.',
                   key: Key('post-photo-hint'),
+                ),
+              if (medalPhotoBytes != null)
+                OutlinedButton.icon(
+                  key: const Key('use-medal-for-post'),
+                  onPressed: saving || uploadingPost
+                      ? null
+                      : useMedalPhotoForPost,
+                  icon: const Icon(Icons.workspace_premium_outlined),
+                  label: const Text('Usar a foto da medalha no post'),
                 ),
               tagButton(saveNow: false),
               const SizedBox(height: 8),
@@ -4447,22 +5255,29 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                   key: Key('needs-photo-hint'),
                 ),
               ),
-            if (!ratingsComplete)
+            if (!ratingsValid)
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
                 child: Text(
-                  'Dê uma nota de 1 a 5 estrelas em todos os critérios para concluir.',
+                  'Dê nota aos 8 critérios ou deixe todos em branco para avaliar depois.',
+                  key: Key('ratings-partial-hint'),
                 ),
               ),
             FilledButton(
               onPressed:
                   saving ||
-                      !ratingsComplete ||
+                      !ratingsValid ||
                       imageReference == null ||
                       (publishToFeed && postImageReference == null)
                   ? null
                   : complete,
               child: Text(saving ? 'Concluindo...' : 'Concluir participação'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              key: const Key('save-draft'),
+              onPressed: saving || uploading ? null : saveAsDraft,
+              child: const Text('Salvar como rascunho'),
             ),
           ],
           if (draft['state'] == 'draft')
@@ -4513,7 +5328,13 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
         '/participations/${Uri.encodeComponent(widget.participationId)}/review',
       );
       if (!mounted) return;
-      review = result;
+      // Cópia editável: as notas são mexidas na tela (estrelas e "mesma nota para todos").
+      review = {
+        ...result,
+        'ratings': Map<String, dynamic>.from(
+          (result['ratings'] as Map?) ?? const {},
+        ),
+      };
       comment.text = result['comment'] as String? ?? '';
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
@@ -4539,7 +5360,14 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
           if (comment.text.isNotEmpty) 'comment': comment.text,
         },
       );
-      if (mounted) message = 'Avaliação atualizada.';
+      if (mounted) {
+        message = 'Avaliação atualizada.';
+        // "Salvar" volta para a tela anterior, com o aviso lá.
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Avaliação atualizada.')));
+        Navigator.of(context).pop();
+      }
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
     } finally {
@@ -4563,6 +5391,16 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
         : ListView(
             padding: const EdgeInsets.all(24),
             children: [
+              SameRatingPicker(
+                onPick: saving
+                    ? (_) {}
+                    : (n) => setState(() {
+                        for (final key
+                            in (review!['ratings'] as Map).keys.toList()) {
+                          (review!['ratings'] as Map)[key] = n;
+                        }
+                      }),
+              ),
               for (final (key, label, icon) in _EditionScreenState.criteria)
                 RatingInput(
                   label: label,

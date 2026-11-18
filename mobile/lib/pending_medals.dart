@@ -1,5 +1,6 @@
 import 'identity_gateway.dart';
 import 'my_races.dart' show fetchImageBytes;
+import 'undo_delete.dart';
 
 /// Medalhas provisórias: pedidos de cadastro de corrida que levaram a foto da medalha (`details.medalPhoto`).
 /// Ficam na prateleira como "Em análise" até a equipe decidir; a foto só aparece para a própria pessoa.
@@ -13,7 +14,8 @@ Future<List<Map<String, dynamic>>> loadPendingMedals(
     );
     return [
       for (final item in (page['items'] as List? ?? const []))
-        if (((item as Map)['details'] as Map?)?['medalImageReference'] !=
+        if (!pendingDeletions.contains(item['id']) &&
+            ((item as Map)['details'] as Map?)?['medalImageReference'] !=
                 null &&
             item['kind'] != 'banner')
           Map<String, dynamic>.from(item),

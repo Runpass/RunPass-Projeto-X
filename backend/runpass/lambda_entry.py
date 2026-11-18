@@ -205,6 +205,8 @@ def run_maintenance(events, erasure, worker_id):
         "expire": events.expire_payloads,
         "erasure": erasure.run_pending,
     }
+    if hasattr(erasure, "run_pending_participations"):
+        tasks["participationErasure"] = erasure.run_pending_participations
     for name, task in tasks.items():
         try:
             summary[name] = task()

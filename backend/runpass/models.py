@@ -203,7 +203,9 @@ class ReviewRatings(Input):
 class CompleteParticipation(Input):
     expectedVersion: Annotated[int, Field(ge=1)]
     declaredCompleted: bool
-    ratings: ReviewRatings
+    # Avaliacao opcional: sem `ratings` a participacao conclui sem avaliacao (a pessoa avalia depois) e nao conta
+    # na nota publica da corrida. Quando vem, sao sempre as 8 notas.
+    ratings: ReviewRatings | None = None
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)]
     publishToFeed: bool
     comment: Annotated[str, Field(max_length=2000)] | None = None
@@ -223,6 +225,12 @@ class CompleteParticipation(Input):
             raise ValueError("Completion declaration required")
         return value
 
+    @model_validator(mode="after")
+    def comment_needs_ratings(self):
+        if self.comment is not None and self.ratings is None:
+            raise ValueError("O comentario pertence a avaliacao: envie as notas junto")
+        return self
+
 
 class PublishParticipation(Input):
     """Publica no feed uma participacao ja concluida (e ainda nao publicada), com uma foto propria."""
@@ -238,7 +246,8 @@ class PublishParticipation(Input):
 
 
 class ReplaceReview(Input):
-    expectedVersion: Annotated[int, Field(ge=1)]
+    # 0 cria a avaliacao de uma participacao concluida sem avaliacao; >= 1 substitui a existente.
+    expectedVersion: Annotated[int, Field(ge=0)]
     ratings: ReviewRatings
     comment: Annotated[str, Field(max_length=2000)] | None = None
 
@@ -294,7 +303,7 @@ class PendingParticipation(Input):
     timeSeconds: Annotated[int, Field(ge=1)] | None = None
     placement: Annotated[int, Field(ge=1)] | None = None
     bibNumber: Annotated[str, Field(max_length=40)] | None = None
-    ratings: ReviewRatings
+    ratings: ReviewRatings | None = None
     comment: Annotated[str, Field(max_length=2000)] | None = None
     publishToFeed: bool = False
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
@@ -306,6 +315,8 @@ class PendingParticipation(Input):
             raise ValueError("Publicar no feed exige a foto da publicacao")
         if self.postImageReference and not self.publishToFeed:
             raise ValueError("A foto da publicacao so vale ao publicar no feed")
+        if self.comment is not None and self.ratings is None:
+            raise ValueError("O comentario pertence a avaliacao: envie as notas junto")
         return self
 
 

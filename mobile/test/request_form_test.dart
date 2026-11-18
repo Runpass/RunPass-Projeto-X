@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:runpass/br_locations.dart';
 import 'package:runpass/edition_requests.dart';
 import 'package:runpass/identity_gateway.dart';
 
@@ -69,13 +70,17 @@ void main() {
         MaterialApp(home: EditionRequestFormScreen(gateway: await gateway())),
       );
       expect(find.text('Estado e cidade'), findsOneWidget);
-      expect(find.text('SP - São Paulo'), findsOneWidget);
+      // Nenhuma cidade vem escolhida: nunca um padrão inventado (B8).
+      expect(find.text('Escolha o estado e a cidade'), findsOneWidget);
+      expect(find.text('SP - São Paulo'), findsNothing);
       await tester.tap(find.byKey(const Key('request-location')));
       await tester.pumpAndSettle();
       expect(find.text('Estado e cidade'), findsWidgets);
       await tester.tap(find.byKey(const Key('location-done')));
       await tester.pumpAndSettle();
-      expect(find.text('SP - São Paulo'), findsOneWidget);
+      final uf = brStates.first.uf;
+      expect(find.text('$uf - ${brCitiesByState[uf]!.first}'), findsOneWidget);
+      expect(find.text('Escolha o estado e a cidade'), findsNothing);
     },
   );
 

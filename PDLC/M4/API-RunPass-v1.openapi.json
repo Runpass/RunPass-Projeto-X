@@ -809,6 +809,17 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "expand",
+            "in": "query",
+            "description": "`edition` embeds the edition detail in each item (field `edition`), replacing one GET /editions/{id} per item.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "edition"
+              ]
+            }
           }
         ],
         "responses": {
@@ -6247,7 +6258,7 @@
     "/editions/{id}/photos": {
       "get": {
         "operationId": "listEditionPhotos",
-        "description": "Photos runners published for this edition (own medal photo of published participations of active accounts), newest first. Never the catalog's generic art. `total` counts the photos visible to the reader.",
+        "description": "Photos runners posted for this edition: the post photo (not the medal photo) of participations published to the feed by active accounts, newest first. Item image is GET /participations/{id}/post-image. Never the catalog's generic art. `total` counts the photos visible to the reader.",
         "responses": {
           "200": {
             "description": "Authorized result",
@@ -6587,7 +6598,6 @@
         "required": [
           "expectedVersion",
           "declaredCompleted",
-          "ratings",
           "medalImageReference",
           "publishToFeed"
         ],
@@ -6618,7 +6628,8 @@
             "maxLength": 2000
           },
           "ratings": {
-            "$ref": "#/components/schemas/ReviewRatings"
+            "$ref": "#/components/schemas/ReviewRatings",
+            "description": "Optional. Without ratings the participation completes with no review (the runner rates later with PUT /participations/{id}/review and expectedVersion 0) and does not count in the edition's public score. When present, all 8 criteria are required. `comment` requires `ratings`."
           },
           "postImageReference": {
             "type": "string",
@@ -6748,6 +6759,9 @@
               "maxLength": 100
             },
             "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
+          },
+          "edition": {
+            "$ref": "#/components/schemas/Edition"
           }
         }
       },
@@ -6891,7 +6905,8 @@
         "properties": {
           "expectedVersion": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 0,
+            "description": "0 creates the review of a completed participation that has none; >= 1 replaces the current review (version must match)."
           },
           "ratings": {
             "$ref": "#/components/schemas/ReviewRatings"
@@ -10438,9 +10453,6 @@
       "PendingParticipation": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "ratings"
-        ],
         "properties": {
           "timeSeconds": {
             "type": "integer",
@@ -10455,7 +10467,8 @@
             "maxLength": 40
           },
           "ratings": {
-            "$ref": "#/components/schemas/ReviewRatings"
+            "$ref": "#/components/schemas/ReviewRatings",
+            "description": "Optional. Without ratings the pending participation applies with no review when the race is approved. `comment` requires `ratings`."
           },
           "comment": {
             "type": "string",

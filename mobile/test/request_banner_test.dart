@@ -83,6 +83,13 @@ Future<void> fill(WidgetTester tester) async {
   await type('name', 'Corrida do Banner');
   await type('date', '14/03/2027');
   await type('distanceKm', '10');
+  // A cidade nao vem pronta: a pessoa escolhe na roda (aqui, o primeiro estado e a primeira cidade).
+  final location = find.byKey(const Key('request-location'));
+  await tester.ensureVisible(location);
+  await tester.tap(location);
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('location-done')));
+  await tester.pumpAndSettle();
 }
 
 Future<void> submit(WidgetTester tester) async {
@@ -197,7 +204,7 @@ void main() {
         find.byKey(const Key('request-banner')),
         findsOneWidget,
       ); // banner segue opcional
-      expect(find.text('Concluir cadastro da medalha'), findsOneWidget);
+      expect(find.text('Continuar: dados da participação'), findsOneWidget);
       await submit(tester);
       expect(s.calls, [
         'POST /uploads',
@@ -321,13 +328,42 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('request-delete-confirm')));
       await tester.pumpAndSettle();
+      // Some na hora, com "Desfazer"; o DELETE só vai depois da janela.
+      expect(find.byKey(const Key('request-r-pending')), findsNothing);
+      expect(find.byKey(const Key('request-r-approved')), findsOneWidget);
+      expect(find.text('Solicitação excluída.'), findsOneWidget);
+      expect(find.byKey(const Key('undo-delete')), findsOneWidget);
+      expect(s.calls.any((c) => c.startsWith('DELETE')), isFalse);
+      await tester.pump(
+        const Duration(seconds: 7),
+      ); // fecha a janela do Desfazer
+      await tester.pumpAndSettle();
       expect(
         s.calls.where((c) => c == 'DELETE /edition-requests/r-pending').length,
         1,
       );
+    },
+  );
+
+  testWidgets(
+    'excluir solicitação e desfazer: volta para a lista e nada é enviado',
+    (tester) async {
+      final s = await setup(mine: [listed('pending'), listed('approved')]);
+      await tester.pumpWidget(
+        MaterialApp(home: MyEditionRequestsScreen(gateway: s.gateway)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('request-delete-r-pending')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('request-delete-confirm')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('request-r-pending')), findsNothing);
-      expect(find.byKey(const Key('request-r-approved')), findsOneWidget);
-      expect(find.text('Solicitação excluída.'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('undo-delete')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('request-r-pending')), findsOneWidget);
+      expect(s.calls.any((c) => c.startsWith('DELETE')), isFalse);
     },
   );
 

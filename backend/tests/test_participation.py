@@ -678,36 +678,172 @@ class ParticipationTests(unittest.TestCase):
         self.assertEqual(social.edition_participants(reader, "synthetic-sp-2025")["items"], [])
         self.assertEqual(social.edition_participants(reader, "synthetic-sp-2024", "5k")["total"], 0)
 
-    def test_edition_photos_only_runner_photos_of_published_participations(self):
+    def test_complete_without_ratings_then_rate_later(self):
+        # Avaliacao opcional: conclui sem notas e avalia depois (expectedVersion 0 cria a avaliacao).
+        social = SocialService(self.identity)
+        reader = self.admit("reader")
+        draft = self.service.create(self.actor, "d-opt", self.payload(timeSeconds=3600))
+        body = self.completion(draft)
+        body.pop("ratings")
+        done = self.service.complete(self.actor, draft["id"], "c-opt", body)
+        self.assertEqual(done["state"], "completed")
+        pid = draft["id"]
+        # Sem avaliacao: nao ha review, nem evento de nota, nem aparece na lista publica de avaliacoes.
+        with self.assertRaises(Problem) as error:
+            self.service.get_review(self.actor, pid)
+        self.assertEqual(error.exception.code, "REVIEW_NOT_FOUND")
+        self.assertIsNone(self.store.get(("history", "USER#owner", "P#" + pid + "#REVIEW")))
+        self.assertEqual(social.edition_reviews(reader, "synthetic-sp-2024")["items"], [])
+        # Versao diferente de 0 nao cria avaliacao.
+        rating = {k: 4 for k in self.completion(draft)["ratings"]}
+        with self.assertRaises(Problem) as error:
+            self.service.replace_review(
+                self.actor, pid, "r-bad", {"expectedVersion": 1, "ratings": rating}
+            )
+        self.assertEqual(error.exception.code, "REVIEW_NOT_FOUND")
+        # Avaliar depois: expectedVersion 0 cria; aparece na lista publica e na leitura.
+        created = self.service.replace_review(
+            self.actor, pid, "r-new", {"expectedVersion": 0, "ratings": rating, "comment": "Depois"}
+        )
+        self.assertEqual(created["version"], 1)
+        self.assertEqual(self.service.get_review(self.actor, pid)["comment"], "Depois")
+        listed = social.edition_reviews(reader, "synthetic-sp-2024")
+        self.assertEqual([i["participationId"] for i in listed["items"]], [pid])
+        # Criar de novo com 0 e conflito; a versao certa substitui.
+        with self.assertRaises(Problem) as error:
+            self.service.replace_review(
+                self.actor, pid, "r-dup", {"expectedVersion": 0, "ratings": rating}
+            )
+        self.assertEqual(error.exception.code, "VERSION_CONFLICT")
+        again = self.service.replace_review(
+            self.actor, pid, "r-up", {"expectedVersion": 1, "ratings": rating}
+        )
+        self.assertEqual(again["version"], 2)
+
+    def _published_with_images(self):
+        """Participacao concluida e publicada, com foto da medalha e da postagem (copias tratadas no blob store)."""
+        from runpass.upload import MemoryBlobStore
+
+        draft = self.service.create(self.actor, "d-erase", self.payload(timeSeconds=3600))
+        post_ref = "img_" + "c" * 64
+        for ref in ("img-erase-medal", post_ref):
+            key = ("operations", "USER#owner", "IMAGE#" + ref)
+            self.store.commit(
+                {key: None},
+                {key: {"owner": "owner", "origin": "runner", "state": "valid", "refs": 0}},
+            )
+        body = self.completion(draft, medalImageReference="img-erase-medal")
+        body.update(publishToFeed=True, postImageReference=post_ref, postText="Texto do post")
+        done = self.service.complete(self.actor, draft["id"], "c-erase", body)
+        blobs = MemoryBlobStore()
+        for ref in ("img-erase-medal", post_ref):
+            blobs.derived[ref] = {"owner": "owner", "contentType": "image/png", "data": b"x"}
+        return done, blobs, post_ref
+
+    def test_participation_erasure_executor_removes_data_and_completes_the_operation(self):
+        from runpass.erasure import ErasureProcessor
+
+        done, blobs, post_ref = self._published_with_images()
+        pid = done["id"]
+        out = self.service.delete(self.actor, pid, "x-erase", done["version"])
+        self.assertEqual(out["state"], "pending")
+        # Some da lista na hora, mesmo antes do executor.
+        listed = [i["id"] for i in self.service.list(self.actor, None, 50, None)["items"]]
+        self.assertNotIn(pid, listed)
+        pk = "USER#owner"
+        self.assertIsNotNone(self.store.get(("history", pk, "P#" + pid + "#PART")))
+        # O executor roda: apaga participacao, avaliacao, medalha, imagens e conclui a operacao.
+        erasure = ErasureProcessor(self.identity, blobs)
+        self.assertEqual(erasure.run_pending_participations(), {"completed": 1, "pending": 0})
+        for suffix in ("#PART", "#REVIEW", "#MEDAL"):
+            self.assertIsNone(self.store.get(("history", pk, "P#" + pid + suffix)))
+        self.assertIsNone(self.store.get(("history", "PARTICIPATION#" + pid, "OWNER")))
+        self.assertIsNone(self.store.get(("operations", pk, "IMAGE#img-erase-medal")))
+        self.assertIsNone(self.store.get(("operations", pk, "IMAGE#" + post_ref)))
+        self.assertEqual(blobs.derived, {})  # as copias tratadas foram apagadas
+        state = self.service.get_deletion(self.actor, out["operationId"])
+        self.assertEqual(state["state"], "completed")
+        # Rodar de novo nao faz nada.
+        self.assertEqual(erasure.run_pending_participations(), {"completed": 0, "pending": 0})
+
+    def test_participation_erasure_keeps_images_still_used_and_never_touches_official_art(self):
+        from runpass.erasure import ErasureProcessor
+
+        done, blobs, post_ref = self._published_with_images()
+        # A foto da postagem tambem esta em uso por outra participacao: nao pode ser apagada.
+        key = ("operations", "USER#owner", "IMAGE#" + post_ref)
+        row = self.store.get(key)
+        self.store.commit({key: row}, {key: {**row, "refs": row["refs"] + 1}})
+        self.service.delete(self.actor, done["id"], "x-keep", done["version"])
+        ErasureProcessor(self.identity, blobs).run_pending_participations()
+        self.assertIsNotNone(self.store.get(key))
+        self.assertIn(post_ref, blobs.derived)
+        self.assertNotIn("img-erase-medal", blobs.derived)
+
+    def test_participation_erasure_does_not_touch_other_participations(self):
+        from runpass.erasure import ErasureProcessor
+
+        done, blobs, _ = self._published_with_images()
+        other = self.admit("other")
+        draft = self.service.create(other, "d-other", self.payload(timeSeconds=1800))
+        self.service.delete(self.actor, done["id"], "x-iso", done["version"])
+        ErasureProcessor(self.identity, blobs).run_pending_participations()
+        # O rascunho de outra pessoa continua la.
+        self.assertEqual(self.service.get(other, draft["id"])["state"], "draft")
+
+    def test_delete_completed_participation_without_review(self):
+        draft = self.service.create(self.actor, "d-del", self.payload(timeSeconds=3600))
+        body = self.completion(draft)
+        body.pop("ratings")
+        done = self.service.complete(self.actor, draft["id"], "c-del", body)
+        out = self.service.delete(self.actor, draft["id"], "x-del", done["version"])
+        self.assertTrue(out["publiclyHidden"])
+
+    def test_edition_photos_only_post_photos_of_published_participations(self):
         social = SocialService(self.identity)
         reader = self.admit("reader")
         self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 0)
-        _, with_photo = self.finish("owner", 5)
-        _, unpublished = self.finish("plain", 4)  # nao publicou: a foto nao e publica
+        _, with_post = self.finish("owner", 5)
+        _, medal_only = self.finish("plain", 4)  # publicada, mas so com a foto da medalha
 
-        def publish(subject, pid, value):
+        def change(subject, pid, **fields):
             key = ("history", "USER#" + subject, "P#" + pid + "#PART")
             part = self.store.get(key)
-            self.store.commit({key: part}, {key: {**part, "publishToFeed": value}})
+            self.store.commit({key: part}, {key: {**part, **fields}})
 
-        publish("owner", with_photo, True)
+        post_ref = "img_" + "a" * 64
+        # Foto de postagem sem publicar: nao entra.
+        change("owner", with_post, postImageReference=post_ref)
+        self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 0)
+        # Publicada com foto de postagem: entra, e so ela.
+        change("owner", with_post, publishToFeed=True)
+        change("plain", medal_only, publishToFeed=True)
         page = social.edition_photos(reader, "synthetic-sp-2024")
         self.assertEqual(page["total"], 1)
-        self.assertEqual([i["participationId"] for i in page["items"]], [with_photo])
+        self.assertEqual([i["participationId"] for i in page["items"]], [with_post])
         self.assertEqual(page["items"][0]["author"]["username"], "owner")
         self.assertEqual(page["items"][0]["distanceId"], "10k")
         self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024", "5k")["total"], 0)
         self.assertEqual(social.edition_photos(reader, "synthetic-sp-2025")["items"], [])
-        # Medalha padrao do catalogo (sem foto propria) nunca entra, mesmo publicada.
-        publish("plain", unpublished, True)
-        plain_key = ("history", "USER#plain", "P#" + unpublished + "#MEDAL")
-        plain = self.store.get(plain_key)
-        self.store.commit({plain_key: plain}, {plain_key: {**plain, "imageOrigin": "catalog"}})
-        self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 1)
-        # Despublicada: some para os outros, mas o dono continua vendo a propria.
-        publish("owner", with_photo, False)
+        # A foto da medalha nunca vale: mesmo com origem do corredor, sem foto de postagem fica de fora.
+        self.assertNotIn(medal_only, [i["participationId"] for i in page["items"]])
+        # Despublicada: some para todos, inclusive para o dono.
+        change("owner", with_post, publishToFeed=False)
         self.assertEqual(social.edition_photos(reader, "synthetic-sp-2024")["total"], 0)
-        self.assertEqual(social.edition_photos(self.actor, "synthetic-sp-2024")["total"], 1)
+        self.assertEqual(social.edition_photos(self.actor, "synthetic-sp-2024")["total"], 0)
+
+    def test_review_summary_accepts_decimal_ratings_like_dynamodb_returns(self):
+        # O DynamoDB devolve numeros como Decimal. Antes, Decimal + float quebrava a aba Avaliacoes (TypeError).
+        from decimal import Decimal
+
+        social = SocialService(self.identity)
+        ratings = {c: Decimal(5) for c in SocialService.CRITERIA}
+        poor = {c: Decimal(3) for c in SocialService.CRITERIA}
+        summary = social._review_summary([{"ratings": ratings}, {"ratings": poor}])
+        self.assertEqual(summary["reviewCount"], 2)
+        self.assertEqual(summary["average"], 4.0)
+        self.assertEqual(summary["byCriterion"]["kit"], 4.0)
+        self.assertEqual(summary["recommendPercent"], 50)
 
     def test_edition_carries_the_public_score_only_when_there_are_reviews(self):
         reader = self.admit("reader")
@@ -930,6 +1066,28 @@ class ParticipationApiTests(unittest.TestCase):
         self.assertEqual(
             client.get("/me/participations?state=draft", headers=headers).json()["items"][0]["id"],
             participation_id,
+        )
+        # Comentario sem notas nao vale (a avaliacao e tudo ou nada).
+        bad = client.post(
+            f"/participations/{participation_id}/complete",
+            headers={**headers, "Idempotency-Key": "c-bad"},
+            json={
+                "expectedVersion": 1,
+                "declaredCompleted": True,
+                "medalImageReference": "img-http",
+                "publishToFeed": False,
+                "comment": "sem notas",
+            },
+        )
+        self.assertEqual(bad.status_code, 422)
+        plain = client.get("/me/participations?state=draft", headers=headers).json()["items"][0]
+        self.assertNotIn("edition", plain)
+        expanded = client.get("/me/participations?state=draft&expand=edition", headers=headers)
+        self.assertEqual(expanded.status_code, 200, expanded.text)
+        self.assertEqual(expanded.json()["items"][0]["edition"]["id"], "synthetic-sp-2024")
+        self.assertIn("distances", expanded.json()["items"][0]["edition"])
+        self.assertEqual(
+            client.get("/me/participations?expand=outra", headers=headers).status_code, 422
         )
         image_key = ("operations", "USER#runner", "IMAGE#img-http")
         store.commit(

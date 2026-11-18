@@ -189,7 +189,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Avaliação obrigatória'), findsOneWidget);
+      expect(find.text('Avaliação (opcional)'), findsOneWidget);
       expect(find.text('Comentário (opcional)'), findsOneWidget);
       expect(find.byKey(const Key('needs-photo-hint')), findsOneWidget);
       expect(
@@ -257,9 +257,19 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Salvar visibilidade'), findsNothing);
-      // O comentário que escrevi aparece nesta tela.
-      expect(find.byKey(const Key('my-comment')), findsOneWidget);
-      expect(find.text('“Percurso bonito e bem sinalizado”'), findsOneWidget);
+      // O comentário que escrevi aparece nesta tela, num campo que já dá para editar.
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('review-comment-inline')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('review-comment-inline')))
+            .controller!
+            .text,
+        'Percurso bonito e bem sinalizado',
+      );
       // Mudar a chave grava na hora.
       await tester.ensureVisible(find.byKey(const Key('show-time-switch')));
       await tester.tap(find.byKey(const Key('show-time-switch')));

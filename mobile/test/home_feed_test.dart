@@ -84,7 +84,7 @@ void main() {
       expect(find.byKey(const Key('notifications-bell')), findsOneWidget);
       // Compartilhar abre a folha do sistema (WhatsApp, e-mail, Instagram, Facebook...).
       expect(find.byKey(const Key('share-p-amiga')), findsOneWidget);
-      expect(find.text('Compartilhar'), findsOneWidget);
+      expect(find.text('Compartilhar'), findsNothing); // só o ícone
     },
   );
 

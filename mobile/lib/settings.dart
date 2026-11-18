@@ -56,6 +56,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     await BiometricPrefs.clear();
+    clearMedalCaches();
     try {
       await widget.gateway.signOut();
     } on Exception {
@@ -94,6 +95,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     NotificationCenter.instance.stop();
     await BiometricPrefs.clear();
     await SavedAccount.clear();
+    clearMedalCaches();
     await widget.gateway.forgetSession();
     if (mounted) {
       toSignIn('Exclusão aceita. O acesso à conta foi encerrado.');

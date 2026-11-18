@@ -55,6 +55,7 @@ Future<IdentityGateway> runner({
   List<Map<String, dynamic>> requests = const [],
   bool Function(String q)? foundFor,
   bool participationExists = false,
+  bool draftOnA = true,
 }) async {
   final editions = {
     'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
@@ -86,7 +87,7 @@ Future<IdentityGateway> runner({
               : [
                   done('p1', 'a', seconds: 1500),
                   done('p2', 'b'),
-                  {...done('p3', 'a'), 'state': 'draft'},
+                  if (draftOnA) {...done('p3', 'a'), 'state': 'draft'},
                 ],
         });
       }
@@ -367,7 +368,8 @@ void main() {
       await tester.tap(find.byKey(const Key('medal-scan-request')));
       await tester.pumpAndSettle();
       expect(find.byType(EditionRequestFormScreen), findsOneWidget);
-      expect(find.text('CIRCUITO DAS ESTAÇÕES'), findsOneWidget);
+      // O nome impresso em caixa alta chega legível ao formulário (T10).
+      expect(find.text('Circuito das Estações'), findsOneWidget);
     },
   );
 
@@ -507,7 +509,7 @@ void main() {
       expect(find.byType(EditionScreen), findsNothing);
       // Tempo e distância (km) para preencher, avaliação, e a foto do post é opcional (aparece ao publicar).
       expect(find.byKey(const Key('time-field')), findsOneWidget);
-      expect(find.text('Avaliação obrigatória'), findsOneWidget);
+      expect(find.text('Avaliação (opcional)'), findsOneWidget);
       final list = find.byType(Scrollable).first;
       final publish = find.byKey(const Key('publish-to-feed'));
       await tester.scrollUntilVisible(publish, 200, scrollable: list);
@@ -594,6 +596,97 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ParticipationDraftScreen), findsOneWidget);
       expect(find.byType(EditionScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'medalha já cadastrada: avisa, não cadastra de novo e só edita se eu escolher',
+    (tester) async {
+      final gateway = await runner(
+        draftOnA: false, // so a participacao concluida p1 na corrida A
+        found: [
+          {
+            'id': 'a',
+            'name': 'Corrida A',
+            'date': '2026-09-01',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '10k', 'kilometers': 10},
+            ],
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Corrida A']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      // A lista ja diz que esta medalha e minha.
+      expect(find.textContaining('Já cadastrada por você'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      // Nao abre a participacao sozinha: avisa.
+      expect(find.byKey(const Key('medal-already')), findsOneWidget);
+      expect(find.text('Essa medalha já está cadastrada'), findsOneWidget);
+      expect(find.byType(ParticipationDraftScreen), findsNothing);
+      // Fechar: segue na leitura da medalha, sem cadastrar nada.
+      await tester.tap(find.byKey(const Key('medal-already-close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('medal-already')), findsNothing);
+      expect(find.byType(ParticipationDraftScreen), findsNothing);
+      // Editar: so por escolha explicita.
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('medal-already-edit')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'participação concluída: no topo fica a foto da medalha, não a da publicação',
+    (tester) async {
+      final gateway = await runner();
+      final completed = {
+        ...done('p1', 'a', seconds: 1500),
+        'postImageReference': 'img_${'a' * 64}',
+        'publishToFeed': true,
+      };
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(gateway: gateway, initial: completed),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<MedalPhoto>(find.byType(MedalPhoto)).usePostImage,
+        isFalse,
+      );
+      // Aberta a partir de um post do Feed, vale a foto da publicação.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            key: UniqueKey(),
+            gateway: gateway,
+            initial: completed,
+            fromPost: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<MedalPhoto>(find.byType(MedalPhoto)).usePostImage,
+        isTrue,
+      );
     },
   );
 
@@ -698,7 +791,7 @@ void main() {
       expect(opened.single.host, 'www.google.com');
       expect(
         opened.single.queryParameters['q'],
-        'MARATONA PAI DE ACUCAR corrida',
+        'Maratona Pai de Acucar corrida',
       );
       // O nome corrigido na tela é o que vai na pesquisa; sem nome, o botão desabilita.
       final field = find.byKey(const Key('medal-edit-name'));
@@ -916,6 +1009,15 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('medal-delete-confirm')));
       await tester.pumpAndSettle();
+      // Some na hora, com "Desfazer"; a exclusao so vai ao servidor depois da janela.
+      expect(find.byKey(const Key('medal-edit-p1')), findsNothing);
+      expect(find.textContaining('saiu de Minhas corridas'), findsOneWidget);
+      expect(find.byKey(const Key('undo-delete')), findsOneWidget);
+      expect(calls.any((c) => c.startsWith('DELETE')), isFalse);
+      await tester.pump(
+        const Duration(seconds: 7),
+      ); // fecha a janela do Desfazer
+      await tester.pumpAndSettle();
       expect(
         calls
             .where(
@@ -924,8 +1026,6 @@ void main() {
             .length,
         1,
       );
-      expect(find.byKey(const Key('medal-edit-p1')), findsNothing);
-      expect(find.textContaining('saiu de Minhas corridas'), findsOneWidget);
     },
   );
 
@@ -1251,14 +1351,345 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('pending-delete-confirm')));
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pending-medal-r9')), findsNothing);
+      expect(find.text('Medalha excluída.'), findsOneWidget);
+      expect(find.byKey(const Key('undo-delete')), findsOneWidget);
+      expect(calls.any((c) => c.startsWith('DELETE')), isFalse);
+      await tester.pump(
+        const Duration(seconds: 7),
+      ); // fecha a janela do Desfazer
+      await tester.pumpAndSettle();
       expect(
         calls
             .where((c) => c == 'DELETE /edition-requests/r9?expectedVersion=1')
             .length,
         1,
       );
-      expect(find.byKey(const Key('pending-medal-r9')), findsNothing);
-      expect(find.text('Medalha excluída.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'salvar a medalha sem mexer na legenda não grava o nome genérico "Corrida"',
+    (tester) async {
+      var patchBody = <String, dynamic>{};
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        sleeper: (_) async {},
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          if (uri.path == '/me/participations') {
+            return JsonReply(200, {
+              'items': [done('p1', 'a', seconds: 1500)],
+            });
+          }
+          if (uri.path == '/participations/p1' && method == 'PATCH') {
+            patchBody = Map<String, dynamic>.from(body as Map);
+            return const JsonReply(200, {'id': 'p1'});
+          }
+          // A corrida nao carrega (erro passageiro): o nome cai para "Corrida".
+          return const JsonReply(503, {'code': 'SERVICE_UNAVAILABLE'});
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(home: MedalCollectionScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('medal-edit-p1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('medal-edit-save')));
+      await tester.pumpAndSettle();
+      expect(patchBody.containsKey('medalDescription'), isTrue);
+      expect(patchBody['medalDescription'], isNull);
+    },
+  );
+
+  testWidgets(
+    'tela da participação: "Editar informações da medalha" abre o editor, grava e atualiza',
+    (tester) async {
+      var patch = <String, dynamic>{};
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        sleeper: (_) async {},
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          if (uri.path == '/participations/p1' && method == 'PATCH') {
+            patch = Map<String, dynamic>.from(body! as Map);
+            return JsonReply(200, {
+              ...done('p1', 'a', seconds: 1500),
+              'version': 3,
+              'medalDescription': patch['medalDescription'],
+            });
+          }
+          if (uri.path == '/editions/a') {
+            return JsonReply(
+              200,
+              edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+            );
+          }
+          return const JsonReply(404, {'code': 'NOT_FOUND'});
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: done('p1', 'a', seconds: 1500),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('edit-medal-info')));
+      await tester.tap(find.byKey(const Key('edit-medal-info')));
+      await tester.pumpAndSettle();
+      expect(find.text('Personalizar medalha'), findsOneWidget);
+      // Aqui nao ha "Excluir medalha": o "Excluir participacao" ja esta na tela.
+      expect(find.byKey(const Key('medal-delete')), findsNothing);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Nome da Corrida'),
+        'Minha legenda',
+      );
+      await tester.tap(find.byKey(const Key('medal-edit-save')));
+      await tester.pumpAndSettle();
+      expect(patch['medalDescription'], 'Minha legenda');
+      expect(patch['expectedVersion'], 2);
+      expect(find.text('Informações da medalha salvas.'), findsOneWidget);
+      expect(
+        find.byType(ParticipationDraftScreen),
+        findsOneWidget,
+      ); // segue na tela
+    },
+  );
+
+  Future<IdentityGateway> shelfGateway({
+    required bool published,
+    bool postFails = false,
+    List<String>? calls,
+  }) async {
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.example'),
+      api: Uri.parse('https://api.example'),
+      clientId: 'synthetic',
+      sleeper: (_) async {},
+      transport: (uri, method, headers, body) async {
+        calls?.add('$method ${uri.path}');
+        if (uri.host == 'cognito.example') {
+          return const JsonReply(200, {
+            'AuthenticationResult': {'AccessToken': 'synthetic'},
+          });
+        }
+        if (uri.path == '/me/participations') {
+          return JsonReply(200, {
+            'items': [
+              {
+                ...done('p1', 'a', seconds: 1500),
+                'publishToFeed': published,
+                if (published) 'postImageReference': 'img_${'b' * 64}',
+              },
+            ],
+          });
+        }
+        if (uri.path == '/posts/p1') {
+          if (postFails) {
+            return const JsonReply(503, {'code': 'SERVICE_UNAVAILABLE'});
+          }
+          return const JsonReply(200, {
+            'id': 'p1',
+            'participation': {
+              'id': 'p1',
+              'editionId': 'a',
+              'state': 'completed',
+            },
+            'tagged': [
+              {
+                'id': 'u2',
+                'displayName': '[FICTICIA] Beto',
+                'username': 'beto',
+              },
+            ],
+          });
+        }
+        if (uri.path == '/editions/a') {
+          return JsonReply(
+            200,
+            edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+          );
+        }
+        return const JsonReply(404, {'code': 'NOT_FOUND'});
+      },
+    );
+    await gateway.signIn('synthetic@example.test', 'synthetic');
+    return gateway;
+  }
+
+  testWidgets(
+    'Medalhas: tocar na medalha abre as opções para ajustar a medalha, sem mexer na publicação',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      for (final published in [true, false]) {
+        final calls = <String>[];
+        final gateway = await shelfGateway(published: published, calls: calls);
+        await tester.pumpWidget(
+          MaterialApp(
+            key: UniqueKey(),
+            home: MedalCollectionScreen(gateway: gateway),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Corrida A').first);
+        await tester.pumpAndSettle();
+        final screen = tester.widget<ParticipationDraftScreen>(
+          find.byType(ParticipationDraftScreen),
+        );
+        expect(screen.medalMode, isTrue);
+        expect(screen.fromPost, isFalse);
+        // Opcoes da medalha (nao do post): foto, foto+modelo+legenda, dados e legenda.
+        expect(find.byKey(const Key('medal-options')), findsOneWidget);
+        expect(find.byKey(const Key('change-medal-photo')), findsOneWidget);
+        expect(find.byKey(const Key('edit-medal-info')), findsOneWidget);
+        expect(find.byKey(const Key('open-race-data')), findsOneWidget);
+        expect(find.byKey(const Key('medal-legend-edit')), findsOneWidget);
+        // Os tres botoes seguem o mesmo padrao: contornados, com icone.
+        for (final key in [
+          'change-medal-photo',
+          'edit-medal-info',
+          'open-race-data',
+        ]) {
+          expect(
+            find.descendant(
+              of: find.byKey(Key(key)),
+              matching: find.byType(Icon),
+            ),
+            findsOneWidget,
+          );
+          expect(tester.widget(find.byKey(Key(key))), isA<OutlinedButton>());
+        }
+        // Nada da publicacao aqui, e o post nem e buscado.
+        expect(find.byKey(const Key('post-text-edit')), findsNothing);
+        expect(find.byKey(const Key('replace-post-photo')), findsNothing);
+        expect(calls.any((c) => c.startsWith('GET /posts/')), isFalse);
+      }
+    },
+  );
+
+  testWidgets('excluir medalha e desfazer: nada é enviado e a medalha volta', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final calls = <String>[];
+    final gateway = await shelfGateway(published: false, calls: calls);
+    await tester.pumpWidget(
+      MaterialApp(home: MedalCollectionScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('medal-edit-p1')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('medal-delete')));
+    await tester.tap(find.byKey(const Key('medal-delete')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('medal-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('medal-edit-p1')), findsNothing); // escondida
+    await tester.tap(find.byKey(const Key('undo-delete')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 7));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('medal-edit-p1')), findsOneWidget); // voltou
+    expect(
+      calls.any((c) => c.startsWith('DELETE')),
+      isFalse,
+    ); // e nada foi enviado
+  });
+
+  testWidgets(
+    'opções da medalha: salvar a legenda grava só a legenda e continua na tela; "dados" abre a tela dos dados',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      var patch = <String, dynamic>{};
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        sleeper: (_) async {},
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          if (uri.path == '/participations/p1' && method == 'PATCH') {
+            patch = Map<String, dynamic>.from(body! as Map);
+            return JsonReply(200, {
+              ...done('p1', 'a', seconds: 1500),
+              'version': 3,
+              'medalDescription': patch['medalDescription'],
+            });
+          }
+          if (uri.path == '/editions/a') {
+            return JsonReply(
+              200,
+              edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
+            );
+          }
+          return const JsonReply(404, {'code': 'NOT_FOUND'});
+        },
+      );
+      await gateway.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: done('p1', 'a', seconds: 1500),
+            medalMode: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('medal-legend-edit')),
+        'Minha legenda',
+      );
+      await tester.ensureVisible(find.byKey(const Key('save-medal-legend')));
+      await tester.tap(find.byKey(const Key('save-medal-legend')));
+      await tester.pumpAndSettle();
+      expect(patch, {
+        'expectedVersion': 2,
+        'medalDescription': 'Minha legenda',
+      });
+      expect(find.text('Legenda da medalha salva.'), findsOneWidget);
+      // Legenda igual ao nome da corrida (ou vazia) volta ao padrao (null).
+      await tester.enterText(
+        find.byKey(const Key('medal-legend-edit')),
+        'Corrida A',
+      );
+      await tester.tap(find.byKey(const Key('save-medal-legend')));
+      await tester.pumpAndSettle();
+      expect(patch['medalDescription'], isNull);
+      // Dados da corrida e avaliacao: abre a tela dos dados (sem o modo medalha).
+      await tester.ensureVisible(find.byKey(const Key('open-race-data')));
+      await tester.tap(find.byKey(const Key('open-race-data')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('save-data')), findsWidgets);
+      expect(find.byKey(const Key('medal-options')), findsNothing);
     },
   );
 
