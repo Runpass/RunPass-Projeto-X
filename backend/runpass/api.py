@@ -642,6 +642,11 @@ def create_app(
     ):
         return friends().feed(actor, limit, cursor, scope)
 
+    @app.get("/me/posts", operation_id="listMyPosts")
+    def my_posts(actor: Actor):
+        """Minhas publicações (a de cada corrida e as extras), para o perfil."""
+        return friends().my_posts(actor)
+
     @app.post("/posts", status_code=201, operation_id="createExtraPost")
     def create_extra_post(body: CreateExtraPost, actor: Actor, idempotency_key: IdempotencyKey):
         """Outra publicação de uma corrida que eu já concluí (várias por corrida)."""

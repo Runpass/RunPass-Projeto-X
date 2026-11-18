@@ -790,6 +790,8 @@ class ParticipationTests(unittest.TestCase):
             },
         )
         self.assertEqual(again["id"], extra["id"])
+        mine = [p["id"] for p in social.my_posts(self.actor)["items"]]
+        self.assertEqual(sorted(mine), sorted([done["id"], extra["id"]]))
         viewer = self.admit("viewer")
         feed = social.feed(viewer)["items"]
         ids = [p["id"] for p in feed]

@@ -616,6 +616,16 @@ class SocialService:
             self._authorized_post(self.store.get, actor.subject, post_id), actor.subject
         )
 
+    def my_posts(self, actor):
+        """Todas as minhas publicações (a de cada corrida e as extras), mais recentes primeiro."""
+        self.identity.authorize(actor, admitted=True)
+        me = actor.subject
+        parts = [
+            {**p, "owner": me} for p in self._completed(me) if p.get("publishToFeed")
+        ] + self._extra_posts(me)
+        parts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
+        return {"items": [self._post_view(p, me) for p in parts]}
+
     def _friend_ids(self, subject):
         return [
             sk.split("#", 1)[1]
