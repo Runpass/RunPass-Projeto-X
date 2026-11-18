@@ -684,12 +684,14 @@ class _PostCardState extends State<PostCard> {
       if (entry.place != null) entry.place!,
     ].join('  •  ');
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Cabeçalho: quem publicou, quando e onde.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
+            child: Row(
               children: [
                 InkWell(
                   key: Key('post-author-${entry.postId}'),
@@ -747,155 +749,155 @@ class _PostCardState extends State<PostCard> {
                   const Icon(Icons.more_horiz),
               ],
             ),
-            const SizedBox(height: 12),
-            // Em negrito, sem sublinhado: tocar no nome da corrida abre as informações dela.
-            InkWell(
-              key: Key('post-race-${entry.postId}'),
-              borderRadius: BorderRadius.circular(6),
-              onTap: entry.race.participation['editionId'] is String
-                  ? () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => EditionScreen(
-                          gateway: widget.gateway,
-                          editionId:
-                              entry.race.participation['editionId'] as String,
+          ),
+          // Foto como no Instagram: de ponta a ponta do cartão, mais alta (4:5) e inteira (sem cortar). A medalha
+          // sem foto de publicação continua preenchendo o quadro.
+          AspectRatio(
+            aspectRatio: 4 / 5,
+            child: ColoredBox(
+              color: entry.race.hasPostImage
+                  ? Colors.black
+                  : (dark ? const Color(0xff2a211c) : const Color(0xfffff2ec)),
+              child: SizedBox.expand(
+                child: MedalPhoto(
+                  key: Key('post-photo-${entry.postId}'),
+                  gateway: widget.gateway,
+                  participationId: entry.race.participation['id'] as String?,
+                  size: 72,
+                  usePostImage: entry.race.hasPostImage,
+                  fit: entry.race.hasPostImage ? BoxFit.contain : BoxFit.cover,
+                ),
+              ),
+            ),
+          ),
+          // Ações logo abaixo da foto e, depois, a legenda (prova, texto, números e último comentário).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    InkWell(
+                      onTap: entry.postId == null ? null : toggleLike,
+                      child: Row(
+                        children: [
+                          Icon(
+                            entry.liked
+                                ? Icons.favorite
+                                : Icons.favorite_border,
+                            color: runPassOrange,
+                          ),
+                          const SizedBox(width: 6),
+                          Text('${entry.likes}'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 22),
+                    InkWell(
+                      onTap: openComments,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.chat_bubble_outline),
+                          const SizedBox(width: 6),
+                          Text('${entry.comments}'),
+                        ],
+                      ),
+                    ),
+                    // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
+                    // Na minha publicação o ícone aparece sempre e é um atalho para marcar alguém.
+                    if ((entry.tagged.isNotEmpty || entry.mine) &&
+                        entry.postId != null) ...[
+                      const SizedBox(width: 22),
+                      TaggedLink(
+                        gateway: widget.gateway,
+                        postId: entry.postId!,
+                        tagged: entry.tagged,
+                        onTag: entry.mine ? tagPeople : null,
+                      ),
+                    ],
+                    const SizedBox(width: 12),
+                    const Spacer(),
+                    Semantics(
+                      label: 'Compartilhar',
+                      button: true,
+                      child: InkWell(
+                        key: Key('share-${entry.race.participation['id']}'),
+                        onTap: share,
+                        customBorder: const CircleBorder(),
+                        child: const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Tooltip(
+                            message: 'Compartilhar',
+                            child: Icon(Icons.ios_share, size: 22),
+                          ),
                         ),
                       ),
-                    )
-                  : null,
-              child: Text(
-                entry.title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 17,
+                    ),
+                  ],
                 ),
-              ),
-            ),
-            if (entry.comment != null) ...[
-              const SizedBox(height: 6),
-              Text(entry.comment!),
-            ],
-            const SizedBox(height: 12),
-            AspectRatio(
-              aspectRatio: 16 / 10,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: dark
-                        ? const [Color(0xff3a2a22), Color(0xff2a211c)]
-                        : const [Color(0xffffd9cc), Color(0xfffff2ec)],
-                  ),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: SizedBox.expand(
-                    child: MedalPhoto(
-                      gateway: widget.gateway,
-                      participationId:
-                          entry.race.participation['id'] as String?,
-                      size: 72,
-                      usePostImage: entry.race.hasPostImage,
-                      // A foto publicada aparece inteira dentro do quadro (a medalha continua preenchendo).
-                      fit: entry.race.hasPostImage
-                          ? BoxFit.contain
-                          : BoxFit.cover,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            if (km != null ||
-                race.timeSeconds != null ||
-                race.paceSecondsPerKm != null) ...[
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  if (km != null)
-                    statItem(
-                      Icons.directions_run,
-                      formatKilometers(km),
-                      'Distância',
-                    ),
-                  if (race.timeSeconds != null)
-                    statItem(
-                      Icons.timer_outlined,
-                      formatDuration(race.timeSeconds!),
-                      'Tempo',
-                    ),
-                  if (race.paceSecondsPerKm != null)
-                    statItem(
-                      Icons.speed,
-                      formatPace(race.paceSecondsPerKm!),
-                      'Pace',
-                    ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 14),
-            if (entry.lastComment != null) lastCommentBox(),
-            Row(
-              children: [
+                const SizedBox(height: 8),
+                // Em negrito, sem sublinhado: tocar no nome da corrida abre as informações dela.
                 InkWell(
-                  onTap: entry.postId == null ? null : toggleLike,
-                  child: Row(
+                  key: Key('post-race-${entry.postId}'),
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: entry.race.participation['editionId'] is String
+                      ? () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => EditionScreen(
+                              gateway: widget.gateway,
+                              editionId:
+                                  entry.race.participation['editionId']
+                                      as String,
+                            ),
+                          ),
+                        )
+                      : null,
+                  child: Text(
+                    entry.title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 17,
+                    ),
+                  ),
+                ),
+                if (entry.comment != null) ...[
+                  const SizedBox(height: 6),
+                  Text(entry.comment!),
+                ],
+                if (km != null ||
+                    race.timeSeconds != null ||
+                    race.paceSecondsPerKm != null) ...[
+                  const SizedBox(height: 14),
+                  Row(
                     children: [
-                      Icon(
-                        entry.liked ? Icons.favorite : Icons.favorite_border,
-                        color: runPassOrange,
-                      ),
-                      const SizedBox(width: 6),
-                      Text('${entry.likes}'),
+                      if (km != null)
+                        statItem(
+                          Icons.directions_run,
+                          formatKilometers(km),
+                          'Distância',
+                        ),
+                      if (race.timeSeconds != null)
+                        statItem(
+                          Icons.timer_outlined,
+                          formatDuration(race.timeSeconds!),
+                          'Tempo',
+                        ),
+                      if (race.paceSecondsPerKm != null)
+                        statItem(
+                          Icons.speed,
+                          formatPace(race.paceSecondsPerKm!),
+                          'Pace',
+                        ),
                     ],
                   ),
-                ),
-                const SizedBox(width: 22),
-                InkWell(
-                  onTap: openComments,
-                  child: Row(
-                    children: [
-                      const Icon(Icons.chat_bubble_outline),
-                      const SizedBox(width: 6),
-                      Text('${entry.comments}'),
-                    ],
-                  ),
-                ),
-                // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
-                // Na minha publicação o ícone aparece sempre e é um atalho para marcar alguém.
-                if ((entry.tagged.isNotEmpty || entry.mine) &&
-                    entry.postId != null) ...[
-                  const SizedBox(width: 22),
-                  TaggedLink(
-                    gateway: widget.gateway,
-                    postId: entry.postId!,
-                    tagged: entry.tagged,
-                    onTag: entry.mine ? tagPeople : null,
-                  ),
                 ],
-                const SizedBox(width: 12),
-                const Spacer(),
-                Semantics(
-                  label: 'Compartilhar',
-                  button: true,
-                  child: InkWell(
-                    key: Key('share-${entry.race.participation['id']}'),
-                    onTap: share,
-                    customBorder: const CircleBorder(),
-                    child: const Padding(
-                      padding: EdgeInsets.all(8),
-                      child: Tooltip(
-                        message: 'Compartilhar',
-                        child: Icon(Icons.ios_share, size: 22),
-                      ),
-                    ),
-                  ),
-                ),
+                const SizedBox(height: 14),
+                if (entry.lastComment != null) lastCommentBox(),
               ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
