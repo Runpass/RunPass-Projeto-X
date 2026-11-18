@@ -27,6 +27,7 @@ Map<String, dynamic> post(String id, String authorId) => {
 Future<IdentityGateway> gateway(
   List<String> calls, {
   bool serverStillHasIt = false,
+  bool withExtra = false,
 }) async {
   var removed = false;
   final g = IdentityGateway(
@@ -52,9 +53,16 @@ Future<IdentityGateway> gateway(
           'items': [
             // A exclusão termina em segundo plano: logo depois o servidor ainda pode devolver o post.
             if (!removed || serverStillHasIt) post('p-minha', 'me'),
+            if (withExtra && !removed)
+              {...post('x-extra', 'me'), 'extra': true},
             post('p-amiga', 'amiga'),
           ],
         });
+      }
+      if (method == 'DELETE' && uri.path.startsWith('/posts/')) {
+        calls.add('$method ${uri.path}');
+        removed = true;
+        return const JsonReply(200, {});
       }
       if (method == 'DELETE' && uri.path.startsWith('/participations/')) {
         calls.add(
@@ -147,6 +155,28 @@ void main() {
         findsNothing,
       ); // a da amiga não tem menu
       expect(find.text('Amiga'), findsWidgets);
+    },
+  );
+
+  testWidgets(
+    'publicação extra: remover apaga só ela (DELETE /posts/{id}), sem excluir a participação',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <String>[];
+      final g = await gateway(calls, withExtra: true);
+      await tester.pumpWidget(MaterialApp(home: RunPassHomeScreen(gateway: g)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('post-menu-x-extra')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('post-menu-remove')));
+      await tester.pumpAndSettle();
+      expect(find.text('Remover esta publicação?'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('post-remove-confirm')));
+      await tester.pumpAndSettle();
+      expect(calls, ['DELETE /posts/x-extra']);
+      expect(find.byKey(const Key('post-menu-x-extra')), findsNothing);
     },
   );
 }
