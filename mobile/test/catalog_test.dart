@@ -187,7 +187,7 @@ void main() {
             : JsonReply(200, entry('A'));
       });
       await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
       await reveal(tester, find.text('Corrida A'));
@@ -612,9 +612,7 @@ void main() {
       (uri, method, headers, body) async =>
           const JsonReply(403, {'code': 'BETA_ADMISSION_REQUIRED'}),
     );
-    await tester.pumpWidget(
-      MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
-    );
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
     await reveal(
       tester,
@@ -902,9 +900,7 @@ void main() {
       }
       return JsonReply(200, entry('A'));
     });
-    await tester.pumpWidget(
-      MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
-    );
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
     await reveal(tester, find.textContaining('Já está na sua lista'));
     expect(find.textContaining('Já está na sua lista'), findsOneWidget);
@@ -1376,7 +1372,7 @@ void main() {
         await tester.testTextInput.receiveAction(TextInputAction.search);
         await tester.pumpAndSettle();
         // A busca por nome vale para o catálogo todo: sem cidade do perfil nem janela de 20 dias.
-        expect(calls.last, {'q': 'meia', 'limit': '100'});
+        expect(calls.last, {'q': 'meia', 'limit': '20'});
         // Fechar a lupa volta à lista padrão.
         await tester.tap(find.byKey(const Key('catalog-search-toggle')));
         await tester.pumpAndSettle();
@@ -1453,9 +1449,7 @@ void main() {
           return const JsonReply(200, {'items': []});
         });
         await tester.pumpWidget(
-          MaterialApp(
-            home: CatalogScreen(gateway: gateway, serverPaging: true),
-          ),
+          MaterialApp(home: CatalogScreen(gateway: gateway)),
         );
         await tester.pumpAndSettle();
         // Pedir cadastro e acompanhar os pedidos ficam sempre visiveis, sem abrir a lupa.
@@ -1608,9 +1602,7 @@ void main() {
     final gateway = await signed((uri, method, headers, body) async {
       return const JsonReply(200, {'items': []});
     });
-    await tester.pumpWidget(
-      MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
-    );
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
     expect(
       find.text(
@@ -1635,9 +1627,7 @@ void main() {
         'items': [entry('A')],
       });
     });
-    await tester.pumpWidget(
-      MaterialApp(home: CatalogScreen(gateway: gateway, serverPaging: true)),
-    );
+    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
     // O atalho fixo do topo continua: nao depende de a lista estar vazia.
@@ -1645,7 +1635,7 @@ void main() {
   });
 
   testWidgets(
-    'a lista vem sempre da corrida mais antiga para a mais nova, sem ícones de ordem',
+    'a lista mantém a ordem do servidor (da mais antiga para a mais nova), sem ícones de ordem',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -1654,9 +1644,9 @@ void main() {
         if (uri.path == '/editions') {
           return JsonReply(200, {
             'items': [
-              {...entry('C'), 'id': 'EC', 'date': '2026-05-01'},
               {...entry('A'), 'id': 'EA', 'date': '2024-05-01'},
               {...entry('B'), 'id': 'EB', 'date': '2025-05-01'},
+              {...entry('C'), 'id': 'EC', 'date': '2026-05-01'},
             ],
           });
         }
@@ -1676,43 +1666,51 @@ void main() {
     },
   );
 
-  testWidgets('a lista carrega todas as páginas com o mesmo limite do cursor', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final calls = <Map<String, String>>[];
-    final gateway = await signed((uri, method, headers, body) async {
-      if (uri.path != '/editions') return const JsonReply(200, {'items': []});
-      calls.add(uri.queryParameters);
-      final q = uri.queryParameters;
-      if (q['cursor'] != null && q['limit'] != '100') {
-        return const JsonReply(422, {'code': 'INVALID_CURSOR'});
-      }
-      if (q['cursor'] == 'c2') {
+  testWidgets(
+    'a lista traz 20 por vez e "Carregar mais" pede a próxima página com o mesmo limite',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <Map<String, String>>[];
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path != '/editions') return const JsonReply(200, {'items': []});
+        calls.add(uri.queryParameters);
+        final q = uri.queryParameters;
+        if (q['cursor'] != null && q['limit'] != '20') {
+          return const JsonReply(422, {'code': 'INVALID_CURSOR'});
+        }
+        if (q['cursor'] == 'c2') {
+          return JsonReply(200, {
+            'items': [
+              {...entry('B'), 'id': 'EB', 'date': '2026-01-01'},
+            ],
+          });
+        }
         return JsonReply(200, {
           'items': [
-            {...entry('B'), 'id': 'EB', 'date': '2026-01-01'},
+            {...entry('A'), 'id': 'EA', 'date': '2025-01-01'},
           ],
+          'nextCursor': 'c2',
         });
-      }
-      return JsonReply(200, {
-        'items': [
-          {...entry('A'), 'id': 'EA', 'date': '2025-01-01'},
-        ],
-        'nextCursor': 'c2',
       });
-    });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
-    await tester.pumpAndSettle();
-    expect(calls.map((c) => c['limit']), ['100', '100']);
-    expect(calls.last['cursor'], 'c2');
-    expect(find.byKey(const Key('catalog-error')), findsNothing);
-    expect(find.textContaining('Corrida A'), findsOneWidget);
-    expect(find.textContaining('Corrida B'), findsOneWidget);
-    expect(find.text('Carregar mais'), findsNothing);
-  });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      // Só a primeira página: nada de carregar o resto em sequência.
+      expect(calls.map((c) => c['limit']), ['20']);
+      expect(find.textContaining('Corrida B'), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-show-more')));
+      await tester.pumpAndSettle();
+      expect(calls.map((c) => c['limit']), ['20', '20']);
+      expect(calls.last['cursor'], 'c2');
+      expect(find.byKey(const Key('catalog-error')), findsNothing);
+      expect(find.textContaining('Corrida A'), findsOneWidget);
+      expect(find.textContaining('Corrida B'), findsOneWidget);
+      expect(find.byKey(const Key('catalog-show-more')), findsNothing);
+    },
+  );
 
   testWidgets(
     'atalhos da lista: quero correr, inscrito e já corri sem abrir a corrida',
@@ -1805,7 +1803,7 @@ void main() {
 
 void priorityOrderTests() {
   testWidgets(
-    'as minhas corridas não passam mais na frente: tudo por data, da mais recente para a mais antiga',
+    'as minhas corridas não passam mais na frente: a lista segue a ordem do servidor (da mais antiga para a mais nova)',
     (tester) async {
       tester.view.physicalSize = const Size(800, 4000);
       tester.view.devicePixelRatio = 1;
@@ -1820,12 +1818,13 @@ void priorityOrderTests() {
         if (uri.path == '/editions') {
           return JsonReply(200, {
             'items': [
-              race('A', '2027-01-01'), // sem marca, a mais recente
-              race('B', '2026-06-01'), // desejo
-              race('C', '2026-05-01'), // inscrito
+              // O servidor já devolve da mais antiga para a mais nova.
               race('D', '2024-01-01'), // já corri, a mais antiga
-              race('E', '2026-12-01'), // sem marca
+              race('C', '2026-05-01'), // inscrito
+              race('B', '2026-06-01'), // desejo
               race('F', '2026-07-01'), // desejo
+              race('E', '2026-12-01'), // sem marca
+              race('A', '2027-01-01'), // sem marca, a mais recente
             ],
           });
         }
@@ -1889,7 +1888,7 @@ void defaultOrderTests() {
     });
     await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
-    expect(limits.first, '100');
+    expect(limits.first, '20');
     double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
     expect(top('Corrida A') < top('Corrida B'), isTrue);
   });
@@ -1985,37 +1984,4 @@ void ratingTests() {
     expect(calls.last.containsKey('dateFrom'), isFalse);
     expect(calls.last.containsKey('dateTo'), isFalse);
   });
-
-  testWidgets(
-    'a lista mostra 20 corridas por vez e "Carregar mais" mostra +20',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 12000);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final gateway = await signed((uri, method, headers, body) async {
-        if (uri.path == '/editions') {
-          return JsonReply(200, {
-            'items': [
-              for (var i = 0; i < 45; i++)
-                rated(
-                  'C$i',
-                  '2026-05-${(i % 28 + 1).toString().padLeft(2, '0')}',
-                  score: 4,
-                  reviews: 1,
-                ),
-            ],
-          });
-        }
-        return const JsonReply(200, {'items': []});
-      });
-      await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byType(Card), findsNWidgets(20));
-      await tester.tap(find.byKey(const Key('catalog-show-more')));
-      await tester.pumpAndSettle();
-      expect(find.byType(Card), findsNWidgets(40));
-    },
-  );
 }

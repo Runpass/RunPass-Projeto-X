@@ -22,6 +22,7 @@ class Unavailable(Exception):
 class Store(Protocol):
     def get(self, key: Key) -> Item: ...
     def commit(self, expected: dict[Key, Item], writes: dict[Key, Item]) -> None: ...
+    def batch_get(self, keys) -> dict[Key, Item]: ...
     def query(self, table, pk, *, lower=None, upper=None, prefix=None, after=None, limit=20): ...
 
 
@@ -45,6 +46,9 @@ class MemoryStore:
     def get(self, key):
         with self.lock:
             return deepcopy(self.items.get(key))
+
+    def batch_get(self, keys):
+        return {key: self.get(key) for key in keys}
 
     def commit(self, expected, writes):
         with self.lock:
@@ -104,6 +108,41 @@ class DynamoStore:
         if not result:
             return None
         return {k: self.decoder.deserialize(v) for k, v in result.items() if k not in ("PK", "SK")}
+
+    def batch_get(self, keys):
+        """Varias leituras consistentes em poucas chamadas (BatchGetItem, ate 100 chaves cada). Chave de
+        tabela nao configurada volta como ausente. Devolve {chave: item ou None}."""
+        keys = list(dict.fromkeys(keys))
+        result = {key: None for key in keys}
+        by_table = {}
+        for key in keys:
+            if key[0] in self.tables:
+                by_table.setdefault(key[0], []).append(key)
+        for table, group in by_table.items():
+            name = self.tables[table]
+            for start in range(0, len(group), 100):
+                pending = {
+                    "Keys": [
+                        self.encode({"PK": pk, "SK": sk})
+                        for _, pk, sk in group[start : start + 100]
+                    ],
+                    "ConsistentRead": True,
+                }
+                for _ in range(4):
+                    try:
+                        response = self.client.batch_get_item(RequestItems={name: pending})
+                    except (ClientError, BotoCoreError) as error:
+                        raise Unavailable() from error
+                    for row in response.get("Responses", {}).get(name, []):
+                        item = {k: self.decoder.deserialize(v) for k, v in row.items()}
+                        pk, sk = item.pop("PK"), item.pop("SK")
+                        result[(table, pk, sk)] = item
+                    pending = (response.get("UnprocessedKeys") or {}).get(name)
+                    if not pending:
+                        break
+                else:
+                    raise Unavailable()
+        return result
 
     def commit(self, expected, writes):
         if not writes.keys() <= expected.keys() or len(expected) > 100:
