@@ -3136,10 +3136,6 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
   static const _gridKey = 'grid-columns-profile';
   int gridColumns = GridColumns.standard;
 
-  /// Corridas da agenda no perfil: grade (padrão, 3 por linha) ou lista como na tela Corridas; fica neste aparelho.
-  static const _viewKey = 'profile-view-mode';
-  CatalogViewMode planView = CatalogViewMode.grid;
-
   /// Minhas publicações: grade de miniaturas (padrão) ou lista com as publicações inteiras, como no início.
   static const _postViewKey = 'profile-posts-view-mode';
   CatalogViewMode postView = CatalogViewMode.grid;
@@ -3148,9 +3144,6 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
   void initState() {
     super.initState();
     _loadGridColumns();
-    CatalogViewMode.read(_viewKey, CatalogViewMode.grid).then((mode) {
-      if (mounted) setState(() => planView = mode);
-    });
     CatalogViewMode.read(_postViewKey, CatalogViewMode.grid).then((mode) {
       if (mounted) setState(() => postView = mode);
     });
@@ -3551,21 +3544,12 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     ),
   );
 
-  /// Corrida da agenda no mesmo cartão da tela Corridas (lista ou grade). Tocar abre a prova.
+  /// Corrida da agenda no mesmo cartão compacto da tela Corridas. Tocar abre a prova.
   Widget planTile(Map<String, dynamic> plan) {
     final edition = {
       ...(plan['edition'] as Map<String, dynamic>? ?? const {}),
       'id': plan['editionId'],
     };
-    final date = edition['date'] as String?;
-    final place = [
-      if (edition['city'] != null) edition['city'] as String,
-      if (edition['state'] != null) edition['state'] as String,
-    ].join('/');
-    final subtitle = [
-      if (date != null) displayDate(date),
-      if (place.isNotEmpty) place,
-    ].join(' · ');
     Future<void> open() async {
       if (plan['editionId'] == null) return;
       await Navigator.of(context).push(
@@ -3583,30 +3567,11 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
       }
     }
 
-    final key = Key('plan-${plan['editionId']}');
-    if (planView == CatalogViewMode.grid) {
-      return EditionGridCard(
-        key: key,
-        gateway: widget.gateway,
-        edition: edition,
-        columns: gridColumns,
-        subtitle: subtitle,
-        shortDate: date == null ? '' : displayDate(date).substring(0, 5),
-        onTap: open,
-      );
-    }
-    final distances = [
-      for (final d in (edition['distances'] as List? ?? const []))
-        '${(d as Map)['kilometers']} km',
-    ].join(' · ');
-    return EditionListCard(
-      key: key,
+    // Mesmo cartão compacto da tela Corridas (só lista): miniatura, quando e onde, nome e distâncias.
+    return EditionCompactCard(
+      key: Key('plan-${plan['editionId']}'),
       gateway: widget.gateway,
       edition: edition,
-      lines: [
-        if (subtitle.isNotEmpty) subtitle,
-        if (distances.isNotEmpty) distances,
-      ],
       onTap: open,
     );
   }
@@ -3634,19 +3599,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
             style: TextStyle(fontWeight: FontWeight.w700, color: context.muted),
           ),
         ),
-        if (planView == CatalogViewMode.grid)
-          GridView.count(
-            padding: EdgeInsets.zero,
-            crossAxisCount: gridColumns,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-            childAspectRatio: gridCardAspectRatio(gridColumns),
-            children: [for (final plan in shown) planTile(plan)],
-          )
-        else
-          for (final plan in shown) planTile(plan),
+        for (final plan in shown) planTile(plan),
         const SizedBox(height: 8),
       ],
     );
@@ -3749,19 +3702,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       ),
                     ),
                   ),
-                  sectionTitle(
-                    'Quero correr',
-                    trailing: CatalogViewMenu(
-                      key: const Key('view-menu-plans'),
-                      value: planView,
-                      columns: gridColumns,
-                      onChanged: (mode) {
-                        setState(() => planView = mode);
-                        mode.write(_viewKey);
-                      },
-                      onColumnsChanged: _setGridColumns,
-                    ),
-                  ),
+                  sectionTitle('Quero correr'),
                   if (result.plans.isEmpty)
                     const Text(
                       'Suas corridas desejadas e inscritas aparecerão aqui.',

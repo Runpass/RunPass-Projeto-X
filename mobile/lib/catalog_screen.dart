@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'agenda.dart';
-import 'catalog_views.dart';
 import 'duration_field.dart';
 import 'edition_cards.dart';
 import 'friends.dart';
@@ -261,6 +260,29 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
 
 /// Arte padrão de uma corrida sem imagem aprovada: degradê estável (a mesma corrida sempre tem a mesma
 /// cor), silhueta de corredor e a maior distância. Não é foto nem logo da prova: só uma identidade visual.
+/// Tipo da prova deduzido do nome (só para a arte padrão; não é um dado curado).
+enum RaceKind { rua, trilha, kids, noturna }
+
+RaceKind raceKind(String? name) {
+  final n = (name ?? '')
+      .toLowerCase()
+      .replaceAll(RegExp('[áàâã]'), 'a')
+      .replaceAll(RegExp('[éê]'), 'e')
+      .replaceAll('í', 'i')
+      .replaceAll(RegExp('[óôõ]'), 'o')
+      .replaceAll('ú', 'u');
+  bool has(String pattern) => RegExp(pattern).hasMatch(n);
+  if (has(r'\b(kids?|infantil|mirim|crianca)')) return RaceKind.kids;
+  if (has(r'\b(trail|trilha|montanha|mountain|cross|serra|ultra)')) {
+    return RaceKind.trilha;
+  }
+  if (has(r'\b(noturna|night|noite|neon|lua)')) return RaceKind.noturna;
+  return RaceKind.rua;
+}
+
+/// Arte padrão da corrida sem imagem aprovada: não é foto nem logo da prova, só uma identidade visual honesta.
+/// Cor e ícone pelo tipo (rua, trilha, kids, noturna) e, em destaque, a maior distância ou a sigla da cidade.
+/// A mesma corrida tem sempre a mesma variação de cor.
 class RaceArt extends StatelessWidget {
   final Map<String, dynamic> edition;
 
@@ -268,18 +290,39 @@ class RaceArt extends StatelessWidget {
   final bool labelAtLeft;
   const RaceArt({super.key, required this.edition, this.labelAtLeft = false});
 
-  static const palettes = [
-    [runPassNavy, Color(0xff5a2a1c), runPassOrange],
-    [Color(0xff0f2a43), Color(0xff1d5d7a), Color(0xff4cb5ae)],
-    [Color(0xff24103f), Color(0xff6a3d9a), Color(0xffff7a59)],
-    [Color(0xff10321f), Color(0xff2f7d4f), Color(0xffd9b44a)],
-    [Color(0xff3a0f1e), Color(0xff9a2e4d), Color(0xffff9d5c)],
-  ];
+  static const kindPalettes = {
+    RaceKind.rua: [
+      [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+      [Color(0xff3a0f1e), Color(0xff9a2e4d), Color(0xffff9d5c)],
+    ],
+    RaceKind.trilha: [
+      [Color(0xff10321f), Color(0xff2f7d4f), Color(0xffd9b44a)],
+      [Color(0xff2b1d0e), Color(0xff6b4a22), Color(0xff8fb35a)],
+    ],
+    RaceKind.kids: [
+      [Color(0xff0f2a43), Color(0xff1d8a8a), Color(0xffffd23f)],
+      [Color(0xff3b1d5a), Color(0xffd94f8a), Color(0xffffc857)],
+    ],
+    RaceKind.noturna: [
+      [Color(0xff070b1f), Color(0xff24103f), Color(0xff6a3d9a)],
+      [Color(0xff050816), Color(0xff0f2a43), Color(0xff3f6fd8)],
+    ],
+  };
+
+  static const kindIcons = {
+    RaceKind.rua: Icons.directions_run,
+    RaceKind.trilha: Icons.terrain,
+    RaceKind.kids: Icons.child_care,
+    RaceKind.noturna: Icons.nights_stay,
+  };
+
+  RaceKind get kind => raceKind(edition['name'] as String?);
 
   List<Color> get colors {
     final id = '${edition['id'] ?? edition['name'] ?? ''}';
     final seed = id.codeUnits.fold<int>(7, (h, c) => (h * 31 + c) & 0x7fffffff);
-    return palettes[seed % palettes.length];
+    final options = kindPalettes[kind]!;
+    return options[seed % options.length];
   }
 
   String? get longest {
@@ -293,9 +336,23 @@ class RaceArt extends StatelessWidget {
     return distanceLabel(km.last);
   }
 
+  /// Sem distância: a sigla da cidade (3 letras), para cada corrida não ficar igual às outras.
+  String? get label {
+    final distance = longest;
+    if (distance != null) return distance;
+    final city = '${edition['city'] ?? ''}'.trim();
+    if (city.isEmpty) return null;
+    final letters = city.replaceAll(RegExp(r'[^A-Za-zÀ-ÿ]'), '');
+    return letters.isEmpty
+        ? null
+        : letters
+              .substring(0, letters.length < 3 ? letters.length : 3)
+              .toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final label = longest;
+    final text = label;
     final decoration = BoxDecoration(
       gradient: LinearGradient(
         begin: Alignment.topLeft,
@@ -306,26 +363,54 @@ class RaceArt extends StatelessWidget {
     return DecoratedBox(
       key: const Key('race-art'),
       decoration: decoration,
-      child: ClipRect(
-        child: Stack(
-          children: [
-            Positioned(
-              right: -14,
-              bottom: -26,
-              child: Icon(
-                Icons.directions_run,
-                size: 170,
-                color: Colors.white.withValues(alpha: .13),
-              ),
-            ),
-            if (label != null)
-              Positioned.fill(
-                child: CustomPaint(
-                  painter: _ArtLabelPainter(label, left: labelAtLeft),
+      child: LayoutBuilder(
+        builder: (context, box) {
+          // Miniatura (lista compacta): a distância é a informação, legível e no centro.
+          final small = box.maxWidth < 140;
+          return ClipRect(
+            child: Stack(
+              children: [
+                Positioned(
+                  right: small ? -6 : -14,
+                  bottom: small ? -10 : -26,
+                  child: Icon(
+                    kindIcons[kind],
+                    key: Key('race-art-${kind.name}'),
+                    size: small ? 56 : 170,
+                    color: Colors.white.withValues(alpha: small ? .18 : .13),
+                  ),
                 ),
-              ),
-          ],
-        ),
+                if (text != null && small)
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(6),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          text,
+                          key: const Key('race-art-label'),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 24,
+                            shadows: [
+                              Shadow(blurRadius: 6, color: Colors.black38),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                else if (text != null)
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: _ArtLabelPainter(text, left: labelAtLeft),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -475,8 +560,7 @@ class CatalogScreen extends StatefulWidget {
 
 class _CatalogScreenState extends State<CatalogScreen> {
   final fields = {
-    for (final key in ['q', 'city', 'state', 'year'])
-      key: TextEditingController(text: key == 'year' ? upcomingFilter : ''),
+    for (final key in ['q', 'city', 'state']) key: TextEditingController(),
   };
   // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
@@ -489,27 +573,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
   bool loading = false;
   bool showFilters = false;
 
-  /// Padrão da lista: só as corridas dos próximos 20 dias. Escolher um ano, "Todos os anos" ou buscar por um nome
-  /// mostra as outras.
-  bool get upcomingWindow =>
-      fields['year']!.text == upcomingFilter &&
-      fields['q']!.text.trim().isEmpty;
-
-  int? get selectedYear => int.tryParse(fields['year']!.text);
-
-  /// Anos das corridas já vistas (qualquer busca), para o filtro de ano alcançar todas as datas do catálogo.
-  final Set<int> knownYears = {};
-
-  /// Visualização escolhida (lista ou grade) e colunas da grade; ficam neste aparelho.
-  CatalogViewMode viewMode = CatalogViewMode.list;
-  int gridColumns = 2;
+  /// A lista mostra só as corridas dos próximos 20 dias; as outras aparecem pela busca por nome.
+  bool get upcomingWindow => fields['q']!.text.trim().isEmpty;
 
   @override
   void initState() {
     super.initState();
     start();
     loadMine();
-    loadViewPreferences();
   }
 
   /// Primeira carga: se o perfil tem cidade, a lista abre nela (dá para trocar ou limpar em "Estado e cidade").
@@ -528,93 +599,30 @@ class _CatalogScreenState extends State<CatalogScreen> {
     if (mounted) await load();
   }
 
-  Future<void> loadViewPreferences() async {
-    final mode = await CatalogViewMode.read();
-    final columns = (await GridColumns.read(
-      'catalog-grid-columns',
-      fallback: 2,
-    )).clamp(2, 3);
-    if (mounted) {
-      setState(() {
-        viewMode = mode;
-        gridColumns = columns;
-      });
-    }
-  }
-
-  void chooseViewMode(CatalogViewMode mode) {
-    setState(() => viewMode = mode);
-    mode.write();
-  }
-
-  void chooseGridColumns(int columns) {
-    setState(() => gridColumns = columns);
-    GridColumns.write('catalog-grid-columns', columns);
-  }
-
-  /// Cartão da grade (compartilhado com a agenda e o perfil).
-  Widget gridCard(Map<String, dynamic> edition) {
-    final score = scoreOf(edition);
-    return EditionGridCard(
-      key: Key('grid-card-${edition['id']}'),
-      gateway: widget.gateway,
-      edition: edition,
-      columns: gridColumns,
-      subtitle:
-          '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
-      shortDate: displayDate(edition['date'] as String).substring(0, 5),
-      rating: score == null
-          ? null
-          : '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
-      onTap: loading ? null : () => openEdition(edition['id'] as String),
-    );
-  }
-
-  /// Corpo da lista conforme a visualização escolhida.
+  /// Corpo da lista (só lista, com seções por período).
   List<Widget> editionViews() {
     final shown = items;
-    switch (viewMode) {
-      case CatalogViewMode.list:
-        // Seções por período (a lista já vem na ordem certa): Hoje, Amanhã, Este fim de semana...
-        final out = <Widget>[];
-        String? section;
-        for (final edition in shown) {
-          final period = periodOf('${edition['date']}');
-          if (period != section) {
-            section = period;
-            out.add(
-              Padding(
-                key: Key('catalog-section-$period'),
-                padding: const EdgeInsets.only(top: 6, bottom: 8),
-                child: Text(
-                  period,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                  ),
-                ),
-              ),
-            );
-          }
-          out.add(editionCard(edition));
-        }
-        return out;
-      case CatalogViewMode.grid:
-        if (shown.isEmpty) return const [];
-        return [
-          GridView.count(
-            key: const Key('catalog-grid'),
-            crossAxisCount: gridColumns,
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: gridCardAspectRatio(gridColumns),
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            children: [for (final edition in shown) gridCard(edition)],
+    // Seções por período (a lista já vem na ordem certa): Hoje, Amanhã, Este fim de semana...
+    final out = <Widget>[];
+    String? section;
+    for (final edition in shown) {
+      final period = periodOf('${edition['date']}');
+      if (period != section) {
+        section = period;
+        out.add(
+          Padding(
+            key: Key('catalog-section-$period'),
+            padding: const EdgeInsets.only(top: 6, bottom: 8),
+            child: Text(
+              period,
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+            ),
           ),
-          const SizedBox(height: 12),
-        ];
+        );
+      }
+      out.add(editionCard(edition));
     }
+    return out;
   }
 
   Future<void> loadMine() async {
@@ -853,10 +861,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
               for (final key in ['city', 'state'])
                 if (fields[key]!.text.trim().isNotEmpty)
                   key: fields[key]!.text.trim(),
-              if (yearRange(fields['year']!.text) case final range?) ...{
-                'dateFrom': range.from,
-                'dateTo': range.to,
-              } else if (upcomingWindow) ...{
+              if (upcomingWindow) ...{
                 'dateFrom': upcomingRange().from,
                 'dateTo': upcomingRange().to,
               },
@@ -883,8 +888,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
       for (final entry
           in (page['items'] as List).cast<Map<String, dynamic>>()) {
         if (known.add(entry['id'])) items.add(entry);
-        final year = int.tryParse('${entry['date']}'.split('-').first);
-        if (year != null && year >= 1990 && year <= 2100) knownYears.add(year);
       }
       nextCursor = page['nextCursor'] as String?;
       autoRetried = false;
@@ -1044,33 +1047,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
-          // Ícones da lista: calendário (filtra por data), lupa (busca por nome) e, à direita, lista/grade
-          // (até 3 colunas). A ordem é sempre da corrida mais antiga para a mais nova.
+          // Lupa: busca por nome (as corridas fora dos próximos 20 dias aparecem por ela).
           Row(
             children: [
-              PopupMenuButton<String>(
-                key: const Key('catalog-date-filter'),
-                tooltip: 'Filtrar por data',
-                icon: const Icon(Icons.calendar_today_rounded),
-                enabled: !loading,
-                initialValue: fields['year']!.text,
-                onSelected: (value) {
-                  setState(() => fields['year']!.text = value);
-                  load();
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                    value: upcomingFilter,
-                    child: Text('Próximos 20 dias'),
-                  ),
-                  const PopupMenuItem(value: '', child: Text('Todos os anos')),
-                  for (final y in filterYears(null, {
-                    ...knownYears,
-                    ?selectedYear,
-                  }))
-                    PopupMenuItem(value: '$y', child: Text('$y')),
-                ],
-              ),
               IconButton(
                 key: const Key('catalog-search-toggle'),
                 tooltip: showFilters
@@ -1081,23 +1060,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
                 onPressed: toggleSearch,
               ),
-              const Spacer(),
-              CatalogViewMenu(
-                value: viewMode,
-                onChanged: chooseViewMode,
-                columns: gridColumns,
-                onColumnsChanged: chooseGridColumns,
-              ),
             ],
           ),
-          // Um pouco mais de ar entre a linha do ano e o primeiro cartão.
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           if (loading) const Center(child: CircularProgressIndicator()),
           if (!loading && error == null && items.isEmpty)
             Text(
               nextCursor == null
                   ? (upcomingWindow
-                        ? 'Nenhuma corrida nos próximos 20 dias com esses filtros. Escolha "Todos os anos" ou um ano para ver as outras, ou troque a cidade.'
+                        ? 'Nenhuma corrida nos próximos 20 dias. Busque pelo nome (lupa) para ver outras datas.'
                         : 'Nenhuma corrida encontrada com esses filtros.')
                   : 'Nenhuma corrida nesta página. Continue a busca.',
             ),

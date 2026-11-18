@@ -181,7 +181,6 @@ void main() {
   });
   priorityOrderTests();
   defaultOrderTests();
-  ratingTests();
   test('query parameters preserve stage and encode filters without leaking into path', () async {
     final gateway = await signed((uri, method, headers, body) async {
       expect(uri.path, '/dev/editions');
@@ -1985,7 +1984,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.text(
-        'Nenhuma corrida nos próximos 20 dias com esses filtros. Escolha "Todos os anos" ou um ano para ver as outras, ou troque a cidade.',
+        'Nenhuma corrida nos próximos 20 dias. Busque pelo nome (lupa) para ver outras datas.',
       ),
       findsOneWidget,
     );
@@ -2041,7 +2040,7 @@ void main() {
       expect(top('Corrida B') < top('Corrida C'), isTrue);
       expect(find.byKey(const Key('catalog-sort')), findsNothing);
       expect(find.byKey(const Key('catalog-sort-rating')), findsNothing);
-      expect(find.byKey(const Key('catalog-date-filter')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-date-filter')), findsNothing);
     },
   );
 
@@ -2303,97 +2302,5 @@ void defaultOrderTests() {
     expect(limits.first, '20');
     double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
     expect(top('Corrida A') < top('Corrida B'), isTrue);
-  });
-}
-
-void ratingTests() {
-  Map<String, dynamic> rated(
-    String id,
-    String date, {
-    num? score,
-    int reviews = 0,
-  }) => {
-    ...entry(id),
-    'id': 'E$id',
-    'date': date,
-    if (score != null) 'runScore': {'value': score, 'reviewCount': reviews},
-  };
-
-  testWidgets(
-    'calendário e lupa ficam na mesma linha, nessa ordem, e o + no topo',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 3000);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final gateway = await signed((uri, method, headers, body) async {
-        return JsonReply(200, {
-          'items': [rated('A', '2026-05-01', score: 4, reviews: 3)],
-        });
-      });
-      await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
-      );
-      await tester.pumpAndSettle();
-      final calendar = tester.getRect(
-        find.byKey(const Key('catalog-date-filter')),
-      );
-      final search = tester.getRect(
-        find.byKey(const Key('catalog-search-toggle')),
-      );
-      final viewMenu = tester.getRect(
-        find.byKey(const Key('catalog-view-mode')),
-      );
-      expect(search.center.dy, closeTo(calendar.center.dy, 1));
-      expect(viewMenu.center.dy, closeTo(calendar.center.dy, 1));
-      expect(
-        search.left,
-        greaterThan(calendar.left),
-      ); // calendário, depois a lupa
-      expect(viewMenu.left, greaterThan(search.left));
-      // O "+" (pedir cadastro) fica na barra do topo, com a agenda e os avisos.
-      final bar = tester.getRect(find.byType(AppBar));
-      for (final key in ['catalog-request-new', 'catalog-agenda']) {
-        expect(
-          bar.contains(tester.getCenter(find.byKey(Key(key)))),
-          isTrue,
-          reason: key,
-        );
-      }
-      // Não existe mais o filtro de público (adultos/kids).
-      expect(find.text('Kids'), findsNothing);
-      expect(find.text('Adultos'), findsNothing);
-    },
-  );
-
-  testWidgets('a lista abre nos próximos 20 dias e o ano libera as outras', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final calls = <Map<String, String>>[];
-    final gateway = await signed((uri, method, headers, body) async {
-      if (uri.path == '/editions') calls.add(uri.queryParameters);
-      return JsonReply(200, {
-        'items': [rated('A', '2026-05-01', score: 4, reviews: 3)],
-      });
-    });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
-    await tester.pumpAndSettle();
-    expect(calls.last['dateFrom'], upcomingRange().from);
-    expect(calls.last['dateTo'], upcomingRange().to);
-    expect(calls.last.containsKey('audience'), isFalse);
-    await tester.tap(find.byKey(const Key('catalog-date-filter')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('2026').last);
-    await tester.pumpAndSettle();
-    expect(calls.last['dateFrom'], '2026-01-01');
-    expect(calls.last['dateTo'], '2026-12-31');
-    await tester.tap(find.byKey(const Key('catalog-date-filter')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Todos os anos').last);
-    await tester.pumpAndSettle();
-    expect(calls.last.containsKey('dateFrom'), isFalse);
-    expect(calls.last.containsKey('dateTo'), isFalse);
   });
 }

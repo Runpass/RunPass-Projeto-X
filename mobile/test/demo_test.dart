@@ -100,13 +100,8 @@ void main() {
       await tester.tap(find.byKey(const Key('catalog-search-toggle')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
-      // Calendário (filtro de data) na lista; sem ícones de ordem.
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('catalog-date-filter')),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(find.byKey(const Key('catalog-date-filter')), findsOneWidget);
+      // Só a lista, sem filtro de data nem ícones de ordem.
+      expect(find.byKey(const Key('catalog-date-filter')), findsNothing);
       expect(find.byKey(const Key('catalog-sort')), findsNothing);
       await tester.tap(find.text('Início'));
       await tester.pumpAndSettle();

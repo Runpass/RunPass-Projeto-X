@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/edition_cards.dart';
 import 'package:runpass/identity_gateway.dart';
 
@@ -71,6 +72,50 @@ void main() {
     await tester.pump();
     expect(find.text('Amanhã · Santos/SP'), findsOneWidget);
     expect(find.text('Corrida A'), findsOneWidget);
-    expect(find.text('5K'), findsOneWidget);
+    // Na pílula e em destaque na miniatura (corrida sem foto).
+    expect(find.text('5K'), findsNWidgets(2));
   });
+
+  test('tipo da prova pelo nome, para a arte padrão', () {
+    expect(raceKind('Corrida Kids do Parque'), RaceKind.kids);
+    expect(raceKind('Desafio Trilha da Serra'), RaceKind.trilha);
+    expect(raceKind('Night Run Outubro Rosa'), RaceKind.noturna);
+    expect(raceKind('Meia Maratona de São Paulo'), RaceKind.rua);
+  });
+
+  testWidgets(
+    'miniatura sem foto: tipo e distância (ou sigla da cidade) em destaque',
+    (tester) async {
+      Future<void> art(Map<String, dynamic> edition) => tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: SizedBox(
+              width: 76,
+              height: 76,
+              child: RaceArt(edition: edition),
+            ),
+          ),
+        ),
+      );
+      await art({
+        'id': 'a',
+        'name': 'Trail da Serra',
+        'city': 'Campinas',
+        'distances': [
+          {'kilometers': 21.0975},
+          {'kilometers': 5},
+        ],
+      });
+      expect(find.byKey(const Key('race-art-trilha')), findsOneWidget);
+      expect(find.text('21K'), findsOneWidget);
+      await art({
+        'id': 'b',
+        'name': 'Corrida X',
+        'city': 'Santos',
+        'distances': [],
+      });
+      expect(find.byKey(const Key('race-art-rua')), findsOneWidget);
+      expect(find.text('SAN'), findsOneWidget);
+    },
+  );
 }
