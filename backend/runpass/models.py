@@ -309,6 +309,10 @@ class PendingParticipation(Input):
         return self
 
 
+class AddDistance(Input):
+    kilometers: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
+
+
 class EditionRequestFields(Input):
     """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
     (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""

@@ -223,7 +223,7 @@ test('preferências: leitura segura e aba inicial só entre as permitidas', asyn
   assert.deepEqual(lerPrefs('{"tema":"roxo","abaInicial":"<script>"}'), { tema: 'auto', abaInicial: '' });
   assert.deepEqual(lerPrefs('null'), { tema: 'auto', abaInicial: '' });
   assert.equal(abaInicial('custos', ['cost_read']), 'custos');
-  assert.equal(abaInicial('custos', ['catalog_admin']), 'pedidos'); // sem permissão: cai no padrão
+  assert.equal(abaInicial('custos', ['catalog_admin']), 'catalogo'); // sem permissão: cai no padrão (atualização do catálogo)
   assert.equal(abaInicial('', ['user_admin']), 'cadastros');
   assert.equal(abaInicial('banners', ['catalog_admin', 'cost_read']), 'banners');
   assert.equal(abaInicial('operadores', ['cost_read']), 'custos');
@@ -317,4 +317,19 @@ test('idFonte e validarFonte seguem as regras do servidor', async () => {
   assert.match(validarFonte({ ...ok, tipo: 'platform', nivel: 1 }), /Só organizador/);
   assert.match(validarFonte({ ...ok, frequencia: 0 }), /1 a 2160/);
   assert.match(validarFonte({ ...ok, nome: '' }), /nome/);
+});
+
+test('agendamento mensal: texto dos dias e validação dos dias do mês', async () => {
+  const { quandoMensal, listaDiasMes } = await import('./lib.js');
+  assert.equal(quandoMensal([3, 1, 2], '03:00'), 'Dias 1, 2 e 3 de cada mês às 03:00');
+  assert.equal(quandoMensal([5], '06:30'), 'Dia 5 de cada mês às 06:30');
+  assert.equal(quandoMensal([], '03:00'), '');
+  assert.deepEqual(listaDiasMes('3, 1;2'), [1, 2, 3]);
+  for (const ruim of ['', '0', '29', '1,1', '1,2,3,4,5,6', 'a']) assert.throws(() => listaDiasMes(ruim), ruim);
+});
+
+test('o portal não tem mais as abas de fontes e divergências', async () => {
+  const { ABAS } = await import('./lib.js');
+  assert.ok(!('fontes' in ABAS) && !('divergencias' in ABAS));
+  assert.ok('catalogo' in ABAS && 'descobertas' in ABAS);
 });

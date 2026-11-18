@@ -562,21 +562,34 @@ String distanceLabel(double km) => '${km.round()}K';
 /// Edition details by id. A lookup that fails is left out of the result.
 Future<Map<String, Map<String, dynamic>>> loadEditions(
   IdentityGateway gateway,
-  Iterable<String> ids,
-) async {
+  Iterable<String> ids, {
+  int concurrency = 6,
+}) async {
+  // Poucas buscas por vez e uma nova tentativa: pedir todas juntas estoura o limite da API (as que falham
+  // sumiam em silencio e os km e as distâncias das medalhas mudavam a cada carga).
   final editions = <String, Map<String, dynamic>>{};
-  await Future.wait([
-    for (final id in ids.toSet())
-      () async {
+  final queue = ids.toSet().toList();
+  Future<void> worker() async {
+    while (queue.isNotEmpty) {
+      final id = queue.removeLast();
+      for (var attempt = 0; attempt < 3; attempt++) {
         try {
           editions[id] = await gateway.request(
             '/editions/${Uri.encodeComponent(id)}',
           );
+          break;
+        } on IdentityIssue catch (issue) {
+          if (issue.code == 'EDITION_NOT_FOUND') break;
         } on Exception {
-          // The caller still shows the item, only without edition details.
+          // tenta de novo
         }
-      }(),
-  ]);
+        await Future<void>.delayed(Duration(milliseconds: 300 * (attempt + 1)));
+      }
+      // A chamada que falhou 3 vezes continua sem detalhes: o chamador mostra o item mesmo assim.
+    }
+  }
+
+  await Future.wait([for (var i = 0; i < concurrency; i++) worker()]);
   return editions;
 }
 

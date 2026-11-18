@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from .catalog import CatalogFilters
 from .identity import AuthFailure
 from .models import (
+    AddDistance,
     BannerSuggestion,
     CompleteParticipation,
     CreateComment,
@@ -246,6 +247,14 @@ def create_app(
         if catalog is None:
             raise Unavailable()
         return catalog.detail(actor, id)
+
+    @app.post("/editions/{id}/distances", operation_id="addEditionDistance")
+    def add_edition_distance(id: str, body: AddDistance, actor: Actor):
+        """Corrida sem distancia: o corredor informa o km ao se inscrever (so quando nao ha distancia de fonte)."""
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        return catalog.add_runner_distance(actor, id, body.kilometers)
 
     @app.get("/editions/{id}/reviews", operation_id="listEditionReviews")
     def edition_reviews(
