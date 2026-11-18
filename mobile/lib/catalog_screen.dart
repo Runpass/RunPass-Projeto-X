@@ -823,6 +823,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
       loading = true;
       error = null;
     });
+    transient = false;
     try {
       final page = await widget.gateway.request(
         '/editions',
@@ -841,14 +842,34 @@ class _CatalogScreenState extends State<CatalogScreen> {
         if (year != null && year >= 1990 && year <= 2100) knownYears.add(year);
       }
       nextCursor = page['nextCursor'] as String?;
+      autoRetried = false;
     } on IdentityIssue catch (issue) {
       if (mounted) error = catalogError(issue);
+      transient = const {
+        'SERVICE_UNAVAILABLE',
+        'CONCURRENT_RETRY_REQUIRED',
+      }.contains(issue.code);
     } on Exception {
       if (mounted) error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.';
+      transient = true;
     } finally {
       if (mounted) setState(() => loading = false);
     }
+    // Falha passageira (serviço sobrecarregado ou rede): a tela tenta de novo sozinha uma vez, em vez de deixar o
+    // erro parado até a pessoa tocar em "Tentar novamente".
+    if (error != null && transient && !autoRetried && mounted) {
+      autoRetried = true;
+      final retryMore = more;
+      Future<void>.delayed(autoRetryDelay, () {
+        if (mounted && error != null && !loading) load(more: retryMore);
+      });
+    }
   }
+
+  /// Uma nova tentativa automática por falha passageira (zera quando uma carga dá certo).
+  bool autoRetried = false;
+  bool transient = false;
+  static const autoRetryDelay = Duration(seconds: 3);
 
   void openMyRequests() => Navigator.of(context).push(
     MaterialPageRoute<void>(
