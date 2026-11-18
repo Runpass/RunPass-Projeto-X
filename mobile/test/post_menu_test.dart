@@ -64,6 +64,10 @@ Future<IdentityGateway> gateway(
         removed = true;
         return const JsonReply(200, {});
       }
+      if (method == 'GET' && uri.path.startsWith('/participations/')) {
+        // Versão atual no servidor (a tela tinha 4; marcar pessoas mudou para 5).
+        return JsonReply(200, {'id': uri.pathSegments.last, 'version': 5});
+      }
       if (method == 'DELETE' && uri.path.startsWith('/participations/')) {
         calls.add(
           '$method ${uri.path} ${uri.queryParameters['expectedVersion']}',
@@ -98,7 +102,7 @@ void main() {
   });
 
   testWidgets(
-    'Remover pede confirmação, exclui a participação e some do início',
+    'Remover tira na hora, oferece Desfazer e só então exclui a participação com a versão atual',
     (tester) async {
       tester.view.physicalSize = const Size(900, 4000);
       tester.view.devicePixelRatio = 1;
@@ -112,20 +116,25 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-menu-remove')));
       await tester.pumpAndSettle();
-      expect(find.text('Remover publicação?'), findsOneWidget);
-      // Cancelar não exclui nada.
-      await tester.tap(find.byKey(const Key('post-remove-cancel')));
+      expect(find.byKey(const Key('post-menu-p-minha')), findsNothing);
+      expect(
+        find.textContaining('com a participação e a medalha'),
+        findsOneWidget,
+      );
+      // Desfazer: volta e nada é enviado.
+      await tester.tap(find.byKey(const Key('undo-delete')));
       await tester.pumpAndSettle();
       expect(calls, isEmpty);
+      expect(find.byKey(const Key('post-menu-p-minha')), findsOneWidget);
+      // Sem desfazer: a janela fecha e a exclusão vai com a versão atual (5), não a da tela (4).
       await tester.tap(find.byKey(const Key('post-menu-p-minha')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-menu-remove')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('post-remove-confirm')));
+      await tester.pump(const Duration(seconds: 7));
       await tester.pumpAndSettle();
-      expect(calls, ['DELETE /participations/p-minha 4']);
+      expect(calls, ['DELETE /participations/p-minha 5']);
       expect(find.byKey(const Key('post-menu-p-minha')), findsNothing);
-      expect(find.text('Publicação removida.'), findsOneWidget);
     },
   );
 
@@ -143,7 +152,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-menu-remove')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('post-remove-confirm')));
+      await tester.pump(const Duration(seconds: 7));
       await tester.pumpAndSettle();
       // Abrir o Início de novo (recarrega o feed): a publicação removida continua fora.
       await tester.pumpWidget(const SizedBox());
@@ -172,8 +181,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-menu-remove')));
       await tester.pumpAndSettle();
-      expect(find.text('Remover esta publicação?'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('post-remove-confirm')));
+      await tester.pump(const Duration(seconds: 7));
       await tester.pumpAndSettle();
       expect(calls, ['DELETE /posts/x-extra']);
       expect(find.byKey(const Key('post-menu-x-extra')), findsNothing);

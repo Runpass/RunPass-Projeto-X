@@ -16,7 +16,8 @@ import 'location_picker.dart';
 import 'medal_scan.dart';
 import 'pending_medals.dart';
 import 'notifications.dart';
-import 'post_card.dart' show FeedEntry, PostThumb, entryFromPost;
+import 'post_card.dart'
+    show FeedEntry, PostThumb, deleteParticipation, entryFromPost;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 import 'settings.dart';
@@ -1848,11 +1849,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
           }
         },
         perform: () async {
-          await widget.gateway.request(
-            '/participations/${Uri.encodeComponent(id)}',
-            method: 'DELETE',
-            query: {'expectedVersion': '${race.participation['version']}'},
-          );
+          await deleteParticipation(widget.gateway, id);
           forgetMedalDisplayImage(id);
         },
       );
@@ -3434,12 +3431,11 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              CircleAvatar(
+              MedalAvatar(
                 radius: 46,
-                backgroundColor: Theme.of(context).colorScheme.surface,
                 child: ProfileAvatar(
                   key: ValueKey('avatar-${profile['photoReference']}'),
-                  radius: 42,
+                  radius: 40,
                   gateway: widget.gateway,
                   profile: profile,
                 ),

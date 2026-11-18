@@ -1975,28 +1975,43 @@ void main() {
     );
   });
 
-  testWidgets('sem resultado, a tela oferece pedir o cadastro direto', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final gateway = await signed((uri, method, headers, body) async {
-      return const JsonReply(200, {'items': []});
-    });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
-    await tester.pumpAndSettle();
-    expect(
-      find.text(
-        'Nenhuma corrida nos próximos 20 dias. Busque pelo nome (lupa) para ver outras datas.',
-      ),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const Key('catalog-request-empty')));
-    await tester.pumpAndSettle();
-    expect(find.text('Pedir cadastro da corrida'), findsWidgets);
-    expect(find.byKey(const Key('request-submit')), findsOneWidget);
-  });
+  testWidgets(
+    'ao abrir sem corridas não há mensagem; a busca sem resultado oferece pedir o cadastro',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Nenhuma corrida'), findsNothing);
+      expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
+      // Busca aberta: o X fica no lugar da lupa.
+      await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('catalog-search-toggle')), findsOneWidget);
+      expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.search_rounded), findsNothing);
+      await tester.enterText(
+        find.byKey(const Key('catalog-name-search')),
+        'Inexistente',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Nenhuma corrida encontrada com esses filtros.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('catalog-request-empty')));
+      await tester.pumpAndSettle();
+      expect(find.text('Pedir cadastro da corrida'), findsWidgets);
+      expect(find.byKey(const Key('request-submit')), findsOneWidget);
+    },
+  );
 
   testWidgets('com resultados nao ha atalho de pedido no fim da lista', (
     tester,
@@ -2072,7 +2087,8 @@ void main() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pump(const Duration(seconds: 2));
-      expect(find.byKey(const Key('catalog-error')), findsOneWidget);
+      // Enquanto tenta de novo sozinha, não mostra a mensagem de erro.
+      expect(find.byKey(const Key('catalog-error')), findsNothing);
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
       expect(calls, 4);
@@ -2307,4 +2323,49 @@ void defaultOrderTests() {
     double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
     expect(top('Corrida A') < top('Corrida B'), isTrue);
   });
+
+  testWidgets(
+    'cartão da lista: ícone do link da prova só quando há link https',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final opened = <Uri>[];
+      final original = linkOpener;
+      linkOpener = (uri) async {
+        opened.add(uri);
+        return true;
+      };
+      addTearDown(() => linkOpener = original);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              {...entry('A'), 'officialUrl': 'https://corrida.exemplo.test/'},
+              {
+                ...entry('B'),
+                'registrationUrl': 'https://ingressos.exemplo.test/b',
+              },
+              {...entry('C'), 'officialUrl': 'javascript:alert(1)'},
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('card-link-A')), findsOneWidget);
+      expect(find.byKey(const Key('card-link-B')), findsOneWidget);
+      expect(find.byKey(const Key('card-link-C')), findsNothing);
+      await tester.tap(find.byKey(const Key('card-link-A')));
+      await tester.tap(find.byKey(const Key('card-link-B')));
+      await tester.pump();
+      expect(opened.map((u) => u.toString()), [
+        'https://corrida.exemplo.test/',
+        'https://ingressos.exemplo.test/b',
+      ]);
+    },
+  );
 }

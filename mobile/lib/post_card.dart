@@ -15,7 +15,7 @@ import 'friends.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
 import 'tagged_people.dart';
-import 'undo_delete.dart' show pendingDeletions;
+import 'undo_delete.dart' show deleteWithUndo, pendingDeletions;
 import 'runpass_theme.dart';
 
 /// Um cartao do Inicio. Vem de uma publicacao (`/feed`, `/posts/{id}`) ou de uma corrida
@@ -526,95 +526,51 @@ class _PostCardState extends State<PostCard> {
     widget.onChanged?.call();
   }
 
-  /// Remover a minha publicação: a publicação nasce da participação concluída, então remover exclui a
-  /// participação (e a medalha dela), depois de confirmar.
-  /// Publicação extra: remove só ela (a corrida, a medalha e a outra publicação continuam).
-  Future<void> removeExtra() async {
-    final id = entry.postId;
-    if (id == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remover esta publicação?'),
-        content: const Text(
-          'Só esta publicação sai do feed. A corrida, a medalha e as outras publicações continuam.',
-        ),
-        actions: [
-          TextButton(
-            key: const Key('post-remove-cancel'),
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            key: const Key('post-remove-confirm'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remover'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      await widget.gateway.request(
-        '/posts/${Uri.encodeComponent(id)}',
-        method: 'DELETE',
-      );
-      pendingDeletions.add(id);
-      if (!mounted) return;
-      setState(() => removed = true);
-      soon('Publicação removida.');
-      widget.onRemoved?.call();
-    } on IdentityIssue catch (issue) {
-      soon(catalogError(issue));
-    } on Exception {
-      soon('Não foi possível remover agora. Nada foi alterado.');
-    }
-  }
-
+  /// Remover a minha publicação, com "Desfazer". A publicação nasce da participação concluída, então remover
+  /// exclui a participação e a medalha dela. A publicação extra sai sozinha (a corrida, a medalha e a outra
+  /// publicação continuam). O cartão some na hora; a exclusão só vai ao servidor quando a janela do
+  /// "Desfazer" fecha.
   Future<void> removeMine() async {
-    if (entry.extra) return removeExtra();
     final participation = entry.race.participation;
-    final id = participation['id'] as String?;
+    final participationId = participation['id'] as String?;
+    final id = entry.extra ? entry.postId : participationId;
     if (id == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remover publicação?'),
-        content: const Text(
-          'A publicação e a participação nesta corrida serão excluídas, e a medalha dela sai das suas medalhas. Não dá para desfazer.',
-        ),
-        actions: [
-          TextButton(
-            key: const Key('post-remove-cancel'),
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            key: const Key('post-remove-confirm'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remover'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final onRemoved = widget.onRemoved;
     try {
-      await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(id)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${participation['version']}'},
+      final done = await deleteWithUndo(
+        context,
+        id: id,
+        message: entry.extra
+            ? 'Publicação removida.'
+            : 'Publicação removida, com a participação e a medalha.',
+        hide: () {
+          setState(() => removed = true);
+          onRemoved?.call();
+        },
+        restore: () {
+          if (mounted) setState(() => removed = false);
+        },
+        perform: () => entry.extra
+            ? widget.gateway.request(
+                '/posts/${Uri.encodeComponent(id)}',
+                method: 'DELETE',
+              )
+            : deleteParticipation(widget.gateway, id),
       );
-      // A exclusão termina no servidor em segundo plano (202): até lá a publicação ainda volta numa recarga.
-      // Fica escondida em todas as listas (Início, perfil e medalhas) e a tela não recarrega.
-      pendingDeletions.add(id);
-      if (!mounted) return;
-      setState(() => removed = true);
-      soon('Publicação removida.');
-      widget.onRemoved?.call();
+      // A exclusão termina no servidor em segundo plano (202): até lá o item ainda pode voltar numa
+      // recarga. Fica escondido em todas as listas (Início, perfil e medalhas) até o app fechar.
+      if (done) pendingDeletions.add(id);
     } on IdentityIssue catch (issue) {
-      soon(catalogError(issue));
+      if (mounted) setState(() => removed = false);
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
     } on Exception {
-      soon('Não foi possível remover agora. Nada foi alterado.');
+      if (mounted) setState(() => removed = false);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível remover agora. Nada foi alterado.'),
+        ),
+      );
     }
   }
 
@@ -1272,5 +1228,17 @@ class _PostScreenState extends State<PostScreen> {
           ),
       ],
     ),
+  );
+}
+
+/// Exclui a participação (com a publicação e a medalha) usando a versão atual do servidor, não a da tela:
+/// marcar pessoas ou editar o texto muda a versão, e a versão antiga seria recusada (VERSION_CONFLICT).
+Future<void> deleteParticipation(IdentityGateway gateway, String id) async {
+  final path = '/participations/${Uri.encodeComponent(id)}';
+  final current = await gateway.request(path);
+  await gateway.request(
+    path,
+    method: 'DELETE',
+    query: {'expectedVersion': '${current['version']}'},
   );
 }

@@ -116,4 +116,25 @@ void main() {
       expect(result, png); // sempre a foto original, inteira
     },
   );
+
+  testWidgets(
+    'recortar é opcional e discreto: mostra os tamanhos e volta para a foto inteira',
+    (tester) async {
+      await tester.pumpWidget(MaterialApp(home: PhotoZoomScreen(image: png)));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Use + e −'),
+        findsNothing,
+      ); // sem texto de instrução
+      expect(find.byKey(const Key('crop-aspect-0')), findsNothing);
+      await tester.tap(find.byKey(const Key('photo-crop')));
+      await tester.pump();
+      expect(find.text('Livre'), findsOneWidget);
+      expect(find.text('Feed 16:10'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('photo-crop-off')));
+      await tester.pump();
+      expect(find.byKey(const Key('crop-aspect-0')), findsNothing);
+      expect(find.byKey(const Key('photo-zoom-viewer')), findsOneWidget);
+    },
+  );
 }

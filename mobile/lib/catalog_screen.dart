@@ -745,10 +745,31 @@ class _CatalogScreenState extends State<CatalogScreen> {
           : '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
       onTap: loading ? null : () => openEdition(edition['id'] as String),
       actions: quickActions(edition),
+      trailing: raceLinkButton(edition),
     );
   }
 
   /// Ações da corrida com rótulo (não só ícone): Quero correr, Inscrito e Já corri. Marcada fica laranja.
+  /// Link da prova no cartão: o site oficial; sem ele, a página de inscrição. Sem link, nada aparece.
+  Widget? raceLinkButton(Map<String, dynamic> edition) {
+    final official = safeHttpsUri(edition['officialUrl']);
+    final link = official ?? safeHttpsUri(edition['registrationUrl']);
+    if (link == null) return null;
+    return IconButton(
+      key: Key('card-link-${edition['id']}'),
+      tooltip: official != null ? 'Site da corrida' : 'Página de inscrição',
+      visualDensity: VisualDensity.compact,
+      icon: const Icon(Icons.public_rounded, size: 20),
+      onPressed: () async {
+        if (!await linkOpener(link) && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Não foi possível abrir o link.')),
+          );
+        }
+      },
+    );
+  }
+
   Widget quickActions(Map<String, dynamic> edition) {
     final id = edition['id'] as String;
     final status = edition['status'];
@@ -917,15 +938,19 @@ class _CatalogScreenState extends State<CatalogScreen> {
     // erro parado até a pessoa tocar em "Tentar novamente".
     if (error != null && transient && !autoRetried && mounted) {
       autoRetried = true;
+      setState(() => retryPending = true);
       final retryMore = more;
       Future<void>.delayed(autoRetryDelay, () {
-        if (mounted && error != null && !loading) load(more: retryMore);
+        if (!mounted) return;
+        retryPending = false;
+        if (error != null && !loading) load(more: retryMore);
       });
     }
   }
 
   /// Uma nova tentativa automática por falha passageira (zera quando uma carga dá certo).
   bool autoRetried = false;
+  bool retryPending = false;
   bool transient = false;
   static const autoRetryDelay = Duration(seconds: 3);
 
@@ -1029,7 +1054,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: 'Nome da corrida',
-                prefixIcon: const Icon(Icons.search_rounded),
+                // Busca aberta: o X fica no lugar da lupa e fecha a busca.
+                prefixIcon: IconButton(
+                  key: const Key('catalog-search-toggle'),
+                  tooltip: 'Fechar a busca',
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: toggleSearch,
+                ),
                 suffixIcon: IconButton(
                   key: const Key('catalog-name-search-go'),
                   tooltip: 'Buscar',
@@ -1050,39 +1081,42 @@ class _CatalogScreenState extends State<CatalogScreen> {
             const SizedBox(height: 8),
           ],
           // Mesmo espaço (12) entre "Minhas solicitações", o público e o ano.
-          if (error != null) ...[
+          // Falha passageira com nova tentativa automática em curso: espera em silêncio, sem mensagem.
+          if (error != null && retryPending)
+            const Center(child: CircularProgressIndicator())
+          else if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
             TextButton(
               onPressed: loading ? null : () => load(more: nextCursor != null),
               child: const Text('Tentar novamente'),
             ),
           ],
-          // Lupa: busca por nome (as corridas fora dos próximos 20 dias aparecem por ela).
-          Row(
-            children: [
-              IconButton(
-                key: const Key('catalog-search-toggle'),
-                tooltip: showFilters
-                    ? 'Fechar a busca'
-                    : 'Buscar corridas por nome',
-                icon: Icon(
-                  showFilters ? Icons.close_rounded : Icons.search_rounded,
+          // Lupa: busca por nome (as corridas fora dos próximos 20 dias aparecem por ela). Aberta, vira o X do campo.
+          if (!showFilters)
+            Row(
+              children: [
+                IconButton(
+                  key: const Key('catalog-search-toggle'),
+                  tooltip: 'Buscar corridas por nome',
+                  icon: const Icon(Icons.search_rounded),
+                  onPressed: toggleSearch,
                 ),
-                onPressed: toggleSearch,
-              ),
-            ],
-          ),
+              ],
+            ),
           const SizedBox(height: 8),
           if (loading) const Center(child: CircularProgressIndicator()),
-          if (!loading && error == null && items.isEmpty)
+          // Ao abrir (lista dos próximos 20 dias) não há mensagem; só a busca explica quando não acha nada.
+          if (!loading && error == null && items.isEmpty && !upcomingWindow)
             Text(
               nextCursor == null
-                  ? (upcomingWindow
-                        ? 'Nenhuma corrida nos próximos 20 dias. Busque pelo nome (lupa) para ver outras datas.'
-                        : 'Nenhuma corrida encontrada com esses filtros.')
+                  ? 'Nenhuma corrida encontrada com esses filtros.'
                   : 'Nenhuma corrida nesta página. Continue a busca.',
             ),
-          if (!loading && error == null && items.isEmpty && nextCursor == null)
+          if (!loading &&
+              error == null &&
+              items.isEmpty &&
+              nextCursor == null &&
+              !upcomingWindow)
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton(
@@ -3408,7 +3442,7 @@ Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
       ),
     );
 
-/// Foto da PUBLICAÇÃO: sempre inteira, sem recorte; a tela só deixa ampliar e reduzir para conferir.
+/// Foto da PUBLICAÇÃO: abre inteira; recortar (com os tamanhos) é opcional.
 Future<List<int>?> cropPostPhoto(BuildContext context, List<int> photo) =>
     Navigator.of(context).push<List<int>>(
       MaterialPageRoute(
