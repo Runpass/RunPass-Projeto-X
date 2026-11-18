@@ -1667,6 +1667,39 @@ void main() {
   );
 
   testWidgets(
+    'falha passageira na lista: a tela tenta de novo sozinha uma vez',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      var calls = 0;
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path != '/editions') return const JsonReply(200, {'items': []});
+        calls++;
+        // 3 recusas seguidas (o gateway já tenta 3 vezes) e depois responde.
+        if (calls <= 3) {
+          return const JsonReply(503, {'message': 'Service Unavailable'});
+        }
+        return JsonReply(200, {
+          'items': [
+            {...entry('A'), 'id': 'EA', 'date': '2026-05-01'},
+          ],
+        });
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.byKey(const Key('catalog-error')), findsOneWidget);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(calls, 4);
+      expect(find.byKey(const Key('catalog-error')), findsNothing);
+      expect(find.textContaining('Corrida A'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'a lista traz 20 por vez e "Carregar mais" pede a próxima página com o mesmo limite',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);

@@ -563,29 +563,22 @@ String distanceLabel(double km) => '${km.round()}K';
 Future<Map<String, Map<String, dynamic>>> loadEditions(
   IdentityGateway gateway,
   Iterable<String> ids, {
-  int concurrency = 6,
+  int concurrency = 4,
 }) async {
-  // Poucas buscas por vez e uma nova tentativa: pedir todas juntas estoura o limite da API (as que falham
-  // sumiam em silencio e os km e as distâncias das medalhas mudavam a cada carga).
+  // Poucas buscas por vez (o gateway também limita e já tenta de novo quando a API recusa por sobrecarga).
+  // Antes todas saíam juntas e as que falhavam sumiam: os km das medalhas mudavam a cada carga.
   final editions = <String, Map<String, dynamic>>{};
   final queue = ids.toSet().toList();
   Future<void> worker() async {
     while (queue.isNotEmpty) {
       final id = queue.removeLast();
-      for (var attempt = 0; attempt < 3; attempt++) {
-        try {
-          editions[id] = await gateway.request(
-            '/editions/${Uri.encodeComponent(id)}',
-          );
-          break;
-        } on IdentityIssue catch (issue) {
-          if (issue.code == 'EDITION_NOT_FOUND') break;
-        } on Exception {
-          // tenta de novo
-        }
-        await Future<void>.delayed(Duration(milliseconds: 300 * (attempt + 1)));
+      try {
+        editions[id] = await gateway.request(
+          '/editions/${Uri.encodeComponent(id)}',
+        );
+      } on Exception {
+        // Sem detalhes desta corrida: o chamador mostra o item mesmo assim.
       }
-      // A chamada que falhou 3 vezes continua sem detalhes: o chamador mostra o item mesmo assim.
     }
   }
 
