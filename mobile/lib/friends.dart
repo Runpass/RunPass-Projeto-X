@@ -33,6 +33,7 @@ String friendLabel(String? state) => switch (state) {
   _ => 'Adicionar amigo',
 };
 
+/// Foto de perfil, sempre no formato de medalha (aro dourado e fita); [radius] e o tamanho total.
 class ProfileAvatar extends StatelessWidget {
   final double radius;
   final IdentityGateway? gateway;
@@ -46,26 +47,30 @@ class ProfileAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final inner = MedalAvatar.innerRadius(radius);
     final id = profile?['id'] as String?;
-    final person = Icon(Icons.person, color: runPassOrange, size: radius * 1.1);
+    final person = Icon(Icons.person, color: runPassOrange, size: inner * 1.1);
     final photo =
         gateway != null && id != null && profile?['photoReference'] != null;
-    return CircleAvatar(
+    return MedalAvatar(
       radius: radius,
-      backgroundColor: context.softFill,
-      child: photo
-          ? ClipOval(
-              child: SizedBox(
-                width: radius * 2,
-                height: radius * 2,
-                child: SignedPhoto(
-                  gateway: gateway!,
-                  endpoint: '/profiles/${Uri.encodeComponent(id)}/photo',
-                  fallback: Center(child: person),
+      child: CircleAvatar(
+        radius: inner,
+        backgroundColor: context.softFill,
+        child: photo
+            ? ClipOval(
+                child: SizedBox(
+                  width: inner * 2,
+                  height: inner * 2,
+                  child: SignedPhoto(
+                    gateway: gateway!,
+                    endpoint: '/profiles/${Uri.encodeComponent(id)}/photo',
+                    fallback: Center(child: person),
+                  ),
                 ),
-              ),
-            )
-          : person,
+              )
+            : person,
+      ),
     );
   }
 }
@@ -76,10 +81,13 @@ class MedalAvatar extends StatelessWidget {
   final Widget child;
   const MedalAvatar({super.key, required this.radius, required this.child});
 
+  /// Raio do circulo de dentro (a foto), descontando o aro dourado.
+  static double innerRadius(double radius) => radius * 0.87;
+
   @override
   Widget build(BuildContext context) {
     final size = radius * 2;
-    final ribbonHeight = radius * 0.9;
+    final ribbonHeight = radius * (radius < 24 ? 0.7 : 0.9);
     return SizedBox(
       key: const Key('medal-avatar'),
       width: size,
@@ -127,6 +135,128 @@ class MedalAvatar extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// O que a pessoa escolheu na foto ampliada do proprio perfil.
+enum ProfilePhotoAction { change, remove }
+
+/// Abre a foto do perfil ampliada, no formato de medalha. No proprio perfil ([editable]) oferece
+/// alterar e, se houver foto, remover; devolve a escolha (ou null se so olhou).
+Future<ProfilePhotoAction?> openProfilePhoto(
+  BuildContext context, {
+  required IdentityGateway gateway,
+  required Map profile,
+  bool editable = false,
+}) => Navigator.of(context).push<ProfilePhotoAction>(
+  PageRouteBuilder(
+    opaque: false,
+    barrierDismissible: true,
+    barrierColor: Colors.black87,
+    pageBuilder: (context, _, _) => ProfilePhotoViewer(
+      gateway: gateway,
+      profile: profile,
+      editable: editable,
+    ),
+    transitionsBuilder: (context, animation, _, child) => FadeTransition(
+      opacity: animation,
+      child: ScaleTransition(
+        scale: Tween(begin: 0.85, end: 1.0).animate(
+          CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
+        ),
+        child: child,
+      ),
+    ),
+  ),
+);
+
+class ProfilePhotoViewer extends StatelessWidget {
+  final IdentityGateway gateway;
+  final Map profile;
+  final bool editable;
+  const ProfilePhotoViewer({
+    super.key,
+    required this.gateway,
+    required this.profile,
+    this.editable = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPhoto = profile['photoReference'] != null;
+    final size = MediaQuery.sizeOf(context);
+    final radius = (size.shortestSide * 0.36).clamp(90.0, 170.0);
+    return Scaffold(
+      key: const Key('profile-photo-viewer'),
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(onTap: () => Navigator.pop(context)),
+            ),
+            Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                key: const Key('profile-photo-close'),
+                tooltip: 'Fechar',
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(height: radius * 0.6),
+                  ProfileAvatar(
+                    radius: radius,
+                    gateway: gateway,
+                    profile: profile,
+                  ),
+                  if (editable) ...[
+                    const SizedBox(height: 32),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        FilledButton.icon(
+                          key: const Key('profile-photo-change'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: runPassOrange,
+                          ),
+                          onPressed: () =>
+                              Navigator.pop(context, ProfilePhotoAction.change),
+                          icon: const Icon(Icons.photo_camera_outlined),
+                          label: Text(
+                            hasPhoto ? 'Alterar foto' : 'Adicionar foto',
+                          ),
+                        ),
+                        if (hasPhoto)
+                          OutlinedButton.icon(
+                            key: const Key('profile-photo-remove'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: const BorderSide(color: Colors.white54),
+                            ),
+                            onPressed: () => Navigator.pop(
+                              context,
+                              ProfilePhotoAction.remove,
+                            ),
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Remover foto'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -522,10 +652,15 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 ],
                 Row(
                   children: [
-                    MedalAvatar(
-                      radius: 34,
+                    GestureDetector(
+                      key: const Key('public-profile-photo'),
+                      onTap: () => openProfilePhoto(
+                        context,
+                        gateway: widget.gateway,
+                        profile: p,
+                      ),
                       child: ProfileAvatar(
-                        radius: 30,
+                        radius: 34,
                         gateway: widget.gateway,
                         profile: p,
                       ),

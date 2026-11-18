@@ -2473,11 +2473,7 @@ class _EditionScreenState extends State<EditionScreen> {
           children: [
             Row(
               children: [
-                CircleAvatar(
-                  radius: 20,
-                  backgroundColor: context.softFill,
-                  child: Icon(Icons.person, color: runPassOrange),
-                ),
+                const ProfileAvatar(radius: 20),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -2701,11 +2697,7 @@ class _EditionScreenState extends State<EditionScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: context.softFill,
-                child: const Icon(Icons.person, color: runPassOrange, size: 20),
-              ),
+              const ProfileAvatar(radius: 18),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'catalog_screen.dart';
+import 'edition_cards.dart' show EditionCompactCard;
 import 'medal_scan.dart' show MedalScanScreen, pickMedalPhotoPath;
 import 'identity_gateway.dart';
 import 'profile_photo.dart' show PhotoZoomScreen;
@@ -250,25 +251,35 @@ class _NewPostScreenState extends State<NewPostScreen> {
                 ),
               ),
             for (final race in filterRaces(list, query, keep: chosen))
-              Card(
+              KeyedSubtree(
                 key: Key('new-post-race-${race.participation['id']}'),
-                color: chosen == race
-                    ? Theme.of(context).colorScheme.primaryContainer
-                    : null,
-                child: ListTile(
-                  leading: Icon(
-                    chosen == race ? Icons.check_circle : Icons.directions_run,
-                    color: runPassOrange,
+                child: EditionCompactCard(
+                  gateway: widget.gateway,
+                  // Mesmo cartao das outras listas de corridas (capa, data, cidade e distancias).
+                  edition:
+                      race.edition ??
+                      {
+                        'id': race.participation['editionId'],
+                        'name': race.name,
+                      },
+                  trailing: Icon(
+                    chosen == race
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    key: chosen == race
+                        ? const Key('new-post-race-chosen')
+                        : null,
+                    color: chosen == race ? runPassOrange : context.muted,
                   ),
-                  title: Text(race.name),
-                  subtitle: Text(
-                    [
-                      if (race.date != null) displayDate(race.date!),
-                      if (race.place.isNotEmpty) race.place,
-                      if (race.participation['publishToFeed'] == true)
-                        'já no feed: vira mais uma publicação',
-                    ].join(' · '),
-                  ),
+                  actions: race.participation['publishToFeed'] == true
+                      ? Text(
+                          'Já no feed: vira mais uma publicação',
+                          style: TextStyle(
+                            color: context.muted,
+                            fontSize: 12.5,
+                          ),
+                        )
+                      : null,
                   onTap: () => setState(() {
                     chosen = race;
                     postImageReference =
