@@ -376,8 +376,8 @@ class CatalogService:
         today = self.identity.clock().astimezone(ZoneInfo("America/Sao_Paulo")).date().isoformat()
         found = []
         for body in bodies.values():
-            if body is None:
-                continue
+            if body is None or body["status"] == "archived":
+                continue  # arquivada (duplicada, cancelada) nunca aparece na lista nem na busca
             name_text = normalized(body["name"])
             if not all(word in name_text for word in filters.q.split()):
                 continue
@@ -446,6 +446,8 @@ class CatalogService:
                 body = bodies[row["editionId"]]
                 if body is None or body["version"] != row["version"] or body["id"] in seen:
                     continue
+                if body["status"] == "archived":
+                    continue  # arquivada so abre pelo id (historico de quem participou)
                 if filters.namePrefix and not normalized(body["name"]).startswith(
                     filters.namePrefix
                 ):

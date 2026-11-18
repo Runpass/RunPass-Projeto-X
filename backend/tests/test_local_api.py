@@ -33,7 +33,7 @@ class LocalApiTests(unittest.TestCase):
                     self.assertEqual(response.status_code, status, response.text)
             admitted = {"Authorization": "Bearer " + runtime.tokens["runnerToken"]}
             page = client.get("/editions", headers=admitted).json()
-            self.assertEqual(len(page["items"]), 5)
+            self.assertEqual(len(page["items"]), 4)  # a sintetica arquivada nao lista
             # So no GET /me do proprio titular, depois da admissao gravar a data.
             self.assertEqual(client.get("/me", headers=admitted).json()["birthDate"], "1990-01-01")
 

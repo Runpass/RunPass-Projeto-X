@@ -308,8 +308,7 @@ class CatalogImportTests(unittest.TestCase):
             "synthetic-sp-2024",
             "synthetic-sp-2025",
             "synthetic-sp-2026",
-            "synthetic-archived",
-        ]
+        ]  # a arquivada (synthetic-archived) fica fora da lista
         near_sp = self.listed(lat=-23.55, lon=-46.63, radiusKm=30)
         self.assertEqual(
             sorted(e["id"] for e in near_sp), sorted(["csv-sp-example-001", *synthetic_sp])
