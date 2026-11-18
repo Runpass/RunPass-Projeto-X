@@ -344,6 +344,30 @@ void main() {
     },
   );
 
+  testWidgets(
+    'nova postagem: "Adicionar outra corrida" usa o fluxo da medalha e avisa quando virou pedido',
+    (tester) async {
+      final (gateway, _) = await setup();
+      var opened = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NewPostScreen(
+            gateway: gateway,
+            addRace: (context) async {
+              opened++;
+              return 'request';
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post-add-race')));
+      await tester.pumpAndSettle();
+      expect(opened, 1);
+      expect(find.textContaining('Pedido de cadastro enviado'), findsOneWidget);
+    },
+  );
+
   testWidgets('sem corrida concluída para publicar a tela explica', (
     tester,
   ) async {

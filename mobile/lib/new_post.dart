@@ -4,30 +4,76 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'catalog_screen.dart';
+import 'medal_scan.dart' show MedalScanScreen, pickMedalPhotoPath;
 import 'identity_gateway.dart';
 import 'profile_photo.dart' show RacePhotoCropScreen;
 import 'tagged_people.dart';
 import 'runpass_theme.dart';
 
 /// Nova postagem (o "+" da Home): publica no feed uma corrida que eu já concluí e ainda não publiquei,
-/// com uma foto própria (qualquer foto, separada da foto da medalha) e um texto.
+/// com uma foto própria (qualquer foto, separada da foto da medalha) e um texto. A corrida pode ser outra:
+/// "Adicionar outra corrida" usa o mesmo fluxo da medalha (corrida do catálogo ou pedido de cadastro) e, ao voltar,
+/// ela aparece na lista para publicar.
 class NewPostScreen extends StatefulWidget {
   final IdentityGateway gateway;
 
   /// Escolhe a foto da postagem; nulo se desistir. Trocável nos testes (a galeria e o recorte não rodam lá).
   final Future<List<int>?> Function(BuildContext context)? photoSelector;
-  const NewPostScreen({super.key, required this.gateway, this.photoSelector});
+
+  /// Adiciona outra corrida (foto da medalha, catálogo ou pedido de cadastro). Devolve o resultado do fluxo da
+  /// medalha (`'request'` quando virou pedido) ou nulo se a pessoa desistir. Trocável nos testes.
+  final Future<Object?> Function(BuildContext context)? addRace;
+  const NewPostScreen({
+    super.key,
+    required this.gateway,
+    this.photoSelector,
+    this.addRace,
+  });
 
   @override
   State<NewPostScreen> createState() => _NewPostScreenState();
 }
 
 class _NewPostScreenState extends State<NewPostScreen> {
-  late final Future<List<RaceRecord>> races = loadMyRaces(widget.gateway).then(
-    (all) => [
-      for (final race in all)
-        if (race.participation['publishToFeed'] != true) race,
-    ],
+  late Future<List<RaceRecord>> races = loadPublishable();
+
+  Future<List<RaceRecord>> loadPublishable() => loadMyRaces(widget.gateway)
+      .then(
+        (all) => [
+          for (final race in all)
+            if (race.participation['publishToFeed'] != true) race,
+        ],
+      );
+
+  /// Corrida que não está na lista: usa o fluxo da medalha (escolhe no catálogo ou pede o cadastro).
+  Future<void> addOtherRace() async {
+    Object? result;
+    if (widget.addRace != null) {
+      result = await widget.addRace!(context);
+    } else {
+      final path = await pickMedalPhotoPath(context);
+      if (path == null || !mounted) return;
+      result = await Navigator.of(context).push<Object?>(
+        MaterialPageRoute<Object?>(
+          builder: (_) =>
+              MedalScanScreen(gateway: widget.gateway, photoPath: path),
+        ),
+      );
+    }
+    if (!mounted || result == null) return;
+    setState(() {
+      races = loadPublishable();
+      message = result == 'request'
+          ? 'Pedido de cadastro enviado. Quando a equipe aprovar a corrida, ela aparece aqui para publicar.'
+          : null;
+    });
+  }
+
+  Widget addRaceButton() => OutlinedButton.icon(
+    key: const Key('new-post-add-race'),
+    onPressed: publishing ? null : addOtherRace,
+    icon: const Icon(Icons.add_location_alt_outlined),
+    label: const Text('Adicionar outra corrida (do catálogo ou não)'),
   );
   RaceRecord? chosen;
   String? postImageReference, message;
@@ -151,11 +197,22 @@ class _NewPostScreenState extends State<NewPostScreen> {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24),
-              child: Text(
-                'Você não tem corrida concluída para publicar. Conclua a participação em uma corrida (ou adicione uma medalha) e ela aparece aqui.',
-                key: const Key('new-post-empty'),
-                textAlign: TextAlign.center,
-                style: TextStyle(color: context.muted),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Você não tem corrida concluída para publicar. Adicione a corrida (do catálogo ou não) com a foto da medalha e ela aparece aqui.',
+                    key: const Key('new-post-empty'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: context.muted),
+                  ),
+                  const SizedBox(height: 12),
+                  addRaceButton(),
+                  if (message != null) ...[
+                    const SizedBox(height: 8),
+                    Text(message!, key: const Key('new-post-message')),
+                  ],
+                ],
               ),
             ),
           );
@@ -194,6 +251,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
                   }),
                 ),
               ),
+            Align(alignment: Alignment.centerLeft, child: addRaceButton()),
             if (chosen != null) ...[
               const SizedBox(height: 16),
               const Text(

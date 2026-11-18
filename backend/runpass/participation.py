@@ -74,6 +74,7 @@ class ParticipationService:
                 "state",
                 "version",
                 "timeSeconds",
+                "paceSecondsPerKm",
                 "placement",
                 "bibNumber",
                 "showTime",
@@ -153,7 +154,7 @@ class ParticipationService:
                 "createdAt": stamp(now),
                 "updatedAt": stamp(now),
             }
-            for field in ("timeSeconds", "placement", "bibNumber"):
+            for field in ("timeSeconds", "paceSecondsPerKm", "placement", "bibNumber"):
                 if payload.get(field) is not None:
                     item[field] = payload[field]
             write(part_key, item)
@@ -919,6 +920,7 @@ class ParticipationService:
                 "editionId",
                 "distanceId",
                 "timeSeconds",
+                "paceSecondsPerKm",
                 "placement",
                 "bibNumber",
                 "showTime",

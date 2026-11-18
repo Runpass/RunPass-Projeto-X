@@ -13,6 +13,7 @@ import 'friends.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
 import 'tagged_people.dart';
+import 'undo_delete.dart' show pendingDeletions;
 import 'runpass_theme.dart';
 
 /// Um cartao do Inicio. Vem de uma publicacao (`/feed`, `/posts/{id}`) ou de uma corrida
@@ -117,17 +118,19 @@ Future<ui.Image?> _loadAssetImage(String path) async {
 
 /// Recorte "cover" (preenche sem distorcer, cortando o excesso) da imagem de origem para caber
 /// exatamente no retangulo de destino.
-Rect _coverSrcRect(ui.Image image, Size dst) {
-  final iw = image.width.toDouble();
-  final ih = image.height.toDouble();
-  final srcAspect = iw / ih;
-  final dstAspect = dst.width / dst.height;
-  if (srcAspect > dstAspect) {
-    final cropWidth = ih * dstAspect;
-    return Rect.fromLTWH((iw - cropWidth) / 2, 0, cropWidth, ih);
-  }
-  final cropHeight = iw / dstAspect;
-  return Rect.fromLTWH(0, (ih - cropHeight) / 2, iw, cropHeight);
+/// Onde desenhar a foto INTEIRA dentro do quadro (sem cortar): centralizada, mantendo a proporção.
+Rect _containDstRect(ui.Image image, Rect dst) {
+  final scale = [
+    dst.width / image.width,
+    dst.height / image.height,
+  ].reduce((a, b) => a < b ? a : b);
+  final w = image.width * scale, h = image.height * scale;
+  return Rect.fromLTWH(
+    dst.left + (dst.width - w) / 2,
+    dst.top + (dst.height - h) / 2,
+    w,
+    h,
+  );
 }
 
 /// Imagem da propria publicacao: titulo da corrida, texto que o autor escreveu ao publicar
@@ -195,7 +198,7 @@ Future<Uint8List> buildShareCard({
     text(caption, 190, 32, weight: FontWeight.w500, color: Colors.white70);
   }
 
-  // Foto da medalha (recorte "cover"); sem foto, usa um marcador no lugar.
+  // Foto da publicação (ou da medalha) inteira; sem foto, usa um marcador no lugar.
   final photoRect = const Rect.fromLTWH(
     0,
     _cardHeaderHeight,
@@ -212,11 +215,13 @@ Future<Uint8List> buildShareCard({
     }
   }
   if (photo != null) {
+    // A foto inteira (sem cortar), centralizada sobre fundo escuro, como no feed.
+    canvas.drawRect(photoRect, Paint()..color = Colors.black);
     canvas.drawImageRect(
       photo,
-      _coverSrcRect(photo, photoRect.size),
-      photoRect,
-      Paint(),
+      Rect.fromLTWH(0, 0, photo.width.toDouble(), photo.height.toDouble()),
+      _containDstRect(photo, photoRect),
+      Paint()..filterQuality = FilterQuality.high,
     );
   } else {
     bg(photoRect);
@@ -284,17 +289,31 @@ Future<Uint8List> buildShareCard({
   return data!.buffer.asUint8List();
 }
 
+/// Linha de números da imagem de compartilhamento: km, tempo e pace (só o que houver).
+String shareLineOf(RaceRecord race) {
+  final km = race.kilometers;
+  return [
+    if (km != null) formatKilometers(km),
+    if (race.timeSeconds != null) formatDuration(race.timeSeconds!),
+    if (race.paceSecondsPerKm != null) formatPace(race.paceSecondsPerKm!),
+  ].join(' · ');
+}
+
 class PostCard extends StatefulWidget {
   final IdentityGateway gateway;
   final FeedEntry entry;
 
   /// Chamado ao voltar de comentarios ou perfil, para a tela de origem recarregar.
   final VoidCallback? onChanged;
+
+  /// Chamado depois de remover a minha publicação (ex.: fechar a tela da publicação). Não recarrega a lista.
+  final VoidCallback? onRemoved;
   const PostCard({
     super.key,
     required this.gateway,
     required this.entry,
     this.onChanged,
+    this.onRemoved,
   });
 
   @override
@@ -414,10 +433,13 @@ class _PostCardState extends State<PostCard> {
         method: 'DELETE',
         query: {'expectedVersion': '${participation['version']}'},
       );
+      // A exclusão termina no servidor em segundo plano (202): até lá a publicação ainda volta numa recarga.
+      // Fica escondida em todas as listas (Início, perfil e medalhas) e a tela não recarrega.
+      pendingDeletions.add(id);
       if (!mounted) return;
       setState(() => removed = true);
       soon('Publicação removida.');
-      widget.onChanged?.call();
+      widget.onRemoved?.call();
     } on IdentityIssue catch (issue) {
       soon(catalogError(issue));
     } on Exception {
@@ -479,14 +501,7 @@ class _PostCardState extends State<PostCard> {
     widget.onChanged?.call();
   }
 
-  String shareLine() {
-    final race = entry.race;
-    final km = race.kilometers;
-    return [
-      if (km != null) formatKilometers(km),
-      if (race.timeSeconds != null) formatDuration(race.timeSeconds!),
-    ].join(' · ');
-  }
+  String shareLine() => shareLineOf(entry.race);
 
   /// Texto da publicacao para compartilhar (WhatsApp, e-mail, Instagram, Facebook...).
   String shareText() {
@@ -678,7 +693,6 @@ class _PostCardState extends State<PostCard> {
     if (removed) return const SizedBox.shrink();
     final race = entry.race;
     final km = race.kilometers;
-    final dark = Theme.of(context).brightness == Brightness.dark;
     final subtitle = [
       if (entry.publishedAt != null) timeAgo(entry.publishedAt!),
       if (entry.place != null) entry.place!,
@@ -750,14 +764,11 @@ class _PostCardState extends State<PostCard> {
               ],
             ),
           ),
-          // Foto como no Instagram: de ponta a ponta do cartão, mais alta (4:5) e inteira (sem cortar). A medalha
-          // sem foto de publicação continua preenchendo o quadro.
+          // Foto como no Instagram: de ponta a ponta do cartão, mais alta (4:5) e sempre inteira (sem cortar).
           AspectRatio(
             aspectRatio: 4 / 5,
             child: ColoredBox(
-              color: entry.race.hasPostImage
-                  ? Colors.black
-                  : (dark ? const Color(0xff2a211c) : const Color(0xfffff2ec)),
+              color: Colors.black,
               child: SizedBox.expand(
                 child: MedalPhoto(
                   key: Key('post-photo-${entry.postId}'),
@@ -765,7 +776,8 @@ class _PostCardState extends State<PostCard> {
                   participationId: entry.race.participation['id'] as String?,
                   size: 72,
                   usePostImage: entry.race.hasPostImage,
-                  fit: entry.race.hasPostImage ? BoxFit.contain : BoxFit.cover,
+                  // Sempre a foto inteira, sem cortar (a da publicação e a da medalha).
+                  fit: BoxFit.contain,
                 ),
               ),
             ),
@@ -1052,7 +1064,12 @@ class _PostScreenState extends State<PostScreen> {
         if (entry == null && error == null)
           const Center(child: CircularProgressIndicator()),
         if (entry != null)
-          PostCard(gateway: widget.gateway, entry: entry!, onChanged: load),
+          PostCard(
+            gateway: widget.gateway,
+            entry: entry!,
+            onChanged: load,
+            onRemoved: () => Navigator.of(context).maybePop(),
+          ),
       ],
     ),
   );

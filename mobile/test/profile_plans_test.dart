@@ -187,7 +187,7 @@ void main() {
   });
 
   testWidgets(
-    'perfil: Quero correr é só lista; Minhas publicações mantém lista e grade',
+    'perfil: Quero correr é só lista; Minhas publicações sempre em grade de 3',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       tester.view.physicalSize = const Size(800, 3000);
@@ -199,7 +199,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('view-menu-plans')), findsNothing);
-      expect(find.byKey(const Key('view-menu-posts')), findsOneWidget);
+      expect(
+        find.byKey(const Key('view-menu-posts')),
+        findsNothing,
+      ); // publicações: sempre grade de 3
       expect(find.byKey(const Key('compact-card-a')), findsOneWidget);
     },
   );
