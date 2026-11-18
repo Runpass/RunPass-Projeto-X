@@ -106,4 +106,116 @@ void main() {
     expect(distance(), '');
     expect(find.textContaining('Ex.: 5, 10, 21 ou 42'), findsOneWidget);
   });
+
+  testWidgets(
+    'corrida fora do catálogo: procura na internet sozinha e um toque preenche o pedido',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final lookups = <Map<String, dynamic>>[];
+      final g = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          if (uri.host == 'cognito.example') {
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'synthetic'},
+            });
+          }
+          if (uri.path == '/edition-requests/web-lookup') {
+            lookups.add(body!);
+            return const JsonReply(200, {
+              'remaining': 4,
+              'items': [
+                {
+                  'name': 'Corrida Achada [FICTICIA]',
+                  'date': '2027-03-14',
+                  'city': 'Campinas',
+                  'state': 'SP',
+                  'distancesKm': [10, 21.0975],
+                  'officialUrl': 'https://exemplo.invalid/corrida',
+                },
+              ],
+            });
+          }
+          return const JsonReply(200, {'items': []});
+        },
+      );
+      await g.signIn('synthetic@example.test', 'synthetic');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditionRequestFormScreen(
+            gateway: g,
+            webLookup: true,
+            prefill: const {'name': 'corrida achada'},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(lookups.single['name'], 'corrida achada');
+      expect(
+        find.byKey(const Key('request-web-lookup-results')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Campinas/SP'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('request-web-found-0')));
+      await tester.pumpAndSettle();
+      expect(find.text('Corrida Achada [FICTICIA]'), findsOneWidget);
+      expect(find.text('14/03/2027'), findsOneWidget);
+      expect(find.text('10'), findsOneWidget);
+      expect(find.text('https://exemplo.invalid/corrida'), findsOneWidget);
+      expect(find.byKey(const Key('request-web-lookup-note')), findsOneWidget);
+    },
+  );
+
+  testWidgets('limite de buscas do dia: avisa e deixa preencher à mão', (
+    tester,
+  ) async {
+    final g = IdentityGateway(
+      cognito: Uri.parse('https://cognito.example'),
+      api: Uri.parse('https://api.example'),
+      clientId: 'synthetic',
+      transport: (uri, method, headers, body) async {
+        if (uri.host == 'cognito.example') {
+          return const JsonReply(200, {
+            'AuthenticationResult': {'AccessToken': 'synthetic'},
+          });
+        }
+        if (uri.path == '/edition-requests/web-lookup') {
+          return const JsonReply(429, {'code': 'WEB_LOOKUP_LIMIT'});
+        }
+        return const JsonReply(200, {'items': []});
+      },
+    );
+    await g.signIn('synthetic@example.test', 'synthetic');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionRequestFormScreen(
+          gateway: g,
+          webLookup: true,
+          prefill: const {'name': 'xyz corrida'},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('buscas na internet de hoje'), findsOneWidget);
+  });
+
+  testWidgets('busca na internet desligada: o formulário fica só manual', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionRequestFormScreen(
+          gateway: await gateway(),
+          prefill: const {'name': 'corrida qualquer'},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('request-web-lookup')), findsNothing);
+    expect(find.byKey(const Key('request-web-lookup-running')), findsNothing);
+  });
 }

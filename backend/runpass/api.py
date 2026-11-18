@@ -31,6 +31,7 @@ from .models import (
     ReplaceReview,
     ResubmitEditionRequest,
     StartUpload,
+    WebLookupRequest,
 )
 from .nl_search import MAX_PHRASE, text_fallback
 from .service import Problem
@@ -51,6 +52,7 @@ def create_app(
     social=None,
     natural_search=None,
     edition_requests=None,
+    web_lookup=None,
 ):
     # Runtime schema is a subset; the versioned full contract remains the canonical OpenAPI.
     app = FastAPI(
@@ -403,6 +405,13 @@ def create_app(
         if edition_requests is None:
             raise Unavailable()
         return edition_requests.suggest_banner(actor, idempotency_key, id, body.imageReference)
+
+    @app.post("/edition-requests/web-lookup", operation_id="lookUpRaceOnTheWeb")
+    def web_lookup_route(body: WebLookupRequest, actor: Actor):
+        """Corrida fora do catalogo: procura na web e devolve candidatas para preencher o pedido (nao grava)."""
+        if web_lookup is None:
+            raise Problem(503, "WEB_LOOKUP_UNAVAILABLE")
+        return web_lookup.find(actor, body.name, body.city, body.state)
 
     @app.get("/me/edition-requests", operation_id="listMyEditionRequests")
     def list_my_edition_requests(

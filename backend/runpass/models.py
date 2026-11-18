@@ -324,6 +324,12 @@ class AddDistance(Input):
     kilometers: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
 
 
+class WebLookupRequest(Input):
+    name: Annotated[str, Field(min_length=3, max_length=160)]
+    city: Annotated[str, Field(max_length=100)] | None = None
+    state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
+
+
 class EditionRequestFields(Input):
     """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
     (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""

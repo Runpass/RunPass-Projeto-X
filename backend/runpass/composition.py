@@ -24,6 +24,7 @@ from .service import IdentityService
 from .social import SocialService
 from .store import DynamoStore
 from .upload import UploadService
+from .web_lookup import WebLookup
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,12 @@ def _identity_service(settings: AwsSettings, dynamodb_client, account_remover=No
 
 
 def create_aws_app(
-    settings: AwsSettings, dynamodb_client, cognito_client, blob_store=None, natural_search=None
+    settings: AwsSettings,
+    dynamodb_client,
+    cognito_client,
+    blob_store=None,
+    natural_search=None,
+    web_lookup_invoke=None,
 ):
     verifier = CognitoVerifier(
         settings.runner_issuer,
@@ -109,6 +115,7 @@ def create_aws_app(
         social,
         natural_search,
         edition_requests,
+        WebLookup(service, web_lookup_invoke) if web_lookup_invoke else None,
     )
 
 

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'catalog_screen.dart';
+import 'edition_cards.dart' as cards;
+import 'runpass_theme.dart' show runPassOrange;
 import 'identity_gateway.dart';
 import 'undo_delete.dart';
 import 'location_picker.dart';
@@ -86,6 +88,10 @@ String? requestDistanceError(String value) {
       : 'Informe a distância em km (até 1000), por exemplo 10 ou 21,1.';
 }
 
+/// Procura na internet (API da OpenAI) na tela "Pedir cadastro". Desligada por decisão do dono (18/11/2026):
+/// o formulário fica só manual até ser ligada de novo (o backend também só liga com RUNPASS_WEB_LOOKUP=on).
+const webLookupEnabled = false;
+
 class EditionRequestFormScreen extends StatefulWidget {
   final IdentityGateway gateway;
 
@@ -112,9 +118,13 @@ class EditionRequestFormScreen extends StatefulWidget {
 
   /// Baixa a imagem do link colado em "Buscar na internet". Troque nos testes.
   final ImageLinkFetcher imageFetcher;
+
+  /// Procura a corrida na internet (API da OpenAI). Padrão: [webLookupEnabled]; os testes ligam.
+  final bool webLookup;
   const EditionRequestFormScreen({
     super.key,
     required this.gateway,
+    this.webLookup = webLookupEnabled,
     this.existing,
     this.prefill = const {},
     this.bannerSelector,
@@ -142,6 +152,11 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
 
   bool get correcting => widget.existing != null;
 
+  /// Procura na internet (corrida fora do catálogo): roda em segundo plano enquanto a pessoa preenche.
+  bool lookingUp = false;
+  List<Map<String, dynamic>>? found;
+  String? lookupNote;
+
   @override
   void initState() {
     super.initState();
@@ -161,6 +176,177 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
         text: correcting ? '' : start('officialUrl'),
       ),
     };
+    // Veio da busca do catálogo sem resultado: já procura o nome na internet, sem travar o formulário.
+    if (widget.webLookup &&
+        !correcting &&
+        fields['name']!.text.trim().length >= 3) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => lookUp());
+    }
+  }
+
+  Future<void> lookUp() async {
+    final name = fields['name']!.text.trim();
+    if (name.length < 3 || lookingUp) return;
+    setState(() {
+      lookingUp = true;
+      found = null;
+      lookupNote = null;
+    });
+    try {
+      final result = await widget.gateway.request(
+        '/edition-requests/web-lookup',
+        method: 'POST',
+        body: {
+          'name': name,
+          if (fields['city']!.text.trim().isNotEmpty)
+            'city': fields['city']!.text.trim(),
+          if (RegExp(r'^[A-Za-z]{2}$').hasMatch(fields['state']!.text.trim()))
+            'state': fields['state']!.text.trim(),
+        },
+      );
+      if (!mounted) return;
+      final items = (result['items'] as List? ?? const [])
+          .cast<Map<String, dynamic>>();
+      setState(() {
+        found = items;
+        lookupNote = items.isEmpty
+            ? 'Não achamos essa corrida na internet. Preencha o que você sabe.'
+            : null;
+      });
+    } on IdentityIssue catch (issue) {
+      if (mounted) {
+        setState(
+          () => lookupNote = issue.code == 'WEB_LOOKUP_LIMIT'
+              ? 'Você já usou as buscas na internet de hoje. Preencha o que você sabe.'
+              : 'A busca na internet não respondeu agora. Preencha o que você sabe ou tente de novo.',
+        );
+      }
+    } on Exception {
+      if (mounted) {
+        setState(
+          () => lookupNote =
+              'Sem conexão para buscar na internet. Preencha o que você sabe.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => lookingUp = false);
+    }
+  }
+
+  /// Usa uma corrida achada na internet para preencher o pedido (a pessoa ainda confere e envia).
+  void useFound(Map<String, dynamic> race) {
+    setState(() {
+      fields['name']!.text = '${race['name'] ?? ''}';
+      fields['date']!.text = requestDateToDisplay('${race['date'] ?? ''}');
+      fields['city']!.text = '${race['city'] ?? ''}';
+      if (race['state'] != null) fields['state']!.text = '${race['state']}';
+      final kms = (race['distancesKm'] as List? ?? const []);
+      if (kms.isNotEmpty) {
+        final km = (kms.first as num).toDouble();
+        fields['distanceKm']!.text = km == km.roundToDouble()
+            ? '${km.toInt()}'
+            : '$km';
+      }
+      if (race['officialUrl'] != null) {
+        fields['officialUrl']!.text = '${race['officialUrl']}';
+      }
+      found = null;
+      lookupNote = 'Preenchido com os dados da internet. Confira antes de enviar: a equipe ainda confere a fonte.';
+    });
+  }
+
+  Widget webLookupSection() {
+    if (correcting || !widget.webLookup) return const SizedBox.shrink();
+    final muted = Theme.of(context).hintColor;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const Key('request-web-lookup'),
+              onPressed: lookingUp ? null : lookUp,
+              icon: const Icon(Icons.travel_explore),
+              label: const Text('Procurar esta corrida na internet'),
+            ),
+          ),
+          if (lookingUp)
+            Row(
+              key: const Key('request-web-lookup-running'),
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Procurando na internet… você pode continuar preenchendo.',
+                    style: TextStyle(color: muted),
+                  ),
+                ),
+              ],
+            ),
+          if (lookupNote != null)
+            Text(
+              lookupNote!,
+              key: const Key('request-web-lookup-note'),
+              style: TextStyle(color: muted),
+            ),
+          if (found != null && found!.isNotEmpty)
+            Card(
+              key: const Key('request-web-lookup-results'),
+              margin: const EdgeInsets.only(top: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      'Achamos na internet. Toque para preencher:',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  for (final race in found!)
+                    ListTile(
+                      key: Key('request-web-found-${found!.indexOf(race)}'),
+                      title: Text('${race['name']}'),
+                      subtitle: Text(
+                        [
+                          cards.relativeDay('${race['date']}'),
+                          [
+                            race['city'],
+                            race['state'],
+                          ].whereType<String>().join('/'),
+                          ...cards.distanceChips({
+                            'distances': [
+                              for (final km
+                                  in (race['distancesKm'] as List? ?? const []))
+                                {'kilometers': km},
+                            ],
+                          }),
+                          if (race['officialUrl'] != null)
+                            Uri.tryParse('${race['officialUrl']}')?.host ?? '',
+                        ].where((t) => t.isNotEmpty).join(' · '),
+                      ),
+                      trailing: Text(
+                        'Usar',
+                        style: const TextStyle(
+                          color: runPassOrange,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      onTap: () => useFound(race),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -516,6 +702,7 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
                   required: true,
                   maxLength: 160,
                 ),
+                webLookupSection(),
                 field(
                   'date',
                   'Data (DD/MM/AAAA)',
