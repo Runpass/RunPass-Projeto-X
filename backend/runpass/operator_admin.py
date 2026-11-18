@@ -47,7 +47,7 @@ def grant_access(store, subject, permissions, granted_by, now=None):
 def _already_loaded(catalog, entry, head, origin):
     """True quando a versao atual do catalogo ja tem exatamente este conteudo e origem."""
     model = ImportEdition(**entry)
-    body = model.model_dump(exclude_none=True, exclude={"archived"})
+    body = model.model_dump(exclude_none=True, exclude={"archived", "distancesOptional"})
     body["version"] = head["version"]
     body["status"] = "archived" if model.archived else "past"
     stored = catalog.store.get(("catalog", "EDITION#" + model.id, "V#" + str(head["version"])))

@@ -84,7 +84,7 @@ void main() {
       expect(find.byKey(const Key('notifications-bell')), findsOneWidget);
       // Compartilhar abre a folha do sistema (WhatsApp, e-mail, Instagram, Facebook...).
       expect(find.byKey(const Key('share-p-amiga')), findsOneWidget);
-      expect(find.text('Compartilhar'), findsOneWidget);
+      expect(find.text('Compartilhar'), findsNothing); // só o ícone
     },
   );
 
@@ -158,6 +158,29 @@ void main() {
         MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
+      // Foto como no Instagram: quadro 4:5 de ponta a ponta do cartão.
+      final frame = tester.widget<AspectRatio>(
+        find
+            .ancestor(
+              of: find.byKey(const Key('post-photo-p1')),
+              matching: find.byType(AspectRatio),
+            )
+            .first,
+      );
+      expect(frame.aspectRatio, 4 / 5);
+      final card = tester.getRect(
+        find
+            .ancestor(
+              of: find.byKey(const Key('post-photo-p1')),
+              matching: find.byType(Card),
+            )
+            .first,
+      );
+      final photo = tester.getRect(find.byKey(const Key('post-photo-p1')));
+      expect(
+        photo.width,
+        closeTo(card.width - 8, 1),
+      ); // o Card tem 4 de margem de cada lado
       // Em negrito e sem sublinhado: o link é só o nome da corrida.
       final title = tester.widget<Text>(
         find.descendant(
@@ -167,6 +190,9 @@ void main() {
       );
       expect(title.style?.fontWeight, FontWeight.w800);
       expect(title.style?.decoration, isNull);
+      // O nome da corrida fica abaixo da foto (agora maior, como no Instagram).
+      await tester.ensureVisible(find.byKey(const Key('post-race-p1')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-race-p1')));
       await tester.pumpAndSettle();
       expect(paths, contains('/editions/E1'));

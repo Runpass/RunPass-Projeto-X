@@ -48,6 +48,7 @@ Future<IdentityGateway> gatewayWith({
   Map<String, dynamic>? participants,
   Map<String, dynamic>? registrants,
   bool completedByMe = false,
+  bool minePosted = true,
 }) async {
   final gateway = IdentityGateway(
     cognito: Uri.parse('https://cognito.example'),
@@ -81,7 +82,7 @@ Future<IdentityGateway> gatewayWith({
         return JsonReply(200, photos);
       }
       if (completedByMe && uri.path == '/me/participations') {
-        return const JsonReply(200, {
+        return JsonReply(200, {
           'items': [
             {
               'id': 'mine-1',
@@ -89,6 +90,11 @@ Future<IdentityGateway> gatewayWith({
               'distanceId': '10k',
               'state': 'completed',
               'medalImageReference': 'img_mine',
+              // A aba Fotos mostra a foto da POSTAGEM, nunca a da medalha.
+              if (minePosted) ...{
+                'publishToFeed': true,
+                'postImageReference': 'img_post_mine',
+              },
             },
           ],
         });
@@ -403,6 +409,15 @@ void main() {
     expect(find.byKey(const Key('photos-partial')), findsOneWidget);
     expect(find.text('1 foto desta prova'), findsOneWidget);
   });
+
+  testWidgets(
+    'Fotos: concluída só com a foto da medalha (sem postagem) não aparece na aba',
+    (tester) async {
+      final gateway = await gatewayWith(completedByMe: true, minePosted: false);
+      await open(tester, gateway, 'Fotos');
+      expect(find.byKey(const Key('photo-mine-1')), findsNothing);
+    },
+  );
 
   testWidgets('Fotos: a minha vem primeiro e não repete se já está na lista', (
     tester,

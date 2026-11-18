@@ -20,6 +20,7 @@ class Backend {
   final List<String> calls = [];
   Map<String, dynamic>? completion;
   Map<String, dynamic>? published;
+  Map<String, dynamic>? extra;
   var uploads = 0;
   // A segunda foto enviada tem referência diferente (a mesma foto teria a mesma referência).
   String Function(int n) referenceFor = (n) =>
@@ -67,6 +68,10 @@ Future<(IdentityGateway, Backend)> setup() async {
           'state': 'completed',
           'version': 3,
         });
+      }
+      if (uri.path == '/posts' && method == 'POST') {
+        b.extra = Map<String, dynamic>.from(body! as Map);
+        return const JsonReply(201, {'id': 'x-1', 'participationId': 'c2'});
       }
       if (uri.path.endsWith('/publish') && method == 'POST') {
         b.published = Map<String, dynamic>.from(body! as Map);
@@ -155,16 +160,18 @@ void main() {
       await tester.scrollUntilVisible(finishButton, 200, scrollable: list);
       expect(tester.widget<FilledButton>(finishButton).onPressed, isNotNull);
       expect(find.byKey(const Key('select-post-photo')), findsNothing);
-      // Marcou publicar: pede a outra foto e o botão desabilita até ela existir.
+      // Marcou publicar: a foto da medalha já vira a foto do post (envio próprio, referência diferente)...
       final publish = find.byKey(const Key('publish-to-feed'));
       await tester.scrollUntilVisible(publish, -200, scrollable: list);
       await tester.tap(publish);
       await tester.pumpAndSettle();
+      expect(b.uploads, 2);
       expect(find.byKey(const Key('select-post-photo')), findsOneWidget);
-      expect(find.byKey(const Key('post-photo-hint')), findsOneWidget);
+      expect(find.byKey(const Key('post-photo-ok')), findsOneWidget);
+      expect(find.byKey(const Key('use-medal-for-post')), findsOneWidget);
       await tester.scrollUntilVisible(finishButton, 200, scrollable: list);
-      expect(tester.widget<FilledButton>(finishButton).onPressed, isNull);
-      // Envia a foto da publicação (segundo envio, referência diferente da medalha).
+      expect(tester.widget<FilledButton>(finishButton).onPressed, isNotNull);
+      // ...e a pessoa pode escolher outra foto para o post (terceiro envio).
       await tester.scrollUntilVisible(
         find.byKey(const Key('select-post-photo')),
         -200,
@@ -181,9 +188,24 @@ void main() {
       expect(tester.widget<FilledButton>(finishButton).onPressed, isNotNull);
       await tester.tap(finishButton);
       await tester.pumpAndSettle();
-      expect(b.uploads, 2); // duas fotos, dois envios
+      // Antes de publicar, a prévia: voltar e editar não conclui nada; confirmar conclui.
+      expect(find.byKey(const Key('post-preview')), findsOneWidget);
+      expect(find.byKey(const Key('post-preview-photo')), findsOneWidget);
+      expect(find.text('Que corrida!'), findsWidgets);
+      await tester.tap(find.byKey(const Key('post-preview-back')));
+      await tester.pumpAndSettle();
+      expect(b.completion, isNull);
+      await tester.ensureVisible(finishButton);
+      await tester.tap(finishButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('post-preview-confirm')));
+      await tester.pumpAndSettle();
+      expect(
+        b.uploads,
+        3,
+      ); // medalha, cópia da medalha para o post e a outra foto escolhida
       expect(b.completion?['medalImageReference'], 'img_medal');
-      expect(b.completion?['postImageReference'], 'img_post');
+      expect(b.completion?['postImageReference'], isNot('img_medal'));
       expect(b.completion?['postText'], 'Que corrida!');
       expect(b.completion?['publishToFeed'], isTrue);
     },
@@ -231,7 +253,7 @@ void main() {
   });
 
   testWidgets(
-    '"+" da Home abre a nova postagem; só aparecem corridas ainda não publicadas',
+    '"+" da Home abre a nova postagem com todas as corridas concluídas (a já publicada ganha mais uma publicação)',
     (tester) async {
       tall(tester);
       final (gateway, b) = await setup();
@@ -252,7 +274,8 @@ void main() {
           'distanceId': '5k',
           'state': 'completed',
           'version': 3,
-          'publishToFeed': true, // já publicada: não entra na lista
+          'publishToFeed':
+              true, // já publicada: entra e vira mais uma publicação
           'completedAt': '2026-10-01T10:00:00Z',
         },
       ];
@@ -266,7 +289,55 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(NewPostScreen), findsOneWidget);
       expect(find.byKey(const Key('new-post-race-c1')), findsOneWidget);
-      expect(find.byKey(const Key('new-post-race-c2')), findsNothing);
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      expect(find.textContaining('vira mais uma publicação'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'nova postagem de corrida já publicada vira mais uma publicação (sem medalha)',
+    (tester) async {
+      tall(tester);
+      final (gateway, b) = await setup();
+      b.participations = [
+        {
+          'id': 'c2',
+          'editionId': 'E2',
+          'distanceId': '5k',
+          'state': 'completed',
+          'version': 3,
+          'publishToFeed': true,
+          'completedAt': '2026-10-01T10:00:00Z',
+          'medalImageReference': 'img_medal',
+        },
+      ];
+      b.referenceFor = (n) => 'img_post';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NewPostScreen(
+            gateway: gateway,
+            photoSelector: (_) async => jpeg,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post-race-c2')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post-photo')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('new-post-text')),
+        'Outra foto',
+      );
+      await tester.tap(find.byKey(const Key('new-post-publish')));
+      await tester.pumpAndSettle();
+      expect(b.calls, contains('POST /posts'));
+      expect(b.calls, isNot(contains('POST /participations/c2/publish')));
+      expect(b.extra, {
+        'participationId': 'c2',
+        'postImageReference': 'img_post',
+        'postText': 'Outra foto',
+      });
     },
   );
 
@@ -327,6 +398,30 @@ void main() {
     },
   );
 
+  testWidgets(
+    'nova postagem: "Adicionar outra corrida" usa o fluxo da medalha e avisa quando virou pedido',
+    (tester) async {
+      final (gateway, _) = await setup();
+      var opened = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NewPostScreen(
+            gateway: gateway,
+            addRace: (context) async {
+              opened++;
+              return 'request';
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post-add-race')));
+      await tester.pumpAndSettle();
+      expect(opened, 1);
+      expect(find.textContaining('Pedido de cadastro enviado'), findsOneWidget);
+    },
+  );
+
   testWidgets('sem corrida concluída para publicar a tela explica', (
     tester,
   ) async {
@@ -372,6 +467,43 @@ void main() {
         isTrue,
       );
       expect(const RaceRecord({'id': 'c'}, null).hasPostImage, isFalse);
+    },
+  );
+
+  testWidgets(
+    'ao tocar na medalha aparece a foto da medalha; a da publicação só vem pela publicação',
+    (tester) async {
+      tall(tester);
+      const medal = {
+        'id': 'c1',
+        'editionId': 'E1',
+        'distanceId': '5k',
+        'state': 'completed',
+        'version': 4,
+        'hasPostImage': true,
+      };
+      final (gateway, b) = await setup();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(gateway: gateway, initial: medal),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(b.calls, contains('GET /participations/c1/image'));
+      expect(b.calls, isNot(contains('GET /participations/c1/post-image')));
+      b.calls.clear();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            key: const Key('da-publicacao'),
+            gateway: gateway,
+            initial: medal,
+            fromPost: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(b.calls, contains('GET /participations/c1/post-image'));
     },
   );
 

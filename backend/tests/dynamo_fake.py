@@ -20,6 +20,13 @@ class FakeDynamoClient:
         row = self.rows.get(self._id(TableName, Key))
         return {"Item": row} if row else {}
 
+    def batch_get_item(self, RequestItems):
+        # O papel real da Lambda nao tem BatchGetItem: qualquer uso aqui e um erro de permissao.
+        raise ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "no BatchGetItem"}},
+            "BatchGetItem",
+        )
+
     def query(self, TableName, ExpressionAttributeValues, Limit, ExclusiveStartKey=None, **_):
         values = ExpressionAttributeValues
         pk = values[":pk"]["S"]

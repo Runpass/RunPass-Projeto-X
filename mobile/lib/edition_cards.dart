@@ -206,3 +206,223 @@ double gridCardAspectRatio(int columns) => switch (columns) {
   3 => 0.8,
   _ => 0.7,
 };
+
+const _weekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+const _months = [
+  'jan',
+  'fev',
+  'mar',
+  'abr',
+  'mai',
+  'jun',
+  'jul',
+  'ago',
+  'set',
+  'out',
+  'nov',
+  'dez',
+];
+
+DateTime? _day(String iso) {
+  final parsed = DateTime.tryParse(iso);
+  return parsed == null
+      ? null
+      : DateTime(parsed.year, parsed.month, parsed.day);
+}
+
+DateTime _today(DateTime? now) {
+  final n = now ?? DateTime.now();
+  return DateTime(n.year, n.month, n.day);
+}
+
+/// Data para ler de relance: "Hoje", "Amanhã", "Sáb, 22 nov" (até 6 dias à frente), "22 nov" no mesmo ano
+/// e "22 nov 2027" em outro ano.
+String relativeDay(String isoDate, {DateTime? now}) {
+  final day = _day(isoDate);
+  if (day == null) return isoDate;
+  final today = _today(now);
+  final diff = day.difference(today).inDays;
+  if (diff == 0) return 'Hoje';
+  if (diff == 1) return 'Amanhã';
+  final label = '${day.day} ${_months[day.month - 1]}';
+  if (diff > 1 && diff < 7) return '${_weekdays[day.weekday - 1]}, $label';
+  return day.year == today.year ? label : '$label ${day.year}';
+}
+
+/// Seção da lista: Hoje, Amanhã, Este fim de semana, Próximos dias, Mais adiante ou Já aconteceram.
+String periodOf(String isoDate, {DateTime? now}) {
+  final day = _day(isoDate);
+  if (day == null) return 'Mais adiante';
+  final today = _today(now);
+  final diff = day.difference(today).inDays;
+  if (diff < 0) return 'Já aconteceram';
+  if (diff == 0) return 'Hoje';
+  if (diff == 1) return 'Amanhã';
+  // Fim de semana desta semana (sábado e domingo à frente, até 6 dias).
+  if (diff < 7 && day.weekday >= DateTime.saturday) {
+    final saturday = today.add(
+      Duration(days: (DateTime.saturday - today.weekday) % 7),
+    );
+    if (!day.isBefore(saturday)) return 'Este fim de semana';
+  }
+  if (diff <= 7) return 'Próximos dias';
+  return 'Mais adiante';
+}
+
+/// Distâncias em pílulas ("5K", "21K"); vazio quando a corrida não informa.
+List<String> distanceChips(Map<String, dynamic> edition) {
+  final kms = [
+    for (final d in (edition['distances'] as List? ?? const []))
+      if ((d as Map)['kilometers'] is num) (d['kilometers'] as num).toDouble(),
+  ]..sort();
+  String label(double km) {
+    if ((km - 21.0975).abs() < 0.01) return '21K';
+    if ((km - 42.195).abs() < 0.01) return '42K';
+    return km == km.roundToDouble()
+        ? '${km.toInt()}K'
+        : '${km.toStringAsFixed(1)}K';
+  }
+
+  return [for (final km in kms) label(km)];
+}
+
+/// Cartão compacto da tela Corridas (padrão da lista): miniatura à esquerda e, ao lado, quando (relativo) e onde,
+/// o nome, as distâncias em pílulas e as ações com rótulo. Cabem bem mais corridas por tela que no cartão grande.
+class EditionCompactCard extends StatelessWidget {
+  final IdentityGateway gateway;
+  final Map<String, dynamic> edition;
+  final VoidCallback? onTap;
+  final Widget? actions;
+  final String? rating;
+  final DateTime? now;
+
+  /// Canto direito do cartão (ex.: menu da agenda).
+  final Widget? trailing;
+  const EditionCompactCard({
+    super.key,
+    required this.gateway,
+    required this.edition,
+    this.onTap,
+    this.actions,
+    this.rating,
+    this.now,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final archived = edition['status'] == 'archived';
+    final chips = distanceChips(edition);
+    final muted = context.muted;
+    final when = relativeDay('${edition['date']}', now: now);
+    final where = [
+      edition['city'],
+      edition['state'],
+    ].whereType<String>().join('/');
+    return Card(
+      key: Key('compact-card-${edition['id']}'),
+      clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 76,
+                  height: 76,
+                  child: EditionCover(gateway: gateway, edition: edition),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$when · $where',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: archived ? context.archivedText : runPassOrange,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      edition['name'] as String? ?? 'Corrida',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        height: 1.2,
+                        color: archived ? context.archivedText : null,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    if (chips.isEmpty)
+                      Text(
+                        'Distância a confirmar',
+                        style: TextStyle(color: muted, fontSize: 12.5),
+                      )
+                    else
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          for (final chip in chips)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: context.panel,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                chip,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    if (rating != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        rating!,
+                        style: TextStyle(color: muted, fontSize: 12.5),
+                      ),
+                    ],
+                    if (archived)
+                      Text(
+                        'Arquivada',
+                        style: TextStyle(
+                          color: context.archivedText,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    if (actions != null) ...[
+                      const SizedBox(height: 8),
+                      actions!,
+                    ],
+                  ],
+                ),
+              ),
+              ?trailing,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

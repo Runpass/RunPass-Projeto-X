@@ -5,6 +5,7 @@ import json
 import math
 import re
 import unicodedata
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -27,6 +28,83 @@ def normalized(value):
         .casefold()
         .split()
     )
+
+
+# Palavras que nao contam no "nucleo" do nome nem viram chave de busca.
+NAME_STOPWORDS = frozenset(
+    "de da do das dos e a o as os em na no nas nos para por com the of and".split()
+)
+_ROMAN = re.compile(r"^[ivx]{2,6}$", re.IGNORECASE)
+_LETTERS = re.compile(r"[^\W\d_]+")
+
+
+def title_case(name):
+    """Padrao de escrita dos nomes: iniciais maiusculas e o resto minusculo ("3ª Corrida Contra a Polio").
+    Preposicoes e artigos ficam minusculos (exceto no inicio); numerais romanos e o "K" de distancia (10K) ficam
+    maiusculos; ordinais (3ª, 2º) e trechos entre colchetes ficam como estao."""
+    words = (name or "").split()
+    out = []
+    for index, word in enumerate(words):
+        if word.startswith("[") and word.endswith("]"):
+            out.append(word)
+            continue
+        lower = word.lower()
+        if 0 < index < len(words) - 1 and lower in NAME_STOPWORDS:
+            out.append(lower)
+            continue
+        if re.fullmatch(r"\d+(\.\d+)?k", lower):
+            out.append(lower[:-1] + "K")
+            continue
+        if re.fullmatch(r"\d+[ªºa-z]*", lower):
+            out.append(lower)
+            continue
+
+        def fix(match, word=word):
+            part = match.group(0)
+            after_apostrophe = match.start() > 0 and word[match.start() - 1] in "'’"
+            if after_apostrophe and len(part) <= 2:
+                return part.lower()  # Women's, Int'l
+            if _ROMAN.match(part):
+                return part.upper()
+            return part[:1].upper() + part[1:].lower()
+
+        out.append(_LETTERS.sub(fix, word))
+    return " ".join(out)
+
+
+def name_words(name):
+    """Palavras do nome para a busca: sem acento e caixa, sem pontuacao e sem preposicoes."""
+    words = re.split(r"[^0-9a-z]+", normalized(name or ""))
+    return [w for w in dict.fromkeys(words) if len(w) >= 2 and w not in NAME_STOPWORDS]
+
+
+def name_core(name):
+    """Nucleo do nome para achar a mesma prova escrita de outro jeito no mesmo dia: sem ano, sem "edicao" (e o
+    numero dela), sem o ordinal do inicio, sem "corrida"/"run" e sem preposicoes ("2ª Pace Run - Edição 2026" e
+    "Pace Run" tem o mesmo nucleo). Numeros no meio do nome continuam ("4ª Etapa", "9 Km" sao outra prova)."""
+    words = [w for w in re.split(r"[^0-9a-z]+", normalized(name or "")) if w]
+    ordinal = re.compile(r"\d{1,3}(a|o)?")
+    while words and ordinal.fullmatch(words[0]):
+        words = words[1:]  # "3ª Corrida..." / "15 Night Run..."
+    ignore = NAME_STOPWORDS | {"corrida", "run", "e", "ficticia"}
+    kept = []
+    for i, w in enumerate(words):
+        nxt = words[i + 1] if i + 1 < len(words) else ""
+        prev = words[i - 1] if i > 0 else ""
+        if w in ("edicao", "ed") or re.fullmatch(r"(19|20)\d\d", w):
+            continue
+        if ordinal.fullmatch(w) and (nxt in ("edicao", "ed") or prev in ("edicao", "ed")):
+            continue  # "2ª Edição" / "Edição 3"
+        if w not in ignore:
+            kept.append(w)
+    # Nome so de palavras genericas ("Corrida 2026"): compara o nome inteiro, nunca um nucleo vazio.
+    return " ".join(kept) or " ".join(words) or normalized(name or "")
+
+
+def name_without_year(name):
+    """Nome exato sem o ano e sem pontuacao: a mesma prova com data diferente ("... 2026" em 14 e 15/03)."""
+    words = re.split(r"[^0-9a-z]+", normalized(name or ""))
+    return " ".join(w for w in words if w and not re.fullmatch(r"(19|20)\d\d", w))
 
 
 KIDS_WORDS = re.compile(r"\b(kids?|infantil|infantis|mirim|crianca|criancas)\b")
@@ -183,55 +261,89 @@ class CatalogService:
     def __init__(self, identity, cursor_key):
         self.identity, self.store = identity, identity.store
         self.codec = CursorCodec(cursor_key, identity.clock, identity.environment)
+        self._versions = OrderedDict()
 
     def _head(self, edition_id):
         return self.store.get(("catalog", "EDITION#" + edition_id, "HEAD"))
 
-    def _edition(self, edition_id, expected_version=None):
-        for _ in range(5):
-            head = self._head(edition_id)
-            if not head or head.get("publicationState") != "approved":
-                return None
-            if expected_version is not None and head["version"] != expected_version:
-                return None
-            key = ("catalog", "EDITION#" + edition_id, "V#" + str(head["version"]))
-            version = self.store.get(key)
-            if not version:
+    MAX_CACHED_VERSIONS = 2000
+
+    def _remember(self, key, edition):
+        """Conteudo de uma versao (nunca muda depois de gravado): fica na memoria da Lambda."""
+        self._versions[key] = edition
+        self._versions.move_to_end(key)
+        while len(self._versions) > self.MAX_CACHED_VERSIONS:
+            self._versions.popitem(last=False)
+
+    def _bodies(self, edition_ids):
+        """{id: corpo atual ou None} lendo em lote (BatchGetItem): HEAD, versoes ainda nao vistas e notas.
+        A versao e imutavel, entao HEAD + versao dispensam transacao de conferencia."""
+        ids = list(dict.fromkeys(edition_ids))
+        heads = self.store.batch_get([("catalog", "EDITION#" + i, "HEAD") for i in ids])
+        current = {}
+        for i in ids:
+            head = heads[("catalog", "EDITION#" + i, "HEAD")]
+            if head and head.get("publicationState") == "approved":
+                current[i] = head
+        missing = [
+            (i, h["version"]) for i, h in current.items() if (i, h["version"]) not in self._versions
+        ]
+        fetched = (
+            self.store.batch_get([("catalog", "EDITION#" + i, "V#" + str(v)) for i, v in missing])
+            if missing
+            else {}
+        )
+        for i, v in missing:
+            item = fetched[("catalog", "EDITION#" + i, "V#" + str(v))]
+            if not item:
                 raise Problem(503, "CATALOG_INTEGRITY_FAILURE")
-            try:
-                self.store.commit(
-                    {("catalog", "EDITION#" + edition_id, "HEAD"): head, key: version}, {}
-                )
-            except Conflict:
-                continue
-            body = deepcopy(version["edition"])
+            self._remember((i, v), item["edition"])
+        scores = self._scores(list(current))
+        today = self.identity.clock().astimezone(ZoneInfo("America/Sao_Paulo")).date()
+        out = {i: None for i in ids}
+        for i, head in current.items():
+            body = deepcopy(self._versions[(i, head["version"])])
             body["version"] = head["version"]
-            today = self.identity.clock().astimezone(ZoneInfo("America/Sao_Paulo")).date()
             body["status"] = (
                 "archived"
                 if head["archived"]
                 else ("upcoming" if date.fromisoformat(body["date"]) > today else "past")
             )
-            score = self._score(edition_id)
-            if score:
-                body["runScore"] = score
-            return body
-        raise Problem(503, "CONCURRENT_RETRY_REQUIRED")
+            if scores.get(i):
+                body["runScore"] = scores[i]
+            out[i] = body
+        return out
 
-    def _score(self, edition_id):
-        """Nota publica da edicao (projecao ja calculada pelo consumidor); nunca inventa nota."""
+    def _edition(self, edition_id, expected_version=None):
+        body = self._bodies([edition_id])[edition_id]
+        if (
+            body is not None
+            and expected_version is not None
+            and body["version"] != expected_version
+        ):
+            return None
+        return body
+
+    def _scores(self, edition_ids):
+        """Notas publicas (projecao ja calculada pelo consumidor), em lote; nunca inventa nota."""
         try:
-            item = self.store.get(("projections", "EDITION#" + edition_id, "SCORE#current"))
+            items = self.store.batch_get(
+                [("projections", "EDITION#" + i, "SCORE#current") for i in edition_ids]
+            )
         except (KeyError, Unavailable):
             # Sem a tabela de projecoes ou sem leitura dela: a nota e opcional e nunca derruba a lista.
-            return None
-        if not item or not item.get("reviewCount"):
-            return None
-        value = Decimal(item["ratingSum"]) / Decimal(8 * item["reviewCount"])
-        return {
-            "value": float(value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)),
-            "reviewCount": int(item["reviewCount"]),
-        }
+            return {}
+        out = {}
+        for i in edition_ids:
+            item = items.get(("projections", "EDITION#" + i, "SCORE#current"))
+            if not item or not item.get("reviewCount"):
+                continue
+            value = Decimal(item["ratingSum"]) / Decimal(8 * item["reviewCount"])
+            out[i] = {
+                "value": float(value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)),
+                "reviewCount": int(item["reviewCount"]),
+            }
+        return out
 
     def detail(self, actor, edition_id):
         self.identity.authorize(actor, admitted=True)
@@ -241,8 +353,81 @@ class CatalogService:
             raise Problem(404, "EDITION_NOT_FOUND")
         return result
 
+    MAX_WORD_ROWS = 3000
+
+    def _search_by_words(self, actor, filters, cursor):
+        """Busca por nome pelo indice de palavras: le so as corridas que tem a palavra mais longa digitada, confere
+        todas as palavras e os demais filtros, e ordena: as proximas primeiro (da mais perto para a mais longe) e
+        depois as que ja passaram (da mais recente para a mais antiga). None se a busca nao tem palavra util."""
+        words = name_words(filters.q)
+        if not words or max(len(w) for w in words) < 3:
+            return None
+        key = max(words, key=len)
+        rows, after = [], None
+        while len(rows) < self.MAX_WORD_ROWS:
+            page, after = self.store.query(
+                "catalog", WORD_INDEX + key[:3], prefix=key, after=after, limit=500
+            )
+            rows += page
+            if after is None:
+                break
+        ids = list(dict.fromkeys(row["editionId"] for _, row in rows))
+        bodies = self._bodies(ids)
+        today = self.identity.clock().astimezone(ZoneInfo("America/Sao_Paulo")).date().isoformat()
+        found = []
+        for body in bodies.values():
+            if body is None:
+                continue
+            name_text = normalized(body["name"])
+            if not all(word in name_text for word in filters.q.split()):
+                continue
+            if filters.city and normalized(body["city"]) != filters.city:
+                continue
+            if filters.state and body["state"] != filters.state:
+                continue
+            if filters.distanceKm is not None and not any(
+                Decimal(str(d["kilometers"])) == filters.distanceKm for d in body["distances"]
+            ):
+                continue
+            if filters.audience and is_kids(body["name"]) != (filters.audience == "kids"):
+                continue
+            if (
+                filters.registrationStatus
+                and body.get("registrationStatus", "unknown") != filters.registrationStatus
+            ):
+                continue
+            day = date.fromisoformat(body["date"])
+            if (filters.dateFrom and day < filters.dateFrom) or (
+                filters.dateTo and day > filters.dateTo
+            ):
+                continue
+            found.append(body)
+        upcoming = sorted(
+            (b for b in found if b["date"] >= today), key=lambda b: (b["date"], b["id"])
+        )
+        past = sorted(
+            (b for b in found if b["date"] < today),
+            key=lambda b: (b["date"], b["id"]),
+            reverse=True,
+        )
+        ordered = upcoming + past
+        try:
+            start = int(self.codec.read(cursor, actor, filters)) if cursor else 0
+        except ValueError as error:
+            raise Problem(422, "INVALID_CURSOR") from error
+        items = ordered[start : start + filters.limit]
+        self.identity.authorize(actor, admitted=True)
+        result = {"items": items}
+        if start + filters.limit < len(ordered):
+            result["nextCursor"] = self.codec.issue(actor, filters, str(start + filters.limit))
+        return result
+
     def list(self, actor, filters, cursor=None):
         self.identity.authorize(actor, admitted=True)
+        if filters.q and not filters.namePrefix and filters.radiusKm is None:
+            result = self._search_by_words(actor, filters, cursor)
+            if result is not None:
+                return result
         pk, query = filters.plan()
         after = self.codec.read(cursor, actor, filters) if cursor else None
         items, seen, evaluated, more = [], set(), 0, True
@@ -254,11 +439,12 @@ class CatalogService:
                 limit=min(filters.limit - len(items), 500 - evaluated),
                 **query,
             )
+            bodies = self._bodies([row["editionId"] for _, row in rows])
             for sk, row in rows:
                 after = sk
                 evaluated += 1
-                body = self._edition(row["editionId"], row["version"])
-                if body is None or body["id"] in seen:
+                body = bodies[row["editionId"]]
+                if body is None or body["version"] != row["version"] or body["id"] in seen:
                     continue
                 if filters.namePrefix and not normalized(body["name"]).startswith(
                     filters.namePrefix
@@ -334,12 +520,54 @@ class CatalogService:
             raise Problem(422, "DISTANCE_NOT_IN_EDITION")
         return body
 
+    MAX_RUNNER_DISTANCES = 5
+
+    def add_runner_distance(self, actor, edition_id, kilometers):
+        """O corredor informa a distancia de uma corrida que veio sem ela (ou so com distancias de corredores).
+        Nunca mexe em distancia que veio de uma fonte, e acrescenta so uma por vez, marcada `informedBy`."""
+        from .catalog_import import distance_entry, parse_km
+
+        try:
+            km = parse_km(str(kilometers))
+        except ValueError as error:
+            raise Problem(422, "INVALID_DISTANCE") from error
+        entry = {**distance_entry(km), "informedBy": "runner"}
+        for _ in range(3):
+            body = self.detail(actor, edition_id)
+            if body["status"] == "archived":
+                raise Problem(409, "EDITION_ARCHIVED")
+            current = body.get("distances", [])
+            if any(d.get("informedBy") != "runner" for d in current):
+                raise Problem(409, "DISTANCE_NOT_ADDABLE")
+            for existing in current:
+                if Decimal(str(existing["kilometers"])) == km:
+                    return body  # ja informada: nada a gravar
+            if len(current) >= self.MAX_RUNNER_DISTANCES:
+                raise Problem(409, "DISTANCE_LIMIT_REACHED")
+            payload = {k: v for k, v in body.items() if k in ImportEdition.model_fields}
+            payload["distances"] = [*current, entry]
+            payload["distancesOptional"] = True
+            actor_runner = RunnerDistanceActor("runner:" + actor.subject)
+            try:
+                return CatalogImporter(self, allow_system=True).put(
+                    payload,
+                    expected_version=body["version"],
+                    origin="https://corredor.runpass.invalid/distancia",
+                    actor=actor_runner,
+                )
+            except Problem as problem:
+                if problem.code not in ("VERSION_CONFLICT", "CATALOG_VERSION_CONFLICT"):
+                    raise
+        raise Problem(409, "VERSION_CONFLICT")
+
 
 class ImportDistance(Input):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,100}$")
     kilometers: Decimal
     label: str | None = Field(default=None, min_length=1)
     medalImageReference: str | None = Field(default=None, min_length=1)
+    # Distancia informada por um corredor (nao pela fonte): aparece como "informada" e nao e dado conferido.
+    informedBy: Literal["runner"] | None = None
 
     @field_validator("kilometers", mode="before")
     @classmethod
@@ -371,7 +599,9 @@ class ImportEdition(Input):
     # Proveniencia: de onde veio e com que identificador na fonte.
     sourceCode: str | None = Field(default=None, pattern=r"^[a-z0-9_-]{2,40}$")
     sourceExternalId: str | None = Field(default=None, min_length=1, max_length=200)
-    distances: list[ImportDistance] = Field(min_length=1)
+    distances: list[ImportDistance] = Field(default_factory=list)
+    # So as descobertas do catalogo entram sem distancia (o corredor informa ao se inscrever).
+    distancesOptional: bool = False
     description: str | None = None
     organizerName: str | None = None
     organizerId: str | None = None
@@ -395,6 +625,12 @@ class ImportEdition(Input):
         if value is not None and not normalized(value):
             raise ValueError("Nonblank text required")
         return value
+
+    @field_validator("name")
+    @classmethod
+    def standard_name(cls, value):
+        # Padrao de escrita do catalogo: iniciais maiusculas e o resto minusculo (vale para toda entrada).
+        return title_case(value.strip())
 
     @field_validator("date")
     @classmethod
@@ -442,6 +678,8 @@ class ImportEdition(Input):
 
     @model_validator(mode="after")
     def unique_distances(self):
+        if not self.distances and not self.distancesOptional:
+            raise ValueError("At least one distance required")
         if len({d.id for d in self.distances}) != len(self.distances):
             raise ValueError("Duplicate distance ID")
         if self.imageCredit and not self.imageReference:
@@ -449,6 +687,9 @@ class ImportEdition(Input):
         if self.archivedReason and not self.archived:
             raise ValueError("archivedReason requires an archived edition")
         return self
+
+
+WORD_INDEX = "CAT#W#"
 
 
 def index_rows(body, version):
@@ -465,6 +706,13 @@ def index_rows(body, version):
                     if len(pk.encode()) > 2048 or len(sk.encode()) > 1024:
                         raise Problem(422, "CATALOG_KEY_TOO_LARGE")
                     rows[("catalog", pk, sk)] = {"editionId": body["id"], "version": version}
+    # Busca por nome: uma linha por palavra, agrupada pelas 3 primeiras letras (a busca le so o grupo da palavra
+    # mais longa digitada, em vez de percorrer o catalogo inteiro).
+    for word in name_words(body["name"]):
+        pk = f"{WORD_INDEX}{word[:3]}"
+        sk = f"{word}#{body['date']}#{body['id']}#{version}"
+        if len(sk.encode()) <= 1024:
+            rows[("catalog", pk, sk)] = {"editionId": body["id"], "version": version}
     return rows
 
 
@@ -474,6 +722,13 @@ class AutoImportActor:
 
     subject = "system:auto-import"
     token_digest = ""
+
+
+class RunnerDistanceActor(AutoImportActor):
+    """Ator da distancia informada por um corredor: registra a pessoa na auditoria, sem poder de operador."""
+
+    def __init__(self, subject):
+        self.subject = subject
 
 
 class CatalogImporter:
@@ -526,7 +781,7 @@ class CatalogImporter:
         ):
             raise Problem(422, "INVALID_VERSION")
         authorization = self._authorization(actor, synthetic)
-        body = model.model_dump(exclude_none=True, exclude={"archived"})
+        body = model.model_dump(exclude_none=True, exclude={"archived", "distancesOptional"})
         version = expected_version + 1
         body["version"] = version
         body["status"] = "archived" if model.archived else "past"

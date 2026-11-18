@@ -13,16 +13,19 @@ from pydantic import ValidationError
 from .catalog import CatalogFilters
 from .identity import AuthFailure
 from .models import (
+    AddDistance,
     BannerSuggestion,
     CompleteParticipation,
     CreateComment,
     CreateEditionComment,
+    CreateExtraPost,
     CreateParticipation,
     CreateProfile,
     EditComment,
     EditionRequestFields,
     Eligibility,
     PatchEditionRequest,
+    PatchExtraPost,
     PatchParticipation,
     PatchProfile,
     PublishParticipation,
@@ -30,6 +33,7 @@ from .models import (
     ReplaceReview,
     ResubmitEditionRequest,
     StartUpload,
+    WebLookupRequest,
 )
 from .nl_search import MAX_PHRASE, text_fallback
 from .service import Problem
@@ -50,6 +54,7 @@ def create_app(
     social=None,
     natural_search=None,
     edition_requests=None,
+    web_lookup=None,
 ):
     # Runtime schema is a subset; the versioned full contract remains the canonical OpenAPI.
     app = FastAPI(
@@ -247,6 +252,14 @@ def create_app(
             raise Unavailable()
         return catalog.detail(actor, id)
 
+    @app.post("/editions/{id}/distances", operation_id="addEditionDistance")
+    def add_edition_distance(id: str, body: AddDistance, actor: Actor):
+        """Corrida sem distancia: o corredor informa o km ao se inscrever (so quando nao ha distancia de fonte)."""
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        return catalog.add_runner_distance(actor, id, body.kilometers)
+
     @app.get("/editions/{id}/reviews", operation_id="listEditionReviews")
     def edition_reviews(
         id: str,
@@ -395,6 +408,13 @@ def create_app(
             raise Unavailable()
         return edition_requests.suggest_banner(actor, idempotency_key, id, body.imageReference)
 
+    @app.post("/edition-requests/web-lookup", operation_id="lookUpRaceOnTheWeb")
+    def web_lookup_route(body: WebLookupRequest, actor: Actor):
+        """Corrida fora do catalogo: procura na web e devolve candidatas para preencher o pedido (nao grava)."""
+        if web_lookup is None:
+            raise Problem(503, "WEB_LOOKUP_UNAVAILABLE")
+        return web_lookup.find(actor, body.name, body.city, body.state)
+
     @app.get("/me/edition-requests", operation_id="listMyEditionRequests")
     def list_my_edition_requests(
         actor: Actor,
@@ -458,10 +478,25 @@ def create_app(
         state: str | None = Query(None, pattern=r"^(draft|completed)$"),
         limit: int = Query(20, ge=1, le=100),
         cursor: str | None = Query(None, min_length=1, max_length=8192),
+        expand: str | None = Query(None, pattern=r"^edition$"),
     ):
         if participations is None:
             raise Unavailable()
-        return participations.list(actor, state, limit, cursor)
+        page = participations.list(actor, state, limit, cursor)
+        if expand == "edition" and catalog is not None:
+            # Uma chamada em vez de uma por medalha: a prateleira do app mostrava totais e ordem diferentes
+            # a cada carga quando parte das chamadas simultaneas era recusada.
+            cache = {}
+            for item in page["items"]:
+                edition_id = item.get("editionId")
+                if edition_id not in cache:
+                    try:
+                        cache[edition_id] = catalog.detail(actor, edition_id)
+                    except Exception:  # edicao arquivada ou removida: o item segue sem ela
+                        cache[edition_id] = None
+                if cache[edition_id] is not None:
+                    item["edition"] = cache[edition_id]
+        return page
 
     @app.post("/participations/{id}/publish", operation_id="publishParticipation")
     def publish_participation(
@@ -606,6 +641,43 @@ def create_app(
         scope: str = Query("all", pattern="^(all|friends|network)$"),
     ):
         return friends().feed(actor, limit, cursor, scope)
+
+    @app.get("/me/posts", operation_id="listMyPosts")
+    def my_posts(actor: Actor):
+        """Minhas publicações (a de cada corrida e as extras), para o perfil."""
+        return friends().my_posts(actor)
+
+    @app.post("/posts", status_code=201, operation_id="createExtraPost")
+    def create_extra_post(body: CreateExtraPost, actor: Actor, idempotency_key: IdempotencyKey):
+        """Outra publicação de uma corrida que eu já concluí (várias por corrida)."""
+        if participations is None:
+            raise Unavailable()
+        return participations.create_extra_post(
+            actor, idempotency_key, body.model_dump(exclude_none=True)
+        )
+
+    # Nao usa PATCH /posts/{id}: o contrato reserva essa rota para a visibilidade do post.
+    @app.patch("/posts/{id}/extra", operation_id="patchExtraPost")
+    def patch_extra_post(
+        id: str, body: PatchExtraPost, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if participations is None:
+            raise Unavailable()
+        return participations.update_extra_post(
+            actor, id, idempotency_key, body.model_dump(exclude_unset=True)
+        )
+
+    @app.delete("/posts/{id}", operation_id="deleteExtraPost")
+    def delete_extra_post(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        if participations is None:
+            raise Unavailable()
+        return participations.delete_extra_post(actor, id, idempotency_key)
+
+    @app.get("/posts/{id}/image", operation_id="getExtraPostImage")
+    def extra_post_image(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.extra_post_image(actor, id)
 
     @app.get("/posts/{id}", operation_id="getPost")
     def get_post(id: str, actor: Actor):

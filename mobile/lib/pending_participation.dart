@@ -4,16 +4,20 @@ import 'package:image_picker/image_picker.dart';
 import 'catalog_screen.dart';
 import 'duration_field.dart';
 import 'identity_gateway.dart';
-import 'profile_photo.dart' show RacePhotoCropScreen;
+import 'post_preview.dart';
+import 'profile_photo.dart' show PhotoZoomScreen;
 
 /// Dados da minha participação, informados junto do pedido de cadastro de uma corrida que ainda não existe.
 /// Ficam guardados com o pedido e o app os aplica sozinho quando a equipe aprova: a pessoa não preenche de novo.
-/// Devolve o mapa (`participation` do pedido), `{}` para enviar sem a participação agora, ou nulo se voltar.
+/// Devolve o mapa (`participation` do pedido) ou nulo se voltar. A avaliação (8 notas) é obrigatória para enviar.
 class PendingParticipationScreen extends StatefulWidget {
   final IdentityGateway gateway;
 
   /// Nome da corrida, só para mostrar no título.
   final String raceName;
+
+  /// Distância informada no pedido ("5 km"), só para a prévia da publicação.
+  final String? distanceLabel;
 
   /// Escolhe a foto da publicação; nulo se desistir. Trocável nos testes (galeria e recorte não rodam lá).
   final Future<List<int>?> Function(BuildContext context)? postPhotoSelector;
@@ -21,6 +25,7 @@ class PendingParticipationScreen extends StatefulWidget {
     super.key,
     required this.gateway,
     required this.raceName,
+    this.distanceLabel,
     this.postPhotoSelector,
   });
 
@@ -32,6 +37,7 @@ class PendingParticipationScreen extends StatefulWidget {
 class _PendingParticipationScreenState
     extends State<PendingParticipationScreen> {
   final time = TextEditingController();
+  final pace = TextEditingController();
   final placement = TextEditingController();
   final bib = TextEditingController();
   final comment = TextEditingController();
@@ -51,10 +57,12 @@ class _PendingParticipationScreenState
   };
   bool publish = false, uploadingPost = false;
   String? postImageReference, message;
+  List<int>? postBytes; // só para a prévia
 
   @override
   void dispose() {
     time.dispose();
+    pace.dispose();
     placement.dispose();
     bib.dispose();
     comment.dispose();
@@ -63,6 +71,7 @@ class _PendingParticipationScreenState
   }
 
   bool get ratingsComplete => ratings.values.every((v) => v >= 1);
+  bool get ratingsEmpty => ratings.values.every((v) => v == 0);
 
   Future<void> pickPostPhoto() async {
     setState(() {
@@ -86,7 +95,7 @@ class _PendingParticipationScreenState
         bytes = await Navigator.of(context).push<List<int>>(
           MaterialPageRoute(
             fullscreenDialog: true,
-            builder: (_) => RacePhotoCropScreen(image: original),
+            builder: (_) => PhotoZoomScreen(image: original),
           ),
         );
       }
@@ -98,6 +107,7 @@ class _PendingParticipationScreenState
         throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
       }
       postImageReference = result['imageReference'] as String;
+      postBytes = bytes;
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
     } on Exception {
@@ -112,6 +122,11 @@ class _PendingParticipationScreenState
   /// Monta o mapa no formato do pedido; devolve nulo (com a mensagem) se algo faltar ou estiver inválido.
   Map<String, dynamic>? collect() {
     final seconds = parseDuration(time.text);
+    final paceSeconds = parsePace(pace.text);
+    if (paceSeconds == -1) {
+      message = 'O pace deve ser em minutos e segundos por km, como 5:30.';
+      return null;
+    }
     final place = placement.text.trim().isEmpty
         ? null
         : int.tryParse(placement.text.trim());
@@ -120,8 +135,9 @@ class _PendingParticipationScreenState
       message = 'O tempo deve ser como 1:30:00 e a colocação um número inteiro maior que zero.';
       return null;
     }
-    if (!ratingsComplete) {
-      message = 'Dê uma nota de 1 a 5 estrelas em todos os critérios.';
+    // Avaliação opcional: as 8 notas ou nenhuma (avalia depois).
+    if (!ratingsComplete && !ratingsEmpty) {
+      message = 'Dê nota aos 8 critérios ou deixe todos em branco para avaliar depois.';
       return null;
     }
     if (publish && postImageReference == null) {
@@ -130,10 +146,12 @@ class _PendingParticipationScreenState
     }
     return {
       'timeSeconds': ?seconds,
+      'paceSecondsPerKm': ?paceSeconds,
       'placement': ?place,
       if (bib.text.trim().isNotEmpty) 'bibNumber': bib.text.trim(),
-      'ratings': Map<String, int>.from(ratings),
-      if (comment.text.trim().isNotEmpty) 'comment': comment.text.trim(),
+      if (ratingsComplete) 'ratings': Map<String, int>.from(ratings),
+      if (ratingsComplete && comment.text.trim().isNotEmpty)
+        'comment': comment.text.trim(),
       'publishToFeed': publish,
       if (publish) 'postImageReference': postImageReference,
       if (publish && postText.text.trim().isNotEmpty)
@@ -141,11 +159,31 @@ class _PendingParticipationScreenState
     };
   }
 
-  void save() {
+  Future<void> save() async {
     final data = collect();
     if (data == null) {
       setState(() {});
       return;
+    }
+    // Vai publicar no feed: mostra a prévia e só envia o cadastro se a pessoa confirmar.
+    if (publish) {
+      final profile = navProfileOf(widget.gateway);
+      final seconds = parseDuration(time.text);
+      final confirmed = await confirmPostPreview(
+        context,
+        PostPreviewData(
+          authorName: (profile?['displayName'] as String?) ?? 'Você',
+          username: (profile?['username'] as String?) ?? '',
+          raceName: widget.raceName,
+          details: [
+            if (widget.distanceLabel != null) widget.distanceLabel!,
+            if (seconds is int && seconds > 0) formatDuration(seconds),
+          ].join(' · '),
+          text: postText.text,
+          photo: postBytes,
+        ),
+      );
+      if (!confirmed || !mounted) return;
     }
     Navigator.of(context).pop(data);
   }
@@ -170,6 +208,16 @@ class _PendingParticipationScreenState
         DurationField(controller: time),
         const SizedBox(height: 8),
         TextField(
+          key: const Key('pending-pace'),
+          controller: pace,
+          keyboardType: TextInputType.datetime,
+          decoration: const InputDecoration(
+            labelText: 'Pace (opcional)',
+            hintText: 'Ex.: 5:30',
+            suffixText: 'min/km',
+          ),
+        ),
+        TextField(
           key: const Key('pending-placement'),
           controller: placement,
           keyboardType: TextInputType.number,
@@ -184,7 +232,21 @@ class _PendingParticipationScreenState
           ),
         ),
         const Divider(height: 32),
-        const Text('Avaliação', style: TextStyle(fontWeight: FontWeight.w700)),
+        const Text(
+          'Avaliação (opcional)',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const Text(
+          'Dê nota aos 8 critérios ou deixe em branco e avalie depois.',
+          key: Key('rating-optional-hint'),
+        ),
+        SameRatingPicker(
+          onPick: (n) => setState(() {
+            for (final key in ratings.keys.toList()) {
+              ratings[key] = n;
+            }
+          }),
+        ),
         for (final (key, label, icon) in criteriaList)
           RatingInput(
             label: label,
@@ -241,11 +303,6 @@ class _PendingParticipationScreenState
           key: const Key('pending-save'),
           onPressed: uploadingPost ? null : save,
           child: const Text('Guardar e enviar o cadastro'),
-        ),
-        TextButton(
-          key: const Key('pending-skip'),
-          onPressed: () => Navigator.of(context).pop(<String, dynamic>{}),
-          child: const Text('Enviar só o cadastro, sem a avaliação agora'),
         ),
       ],
     ),

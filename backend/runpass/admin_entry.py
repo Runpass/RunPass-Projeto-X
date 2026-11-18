@@ -3,7 +3,12 @@
 import os
 from functools import lru_cache
 
-from .composition import create_admin_aws_app, create_auto_import_aws
+from .composition import (
+    create_admin_aws_app,
+    create_auto_import_aws,
+    create_discovery_aws,
+    create_monthly_aws,
+)
 from .lambda_entry import _boto_client, _settings
 
 
@@ -84,8 +89,39 @@ def _auto_import():
     )
 
 
+@lru_cache(maxsize=1)
+def _monthly():
+    return create_monthly_aws(
+        _settings(with_cursor_key=True),
+        _boto_client("dynamodb"),
+        _boto_client("s3"),
+        os.environ.get("RUNPASS_CATALOG_REPORT_BUCKET", ""),
+    )
+
+
+@lru_cache(maxsize=1)
+def _discoveries():
+    return create_discovery_aws(_settings(with_cursor_key=True), _boto_client("dynamodb"))
+
+
 def handler(event, context):
+    # Promocao em lote (decisao do dono): so evento IAM, nunca HTTP.
+    if isinstance(event, dict) and isinstance(event.get("discoveryPromote"), dict):
+        pedido = event["discoveryPromote"]
+        return _discoveries().promote_bulk(
+            limit=max(1, min(int(pedido.get("limit", 40)), 200)),
+            dry_run=bool(pedido.get("dryRun", True)),
+        )
+    # Ingestao pela esteira do catalogo: evento do Lambda (so IAM), nunca uma rota HTTP publica.
+    if isinstance(event, dict) and isinstance(event.get("discoveryIngest"), dict):
+        pedido = event["discoveryIngest"]
+        return _discoveries().ingest(pedido.get("items"), "api", pedido.get("batchId"))
     # Evento da regra horaria (nao e uma chamada HTTP): importe automatico das corridas achadas pela rotina.
     if isinstance(event, dict) and event.get("autoImport") is True:
-        return _auto_import().run("schedule")
+        result = _auto_import().run("schedule")
+        try:  # aplica a atualizacao mensal pendente (nao faz nada sem relatorio novo ou promocao pendente)
+            result = {**result, "monthly": _monthly().run("schedule")}
+        except Exception as error:  # noqa: BLE001 - a falha daqui nao pode derrubar o importe automatico
+            result = {**result, "monthly": {"error": type(error).__name__}}
+        return result
     return _admin()(event, context)

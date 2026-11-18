@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:runpass/agenda.dart';
 import 'package:runpass/catalog_screen.dart';
+import 'package:runpass/edition_requests.dart' show MyEditionRequestsScreen;
 import 'package:runpass/identity_gateway.dart';
 
 import 'catalog_test.dart' show entry, signed;
@@ -389,28 +390,6 @@ void main() {
     },
   );
 
-  testWidgets('na agenda, Grade põe as corridas lado a lado e a escolha vale '
-      'depois', (tester) async {
-    await openCalendar(tester, calendarPlans());
-    expect(find.byKey(const Key('agenda-grid-wanted')), findsNothing);
-    await tester.tap(find.byKey(const Key('catalog-view-mode')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('catalog-view-grid')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('agenda-grid-wanted')), findsOneWidget);
-    expect(
-      tester.getTopLeft(find.byKey(const Key('agenda-EA'))).dy,
-      tester.getTopLeft(find.byKey(const Key('agenda-EC'))).dy,
-    );
-    expect(
-      find.byKey(const Key('grid-columns-2')),
-      findsNothing,
-    ); // só no menu aberto
-    await tester.tap(find.byKey(const Key('catalog-view-mode')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('grid-columns-2')), findsOneWidget);
-  });
-
   testWidgets(
     'a agenda pode ficar só em lista, sem o calendário, com as corridas '
     'da mais antiga para a mais nova',
@@ -468,45 +447,6 @@ void main() {
   });
 
   testWidgets(
-    'o filtro de ano alcança corridas cadastradas fora da faixa padrão',
-    (tester) async {
-      big(tester);
-      final gateway = await signed((uri, method, headers, body) async {
-        if (uri.path == '/editions') {
-          return JsonReply(200, {
-            'items': [
-              upcoming('A', date: '2019-05-01'),
-              upcoming('B', date: '2029-03-01'),
-              upcoming('C', date: '2026-11-08'),
-            ],
-          });
-        }
-        return const JsonReply(200, {'items': []});
-      });
-      await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
-      );
-      await tester.pumpAndSettle();
-      final box = find.byKey(const ValueKey('filter-year-0'));
-      await tester.ensureVisible(box);
-      for (final year in ['2029', '2019', '2024']) {
-        final chip = find.descendant(of: box, matching: find.text(year));
-        await tester.ensureVisible(chip);
-        expect(chip, findsOneWidget, reason: 'ano $year no seletor');
-      }
-      // escolher um ano antigo filtra por ele e o ano continua disponível depois
-      final old = find.descendant(of: box, matching: find.text('2019'));
-      await tester.ensureVisible(old);
-      await tester.tap(old);
-      await tester.pumpAndSettle();
-      expect(
-        find.descendant(of: box, matching: find.text('2019')),
-        findsOneWidget,
-      );
-    },
-  );
-
-  testWidgets(
     'ao digitar o nome não aparece cartão de sugestões nem chamada de busca até enviar',
     (tester) async {
       big(tester);
@@ -520,12 +460,12 @@ void main() {
       );
       await tester.pumpAndSettle();
       final before = calls.length;
-      // A frase só aparece ao tocar na lupa.
-      expect(find.byKey(const Key('catalog-phrase')), findsNothing);
+      // O campo de nome só aparece ao tocar na lupa.
+      expect(find.byKey(const Key('catalog-name-search')), findsNothing);
       await tester.tap(find.byKey(const Key('catalog-search-toggle')));
       await tester.pumpAndSettle();
       await tester.enterText(
-        find.byKey(const Key('catalog-phrase')),
+        find.byKey(const Key('catalog-name-search')),
         'circuito',
       );
       await tester.pump(const Duration(milliseconds: 600));
@@ -843,162 +783,32 @@ void searchTests() {
     return calls;
   }
 
-  Future<void> pick(WidgetTester tester, String field, String option) async {
-    if (field == 'filter-year') {
-      // O ano é um seletor em linha (como Todas/Adultos/Kids): basta tocar no ano.
-      final year = find.descendant(
-        of: find.byKey(const ValueKey('filter-year-0')),
-        matching: find.text(option),
-      );
-      await tester.ensureVisible(year);
-      await tester.tap(year);
-      await tester.pumpAndSettle();
-      return;
-    }
-    final box = find.byKey(ValueKey('$field-0'));
-    await tester.ensureVisible(box);
-    await tester.tap(box);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(option).last);
-    await tester.pumpAndSettle();
-  }
-
-  Future<void> pickLocation(WidgetTester tester) async {
-    // Mesmo seletor do editar perfil; aceitar o padrão escolhe o primeiro da lista (Acre / Acrelândia).
-    final field = find.byKey(const Key('filter-location'));
-    await tester.ensureVisible(field);
-    await tester.tap(field);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('location-done')));
-    await tester.pumpAndSettle();
-  }
-
-  testWidgets('só o nome é obrigatório; estado e cidade e ano são seletores', (
-    tester,
-  ) async {
-    final calls = await openForm(tester);
-    final before = calls.length;
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Informe o nome da corrida ou escolha outro filtro.'),
-      findsOneWidget,
-    );
-    expect(calls.length, before, reason: 'sem nome nada é enviado');
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Nome da corrida'),
-      'meia',
-    );
-    await pickLocation(tester);
-    await pick(tester, 'filter-year', '2026');
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(calls.last['namePrefix'], 'meia');
-    expect(calls.last['state'], 'AC');
-    expect(calls.last['city'], 'Acrelândia');
-    expect(calls.last['dateFrom'], '2026-01-01');
-    expect(calls.last['dateTo'], '2026-12-31');
-    expect(
-      calls.last.containsKey('distanceKm'),
-      isFalse,
-    ); // distância e o resto são opcionais
-  });
-
-  testWidgets('com outro filtro o nome deixa de ser obrigatório', (
-    tester,
-  ) async {
-    final calls = await openForm(tester);
-    await pick(tester, 'filter-year', '2026');
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Informe o nome da corrida ou escolha outro filtro.'),
-      findsNothing,
-    );
-    expect(calls.last.containsKey('namePrefix'), isFalse);
-    expect(calls.last['dateFrom'], '2026-01-01');
-    expect(calls.last['dateTo'], '2026-12-31');
-  });
-
-  testWidgets('atalhos de km preenchem a distância e a busca a envia', (
-    tester,
-  ) async {
-    final calls = await openForm(tester);
-    final chip = find.byKey(const Key('km-chip-10'));
-    await tester.ensureVisible(chip);
-    await tester.tap(chip);
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(TextFormField, '10'), findsOneWidget);
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(calls.last['distanceKm'], '10');
-    expect(calls.last.containsKey('namePrefix'), isFalse);
-    // tocar de novo no atalho selecionado limpa a distância
-    await tester.ensureVisible(chip);
-    await tester.tap(chip);
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(TextFormField, '10'), findsNothing);
-  });
-
-  testWidgets('limpar a busca zera UF e ano nos seletores', (tester) async {
-    final calls = await openForm(tester);
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Nome da corrida'),
-      'meia',
-    );
-    await pickLocation(tester);
-    await pick(tester, 'filter-year', '2025');
-    await tester.ensureVisible(find.text('Buscar'));
-    await tester.tap(find.text('Buscar'));
-    await tester.pumpAndSettle();
-    expect(calls.last['state'], 'AC');
-    await tester.ensureVisible(find.text('Limpar busca'));
-    await tester.tap(find.text('Limpar busca'));
-    await tester.pumpAndSettle();
-    expect(calls.last.containsKey('state'), isFalse);
-    expect(calls.last.containsKey('dateFrom'), isFalse);
-    expect(find.text('Todos os estados e cidades'), findsOneWidget);
-    final year = tester.widget<SegmentedButton<String>>(
-      find.byWidgetPredicate(
-        (w) =>
-            w is SegmentedButton<String> &&
-            w.key.toString().contains('filter-year'),
-      ),
-    );
-    expect(year.selected, {''}); // volta para "Todos"
-  });
-
   testWidgets(
-    'pedir cadastro e minhas solicitações são ícones na barra superior',
+    'incluir corrida e minhas solicitações ficam num só "+" na barra superior',
     (tester) async {
       await openForm(tester);
       await tester.tap(
         find.byKey(const Key('catalog-search-toggle')),
       ); // fecha a lupa
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
-      expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
-      expect(find.byTooltip('Pedir cadastro da corrida'), findsOneWidget);
-      expect(find.byTooltip('Minhas solicitações'), findsOneWidget);
-      // Ícones na barra, junto da agenda, da lupa e dos avisos (não são mais botões de texto no corpo).
+      // Um só "+" na barra (com a agenda e os avisos): abre "Incluir uma corrida" e "Minhas solicitações".
       final bar = tester.getRect(find.byType(AppBar));
-      for (final key in [
-        'catalog-request-new',
-        'catalog-request-mine',
-        'catalog-agenda',
-        'catalog-search-toggle',
-      ]) {
+      for (final key in ['catalog-request-new', 'catalog-agenda']) {
         expect(
           bar.contains(tester.getCenter(find.byKey(Key(key)))),
           isTrue,
           reason: key,
         );
       }
-      expect(find.text('Pedir cadastro da corrida'), findsNothing);
+      expect(find.byTooltip('Incluir corrida'), findsOneWidget);
+      expect(find.byKey(const Key('catalog-request-mine')), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-request-new')));
+      await tester.pumpAndSettle();
+      expect(find.text('Incluir uma corrida'), findsOneWidget);
+      expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('catalog-request-mine')));
+      await tester.pumpAndSettle();
+      expect(find.byType(MyEditionRequestsScreen), findsOneWidget);
     },
   );
 
@@ -1092,4 +902,38 @@ void raceArtTests() {
     };
     expect(distinct.length > 1, isTrue);
   });
+
+  testWidgets(
+    'a agenda mostra as corridas no mesmo cartão compacto da tela Corridas, só em lista',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/me/race-plans') {
+          return JsonReply(200, {
+            'items': [
+              {
+                'editionId': 'EA',
+                'status': 'registered',
+                'version': 1,
+                'edition': {...upcoming('A'), 'id': 'EA'},
+              },
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: AgendaScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      if (find.byKey(const Key('agenda-layout-toggle')).evaluate().isNotEmpty) {
+        await tester.tap(find.byKey(const Key('agenda-layout-toggle')));
+        await tester.pumpAndSettle();
+      }
+      expect(find.byKey(const Key('compact-card-EA')), findsOneWidget);
+      expect(find.byKey(const Key('catalog-view-mode')), findsNothing);
+    },
+  );
 }

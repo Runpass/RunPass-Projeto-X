@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from .catalog import CatalogImporter, ImportEdition, normalized
+from .catalog import CatalogImporter, ImportEdition, name_core, normalized
 from .operator_admin import _already_loaded
 from .service import Problem, stamp
 
@@ -74,7 +74,7 @@ def _url(value):
     return value
 
 
-def row_to_payload(row, source_code):
+def row_to_payload(row, source_code, allow_no_distance=False):
     """Uma linha do CSV (ou item de conector ja nos nomes do CSV) -> payload do importador."""
     external = (row.get("source_external_id") or "").strip()
     if not external:
@@ -82,7 +82,7 @@ def row_to_payload(row, source_code):
     km_values = [
         parse_km(part) for part in re.split(r"[;|]", row.get("distances_km") or "") if part.strip()
     ]
-    if not km_values:
+    if not km_values and not allow_no_distance:
         raise ValueError("distances_km obrigatorio")
     payload = {
         "id": f"{source_code}-{slug(external)}"[:100],
@@ -94,6 +94,8 @@ def row_to_payload(row, source_code):
         "sourceCode": source_code,
         "sourceExternalId": external,
     }
+    if allow_no_distance:
+        payload["distancesOptional"] = True
     simple = {
         "country": "country",
         "registration_status": "registrationStatus",
@@ -134,7 +136,7 @@ def parse_csv(text, source_code):
     return rows_to_results(list(reader), source_code)
 
 
-def rows_to_results(rows, source_code):
+def rows_to_results(rows, source_code, allow_no_distance=False):
     """Linhas (do CSV ou de um conector, ja nos nomes do CSV) -> resultado validado por linha."""
     results, seen = [], set()
     for number, row in enumerate(rows, start=2):  # linha 1 e o cabecalho
@@ -142,7 +144,7 @@ def rows_to_results(rows, source_code):
             raise Problem(422, "CSV_TOO_MANY_ROWS")
         result = {"row": number, "externalId": (row.get("source_external_id") or "").strip()}
         try:
-            payload = row_to_payload(row, source_code)
+            payload = row_to_payload(row, source_code, allow_no_distance)
             if payload["id"] in seen:
                 raise ValueError("source_external_id repetido no arquivo")
             seen.add(payload["id"])
@@ -159,7 +161,7 @@ def rows_to_results(rows, source_code):
 
 
 def _same_day_candidates(catalog, day, payload):
-    """Editions ja publicadas no mesmo dia com mesmo nome e cidade (outro id)."""
+    """Edicoes ja publicadas no mesmo dia e cidade com o mesmo nucleo de nome (outro id)."""
     found = []
     rows, _ = catalog.store.query(
         "catalog", DATE_INDEX, lower=day + "#", upper=day + "#\U0010ffff", limit=500
@@ -169,7 +171,10 @@ def _same_day_candidates(catalog, day, payload):
         if (
             body
             and body["id"] != payload["id"]
-            and normalized(body["name"]) == normalized(payload["name"])
+            and body["status"] != "archived"
+            # Mesmo nucleo do nome (sem ano, "edicao", ordinal, acento e caixa): "Pace Run - 2ª Edição" e
+            # "2ª Pace Run" no mesmo dia e cidade sao a mesma prova.
+            and name_core(body["name"]) == name_core(payload["name"])
             and normalized(body["city"]) == normalized(payload["city"])
         ):
             found.append(body["id"])

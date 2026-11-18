@@ -7,21 +7,20 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
-import 'catalog_views.dart';
 import 'edition_cards.dart';
 import 'edit_profile.dart';
 import 'edition_requests.dart' show MyEditionRequestsScreen;
 import 'friends.dart';
-import 'grid_columns.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
 import 'medal_scan.dart';
 import 'pending_medals.dart';
 import 'notifications.dart';
-import 'post_card.dart' show FeedEntry, PostCard, PostThumb, entryFromPost;
+import 'post_card.dart' show FeedEntry, PostThumb, entryFromPost;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 import 'settings.dart';
+import 'undo_delete.dart';
 
 /// "15/03/1995 • 18 anos", so quando GET /me devolve birthDate (so para o proprio
 /// titular; nunca em perfil publico). Nulo se ausente ou mal formatada.
@@ -559,22 +558,89 @@ String formatKilometers(double km) => km == km.roundToDouble()
 
 String distanceLabel(double km) => '${km.round()}K';
 
-/// Edition details by id. A lookup that fails is left out of the result.
+/// Limita quantas chamadas rodam ao mesmo tempo. A conta do DEV aceita poucas execucoes simultaneas
+/// (cota de 10 para todas as funcoes): uma chamada por medalha, todas juntas, faz parte falhar e a
+/// prateleira muda de ordem, de nome e de total a cada volta.
+class _Gate {
+  final int limit;
+  _Gate(this.limit);
+  int _running = 0;
+  final _waiting = <Completer<void>>[];
+
+  Future<T> run<T>(Future<T> Function() job) async {
+    while (_running >= limit) {
+      final turn = Completer<void>();
+      _waiting.add(turn);
+      await turn.future;
+    }
+    _running++;
+    try {
+      return await job();
+    } finally {
+      _running--;
+      if (_waiting.isNotEmpty) _waiting.removeAt(0).complete();
+    }
+  }
+}
+
+final _editionGate = _Gate(4);
+final _photoGate = _Gate(4);
+
+/// Falhas que passam sozinhas: vale tentar de novo. As demais (404, imagem inexistente) nao.
+bool isTransientFailure(Object error) =>
+    error is IdentityIssue &&
+    (error.code == 'SERVICE_UNAVAILABLE' ||
+        error.code == 'DEPENDENCY_UNAVAILABLE');
+
+/// Dados da corrida guardados por alguns minutos: a prateleira nao pergunta tudo de novo a cada volta
+/// e, se uma chamada falhar, continua valendo o ultimo dado conhecido.
+final Map<String, ({Map<String, dynamic> data, DateTime at})> _editionCache =
+    {};
+const _editionCacheTtl = Duration(minutes: 10);
+
+/// Filtro e ordem escolhidos na prateleira; sobrevivem a troca de aba (a tela e recriada).
+MedalGrouping _lastMedalGrouping = MedalGrouping.all;
+bool _lastMedalNewestFirst = true;
+
+/// Zera o que a prateleira guarda entre telas. Usado ao sair da conta e nos testes.
+void clearMedalCaches() {
+  _editionCache.clear();
+  _photoLinks.clear();
+  _lastMedalGrouping = MedalGrouping.all;
+  _lastMedalNewestFirst = true;
+}
+
+/// Edition details by id. Chamadas em no maximo 4 por vez, com ate 3 tentativas nas falhas passageiras.
+/// Se continuar falhando, vale o ultimo dado guardado; sem ele, a corrida fica fora do resultado.
 Future<Map<String, Map<String, dynamic>>> loadEditions(
   IdentityGateway gateway,
   Iterable<String> ids,
 ) async {
   final editions = <String, Map<String, dynamic>>{};
+  final now = DateTime.now();
   await Future.wait([
     for (final id in ids.toSet())
       () async {
-        try {
-          editions[id] = await gateway.request(
-            '/editions/${Uri.encodeComponent(id)}',
-          );
-        } on Exception {
-          // The caller still shows the item, only without edition details.
+        final cached = _editionCache[id];
+        if (cached != null && now.difference(cached.at) < _editionCacheTtl) {
+          editions[id] = cached.data;
+          return;
         }
+        for (var attempt = 1; attempt <= 3; attempt++) {
+          try {
+            final data = await _editionGate.run(
+              () => gateway.request('/editions/${Uri.encodeComponent(id)}'),
+            );
+            _editionCache[id] = (data: data, at: DateTime.now());
+            editions[id] = data;
+            return;
+          } on Exception catch (error) {
+            if (!isTransientFailure(error) || attempt == 3) break;
+            await gateway.sleeper(Duration(milliseconds: 400 * attempt));
+          }
+        }
+        // Sem resposta: usa o ultimo dado conhecido, se houver.
+        if (cached != null) editions[id] = cached.data;
       }(),
   ]);
   return editions;
@@ -667,7 +733,15 @@ class _SignedPhotoState extends State<SignedPhoto> {
     }
   }
 
-  Future<void> load() async {
+  Timer? _retry;
+
+  @override
+  void dispose() {
+    _retry?.cancel();
+    super.dispose();
+  }
+
+  Future<void> load([int attempt = 1]) async {
     final endpoint = widget.endpoint;
     if (endpoint == null) return;
     final cached = _photoLinks[endpoint];
@@ -676,19 +750,31 @@ class _SignedPhotoState extends State<SignedPhoto> {
       return;
     }
     try {
-      final reply = await widget.gateway.request(endpoint);
-      final link = reply['url'];
-      final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
-      if (link is String && link.startsWith('https://')) {
-        _photoLinks[endpoint] = (
-          url: link,
-          expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
-              .subtract(const Duration(seconds: 30)),
-        );
-        if (mounted) setState(() => url = link);
+      final reply = await _photoGate.run(
+        () => widget.gateway.request(endpoint),
+      );
+      _applyLink(endpoint, reply);
+    } on Exception catch (error) {
+      // Sem foto ou sem rede: fica o fallback. Falha passageira (cota do servidor): tenta de novo, ate 3 vezes.
+      if (isTransientFailure(error) && attempt < 3 && mounted) {
+        _retry?.cancel();
+        _retry = Timer(Duration(milliseconds: 500 * attempt), () {
+          if (mounted && widget.endpoint == endpoint) load(attempt + 1);
+        });
       }
-    } on Exception {
-      // Sem foto ou sem rede: fica o fallback.
+    }
+  }
+
+  void _applyLink(String endpoint, Map<String, dynamic> reply) {
+    final link = reply['url'];
+    final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
+    if (link is String && link.startsWith('https://')) {
+      _photoLinks[endpoint] = (
+        url: link,
+        expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
+            .subtract(const Duration(seconds: 30)),
+      );
+      if (mounted) setState(() => url = link);
     }
   }
 
@@ -725,10 +811,14 @@ class MedalPhoto extends StatelessWidget {
 
   /// Muda quando a foto foi trocada: força recarregar o link (a lista reaproveita o estado da foto).
   final int revision;
+
+  /// Endereço da foto quando não é da participação (ex.: publicação extra, `/posts/{id}/image`).
+  final String? endpoint;
   const MedalPhoto({
     super.key,
     required this.gateway,
     required this.participationId,
+    this.endpoint,
     this.size = 46,
     this.fit = BoxFit.cover,
     this.useDisplayImage = false,
@@ -739,13 +829,15 @@ class MedalPhoto extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SignedPhoto(
     key: ValueKey(
-      'medal-photo-$participationId-$useDisplayImage-$usePostImage',
+      'medal-photo-$participationId-$useDisplayImage-$usePostImage-$endpoint',
     ),
     gateway: gateway,
-    endpoint: participationId == null
-        ? null
-        : '/participations/${Uri.encodeComponent(participationId!)}/'
-              '${usePostImage ? 'post-image' : (useDisplayImage ? 'display-image' : 'image')}',
+    endpoint:
+        endpoint ??
+        (participationId == null
+            ? null
+            : '/participations/${Uri.encodeComponent(participationId!)}/'
+                  '${usePostImage ? 'post-image' : (useDisplayImage ? 'display-image' : 'image')}'),
     fallback: MedalArt(size: size),
     fit: fit,
   );
@@ -798,27 +890,60 @@ String decimalPt(num value) => value.toStringAsFixed(1).replaceAll('.', ',');
 /// Edition lookups that fail leave the record without edition details.
 Future<List<RaceRecord>> loadMyRaces(IdentityGateway gateway) async {
   final completed = <Map<String, dynamic>>[];
+  final embedded = <String, Map<String, dynamic>>{};
   String? cursor;
   var pages = 0;
   do {
+    // `expand=edition`: o servidor devolve a corrida junto de cada participacao, em vez de uma chamada por
+    // medalha. Servidor antigo ignora o parametro e o app busca as corridas uma a uma, como antes.
     final page = await gateway.request(
       '/me/participations',
-      query: {'state': 'completed', 'limit': '100', 'cursor': ?cursor},
+      query: {
+        'state': 'completed',
+        'limit': '100',
+        'expand': 'edition',
+        'cursor': ?cursor,
+      },
     );
-    completed.addAll(
-      (page['items'] as List? ?? const []).cast<Map<String, dynamic>>().where(
-        (item) => item['state'] == 'completed',
-      ),
-    );
+    for (final item in (page['items'] as List? ?? const [])) {
+      final map = Map<String, dynamic>.from(item as Map);
+      if (map['state'] != 'completed') continue;
+      if (pendingDeletions.contains(map['id'])) {
+        continue; // exclusão em espera (janela do "Desfazer")
+      }
+      final edition = map.remove('edition');
+      if (edition is Map) {
+        embedded['${map['editionId']}'] = Map<String, dynamic>.from(edition);
+        _editionCache['${map['editionId']}'] = (
+          data: embedded['${map['editionId']}']!,
+          at: DateTime.now(),
+        );
+      }
+      completed.add(map);
+    }
     cursor = page['nextCursor'] as String?;
   } while (cursor != null && ++pages < 5);
-  final editions = await loadEditions(gateway, [
-    for (final p in completed) p['editionId'] as String,
-  ]);
+  final missing = [
+    for (final p in completed)
+      if (!embedded.containsKey(p['editionId'])) p['editionId'] as String,
+  ];
+  final fetched = missing.isEmpty
+      ? const <String, Map<String, dynamic>>{}
+      : await loadEditions(gateway, missing);
+  final editions = {...fetched, ...embedded};
   final records = [
     for (final p in completed) RaceRecord(p, editions[p['editionId']]),
   ];
-  records.sort((a, b) => (b.date ?? '').compareTo(a.date ?? ''));
+  // Mais recente primeiro; na mesma data, a conclusao mais recente e, por fim, o id: a ordem nunca varia.
+  records.sort((a, b) {
+    final byDate = (b.date ?? '').compareTo(a.date ?? '');
+    if (byDate != 0) return byDate;
+    final byDone = '${b.participation['completedAt'] ?? ''}'.compareTo(
+      '${a.participation['completedAt'] ?? ''}',
+    );
+    if (byDone != 0) return byDone;
+    return '${a.participation['id']}'.compareTo('${b.participation['id']}');
+  });
   return records;
 }
 
@@ -1173,16 +1298,66 @@ String loadError(Object error) => error is IdentityIssue
     ? catalogError(error)
     : 'Não foi possível carregar seus dados. Tente novamente.';
 
+/// Toque na medalha em Medalhas: abre as opções para ajustar a MEDALHA (foto, modelo, legenda e, dali, os dados da
+/// corrida e a avaliação), no mesmo formato da edição da publicação. A publicação em si não é mexida aqui.
 Future<void> openMedal(
   BuildContext context,
   IdentityGateway gateway,
   RaceRecord race,
 ) => Navigator.of(context).push<void>(
   MaterialPageRoute<void>(
-    builder: (_) =>
-        ParticipationDraftScreen(gateway: gateway, initial: race.participation),
+    builder: (_) => ParticipationDraftScreen(
+      gateway: gateway,
+      initial: race.participation,
+      medalMode: true,
+    ),
   ),
 );
+
+/// Abre "Personalizar medalha" (modelo, foto da prateleira e legenda) a partir da tela da participação e grava
+/// o que mudou. Devolve a participação atualizada, ou nulo se a pessoa cancelou ou não deu para salvar.
+Future<Map<String, dynamic>?> editMedalInfo(
+  BuildContext context,
+  IdentityGateway gateway,
+  RaceRecord race, {
+  ImageBytesFetcher fetchDisplayPhoto = fetchImageBytes,
+  MedalCropOpener openCropScreen = openMedalCropScreen,
+}) async {
+  final result = await showModalBottomSheet<Map<String, dynamic>>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheet) => _MedalEditSheet(
+      gateway: gateway,
+      race: race,
+      fetchDisplayPhoto: fetchDisplayPhoto,
+      openCropScreen: openCropScreen,
+      allowDelete: false,
+    ),
+  );
+  if (result == null || !context.mounted) return null;
+  final id = race.participation['id'] as String;
+  try {
+    final updated = await gateway.request(
+      '/participations/${Uri.encodeComponent(id)}',
+      method: 'PATCH',
+      body: {'expectedVersion': race.participation['version'], ...result},
+    );
+    if (result.containsKey('medalDisplayImageReference')) {
+      forgetMedalDisplayImage(id);
+    }
+    return updated;
+  } on Exception {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível salvar a medalha. Tente de novo.'),
+        ),
+      );
+    }
+    return null;
+  }
+}
 
 String readableEditionName(String editionId) {
   final match = RegExp(r'^pedido-(.+)-\d{4}-\d{2}-\d{2}-[^-]+$')
@@ -1544,8 +1719,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late Future<List<Map<String, dynamic>>> pendingMedals = loadPendingMedals(
     widget.gateway,
   );
-  MedalGrouping grouping = MedalGrouping.all;
-  bool newestFirst = true;
+  MedalGrouping grouping = _lastMedalGrouping;
+  bool newestFirst = _lastMedalNewestFirst;
   bool _applying = false;
 
   @override
@@ -1653,29 +1828,45 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     }
   }
 
-  /// Exclui a medalha: a participação some das medalhas e de "Minhas corridas" (a corrida segue no catálogo).
+  /// Exclui a medalha com "Desfazer": ela some na hora e a exclusão só vai ao servidor depois da janela.
   Future<void> deleteMedal(RaceRecord race) async {
     final id = race.participation['id'] as String;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(id)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${race.participation['version']}'},
+      final done = await deleteWithUndo(
+        context,
+        id: id,
+        message: 'Medalha excluída. Ela também saiu de Minhas corridas.',
+        hide: () => setState(() {
+          races = loadMyRaces(widget.gateway);
+        }),
+        restore: () {
+          if (mounted) {
+            setState(() {
+              races = loadMyRaces(widget.gateway);
+            });
+          }
+        },
+        perform: () async {
+          await widget.gateway.request(
+            '/participations/${Uri.encodeComponent(id)}',
+            method: 'DELETE',
+            query: {'expectedVersion': '${race.participation['version']}'},
+          );
+          forgetMedalDisplayImage(id);
+        },
       );
-      forgetMedalDisplayImage(id);
-      if (!mounted) return;
-      setState(() {
-        races = loadMyRaces(widget.gateway);
-      });
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Medalha excluída. Ela também saiu de Minhas corridas.',
-          ),
-        ),
-      );
+      if (done && mounted) {
+        setState(() {
+          races = loadMyRaces(widget.gateway);
+        });
+      }
     } on Exception {
+      if (mounted) {
+        setState(() {
+          races = loadMyRaces(widget.gateway);
+        });
+      }
       messenger.showSnackBar(
         const SnackBar(
           content: Text('Não foi possível excluir a medalha. Tente de novo.'),
@@ -1913,14 +2104,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   /// Nome atual da corrida (a equipe pode ter corrigido depois do pedido): vale o do catálogo.
   Future<String?> _currentName(String editionId) =>
       _editionNames.putIfAbsent(editionId, () async {
-        try {
-          final edition = await widget.gateway.request(
-            '/editions/${Uri.encodeComponent(editionId)}',
-          );
-          return edition['name'] as String?;
-        } on Exception {
-          return null;
-        }
+        final found = await loadEditions(widget.gateway, [editionId]);
+        return found[editionId]?['name'] as String?;
       });
 
   void _reloadShelf() {
@@ -2083,19 +2268,29 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     if (sure != true || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await widget.gateway.request(
-        '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${request['version']}'},
+      final done = await deleteWithUndo(
+        context,
+        id: request['id'] as String,
+        message: 'Medalha excluída.',
+        hide: _reloadShelf,
+        restore: () {
+          if (mounted) _reloadShelf();
+        },
+        perform: () async {
+          await widget.gateway.request(
+            '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
+            method: 'DELETE',
+            query: {'expectedVersion': '${request['version']}'},
+          );
+          _pendingPhotos.remove(request['id']);
+        },
       );
-      _pendingPhotos.remove(request['id']);
-      _reloadShelf();
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Medalha excluída.')),
-      );
+      if (done && mounted) _reloadShelf();
     } on IdentityIssue catch (issue) {
+      if (mounted) _reloadShelf();
       messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
     } on Exception {
+      if (mounted) _reloadShelf();
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
@@ -2414,7 +2609,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     child: ChoiceChip(
       label: Text(label),
       selected: grouping == value,
-      onSelected: (_) => setState(() => grouping = value),
+      onSelected: (_) => setState(() => grouping = _lastMedalGrouping = value),
       showCheckmark: false,
     ),
   );
@@ -2443,6 +2638,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             }
             final data = snapshot.data!;
             final stats = RaceStats.of(data);
+            final missing = data.where((r) => r.edition == null).length;
             return ListView(
               key: const Key('medals-list'),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
@@ -2513,6 +2709,33 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                     ),
                   ),
                 ),
+                if (missing > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      key: const Key('medals-incomplete'),
+                      children: [
+                        Expanded(
+                          child: Text(
+                            missing == 1
+                                ? 'Uma corrida não carregou agora; os totais podem estar incompletos.'
+                                : '$missing corridas não carregaram agora; os totais podem estar incompletos.',
+                            style: TextStyle(
+                              color: context.muted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          key: const Key('medals-retry'),
+                          onPressed: () => setState(() {
+                            races = loadMyRaces(widget.gateway);
+                          }),
+                          child: const Text('Tentar de novo'),
+                        ),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 6),
                 Row(
                   children: [
@@ -2528,14 +2751,19 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                               fontSize: 17,
                             ),
                           ),
-                          const SizedBox(width: 10),
-                          _addTile(),
+                          // Sem medalhas, o convite grande ja tem o botao de adicionar: um so controle.
+                          if (data.isNotEmpty) ...[
+                            const SizedBox(width: 10),
+                            _addTile(),
+                          ],
                         ],
                       ),
                     ),
                     TextButton.icon(
-                      onPressed: () =>
-                          setState(() => newestFirst = !newestFirst),
+                      onPressed: () => setState(
+                        () =>
+                            newestFirst = _lastMedalNewestFirst = !newestFirst,
+                      ),
                       icon: const Icon(Icons.swap_vert, size: 18),
                       label: Text(
                         newestFirst ? 'Mais recentes' : 'Mais antigas',
@@ -2562,11 +2790,15 @@ class _MedalEditSheet extends StatefulWidget {
   final RaceRecord race;
   final ImageBytesFetcher fetchDisplayPhoto;
   final MedalCropOpener openCropScreen;
+
+  /// Sem o "Excluir medalha": a tela da participação já tem o seu "Excluir participação".
+  final bool allowDelete;
   const _MedalEditSheet({
     required this.gateway,
     required this.race,
     this.fetchDisplayPhoto = fetchImageBytes,
     this.openCropScreen = openMedalCropScreen,
+    this.allowDelete = true,
   });
 
   @override
@@ -2665,10 +2897,17 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
     displayImageTouched = true;
   });
 
+  String? _customLegend(String typed, RaceRecord race) {
+    final text = _blankToNull(typed);
+    return text == null || text == race.name || text == 'Corrida' ? null : text;
+  }
+
   void save() {
     Navigator.pop<Map<String, dynamic>>(context, {
       'medalFrameId': frameId,
-      'medalDescription': _blankToNull(description.text),
+      // A legenda só é guardada quando a pessoa a mudou de fato. O campo já vem preenchido com o nome da
+      // corrida; se a corrida não carregou, esse nome era só "Corrida", e guardá-lo fixava um nome genérico.
+      'medalDescription': _customLegend(description.text, widget.race),
       // Cidade, UF e ano nao sao mais personalizaveis aqui: sempre vem do
       // catalogo da corrida (RaceRecord.medalCity/medalState/medalYear ja
       // caem para o catalogo quando a participacao nao tem valor proprio).
@@ -2815,16 +3054,17 @@ class _MedalEditSheetState extends State<_MedalEditSheet> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            TextButton.icon(
-              key: const Key('medal-delete'),
-              onPressed: confirmDelete,
-              icon: const Icon(Icons.delete_outline, color: Colors.red),
-              label: const Text(
-                'Excluir medalha',
-                style: TextStyle(color: Colors.red),
+            if (widget.allowDelete) const SizedBox(height: 8),
+            if (widget.allowDelete)
+              TextButton.icon(
+                key: const Key('medal-delete'),
+                onPressed: confirmDelete,
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                label: const Text(
+                  'Excluir medalha',
+                  style: TextStyle(color: Colors.red),
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -2858,27 +3098,24 @@ Future<List<FeedEntry>> loadMyPosts(
   List<RaceRecord> races,
   String? myId,
 ) async {
-  final published =
-      [
-        for (final race in races)
-          if (race.participation['publishToFeed'] == true) race,
-      ]..sort(
-        (a, b) => (b.participation['completedAt'] as String? ?? '').compareTo(
-          a.participation['completedAt'] as String? ?? '',
-        ),
-      );
-  final entries = <FeedEntry>[];
-  for (final race in published) {
-    final id = race.participation['id'] as String?;
-    if (id == null) continue;
-    try {
-      final post = await gateway.request('/posts/${Uri.encodeComponent(id)}');
-      entries.add(entryFromPost(post, race.edition, myId));
-    } on Exception {
-      // Uma publicacao que falhar ao carregar simplesmente nao aparece na lista.
-    }
+  // Todas as minhas publicações numa chamada: a de cada corrida e as extras (outras fotos da mesma corrida).
+  final editions = {
+    for (final race in races) '${race.participation['id']}': race.edition,
+  };
+  try {
+    final page = await gateway.request('/me/posts');
+    return [
+      for (final post in (page['items'] as List? ?? const []).cast<Map>())
+        if (!pendingDeletions.contains(post['id']))
+          entryFromPost(
+            Map<String, dynamic>.from(post),
+            editions['${(post['participation'] as Map?)?['id']}'],
+            myId,
+          ),
+    ];
+  } on Exception {
+    return const [];
   }
-  return entries;
 }
 
 class RunnerProfileScreen extends StatefulWidget {
@@ -2897,43 +3134,8 @@ class RunnerProfileScreen extends StatefulWidget {
 }
 
 class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
-  static const _gridKey = 'grid-columns-profile';
-  int gridColumns = GridColumns.standard;
-
-  /// Corridas da agenda no perfil: grade (padrão, 3 por linha) ou lista como na tela Corridas; fica neste aparelho.
-  static const _viewKey = 'profile-view-mode';
-  CatalogViewMode planView = CatalogViewMode.grid;
-
-  /// Minhas publicações: grade de miniaturas (padrão) ou lista com as publicações inteiras, como no início.
-  static const _postViewKey = 'profile-posts-view-mode';
-  CatalogViewMode postView = CatalogViewMode.grid;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadGridColumns();
-    CatalogViewMode.read(_viewKey, CatalogViewMode.grid).then((mode) {
-      if (mounted) setState(() => planView = mode);
-    });
-    CatalogViewMode.read(_postViewKey, CatalogViewMode.grid).then((mode) {
-      if (mounted) setState(() => postView = mode);
-    });
-  }
-
-  void _loadGridColumns() => GridColumns.read(_gridKey).then((n) {
-    if (mounted) {
-      setState(() {
-        gridColumns = n;
-      });
-    }
-  });
-
-  void _setGridColumns(int n) {
-    setState(() {
-      gridColumns = n;
-    });
-    GridColumns.write(_gridKey, n);
-  }
+  /// Minhas publicações: sempre em grade de 3 miniaturas (tocar abre a publicação inteira).
+  static const postColumns = 3;
 
   late Future<ProfileData> data = load();
 
@@ -3315,21 +3517,12 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     ),
   );
 
-  /// Corrida da agenda no mesmo cartão da tela Corridas (lista ou grade). Tocar abre a prova.
+  /// Corrida da agenda no mesmo cartão compacto da tela Corridas. Tocar abre a prova.
   Widget planTile(Map<String, dynamic> plan) {
     final edition = {
       ...(plan['edition'] as Map<String, dynamic>? ?? const {}),
       'id': plan['editionId'],
     };
-    final date = edition['date'] as String?;
-    final place = [
-      if (edition['city'] != null) edition['city'] as String,
-      if (edition['state'] != null) edition['state'] as String,
-    ].join('/');
-    final subtitle = [
-      if (date != null) displayDate(date),
-      if (place.isNotEmpty) place,
-    ].join(' · ');
     Future<void> open() async {
       if (plan['editionId'] == null) return;
       await Navigator.of(context).push(
@@ -3347,30 +3540,11 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
       }
     }
 
-    final key = Key('plan-${plan['editionId']}');
-    if (planView == CatalogViewMode.grid) {
-      return EditionGridCard(
-        key: key,
-        gateway: widget.gateway,
-        edition: edition,
-        columns: gridColumns,
-        subtitle: subtitle,
-        shortDate: date == null ? '' : displayDate(date).substring(0, 5),
-        onTap: open,
-      );
-    }
-    final distances = [
-      for (final d in (edition['distances'] as List? ?? const []))
-        '${(d as Map)['kilometers']} km',
-    ].join(' · ');
-    return EditionListCard(
-      key: key,
+    // Mesmo cartão compacto da tela Corridas (só lista): miniatura, quando e onde, nome e distâncias.
+    return EditionCompactCard(
+      key: Key('plan-${plan['editionId']}'),
       gateway: widget.gateway,
       edition: edition,
-      lines: [
-        if (subtitle.isNotEmpty) subtitle,
-        if (distances.isNotEmpty) distances,
-      ],
       onTap: open,
     );
   }
@@ -3398,19 +3572,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
             style: TextStyle(fontWeight: FontWeight.w700, color: context.muted),
           ),
         ),
-        if (planView == CatalogViewMode.grid)
-          GridView.count(
-            padding: EdgeInsets.zero,
-            crossAxisCount: gridColumns,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-            childAspectRatio: gridCardAspectRatio(gridColumns),
-            children: [for (final plan in shown) planTile(plan)],
-          )
-        else
-          for (final plan in shown) planTile(plan),
+        for (final plan in shown) planTile(plan),
         const SizedBox(height: 8),
       ],
     );
@@ -3513,19 +3675,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       ),
                     ),
                   ),
-                  sectionTitle(
-                    'Quero correr',
-                    trailing: CatalogViewMenu(
-                      key: const Key('view-menu-plans'),
-                      value: planView,
-                      columns: gridColumns,
-                      onChanged: (mode) {
-                        setState(() => planView = mode);
-                        mode.write(_viewKey);
-                      },
-                      onColumnsChanged: _setGridColumns,
-                    ),
-                  ),
+                  sectionTitle('Quero correr'),
                   if (result.plans.isEmpty)
                     const Text(
                       'Suas corridas desejadas e inscritas aparecerão aqui.',
@@ -3535,49 +3685,18 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                     planGrid('wanted', result.plans),
                     planGrid('registered', result.plans),
                   ],
-                  sectionTitle(
-                    'Minhas publicações',
-                    trailing: CatalogViewMenu(
-                      key: const Key('view-menu-posts'),
-                      value: postView,
-                      columns: gridColumns,
-                      onChanged: (mode) {
-                        setState(() => postView = mode);
-                        mode.write(_postViewKey);
-                      },
-                      onColumnsChanged: _setGridColumns,
-                    ),
-                  ),
+                  sectionTitle('Minhas publicações'),
                   if (myPosts.isEmpty)
                     const Text(
                       'Suas corridas publicadas aparecerão aqui.',
                       key: Key('no-my-posts'),
-                    )
-                  else if (postView == CatalogViewMode.list)
-                    Column(
-                      key: const Key('my-posts-list'),
-                      children: [
-                        for (final entry in myPosts)
-                          PostCard(
-                            key: Key('my-post-card-${entry.postId}'),
-                            gateway: widget.gateway,
-                            entry: entry,
-                            onChanged: () {
-                              if (mounted) {
-                                setState(() {
-                                  data = load();
-                                });
-                              }
-                            },
-                          ),
-                      ],
                     )
                   else
                     // Miniaturas, 3 por linha; tocar abre a publicação inteira.
                     GridView.count(
                       padding: EdgeInsets.zero,
                       key: const Key('my-posts-grid'),
-                      crossAxisCount: gridColumns,
+                      crossAxisCount: postColumns,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       mainAxisSpacing: 6,

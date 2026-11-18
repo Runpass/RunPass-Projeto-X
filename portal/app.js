@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, montarAprovacao, montarRenomear, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, quandoMensal, listaDiasMes, montarAprovacao, montarRenomear, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
   resumoPedido, segundosAteExpirar, statusCadastro, montarBannerArquivo, dimensoesEnvio, resumoImporte,
 } from './lib.js';
 
@@ -67,9 +67,6 @@ function sair(motivo) {
   $('segredo').textContent = '';
   $('cadastros').replaceChildren();
   $('custos').replaceChildren();
-  $('divergencias').replaceChildren();
-  $('fontes').replaceChildren();
-  $('fonte-nova').replaceChildren();
   $('operadores').replaceChildren();
   $('banners-candidatas').replaceChildren();
   $('banner-manual').replaceChildren();
@@ -601,100 +598,36 @@ function painelRecusa(area, pedido) {
   area.replaceChildren(el('label', {}, 'Motivo da recusa', motivo), confirmar);
 }
 
-// ---- divergências ---------------------------------------------------------------------------------
-
-async function baixarAceitas() {
+async function importarDescobertas(evento) {
+  const arquivo = evento.target.files[0];
+  evento.target.value = '';
+  if (!arquivo) return;
+  if (arquivo.size > 2000000) return aviso(mensagem('CSV_TOO_LARGE'), 'erro');
   try {
-    const resposta = await fetch(cfg.apiUrl + '/admin/divergences/accepted.csv', { headers: { Authorization: `Bearer ${token}` } });
-    if (resposta.status === 401) return sair('INVALID_TOKEN');
-    if (!resposta.ok) throw new Error('erro');
-    const nome = /filename="([^"]+)"/.exec(resposta.headers.get('content-disposition') || '');
-    const url = URL.createObjectURL(await resposta.blob());
-    const link = el('a', { href: url, download: nome ? nome[1] : 'divergencias-aceitas.csv' });
-    document.body.append(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    const r = await api('/admin/discoveries/import', { method: 'POST', body: JSON.stringify({ csv: await arquivo.text() }) });
+    const c = r.counts;
+    aviso(`Arquivo lido: ${c.created} novas, ${c.updated} completadas, ${c.unchanged} iguais, ${c.invalid} com erro.`, c.invalid ? 'erro' : 'ok');
+    await carregarDescobertas();
   } catch (erro) {
-    if (token) aviso('Não foi possível baixar o CSV agora.', 'erro');
+    if (token) aviso(mensagem(erro.codigo), 'erro');
   }
 }
 
-function cartaoDivergencia(d) {
-  const distancias = el('input', { type: 'text', placeholder: 'ex.: 5, 10', maxlength: '60', autocomplete: 'off', value: d.suggestedKm.join(', ') });
-  const fonte = el('input', { type: 'url', placeholder: 'https://... (página que comprova)', maxlength: '500', autocomplete: 'off' });
-  const trecho = el('input', { type: 'text', placeholder: 'Trecho da fonte (até 160 caracteres)', maxlength: '160', autocomplete: 'off' });
-  const erro = el('p', { class: 'aviso erro', hidden: true });
-  const nada = d.kind === 'nada';
-  const aceitar = el('button', { type: 'button', class: 'ok' }, nada ? 'Existe informação (aceitar)' : 'Aceitar');
-  const reprovar = el('button', { type: 'button', class: 'perigo' }, nada ? 'Descartar (sem informação útil)' : 'Reprovar');
-  const decidir = async (decisao, extra) => {
-    const dados = { decisao, distancias: listaKm(distancias.value), fonte: fonte.value.trim(), trecho: trecho.value.trim(), ...extra };
-    const problema = validarDecisao(dados);
-    erro.hidden = !problema;
-    erro.textContent = problema;
-    if (problema) return;
-    aceitar.disabled = reprovar.disabled = true;
-    const corpo = decisao === 'accepted' ? { decision: 'accepted', distances: dados.distancias, sourceUrl: dados.fonte, snippet: dados.trecho } : { decision: 'rejected', reason: extra.motivo || '' };
-    try {
-      await api(`/admin/divergences/${d.id}/decision`, { method: 'POST', body: JSON.stringify(corpo) });
-      aviso(decisao === 'accepted' ? 'Aceita. Ela entra no CSV das aceitas.' : 'Reprovada.', 'ok');
-      await carregarDivergencias();
-    } catch (falha) {
-      aceitar.disabled = reprovar.disabled = false;
-      if (!token) return;
-      erro.hidden = false;
-      erro.textContent = falha.codigo === 'INVALID_INPUT' ? 'O servidor recusou os dados. Confira a distância, o link https e o trecho.' : mensagem(falha.codigo);
-    }
-  };
-  aceitar.addEventListener('click', () => decidir('accepted', {}));
-  reprovar.addEventListener('click', () => {
-    if (nada) return decidir('rejected', { motivo: 'sem informação útil' });
-    const motivo = window.prompt(`Reprovar "${d.name}". Motivo (opcional, até 200 caracteres):`, '');
-    if (motivo === null) return;
-    decidir('rejected', { motivo: motivo.trim() });
-  });
-  return el(
-    'article',
-    { class: 'cartao' },
-    el('h2', {}, d.name),
-    el('div', { class: 'linha' }, `${dataBr(d.date)}${d.venue ? ' · ' + d.venue : ''}`),
-    el('div', { class: 'aviso' }, TIPO_DIVERGENCIA[d.kind] || d.kind, d.note ? ` — ${d.note}` : ''),
-    linkSeguro(d.source) ? el('div', { class: 'meta' }, 'Fonte da rotina: ', el('a', { href: linkSeguro(d.source), target: '_blank', rel: 'noopener noreferrer' }, d.source)) : '',
-    linkSeguro(d.listSource) ? el('div', { class: 'meta' }, 'Lista oficial: ', el('a', { href: linkSeguro(d.listSource), target: '_blank', rel: 'noopener noreferrer' }, d.listSource)) : '',
-    d.suggestedKm.length ? el('div', { class: 'meta' }, `Distâncias sugeridas (de outra edição, não confirmadas): ${d.suggestedKm.join(', ')} km`) : '',
-    el('label', {}, 'Distâncias em km (para aceitar)', distancias),
-    el('label', {}, 'Link da fonte que comprova', fonte),
-    el('label', {}, 'Trecho da fonte', trecho),
-    erro,
-    el('div', { class: 'acoes' }, aceitar, reprovar),
-  );
-}
-
-function cartaoFonte(f) {
-  const nota = el('input', { type: 'text', placeholder: 'O que foi conferido (site oficial, robots.txt, termos, API ou feed)', maxlength: '300', autocomplete: 'off', value: f.verificationNote || '' });
+function cartaoDescoberta(d) {
   const erro = el('p', { class: 'aviso erro', hidden: true });
   const botoes = [];
   const enviar = async (caminho, corpo, ok) => {
     for (const b of botoes) b.disabled = true;
     try {
-      await api(`/admin/sources/${f.id}/${caminho}`, { method: 'POST', body: JSON.stringify({ version: f.version, ...corpo }) });
-      aviso(ok, 'ok');
-      await carregarFontes();
+      const r = await api(`/admin/discoveries/${d.id}/${caminho}`, { method: 'POST', body: JSON.stringify({ version: d.version, ...corpo }) });
+      aviso(typeof ok === 'function' ? ok(r) : ok, 'ok');
+      await carregarDescobertas();
     } catch (falha) {
       for (const b of botoes) b.disabled = false;
       if (!token) return;
       erro.hidden = false;
-      erro.textContent = falha.codigo === 'INVALID_INPUT' ? 'Descreva o que foi conferido (até 300 caracteres).' : mensagem(falha.codigo);
+      erro.textContent = mensagem(falha.codigo);
     }
-  };
-  const verificar = (status, ok) => () => {
-    if (status !== 'pending' && !nota.value.trim()) {
-      erro.hidden = false;
-      erro.textContent = 'Descreva o que foi conferido antes de verificar ou rejeitar.';
-      return;
-    }
-    enviar('verification', { status, note: nota.value.trim() }, ok);
   };
   const acao = (rotulo, classe, fn) => {
     const b = el('button', { type: 'button', class: classe }, rotulo);
@@ -702,121 +635,63 @@ function cartaoFonte(f) {
     botoes.push(b);
     return b;
   };
-  const acoes = [acao('Marcar como verificada', 'ok', verificar('verified', 'Fonte verificada.')), acao('Rejeitar', 'perigo', verificar('rejected', 'Fonte rejeitada.'))];
-  if (f.verification !== 'pending') acoes.push(acao('Voltar a pendente', 'sec', verificar('pending', 'Fonte voltou a pendente.')));
-  if (f.verification === 'verified') acoes.push(acao(f.active ? 'Desativar' : 'Ativar', f.active ? 'sec' : 'ok', () => enviar('active', { active: !f.active }, f.active ? 'Fonte desativada.' : 'Fonte ativada.')));
-  const site = linkSeguro(f.websiteUrl);
+  const aberta = d.status === 'new' || d.status === 'reviewed';
+  const resultado = el('div', { class: 'acoes' });
+  if (aberta) {
+    resultado.append(
+      acao('Marcar como conferida', 'sec', () => enviar('decision', { decision: 'review' }, 'Marcada como conferida.')),
+      acao('Simular promoção', 'sec', () => enviar('promote', { dryRun: true }, (r) => (r.status === 'created' ? 'Simulação: a corrida seria criada no catálogo.' : `Simulação: ${r.status} (não seria criada).`))),
+      acao('Promover para o catálogo', 'ok', () => {
+        if (window.confirm(`Criar "${d.name}" (${dataBr(d.date)}, ${d.city}) no catálogo do app?`)) enviar('promote', { dryRun: false }, 'Corrida criada no catálogo.');
+      }),
+      acao('Rejeitar', 'perigo', () => {
+        const nota = window.prompt(`Rejeitar "${d.name}". Motivo (opcional):`, '');
+        if (nota !== null) enviar('decision', { decision: 'reject', note: nota.trim() }, 'Rejeitada.');
+      }),
+    );
+  } else if (d.status === 'rejected') {
+    resultado.append(acao('Reabrir', 'sec', () => enviar('decision', { decision: 'reopen' }, 'Reaberta.')));
+  }
   return el(
     'article',
     { class: 'cartao' },
-    el('h2', {}, f.name),
-    el('div', { class: 'linha' }, `${TIPOS_FONTE[f.type] || f.type} · ${NIVEIS_FONTE[f.trustLevel] || ''} · ${f.region} · a cada ${f.frequencyHours} h`),
-    site ? el('div', { class: 'meta' }, el('a', { href: site, target: '_blank', rel: 'noopener noreferrer' }, f.websiteUrl)) : '',
-    el('div', { class: 'aviso' }, `${VERIFICACAO_FONTE[f.verification] || f.verification} · ${f.active ? 'ativa' : 'desativada'} · ${f.collectable ? 'pode coletar' : 'não coleta'}`),
-    f.verifiedAt ? el('div', { class: 'meta' }, `Verificada em ${dataHoraBr(f.verifiedAt)}`) : '',
-    f.lastSuccessAt ? el('div', { class: 'meta' }, `Última coleta com sucesso: ${dataHoraBr(f.lastSuccessAt)}`) : '',
-    f.lastError ? el('div', { class: 'aviso erro' }, `Último erro: ${f.lastError}`) : '',
-    el('label', {}, 'Nota da verificação', nota),
+    el('h2', {}, d.name),
+    el('div', { class: 'linha' }, `${dataBr(d.date)} · ${d.city}/${d.state}${d.venue ? ' · ' + d.venue : ''}`),
+    el('div', { class: 'meta' }, `${SITUACAO_DESCOBERTA[d.status] || d.status} · origem ${d.origin === 'api' ? 'automática (API)' : 'arquivo CSV'} · vista ${d.seen}x`),
+    d.distancesKm.length ? el('div', { class: 'meta' }, `Distâncias: ${d.distancesKm.join(', ')} km`) : el('div', { class: 'aviso' }, 'Sem distância na fonte: entra no catálogo sem distância e o corredor informa ao se inscrever.'),
+    d.organizer ? el('div', { class: 'meta' }, `Organizador: ${d.organizer}`) : '',
+    linkSeguro(d.sourceUrl) ? el('div', { class: 'meta' }, 'Fonte: ', el('a', { href: linkSeguro(d.sourceUrl), target: '_blank', rel: 'noopener noreferrer' }, d.sourceUrl)) : '',
+    d.excerpt ? el('div', { class: 'meta' }, `Trecho: "${d.excerpt}"`) : '',
+    d.editionId ? el('div', { class: 'meta' }, `Corrida no catálogo: ${d.editionId}`) : '',
     erro,
-    el('div', { class: 'acoes' }, acoes),
+    resultado,
   );
 }
 
-function formularioFonte() {
-  const nome = el('input', { type: 'text', maxlength: '80', autocomplete: 'off', placeholder: 'ex.: Nome da organizadora' });
-  const site = el('input', { type: 'url', maxlength: '300', autocomplete: 'off', placeholder: 'https://...' });
-  const tipo = el('select', {}, Object.entries(TIPOS_FONTE).map(([v, t]) => el('option', { value: v }, t)));
-  const nivel = el('select', {}, Object.entries(NIVEIS_FONTE).map(([v, t]) => el('option', { value: v }, t)));
-  const freq = el('input', { type: 'number', min: '1', max: '2160', value: '24' });
-  const erro = el('p', { class: 'aviso erro', hidden: true });
-  const salvar = el('button', { type: 'button', class: 'ok' }, 'Cadastrar (fica pendente e desativada)');
-  tipo.addEventListener('change', () => {
-    nivel.value = tipo.value === 'organizer' ? '1' : tipo.value === 'platform' ? '2' : '3';
-  });
-  salvar.addEventListener('click', async () => {
-    const dados = { nome: nome.value, site: site.value.trim(), tipo: tipo.value, nivel: Number(nivel.value), frequencia: Number(freq.value) };
-    const problema = validarFonte(dados);
-    erro.hidden = !problema;
-    erro.textContent = problema;
-    if (problema) return;
-    salvar.disabled = true;
-    try {
-      await api('/admin/sources', { method: 'POST', body: JSON.stringify({ id: idFonte(dados.nome), name: dados.nome.trim(), type: dados.tipo, trustLevel: dados.nivel, websiteUrl: dados.site, region: 'SP', method: 'website', frequencyHours: dados.frequencia }) });
-      aviso('Fonte cadastrada como pendente.', 'ok');
-      await carregarFontes();
-    } catch (falha) {
-      salvar.disabled = false;
-      if (!token) return;
-      erro.hidden = false;
-      erro.textContent = mensagem(falha.codigo);
-    }
-  });
-  return el('article', { class: 'cartao' }, el('h2', {}, 'Nova fonte'), el('label', {}, 'Nome', nome), el('label', {}, 'Site oficial', site), el('label', {}, 'Tipo', tipo), el('label', {}, 'Nível de confiança', nivel), el('label', {}, 'Frequência da coleta (horas)', freq), erro, el('div', { class: 'acoes' }, salvar));
-}
-
-async function carregarFontes() {
-  const alvo = $('fontes');
+async function carregarDescobertas() {
+  const alvo = $('descobertas');
   alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  const filtros = new URLSearchParams({ limit: '100' });
+  for (const [campo, id] of [['month', 'descobertas-mes'], ['status', 'descobertas-status'], ['q', 'descobertas-busca']]) {
+    const v = $(id).value.trim();
+    if (v) filtros.set(campo, v);
+  }
   try {
-    const r = await api('/admin/sources');
+    const r = await api('/admin/discoveries?' + filtros);
     const m = r.summary;
     alvo.replaceChildren(
       el(
         'div',
         { class: 'grade' },
-        cartaoNumero('Fontes', String(m.total)),
-        cartaoNumero('Verificadas', String(m.verified)),
-        cartaoNumero('Pendentes', String(m.pending)),
-        cartaoNumero('Podem coletar', String(m.collectable), 'ativas e verificadas'),
-        cartaoNumero('Com erro', String(m.withError)),
+        cartaoNumero('Provas', String(m.total)),
+        cartaoNumero('Novas', String(m.byStatus.new)),
+        cartaoNumero('Conferidas', String(m.byStatus.reviewed)),
+        cartaoNumero('Importadas', String(m.byStatus.imported)),
+        cartaoNumero('Com distância', String(m.withDistance)),
+        cartaoNumero('Municípios', String(m.cities)),
       ),
-      ...(r.items.length ? r.items.map(cartaoFonte) : [el('p', { class: 'vazio' }, 'Nenhuma fonte cadastrada. Use "Carregar fontes candidatas" ou cadastre uma abaixo.')]),
-    );
-    $('fonte-nova').replaceChildren(formularioFonte());
-  } catch (erro) {
-    if (token) {
-      alvo.replaceChildren();
-      aviso(mensagem(erro.codigo), 'erro');
-    }
-  }
-}
-
-async function carregarCandidatas() {
-  try {
-    const r = await api('/admin/sources/candidates', { method: 'POST', body: '{}' });
-    aviso(r.created.length ? `${r.created.length} fontes candidatas carregadas (todas pendentes e desativadas).` : 'As candidatas já estavam carregadas.', 'ok');
-    await carregarFontes();
-  } catch (erro) {
-    if (token) aviso(mensagem(erro.codigo), 'erro');
-  }
-}
-
-async function carregarDivergencias() {
-  const alvo = $('divergencias');
-  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
-  try {
-    const r = await api('/admin/divergences');
-    const pendentes = r.items.filter((i) => !i.decision);
-    const decididas = r.items.filter((i) => i.decision);
-    alvo.replaceChildren(
-      el('p', { class: 'meta' }, r.run ? `Coleta de ${dataBr(r.run)}.` : 'Nenhuma coleta de enriquecimento encontrada.'),
-      el(
-        'div',
-        { class: 'grade' },
-        cartaoNumero('Pendentes', String(r.summary.pending)),
-        cartaoNumero('Aceitas', String(r.summary.accepted)),
-        cartaoNumero('Reprovadas', String(r.summary.rejected)),
-        cartaoNumero('Rotina deixou de achar', textoRevocacao(r.summary.nothingFound).valor, textoRevocacao(r.summary.nothingFound).detalhe),
-      ),
-      ...(pendentes.length ? pendentes.map(cartaoDivergencia) : [el('p', { class: 'vazio' }, r.summary.total ? 'Nenhuma divergência pendente.' : 'Nenhuma divergência nesta coleta.')]),
-      decididas.length
-        ? el(
-            'div',
-            { class: 'cartao' },
-            el('div', { class: 'rot' }, 'Já decididas'),
-            tabela(['Prova', 'Data', 'Decisão', 'Detalhe'], decididas.map((i) => [i.name, dataBr(i.date), i.decision.result === 'accepted' ? 'Aceita' : 'Reprovada', i.decision.result === 'accepted' ? `${i.decision.distances.join(', ')} km` : i.decision.reason || '—'])),
-          )
-        : '',
+      ...(r.items.length ? r.items.map(cartaoDescoberta) : [el('p', { class: 'vazio' }, 'Nenhuma prova com esses filtros. Importe um CSV ou espere a esteira enviar.')]),
+      r.matching > r.items.length ? el('p', { class: 'ajuda' }, `Mostrando ${r.items.length} de ${r.matching}. Use os filtros para ver as demais.`) : '',
     );
   } catch (erro) {
     if (token) {
@@ -1482,9 +1357,8 @@ function mostrarAba(nome) {
   aviso('');
   if (nome === 'pedidos') carregarPedidos();
   if (nome === 'catalogo') carregarUltimoDisparo();
-  if (nome === 'fontes') carregarFontes();
+  if (nome === 'descobertas') carregarDescobertas();
   if (nome === 'cadastros') carregarCadastros();
-  if (nome === 'divergencias') carregarDivergencias();
   if (nome === 'qualidade') carregarQualidade();
   if (nome === 'custos') carregarCustos();
   if (nome === 'banners') carregarBanners();
@@ -1522,7 +1396,7 @@ function formularioAgendamento(item, aoFechar) {
   const novo = !item;
   const hoje = dataHojeIso();
   const nome = el('input', { type: 'text', maxlength: '40', placeholder: 'ex.: enriquecimento-quinta', autocomplete: 'off' });
-  const tipo = el('select', {}, ...Object.entries(TIPOS_AGENDAMENTO).map(([v, t]) => el('option', { value: v }, t)));
+  const tipo = el('select', {}, ...Object.entries(TIPOS_AGENDAMENTO).filter(([v]) => v !== 'mensal').map(([v, t]) => el('option', { value: v }, t)));
   const caixas = DIAS_SEMANA.map(([codigo, rotulo]) => {
     const c = el('input', { type: 'checkbox', value: codigo });
     c.checked = !!(item && item.days && item.days.includes(codigo));
@@ -1657,7 +1531,7 @@ async function carregarAgendamentos() {
                 {},
                 el('td', {}, d.quando),
                 el('td', {}, d.oque, a.createdByPortal ? el('div', { class: 'meta' }, 'Criado pelo portal') : ''),
-                el('td', {}, quandoTexto(a.days, a.time, a.date) || a.expression),
+                el('td', {}, quandoTexto(a.days, a.time, a.date) || quandoMensal(a.monthDays, a.time) || a.expression),
                 el('td', {}, d.situacao),
                 el(
                   'td',
@@ -1665,7 +1539,7 @@ async function carregarAgendamentos() {
                   el(
                     'div',
                     { class: 'acoes' },
-                    el('button', { type: 'button', class: 'sec', onclick: () => abrir(a) }, 'Editar'),
+                    a.kind === 'mensal' ? '' : el('button', { type: 'button', class: 'sec', onclick: () => abrir(a) }, 'Editar'),
                     el('button', { type: 'button', class: 'sec', onclick: () => alternarAgendamento(a) }, a.enabled ? 'Pausar' : 'Ativar'),
                     el('button', { type: 'button', class: 'perigo', onclick: () => apagarAgendamento(a) }, 'Apagar'),
                   ),
@@ -1784,7 +1658,104 @@ async function desfazerImporte(c) {
   }
 }
 
+/** Atualização mensal: agendamento, interruptor da aplicação automática, ações manuais e histórico. */
+async function carregarMensal() {
+  const alvo = $('mensal-corpo');
+  try {
+    const [estado, agenda, exec] = await Promise.all([
+      api('/admin/catalog/monthly'),
+      api('/admin/catalog/schedules'),
+      api('/admin/catalog/runs'),
+    ]);
+    const agendado = agenda.items.find((a) => a.kind === 'mensal');
+    const caixa = el('input', { type: 'checkbox' });
+    caixa.checked = estado.enabled;
+    caixa.addEventListener('change', async () => {
+      caixa.disabled = true;
+      try {
+        await api('/admin/catalog/monthly', { method: 'PUT', body: JSON.stringify({ enabled: caixa.checked }) });
+        aviso(caixa.checked ? 'Aplicação automática ligada.' : 'Aplicação automática desligada.', 'ok');
+      } catch (falha) {
+        caixa.checked = !caixa.checked;
+        if (token) aviso(mensagem(falha.codigo), 'erro');
+      } finally {
+        caixa.disabled = false;
+      }
+    });
+    const buscar = el('button', { type: 'button' }, 'Buscar provas agora');
+    buscar.addEventListener('click', async () => {
+      if (!window.confirm('Rodar a busca mensal agora? Ela usa a cota da OpenAI e leva vários minutos; só um disparo a cada 10 minutos.')) return;
+      buscar.disabled = true;
+      try {
+        await api('/admin/catalog/run', { method: 'POST', body: JSON.stringify({ mode: 'mensal' }) });
+        aviso('Busca mensal disparada. O resultado aparece em Execuções e é aplicado no catálogo na próxima hora (ou use "Aplicar resultados agora").', 'ok');
+      } catch (falha) {
+        if (token) aviso(mensagem(falha.codigo), 'erro');
+      } finally {
+        buscar.disabled = false;
+      }
+    });
+    const aplicar = el('button', { type: 'button', class: 'sec' }, 'Aplicar resultados agora');
+    aplicar.addEventListener('click', async () => {
+      aplicar.disabled = true;
+      try {
+        const r = await api('/admin/catalog/monthly/run', { method: 'POST' });
+        aviso(`Aplicado: ${r.counts.staged} novas, ${r.counts.promoted} promovidas, ${r.counts.completed} completadas.${r.toPromote ? ` Faltam ${r.toPromote} a promover: clique de novo.` : ''}`, 'ok');
+        carregarMensal();
+      } catch (falha) {
+        if (token) aviso(mensagem(falha.codigo), 'erro');
+      } finally {
+        aplicar.disabled = false;
+      }
+    });
+    // agendamento: dias do mês + horário
+    const dias = el('input', { type: 'text', value: agendado && agendado.monthDays ? agendado.monthDays.join(', ') : '1, 2, 3', placeholder: '1, 2, 3', autocomplete: 'off' });
+    const hora = el('input', { type: 'time', value: (agendado && agendado.time) || '03:00' });
+    const salvar = el('button', { type: 'button', class: 'sec' }, agendado ? 'Salvar agendamento' : 'Criar agendamento mensal');
+    salvar.addEventListener('click', async () => {
+      let lista;
+      try { lista = listaDiasMes(dias.value); } catch (e) { aviso(e.message, 'erro'); return; }
+      salvar.disabled = true;
+      try {
+        if (agendado) await api(`/admin/catalog/schedules/${encodeURIComponent(agendado.name)}`, { method: 'PUT', body: JSON.stringify({ monthDays: lista, time: hora.value }) });
+        else await api('/admin/catalog/schedules', { method: 'POST', body: JSON.stringify({ name: 'mensal', kind: 'mensal', monthDays: lista, time: hora.value, enabled: true }) });
+        aviso('Agendamento mensal salvo.', 'ok');
+        carregarMensal();
+        carregarAgendamentos();
+      } catch (falha) {
+        salvar.disabled = false;
+        if (token) aviso(mensagem(falha.codigo), 'erro');
+      }
+    });
+    const pausar = agendado
+      ? el('button', { type: 'button', class: 'sec', onclick: async () => { await alternarAgendamento(agendado); carregarMensal(); } }, agendado.enabled ? 'Pausar agendamento' : 'Ativar agendamento')
+      : '';
+    const linhas = estado.runs.map((r) =>
+      el('tr', {}, el('td', {}, dataHoraBr(r.at)), el('td', {}, r.trigger === 'manual' ? 'Manual' : 'Automática'),
+        el('td', {}, String(r.counts.found)), el('td', {}, String(r.counts.staged)), el('td', {}, String(r.counts.completed)),
+        el('td', {}, String(r.counts.promoted)), el('td', {}, String(r.counts.needsReview)), el('td', {}, String(r.counts.errors))),
+    );
+    const buscas = exec.items.filter((e) => e.mode === 'mensal' || e.origin === 'agendada');
+    alvo.replaceChildren(
+      el('p', { class: 'meta' }, agendado
+        ? `Agendamento: ${quandoMensal(agendado.monthDays, agendado.time)} · ${agendado.enabled ? `próxima busca em ${agendado.nextRun ? dataHoraBr(agendado.nextRun) : '—'}` : 'pausado'}`
+        : 'Nenhum agendamento mensal criado. Defina os dias e o horário abaixo (a busca de um mês pode levar mais de uma rodada: use dias seguidos, ex.: 1, 2, 3).'),
+      el('div', { class: 'acoes' }, el('label', {}, 'Dias do mês (1 a 28)', dias), el('label', {}, 'Horário (São Paulo)', hora), salvar, pausar),
+      el('div', { class: 'acoes' }, buscar, aplicar),
+      el('label', { class: 'dia' }, caixa, ' Aplicar sozinho no catálogo a cada hora quando houver resultado novo'),
+      el('p', { class: 'meta' }, `Relatórios de busca ainda não aplicados: ${estado.pendingReports ?? '—'}${buscas.length ? ` · última busca: ${dataHoraBr(buscas[0].at)} (${situacaoExecucao(buscas[0].status)})` : ''}`),
+      el('h3', {}, 'Aplicações no catálogo'),
+      linhas.length
+        ? el('table', { class: 'tabela' }, el('thead', {}, el('tr', {}, ['Quando', 'Como', 'Achadas', 'Novas na lista', 'Completadas', 'Promovidas', 'Para revisão', 'Erros'].map((x) => el('th', {}, x)))), el('tbody', {}, linhas))
+        : el('p', { class: 'vazio' }, 'Nenhuma aplicação ainda.'),
+    );
+  } catch (falha) {
+    if (token) alvo.replaceChildren(el('p', { class: 'meta' }, 'Não foi possível ler a atualização mensal agora.'));
+  }
+}
+
 async function carregarUltimoDisparo() {
+  carregarMensal();
   carregarImporteAutomatico();
   carregarAgendamentos();
   carregarExecucoes();
@@ -1992,10 +1963,10 @@ $('atualizar-operadores').addEventListener('click', carregarOperadores);
 $('atualizar-custos').addEventListener('click', carregarCustos);
 $('atualizar-qualidade').addEventListener('click', carregarQualidade);
 $('verificar-vinculos').addEventListener('click', verificarVinculos);
-$('atualizar-divergencias').addEventListener('click', carregarDivergencias);
-$('atualizar-fontes').addEventListener('click', carregarFontes);
-$('carregar-candidatas').addEventListener('click', carregarCandidatas);
-$('baixar-aceitas').addEventListener('click', baixarAceitas);
+$('atualizar-descobertas').addEventListener('click', carregarDescobertas);
+for (const id of ['descobertas-mes', 'descobertas-status']) $(id).addEventListener('change', carregarDescobertas);
+$('descobertas-busca').addEventListener('change', carregarDescobertas);
+$('descobertas-arquivo').addEventListener('change', importarDescobertas);
 $('atualizar-execucoes').addEventListener('click', carregarExecucoes);
 
 // Abas horizontais dentro de uma aba (telas com mais de um assunto).

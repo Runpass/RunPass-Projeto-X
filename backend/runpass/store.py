@@ -1,5 +1,6 @@
 """Optimistic transactions shared by the local harness and the DynamoDB adapter."""
 
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from threading import RLock
 from typing import Protocol
@@ -22,6 +23,7 @@ class Unavailable(Exception):
 class Store(Protocol):
     def get(self, key: Key) -> Item: ...
     def commit(self, expected: dict[Key, Item], writes: dict[Key, Item]) -> None: ...
+    def batch_get(self, keys) -> dict[Key, Item]: ...
     def query(self, table, pk, *, lower=None, upper=None, prefix=None, after=None, limit=20): ...
 
 
@@ -45,6 +47,9 @@ class MemoryStore:
     def get(self, key):
         with self.lock:
             return deepcopy(self.items.get(key))
+
+    def batch_get(self, keys):
+        return {key: self.get(key) for key in keys}
 
     def commit(self, expected, writes):
         with self.lock:
@@ -104,6 +109,23 @@ class DynamoStore:
         if not result:
             return None
         return {k: self.decoder.deserialize(v) for k, v in result.items() if k not in ("PK", "SK")}
+
+    def batch_get(self, keys):
+        """Varias leituras consistentes ao mesmo tempo (GetItem em paralelo). Nao usa BatchGetItem: o papel da
+        Lambda so tem GetItem/Query (privilegio minimo). Chave de tabela nao configurada volta como ausente.
+        Devolve {chave: item ou None}."""
+        keys = list(dict.fromkeys(keys))
+        result = {key: None for key in keys}
+        wanted = [key for key in keys if key[0] in self.tables]
+        if not wanted:
+            return result
+        if len(wanted) == 1:
+            result[wanted[0]] = self.get(wanted[0])
+            return result
+        with ThreadPoolExecutor(max_workers=min(16, len(wanted))) as pool:
+            for key, item in zip(wanted, pool.map(self.get, wanted)):
+                result[key] = item
+        return result
 
     def commit(self, expected, writes):
         if not writes.keys() <= expected.keys() or len(expected) > 100:

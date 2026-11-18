@@ -140,6 +140,14 @@ class S3BlobStore:
             raise Unavailable() from error
         return {"url": url, "contentType": head["ContentType"]}
 
+    def delete_derived(self, owner, reference):
+        """Apaga todas as versoes da copia tratada de UMA imagem do dono (o original temporario expira pelo ciclo
+        de vida do bucket)."""
+        try:
+            return _delete_versions(self.client, self.bucket, self._derived(owner, reference))
+        except (BotoCoreError, ClientError) as error:
+            raise Unavailable() from error
+
     def delete_owner(self, owner):
         try:
             return sum(

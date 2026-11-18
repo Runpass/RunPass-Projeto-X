@@ -156,7 +156,15 @@ void main() {
         scrollable: list,
       );
       expect(find.byKey(const Key('time-field')), findsOneWidget);
-      expect(find.text('Editar avaliação'), findsOneWidget);
+      // A avaliação se edita na própria tela (sem botão que abra outra).
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('review-comment-inline')),
+        200,
+        scrollable: list,
+      );
+      expect(find.text('Editar avaliação'), findsNothing);
+      expect(find.text('Salvar avaliação'), findsNothing);
+      expect(find.byKey(const Key('review-comment-inline')), findsOneWidget);
     },
   );
 
@@ -258,6 +266,51 @@ void main() {
       expect(b.patches.last.containsKey('postText'), isTrue); // nulo apaga
     },
   );
+
+  testWidgets('salvar o texto da publicação volta para a tela anterior', (
+    tester,
+  ) async {
+    final (gateway, b) = await setup();
+    tester.view.physicalSize = const Size(800, 3600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                key: const Key('abrir'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ParticipationDraftScreen(
+                      gateway: gateway,
+                      initial: published,
+                      fromPost: true,
+                      postPhotoLoader: (_, _) async => jpeg,
+                    ),
+                  ),
+                ),
+                child: const Text('abrir'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('abrir')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('post-text-edit')),
+      'Novo texto',
+    );
+    await tester.tap(find.byKey(const Key('save-post-text')));
+    await tester.pumpAndSettle();
+    expect(b.patches.last['postText'], 'Novo texto');
+    expect(find.byType(ParticipationDraftScreen), findsNothing);
+    expect(find.byKey(const Key('abrir')), findsOneWidget);
+    expect(find.text('Texto da publicação salvo.'), findsOneWidget);
+  });
 
   testWidgets(
     'a medalha concluída mostra o nome da corrida embaixo da foto e sem as frases de apoio',

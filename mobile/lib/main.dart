@@ -594,8 +594,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
           'Use pelo menos $minimumPasswordLength caracteres.',
         'CodeMismatchException' || 'ExpiredCodeException' =>
           'Confira o código recebido ou solicite outro.',
-        'NOT_ELIGIBLE' => 'O período de avaliação é destinado a pessoas com 13 anos completos ou mais.',
-        'BETA_FULL' => 'As vagas do período de avaliação foram preenchidas. Você pode entrar na lista de espera.',
+        'NOT_ELIGIBLE' => 'O app é para pessoas com 13 anos completos ou mais.',
+        'BETA_FULL' => 'As vagas para novos usuários foram preenchidas. Você pode entrar na lista de espera.',
         'IMAGE_TYPE_INVALID' ||
         'IMAGE_NOT_VALID' ||
         'IMAGE_SIZE_INVALID' ||
@@ -777,7 +777,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.photo => 'Sua foto de perfil',
       Step.ready => 'Entrando, ${displayName ?? 'corredor'}…',
       Step.waiting => 'Você está na lista de espera',
-      Step.closed => 'As admissões do período de avaliação foram encerradas',
+      Step.closed => 'As entradas de novos usuários foram encerradas',
     };
     return Scaffold(
       appBar: AppBar(title: const RunPassWordmark(compact: true)),

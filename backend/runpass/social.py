@@ -127,6 +127,46 @@ class SocialService:
         ]
         return sorted(parts, key=lambda i: (i.get("completedAt", ""), i["id"]), reverse=True)
 
+    # ---- publicações extras (várias por corrida) ------------------------------------------------------
+    # Uma publicação extra é um item próprio (`XP#<id>` na partição do autor) ligado a uma participação
+    # concluída. Na leitura vira uma "participação virtual" (os dados da corrida vêm da participação e a foto,
+    # o texto e as marcações vêm da publicação), assim o feed, as curtidas e os comentários tratam as duas
+    # do mesmo jeito. O id começa com "x-" para não colidir com o id da participação.
+
+    @staticmethod
+    def _extra_part(read, owner, item):
+        if not item:
+            return None
+        parent = read(("history", "USER#" + owner, "P#" + item["participationId"] + "#PART"))
+        if not parent or parent.get("state") != "completed":
+            return None
+        part = {
+            **parent,
+            "id": item["id"],
+            "owner": owner,
+            "completedAt": item["publishedAt"],
+            "publishToFeed": True,
+            "postImageReference": item["postImageReference"],
+            "taggedUserIds": item.get("taggedUserIds") or [],
+            "version": item["version"],
+            "extra": True,
+            "participationId": parent["id"],
+        }
+        part.pop("postText", None)
+        if item.get("postText"):
+            part["postText"] = item["postText"]
+        return part
+
+    def _extra_posts(self, author):
+        return [
+            part
+            for part in (
+                self._extra_part(self.store.get, author, item)
+                for _, item in self._list("history", "USER#" + author, "XP#")
+            )
+            if part
+        ]
+
     def _card(self, profile, viewer):
         card = IdentityService.public_profile(profile)
         card["isPrivate"] = bool(profile.get("isPrivate", False))
@@ -334,6 +374,9 @@ class SocialService:
         }
         if "timeSeconds" in part and (mine or part.get("showTime")):
             item["timeSeconds"] = part["timeSeconds"]
+        # O pace segue a mesma escolha de mostrar o tempo.
+        if "paceSecondsPerKm" in part and (mine or part.get("showTime")):
+            item["paceSecondsPerKm"] = part["paceSecondsPerKm"]
         if "placement" in part and (mine or part.get("showPlacement")):
             item["placement"] = part["placement"]
         return item
@@ -505,7 +548,11 @@ class SocialService:
 
     def _post_view(self, part, viewer):
         author = self._active_profile(self.store.get, part["owner"])
-        review = self.store.get(("history", "USER#" + part["owner"], "P#" + part["id"] + "#REVIEW"))
+        review = (
+            None  # publicação extra: só o texto escrito nela
+            if part.get("extra")
+            else self.store.get(("history", "USER#" + part["owner"], "P#" + part["id"] + "#REVIEW"))
+        )
         post = {
             "id": part["id"],
             "author": self._card(author, viewer),
@@ -535,11 +582,21 @@ class SocialService:
             post["comment"] = part[
                 "postText"
             ]  # o texto escrito ao publicar vale mais que o da avaliacao
+        if part.get("extra"):
+            post["extra"] = True
+            post["participation"]["id"] = part["participationId"]
         return post
 
     def _authorized_post(self, read, viewer, post_id):
         """`viewer` is kept in the signature even though posts are always public (same shape
         as before, and the parameter documents intent at call sites)."""
+        if post_id.startswith("x-"):
+            pointer = read(("history", "XPOST#" + post_id, "OWNER"))
+            item = pointer and read(("history", "USER#" + pointer["owner"], "XP#" + post_id))
+            part = item and self._extra_part(read, pointer["owner"], item)
+            if not part or not self._author_active(read, pointer["owner"]):
+                raise Problem(404, "POST_NOT_FOUND")
+            return part
         owner = read(("history", "PARTICIPATION#" + post_id, "OWNER"))
         if not owner:
             raise Problem(404, "POST_NOT_FOUND")
@@ -558,6 +615,16 @@ class SocialService:
         return self._post_view(
             self._authorized_post(self.store.get, actor.subject, post_id), actor.subject
         )
+
+    def my_posts(self, actor):
+        """Todas as minhas publicações (a de cada corrida e as extras), mais recentes primeiro."""
+        self.identity.authorize(actor, admitted=True)
+        me = actor.subject
+        parts = [
+            {**p, "owner": me} for p in self._completed(me) if p.get("publishToFeed")
+        ] + self._extra_posts(me)
+        parts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
+        return {"items": [self._post_view(p, me) for p in parts]}
 
     def _friend_ids(self, subject):
         return [
@@ -582,6 +649,10 @@ class SocialService:
                     key = (part.get("completedAt", ""), part["id"])
                     if after is None or key < tuple(after):
                         posts.append({**part, "owner": author})
+            for part in self._extra_posts(author):
+                key = (part.get("completedAt", ""), part["id"])
+                if after is None or key < tuple(after):
+                    posts.append(part)
         posts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
         return posts
 
@@ -603,6 +674,12 @@ class SocialService:
             if owner not in seen_owners:
                 seen_owners[owner] = self._author_active(self.store.get, owner)
             if not seen_owners[owner]:
+                continue
+            if pointer.get("extra"):
+                item = self.store.get(("history", "USER#" + owner, "XP#" + pointer["id"]))
+                part = self._extra_part(self.store.get, owner, item)
+                if part:
+                    posts.append(part)
                 continue
             part = self.store.get(("history", "USER#" + owner, "P#" + pointer["id"] + "#PART"))
             if part and part.get("state") == "completed" and part.get("publishToFeed"):
@@ -704,7 +781,8 @@ class SocialService:
                 **{
                     k: v
                     for k, v in self._public_participation(part, actor.subject).items()
-                    if k in ("distanceId", "completedAt", "timeSeconds", "placement")
+                    if k
+                    in ("distanceId", "completedAt", "timeSeconds", "paceSecondsPerKm", "placement")
                 },
             }
             for part, profile in page
@@ -749,24 +827,23 @@ class SocialService:
         return result
 
     def edition_photos(self, actor, edition_id, distance_id=None, limit=30, cursor=None):
-        """Fotos de medalha que os corredores publicaram para a edicao, mais recentes primeiro.
+        """Fotos de POSTAGEM que os corredores publicaram para a edicao, mais recentes primeiro.
 
-        Mesma regra de `may_view_photo` (publicacao de conta ativa) e so entra quem enviou a
-        propria foto (origem `runner`), nunca a arte padrao do catalogo. `total` conta as fotos
-        visiveis para o leitor. Assume volume pequeno na beta (como o feed publico)."""
+        So entra participacao publicada no feed (conta ativa) que tem foto de postagem propria
+        (`postImageReference`): nunca a foto da medalha nem a arte padrao do catalogo. A imagem de cada
+        item e `GET /participations/{id}/post-image`. `total` conta as fotos visiveis para o leitor.
+        Assume volume pequeno na beta (como o feed publico)."""
         self.identity.authorize(actor, admitted=True)
         after = _cursor_decode(cursor) if cursor else None
         done = self._edition_completions(edition_id, distance_id)
         done.sort(key=lambda r: (r[0].get("completedAt", ""), r[0]["id"]), reverse=True)
         visible = []
         for part, _, profile in done:
+            if not part.get("publishToFeed") or not part.get("postImageReference"):
+                continue
             if not self.may_view_photo(self.store.get, actor, part["owner"], part):
                 continue
-            medal = self.store.get(
-                ("history", "USER#" + part["owner"], "P#" + part["id"] + "#MEDAL")
-            )
-            if medal and medal.get("imageOrigin") == "runner":
-                visible.append((part, profile))
+            visible.append((part, profile))
         window = [
             r
             for r in visible
@@ -830,12 +907,16 @@ class SocialService:
         count = len(reviews)
         if not count:
             return {"reviewCount": 0, "average": None, "recommendPercent": None, "byCriterion": {}}
-        sums = {c: sum(r["ratings"][c] for r in reviews) for c in self.CRITERIA}
+
+        # O DynamoDB devolve numeros como Decimal; as notas sao inteiras de 1 a 5. Somar Decimal com o
+        # float de arredondamento (1e-9) derrubava a aba Avaliacoes da corrida (500 em producao do DEV).
+        def grade(review, criterion):
+            return int(review["ratings"][criterion])
+
+        sums = {c: sum(grade(r, c) for r in reviews) for c in self.CRITERIA}
         total = sum(sums.values())
         liked = sum(
-            1
-            for r in reviews
-            if sum(r["ratings"][c] for c in self.CRITERIA) / 8 >= self.RECOMMEND_FROM
+            1 for r in reviews if sum(grade(r, c) for c in self.CRITERIA) / 8 >= self.RECOMMEND_FROM
         )
         return {
             "reviewCount": count,
@@ -981,7 +1062,8 @@ class SocialService:
             pending = row["state"] == "pending" and row.get("requestedBy") != me
             if row["state"] == "active" or pending:
                 add("friend_request" if pending else "friend", row["at"], who, pinned=pending)
-        mine = [p for p in self._completed(me) if p.get("publishToFeed")]
+        mine = [p for p in self._completed(me) if p.get("publishToFeed")] + self._extra_posts(me)
+        mine.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
         for part in mine[: self.NOTIFICATION_POSTS]:
             for sk, row in self._like_rows(part["id"]):
                 if row["author"] != me:

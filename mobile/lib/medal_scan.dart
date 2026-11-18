@@ -89,12 +89,63 @@ List<String> medalQueries(List<String> lines, {int max = 3}) {
   return queries.take(max).toList();
 }
 
+/// Medalha costuma vir impressa em CAIXA ALTA: "MARATONA FANTASMA DO VALE" vira "Maratona Fantasma do Vale".
+/// Só mexe quando o texto inteiro está em maiúsculas; nome já escrito em minúsculas ou misto fica como está.
+/// Palavras com número ("10K", "29ª") e siglas de até 2 letras ("SP", "QA") ficam como estão.
+String readableMedalName(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty ||
+      text != text.toUpperCase() ||
+      text == text.toLowerCase()) {
+    return text;
+  }
+  const small = {
+    'de',
+    'da',
+    'do',
+    'das',
+    'dos',
+    'e',
+    'em',
+    'no',
+    'na',
+    'nos',
+    'nas',
+    'a',
+    'o',
+    'para',
+    'por',
+    'com',
+    'ao',
+    'ou',
+    'um',
+    'às',
+  };
+  final words = text.split(RegExp(r'\s+'));
+  final out = <String>[];
+  for (var i = 0; i < words.length; i++) {
+    final word = words[i];
+    final lower = word.toLowerCase();
+    // Número ("10K", "29ª") e sigla de até 2 letras ("QA", "SP", "RJ") ficam como estão; as palavras
+    // pequenas da lista acima ("DE", "DO", "EM"...) viram minúsculas no meio do nome.
+    final isSmall = small.contains(lower);
+    if (RegExp(r'\d').hasMatch(word) || (word.length <= 2 && !isSmall)) {
+      out.add(word);
+    } else if (i > 0 && isSmall) {
+      out.add(lower);
+    } else {
+      out.add(lower[0].toUpperCase() + lower.substring(1));
+    }
+  }
+  return out.join(' ');
+}
+
 /// Dados que dá para tirar do texto da medalha para já preencher o pedido de cadastro: o nome (a
 /// busca mais específica), a distância ("10 KM", "21K") e a data, se estiver impressa (dd/mm/aaaa).
 /// Só entra o que o texto realmente mostra; nada é adivinhado.
 Map<String, String> medalDetails(List<String> lines, List<String> queries) {
   final details = <String, String>{
-    if (queries.isNotEmpty) 'name': queries.first,
+    if (queries.isNotEmpty) 'name': readableMedalName(queries.first),
   };
   final text = lines.join('\n');
   final km = RegExp(
@@ -294,6 +345,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         note = 'Não consegui ler o nome da corrida nesta foto.';
       }
       await searchMatches(queries);
+      if (matches.isNotEmpty) await markRegistered();
       if (queries.isNotEmpty && matches.isEmpty) {
         note = 'Li o texto da medalha, mas não achei uma corrida com ele.';
       }
@@ -326,6 +378,20 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
 
   /// Toque numa corrida achada: preenche o cadastro com os dados dela (nome, data, local, distância),
   /// sem digitar de novo. Os campos continuam editáveis.
+  /// Corridas desta lista em que a pessoa já tem a medalha cadastrada.
+  Set<String> registered = {};
+
+  Future<void> markRegistered() async {
+    final mine = await loadMyEditions(widget.gateway);
+    if (!mounted) return;
+    setState(() {
+      registered = {
+        for (final e in mine.entries)
+          if (e.value['state'] == 'completed') e.key,
+      };
+    });
+  }
+
   void fillFrom(Map<String, dynamic> edition) {
     final distances = [
       for (final d in (edition['distances'] as List? ?? const []))
@@ -358,6 +424,17 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     final km = double.tryParse(distance.text.trim().replaceAll(',', '.'));
     final navigator = Navigator.of(context);
     setState(() => working = true);
+    // Medalha já cadastrada nesta corrida: avisa e não deixa cadastrar de novo (editar é uma escolha explícita).
+    final mine = (await loadMyEditions(widget.gateway))[id];
+    if (!mounted) return;
+    if (mine != null && mine['state'] == 'completed') {
+      setState(() => working = false);
+      await alreadyRegistered(
+        mine,
+        edition['name'] as String? ?? 'esta corrida',
+      );
+      return;
+    }
     final options = await editionDistances(widget.gateway, id, edition);
     if (!mounted) return;
     setState(() => working = false);
@@ -411,6 +488,13 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         // Já existe participação nesta corrida: abre a participação (rascunho ou concluída) para completar/editar.
         final existing = (await loadMyEditions(widget.gateway))[id];
         if (!mounted) return;
+        if (existing != null && existing['state'] == 'completed') {
+          await alreadyRegistered(
+            existing,
+            edition['name'] as String? ?? 'esta corrida',
+          );
+          return;
+        }
         await navigator.push(
           MaterialPageRoute<void>(
             builder: (_) => existing == null
@@ -433,6 +517,48 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         });
       }
     }
+  }
+
+  /// A medalha desta corrida já está cadastrada: não cadastra de novo e não abre a edição sozinho.
+  /// Quem quiser corrigir escolhe "Editar meu cadastro".
+  Future<void> alreadyRegistered(
+    Map<String, dynamic> existing,
+    String raceName,
+  ) async {
+    final navigator = Navigator.of(context);
+    final edit = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        key: const Key('medal-already'),
+        title: const Text('Essa medalha já está cadastrada'),
+        content: Text(
+          'Você já registrou "$raceName". Não dá para cadastrar a mesma medalha duas vezes. '
+          'Se alguma informação estiver errada, edite o cadastro que já existe.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('medal-already-close'),
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Fechar'),
+          ),
+          FilledButton(
+            key: const Key('medal-already-edit'),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Editar meu cadastro'),
+          ),
+        ],
+      ),
+    );
+    if (edit != true || !mounted) return;
+    await navigator.push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: existing,
+        ),
+      ),
+    );
+    if (mounted && navigator.canPop()) navigator.pop(true);
   }
 
   /// Não achou a corrida no catálogo: pesquisa o nome (como está nos campos) na internet, no navegador.
@@ -686,6 +812,8 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                         displayDate(edition['date'] as String),
                       if (edition['city'] != null)
                         '${edition['city']}/${edition['state']}',
+                      if (registered.contains(edition['id']))
+                        'Já cadastrada por você',
                     ].join(' · '),
                   ),
                   // Corrida que já existe: segue direto para a minha participação (tempo, km, avaliação e, se
