@@ -1247,8 +1247,9 @@ void main() {
     });
     await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
-    await reveal(tester, find.textContaining('Já está na sua lista'));
-    expect(find.textContaining('Já está na sua lista'), findsOneWidget);
+    // Corrida já registrada: a ação "Já corri" vira "Meu registro", marcada.
+    await reveal(tester, find.text('Meu registro'));
+    expect(find.text('Meu registro'), findsOneWidget);
     await tester.ensureVisible(find.text('Corrida A'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Corrida A'));
@@ -1827,10 +1828,12 @@ void main() {
           MaterialApp(home: CatalogScreen(gateway: gateway)),
         );
         await tester.pumpAndSettle();
-        // Pedir cadastro e acompanhar os pedidos ficam sempre visiveis, sem abrir a lupa.
+        // Um só "+" no topo: incluir uma corrida ou ver as solicitações.
         expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
-        expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
         await tester.tap(find.byKey(const Key('catalog-request-new')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
+        await tester.tap(find.byKey(const Key('catalog-request-new-item')));
         await tester.pumpAndSettle();
         expect(find.text('Pedir cadastro da corrida'), findsWidgets);
         await fillRequest(tester);
