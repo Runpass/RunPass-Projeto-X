@@ -76,20 +76,32 @@ def name_words(name):
 
 
 def name_core(name):
-    """Nucleo do nome para achar a mesma prova escrita de outro jeito: sem ano, sem "edicao", sem ordinal, sem
-    "corrida"/"run" e sem preposicoes ("2ª Pace Run - Edição 2026" e "Pace Run" tem o mesmo nucleo)."""
-    words = re.split(r"[^0-9a-z]+", normalized(name or ""))
-    ignore = NAME_STOPWORDS | {"edicao", "ed", "corrida", "run", "e", "ficticia"}
-    core = " ".join(
-        w
-        for w in words
-        if w
-        and w not in ignore
-        and not re.fullmatch(r"(19|20)\d\d", w)
-        and not re.fullmatch(r"\d{1,2}(a|o)?", w)
-    )
+    """Nucleo do nome para achar a mesma prova escrita de outro jeito no mesmo dia: sem ano, sem "edicao" (e o
+    numero dela), sem o ordinal do inicio, sem "corrida"/"run" e sem preposicoes ("2ª Pace Run - Edição 2026" e
+    "Pace Run" tem o mesmo nucleo). Numeros no meio do nome continuam ("4ª Etapa", "9 Km" sao outra prova)."""
+    words = [w for w in re.split(r"[^0-9a-z]+", normalized(name or "")) if w]
+    ordinal = re.compile(r"\d{1,3}(a|o)?")
+    while words and ordinal.fullmatch(words[0]):
+        words = words[1:]  # "3ª Corrida..." / "15 Night Run..."
+    ignore = NAME_STOPWORDS | {"corrida", "run", "e", "ficticia"}
+    kept = []
+    for i, w in enumerate(words):
+        nxt = words[i + 1] if i + 1 < len(words) else ""
+        prev = words[i - 1] if i > 0 else ""
+        if w in ("edicao", "ed") or re.fullmatch(r"(19|20)\d\d", w):
+            continue
+        if ordinal.fullmatch(w) and (nxt in ("edicao", "ed") or prev in ("edicao", "ed")):
+            continue  # "2ª Edição" / "Edição 3"
+        if w not in ignore:
+            kept.append(w)
     # Nome so de palavras genericas ("Corrida 2026"): compara o nome inteiro, nunca um nucleo vazio.
-    return core or " ".join(w for w in words if w)
+    return " ".join(kept) or " ".join(words) or normalized(name or "")
+
+
+def name_without_year(name):
+    """Nome exato sem o ano e sem pontuacao: a mesma prova com data diferente ("... 2026" em 14 e 15/03)."""
+    words = re.split(r"[^0-9a-z]+", normalized(name or ""))
+    return " ".join(w for w in words if w and not re.fullmatch(r"(19|20)\d\d", w))
 
 
 KIDS_WORDS = re.compile(r"\b(kids?|infantil|infantis|mirim|crianca|criancas)\b")

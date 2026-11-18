@@ -72,6 +72,13 @@ class CatalogTests(unittest.TestCase):
             name_core("3 CORRIDA CONTRA POLIO"), name_core("3ª Corrida Contra a Pólio")
         )
         self.assertNotEqual(name_core("Corrida Kids do Parque"), name_core("Corrida do Parque"))
+        # numeros no meio do nome sao outra prova
+        self.assertNotEqual(
+            name_core("Campeonato Santista - 4ª Etapa"), name_core("Campeonato Santista - 5ª Etapa")
+        )
+        self.assertNotEqual(
+            name_core("Corrida Mãe Aparecida — 4 Km"), name_core("Corrida Mãe Aparecida — 9 Km")
+        )
         self.assertEqual(name_core("Corrida 2026"), "corrida 2026")  # nunca vazio
 
     def test_busca_por_palavra_traz_proximas_primeiro_depois_as_passadas_e_pagina(self):
