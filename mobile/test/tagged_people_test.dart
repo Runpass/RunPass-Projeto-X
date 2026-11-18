@@ -67,10 +67,10 @@ void main() {
       );
       expect(find.text('Foi lindo'), findsOneWidget);
       expect(find.byKey(const Key('post-tagged-p1')), findsOneWidget);
-      // Fica na linha de baixo, à direita do ícone de comentários.
+      // Fica na linha das ações (logo abaixo da foto, como no Instagram), acima da legenda.
       expect(
         tester.getTopLeft(find.byKey(const Key('post-tagged-p1'))).dy,
-        greaterThan(tester.getTopLeft(find.text('Foi lindo')).dy),
+        lessThan(tester.getTopLeft(find.text('Foi lindo')).dy),
       );
       await tester.ensureVisible(find.byKey(const Key('post-tagged-p1')));
       await tester.pumpAndSettle();

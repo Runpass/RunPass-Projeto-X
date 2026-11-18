@@ -334,6 +334,9 @@ class SocialService:
         }
         if "timeSeconds" in part and (mine or part.get("showTime")):
             item["timeSeconds"] = part["timeSeconds"]
+        # O pace segue a mesma escolha de mostrar o tempo.
+        if "paceSecondsPerKm" in part and (mine or part.get("showTime")):
+            item["paceSecondsPerKm"] = part["paceSecondsPerKm"]
         if "placement" in part and (mine or part.get("showPlacement")):
             item["placement"] = part["placement"]
         return item
@@ -704,7 +707,8 @@ class SocialService:
                 **{
                     k: v
                     for k, v in self._public_participation(part, actor.subject).items()
-                    if k in ("distanceId", "completedAt", "timeSeconds", "placement")
+                    if k
+                    in ("distanceId", "completedAt", "timeSeconds", "paceSecondsPerKm", "placement")
                 },
             }
             for part, profile in page

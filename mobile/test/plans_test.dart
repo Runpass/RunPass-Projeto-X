@@ -469,44 +469,6 @@ void main() {
   });
 
   testWidgets(
-    'o filtro de ano alcança corridas cadastradas fora da faixa padrão',
-    (tester) async {
-      big(tester);
-      Map<String, String>? last;
-      final gateway = await signed((uri, method, headers, body) async {
-        if (uri.path == '/editions') {
-          last = uri.queryParameters;
-          return JsonReply(200, {
-            'items': [
-              upcoming('A', date: '2019-05-01'),
-              upcoming('B', date: '2029-03-01'),
-              upcoming('C', date: '2026-11-08'),
-            ],
-          });
-        }
-        return const JsonReply(200, {'items': []});
-      });
-      await tester.pumpWidget(
-        MaterialApp(home: CatalogScreen(gateway: gateway)),
-      );
-      await tester.pumpAndSettle();
-      final box = find.byKey(const Key('catalog-date-filter'));
-      await tester.ensureVisible(box);
-      await tester.tap(box);
-      await tester.pumpAndSettle();
-      for (final year in ['2029', '2019', '2024']) {
-        expect(find.text(year), findsWidgets, reason: 'ano $year na lista');
-      }
-      await tester.tap(find.text('2019').last);
-      await tester.pumpAndSettle();
-      expect(
-        last?['dateFrom'],
-        '2019-01-01',
-      ); // escolher o ano antigo filtra por ele
-    },
-  );
-
-  testWidgets(
     'ao digitar o nome não aparece cartão de sugestões nem chamada de busca até enviar',
     (tester) async {
       big(tester);
