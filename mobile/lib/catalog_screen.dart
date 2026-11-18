@@ -745,10 +745,31 @@ class _CatalogScreenState extends State<CatalogScreen> {
           : '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
       onTap: loading ? null : () => openEdition(edition['id'] as String),
       actions: quickActions(edition),
+      trailing: raceLinkButton(edition),
     );
   }
 
   /// Ações da corrida com rótulo (não só ícone): Quero correr, Inscrito e Já corri. Marcada fica laranja.
+  /// Link da prova no cartão: o site oficial; sem ele, a página de inscrição. Sem link, nada aparece.
+  Widget? raceLinkButton(Map<String, dynamic> edition) {
+    final official = safeHttpsUri(edition['officialUrl']);
+    final link = official ?? safeHttpsUri(edition['registrationUrl']);
+    if (link == null) return null;
+    return IconButton(
+      key: Key('card-link-${edition['id']}'),
+      tooltip: official != null ? 'Site da corrida' : 'Página de inscrição',
+      visualDensity: VisualDensity.compact,
+      icon: const Icon(Icons.public_rounded, size: 20),
+      onPressed: () async {
+        if (!await linkOpener(link) && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Não foi possível abrir o link.')),
+          );
+        }
+      },
+    );
+  }
+
   Widget quickActions(Map<String, dynamic> edition) {
     final id = edition['id'] as String;
     final status = edition['status'];
@@ -3408,7 +3429,7 @@ Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
       ),
     );
 
-/// Foto da PUBLICAÇÃO: sempre inteira, sem recorte; a tela só deixa ampliar e reduzir para conferir.
+/// Foto da PUBLICAÇÃO: abre inteira; recortar (com os tamanhos) é opcional.
 Future<List<int>?> cropPostPhoto(BuildContext context, List<int> photo) =>
     Navigator.of(context).push<List<int>>(
       MaterialPageRoute(

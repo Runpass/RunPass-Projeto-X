@@ -70,6 +70,93 @@ class ProfileAvatar extends StatelessWidget {
   }
 }
 
+/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child].
+class MedalAvatar extends StatelessWidget {
+  final double radius;
+  final Widget child;
+  const MedalAvatar({super.key, required this.radius, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final size = radius * 2;
+    final ribbonHeight = radius * 0.9;
+    return SizedBox(
+      key: const Key('medal-avatar'),
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          Positioned(
+            top: -ribbonHeight * 0.75,
+            child: CustomPaint(
+              size: Size(radius * 1.15, ribbonHeight),
+              painter: _RibbonPainter(),
+            ),
+          ),
+          Container(
+            width: size,
+            height: size,
+            padding: EdgeInsets.all(radius * 0.09),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xFFFFE08A),
+                  Color(0xFFD4A017),
+                  Color(0xFF9C7412),
+                ],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFFFFF3C4), width: 1.5),
+              ),
+              child: Center(child: child),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fita da medalha em V, nas cores do app (laranja e azul-marinho).
+class _RibbonPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final left = Path()
+      ..moveTo(0, 0)
+      ..lineTo(w * 0.42, 0)
+      ..lineTo(w * 0.62, h)
+      ..lineTo(w * 0.2, h)
+      ..close();
+    final right = Path()
+      ..moveTo(w, 0)
+      ..lineTo(w * 0.58, 0)
+      ..lineTo(w * 0.38, h)
+      ..lineTo(w * 0.8, h)
+      ..close();
+    canvas.drawPath(left, Paint()..color = runPassNavy);
+    canvas.drawPath(right, Paint()..color = runPassOrange);
+  }
+
+  @override
+  bool shouldRepaint(_RibbonPainter oldDelegate) => false;
+}
+
 /// Procurar pessoas por nome ou usuário, para seguir.
 class FriendSearchScreen extends StatefulWidget {
   final IdentityGateway gateway;
@@ -435,10 +522,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 ],
                 Row(
                   children: [
-                    ProfileAvatar(
+                    MedalAvatar(
                       radius: 34,
-                      gateway: widget.gateway,
-                      profile: p,
+                      child: ProfileAvatar(
+                        radius: 30,
+                        gateway: widget.gateway,
+                        profile: p,
+                      ),
                     ),
                     const SizedBox(width: 14),
                     Expanded(

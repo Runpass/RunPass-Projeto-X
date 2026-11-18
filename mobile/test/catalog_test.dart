@@ -2307,4 +2307,49 @@ void defaultOrderTests() {
     double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
     expect(top('Corrida A') < top('Corrida B'), isTrue);
   });
+
+  testWidgets(
+    'cartão da lista: ícone do link da prova só quando há link https',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final opened = <Uri>[];
+      final original = linkOpener;
+      linkOpener = (uri) async {
+        opened.add(uri);
+        return true;
+      };
+      addTearDown(() => linkOpener = original);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              {...entry('A'), 'officialUrl': 'https://corrida.exemplo.test/'},
+              {
+                ...entry('B'),
+                'registrationUrl': 'https://ingressos.exemplo.test/b',
+              },
+              {...entry('C'), 'officialUrl': 'javascript:alert(1)'},
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('card-link-A')), findsOneWidget);
+      expect(find.byKey(const Key('card-link-B')), findsOneWidget);
+      expect(find.byKey(const Key('card-link-C')), findsNothing);
+      await tester.tap(find.byKey(const Key('card-link-A')));
+      await tester.tap(find.byKey(const Key('card-link-B')));
+      await tester.pump();
+      expect(opened.map((u) => u.toString()), [
+        'https://corrida.exemplo.test/',
+        'https://ingressos.exemplo.test/b',
+      ]);
+    },
+  );
 }

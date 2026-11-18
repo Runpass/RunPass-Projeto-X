@@ -977,6 +977,9 @@ void main() {
               'items': deleted ? [] : [done('p1', 'a', seconds: 1500)],
             });
           }
+          if (uri.path == '/participations/p1' && method == 'GET') {
+            return JsonReply(200, done('p1', 'a', seconds: 1500));
+          }
           if (uri.path == '/participations/p1' && method == 'DELETE') {
             deleted = true;
             return const JsonReply(200, {});
