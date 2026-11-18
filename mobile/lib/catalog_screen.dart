@@ -575,7 +575,30 @@ class _CatalogScreenState extends State<CatalogScreen> {
     final shown = items;
     switch (viewMode) {
       case CatalogViewMode.list:
-        return [for (final edition in shown) editionCard(edition)];
+        // Seções por período (a lista já vem na ordem certa): Hoje, Amanhã, Este fim de semana...
+        final out = <Widget>[];
+        String? section;
+        for (final edition in shown) {
+          final period = periodOf('${edition['date']}');
+          if (period != section) {
+            section = period;
+            out.add(
+              Padding(
+                key: Key('catalog-section-$period'),
+                padding: const EdgeInsets.only(top: 6, bottom: 8),
+                child: Text(
+                  period,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+            );
+          }
+          out.add(editionCard(edition));
+        }
+        return out;
       case CatalogViewMode.grid:
         if (shown.isEmpty) return const [];
         return [
@@ -693,65 +716,76 @@ class _CatalogScreenState extends State<CatalogScreen> {
     loadMine();
   }
 
-  /// Cartão da corrida: a imagem (ou a arte padrão) cobre o cartão todo; o texto e os atalhos ficam por cima.
+  /// Cartão compacto: miniatura, quando e onde, nome, distâncias e as ações com rótulo.
   Widget editionCard(Map<String, dynamic> edition) {
-    final archived = edition['status'] == 'archived';
-    final lines = [
-      '${displayDate(edition['date'] as String)} · ${edition['city']}/${edition['state']}',
-      (edition['distances'] as List).isEmpty
-          ? 'Distância ainda não informada'
-          : (edition['distances'] as List)
-                .map((d) => '${d['kilometers']} km')
-                .join(' · '),
-      if (archived)
-        'Arquivada: ${archivedReasonLabel(edition['archivedReason'] as String?) ?? 'motivo não informado'}',
-      if (scoreOf(edition) != null)
-        '★ ${decimalPt(scoreOf(edition)!)} · ${reviewsOf(edition)} avaliações',
-      if (mine.containsKey(edition['id'])) 'Já está na sua lista',
-    ];
-    return EditionListCard(
+    final score = scoreOf(edition);
+    return EditionCompactCard(
       gateway: widget.gateway,
       edition: edition,
-      lines: lines,
+      rating: score == null
+          ? null
+          : '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
       onTap: loading ? null : () => openEdition(edition['id'] as String),
-      overlay: quickActions(edition),
+      actions: quickActions(edition),
     );
   }
 
+  /// Ações da corrida com rótulo (não só ícone): Quero correr, Inscrito e Já corri. Marcada fica laranja.
   Widget quickActions(Map<String, dynamic> edition) {
     final id = edition['id'] as String;
     final status = edition['status'];
     if (status == 'archived') return const SizedBox.shrink();
     final upcoming = status != 'past';
-    // Ícones sobre a imagem: círculo escuro translúcido; marcado fica laranja.
     Widget action(
       String key,
       IconData icon,
       String label,
+      String tooltip,
       bool on,
       VoidCallback onTap,
-    ) => Padding(
-      padding: const EdgeInsets.only(left: 6),
+    ) => Tooltip(
+      message: tooltip,
       child: Material(
-        color: on ? runPassOrange : Colors.black54,
-        shape: const CircleBorder(),
-        child: IconButton(
+        color: on ? runPassOrange : context.panel,
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
           key: Key('$key-$id'),
-          tooltip: label,
-          visualDensity: VisualDensity.compact,
-          color: Colors.white,
-          icon: Icon(icon, size: 22),
-          onPressed: loading ? null : onTap,
+          borderRadius: BorderRadius.circular(999),
+          onTap: loading ? null : onTap,
+          child: ConstrainedBox(
+            // Área de toque confortável mesmo com o texto curto.
+            constraints: const BoxConstraints(minHeight: 34),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 16, color: on ? Colors.white : null),
+                  const SizedBox(width: 4),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: on ? Colors.white : null,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
       children: [
         if (upcoming) ...[
           action(
             'quick-wanted',
             plans[id] == 'wanted' ? Icons.favorite : Icons.favorite_border,
+            'Quero correr',
             plans[id] == 'wanted' ? 'Tirar de Quero correr' : 'Quero correr',
             plans[id] == 'wanted',
             () => togglePlan(edition, 'wanted'),
@@ -759,6 +793,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
           action(
             'quick-registered',
             Icons.how_to_reg_outlined,
+            'Inscrito',
             plans[id] == 'registered' ? 'Tirar de Inscrito' : 'Inscrito',
             plans[id] == 'registered',
             () => togglePlan(edition, 'registered'),
@@ -769,6 +804,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
           mine.containsKey(id)
               ? Icons.check_circle_rounded
               : Icons.directions_run,
+          mine.containsKey(id) ? 'Meu registro' : 'Já corri',
           mine.containsKey(id) ? 'Ver meu registro' : 'Já corri',
           mine.containsKey(id),
           () => markRan(edition),
@@ -914,25 +950,39 @@ class _CatalogScreenState extends State<CatalogScreen> {
     appBar: AppBar(
       title: const RunPassWordmark(compact: true),
       actions: [
-        IconButton(
+        // Um só "+": incluir uma corrida que não está no catálogo ou acompanhar os pedidos já feitos.
+        PopupMenuButton<String>(
           key: const Key('catalog-request-new'),
-          visualDensity: VisualDensity.compact,
-          tooltip: 'Pedir cadastro da corrida',
+          tooltip: 'Incluir corrida',
           icon: const Icon(Icons.add_circle_outline),
-          onPressed: loading ? null : requestRace,
-        ),
-        IconButton(
-          key: const Key('catalog-request-mine'),
-          visualDensity: VisualDensity.compact,
-          tooltip: 'Minhas solicitações',
-          icon: const Icon(Icons.assignment_outlined),
-          onPressed: openMyRequests,
+          enabled: !loading,
+          onSelected: (value) =>
+              value == 'mine' ? openMyRequests() : requestRace(),
+          itemBuilder: (_) => const [
+            PopupMenuItem(
+              key: Key('catalog-request-new-item'),
+              value: 'new',
+              child: ListTile(
+                leading: Icon(Icons.add_location_alt_outlined),
+                title: Text('Incluir uma corrida'),
+              ),
+            ),
+            PopupMenuItem(
+              key: Key('catalog-request-mine'),
+              value: 'mine',
+              child: ListTile(
+                leading: Icon(Icons.assignment_outlined),
+                title: Text('Minhas solicitações'),
+              ),
+            ),
+          ],
         ),
         IconButton(
           key: const Key('catalog-agenda'),
           visualDensity: VisualDensity.compact,
-          tooltip: 'Minha agenda',
-          icon: const Icon(Icons.calendar_month_rounded),
+          // Marcador (não calendário): o calendário da lista é o filtro de data.
+          tooltip: 'Minha agenda (Quero correr e Inscrito)',
+          icon: const Icon(Icons.bookmarks_outlined),
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => AgendaScreen(gateway: widget.gateway),

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:runpass/agenda.dart';
 import 'package:runpass/catalog_screen.dart';
+import 'package:runpass/edition_requests.dart' show MyEditionRequestsScreen;
 import 'package:runpass/identity_gateway.dart';
 
 import 'catalog_test.dart' show entry, signed;
@@ -843,31 +844,31 @@ void searchTests() {
   }
 
   testWidgets(
-    'pedir cadastro e minhas solicitações são ícones na barra superior',
+    'incluir corrida e minhas solicitações ficam num só "+" na barra superior',
     (tester) async {
       await openForm(tester);
       await tester.tap(
         find.byKey(const Key('catalog-search-toggle')),
       ); // fecha a lupa
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('catalog-request-new')), findsOneWidget);
-      expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
-      expect(find.byTooltip('Pedir cadastro da corrida'), findsOneWidget);
-      expect(find.byTooltip('Minhas solicitações'), findsOneWidget);
-      // Ícones na barra, junto da agenda e dos avisos (não são mais botões de texto no corpo).
+      // Um só "+" na barra (com a agenda e os avisos): abre "Incluir uma corrida" e "Minhas solicitações".
       final bar = tester.getRect(find.byType(AppBar));
-      for (final key in [
-        'catalog-request-new',
-        'catalog-request-mine',
-        'catalog-agenda',
-      ]) {
+      for (final key in ['catalog-request-new', 'catalog-agenda']) {
         expect(
           bar.contains(tester.getCenter(find.byKey(Key(key)))),
           isTrue,
           reason: key,
         );
       }
-      expect(find.text('Pedir cadastro da corrida'), findsNothing);
+      expect(find.byTooltip('Incluir corrida'), findsOneWidget);
+      expect(find.byKey(const Key('catalog-request-mine')), findsNothing);
+      await tester.tap(find.byKey(const Key('catalog-request-new')));
+      await tester.pumpAndSettle();
+      expect(find.text('Incluir uma corrida'), findsOneWidget);
+      expect(find.byKey(const Key('catalog-request-mine')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('catalog-request-mine')));
+      await tester.pumpAndSettle();
+      expect(find.byType(MyEditionRequestsScreen), findsOneWidget);
     },
   );
 
