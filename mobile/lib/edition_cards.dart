@@ -295,6 +295,9 @@ class EditionCompactCard extends StatelessWidget {
   final Widget? actions;
   final String? rating;
   final DateTime? now;
+
+  /// Canto direito do cartão (ex.: menu da agenda).
+  final Widget? trailing;
   const EditionCompactCard({
     super.key,
     required this.gateway,
@@ -303,6 +306,7 @@ class EditionCompactCard extends StatelessWidget {
     this.actions,
     this.rating,
     this.now,
+    this.trailing,
   });
 
   @override
@@ -414,6 +418,7 @@ class EditionCompactCard extends StatelessWidget {
                   ],
                 ),
               ),
+              ?trailing,
             ],
           ),
         ),

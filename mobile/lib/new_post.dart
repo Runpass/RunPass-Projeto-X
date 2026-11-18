@@ -6,7 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'catalog_screen.dart';
 import 'medal_scan.dart' show MedalScanScreen, pickMedalPhotoPath;
 import 'identity_gateway.dart';
-import 'profile_photo.dart' show RacePhotoCropScreen;
+import 'profile_photo.dart' show PhotoZoomScreen;
 import 'tagged_people.dart';
 import 'runpass_theme.dart';
 
@@ -110,7 +110,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
         bytes = await Navigator.of(context).push<List<int>>(
           MaterialPageRoute(
             fullscreenDialog: true,
-            builder: (_) => RacePhotoCropScreen(image: original),
+            builder: (_) => PhotoZoomScreen(image: original),
           ),
         );
       }

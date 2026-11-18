@@ -541,3 +541,116 @@ class _RacePhotoCropScreenState extends State<RacePhotoCropScreen> {
     ),
   );
 }
+
+/// Foto da PUBLICAÇÃO: vai sempre inteira (sem recorte). A tela só mostra a foto toda e deixa ampliar (+) e
+/// reduzir (−) para conferir detalhes; o zoom é só para ver, a foto enviada é a original.
+class PhotoZoomScreen extends StatefulWidget {
+  final Uint8List image;
+  const PhotoZoomScreen({super.key, required this.image});
+
+  @override
+  State<PhotoZoomScreen> createState() => _PhotoZoomScreenState();
+}
+
+class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
+  static const minScale = 1.0, maxScale = 4.0, step = 0.5;
+  final controller = TransformationController();
+
+  double get scale => controller.value.getMaxScaleOnAxis();
+
+  void zoom(double delta) {
+    final next = (scale + delta).clamp(minScale, maxScale);
+    setState(() => controller.value = Matrix4.diagonal3Values(next, next, 1));
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: const Text('Foto da publicação'),
+    ),
+    body: SafeArea(
+      child: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
+            child: Text(
+              'A foto vai inteira, como aparece aqui. Use + e − para conferir os detalhes.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          Expanded(
+            child: InteractiveViewer(
+              key: const Key('photo-zoom-viewer'),
+              transformationController: controller,
+              minScale: minScale,
+              maxScale: maxScale,
+              onInteractionEnd: (_) => setState(() {}),
+              child: Center(
+                child: Image.memory(widget.image, fit: BoxFit.contain),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton.filledTonal(
+                  key: const Key('photo-zoom-out'),
+                  tooltip: 'Reduzir',
+                  onPressed: scale > minScale ? () => zoom(-step) : null,
+                  icon: const Icon(Icons.remove),
+                ),
+                const SizedBox(width: 24),
+                IconButton.filledTonal(
+                  key: const Key('photo-zoom-in'),
+                  tooltip: 'Ampliar',
+                  onPressed: scale < maxScale ? () => zoom(step) : null,
+                  icon: const Icon(Icons.add),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('photo-zoom-use'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: runPassOrange,
+                    ),
+                    // Sempre a foto original, inteira.
+                    onPressed: () => Navigator.pop(context, widget.image),
+                    child: const Text('Usar esta foto'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}

@@ -3408,15 +3408,12 @@ Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
       ),
     );
 
-/// Recorte da foto da PUBLICAÇÃO: já vem na proporção do quadro do Feed, para a foto caber nele.
+/// Foto da PUBLICAÇÃO: sempre inteira, sem recorte; a tela só deixa ampliar e reduzir para conferir.
 Future<List<int>?> cropPostPhoto(BuildContext context, List<int> photo) =>
     Navigator.of(context).push<List<int>>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => RacePhotoCropScreen(
-          image: Uint8List.fromList(photo),
-          initialAspect: RacePhotoCropScreen.feedAspect,
-        ),
+        builder: (_) => PhotoZoomScreen(image: Uint8List.fromList(photo)),
       ),
     );
 
@@ -4403,10 +4400,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         bytes = await Navigator.of(context).push<List<int>>(
           MaterialPageRoute(
             fullscreenDialog: true,
-            builder: (_) => RacePhotoCropScreen(
-              image: original,
-              initialAspect: RacePhotoCropScreen.feedAspect,
-            ),
+            builder: (_) => PhotoZoomScreen(image: original),
           ),
         );
       }
