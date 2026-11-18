@@ -81,6 +81,17 @@ class ErasureProcessor:
                 self.blobs.delete_derived(owner, ref)
             expected[image_key] = image
             writes[image_key] = None
+        # Publicações extras desta corrida: saem junto (item, ponteiros e a contagem de uso da foto).
+        extras, _ = self.store.query("history", pk, prefix="XP#", limit=100)
+        for sk, extra in extras:
+            if extra.get("participationId") != participation_id:
+                continue
+            expected[("history", pk, sk)] = extra
+            writes[("history", pk, sk)] = None
+            for shared in map(tuple, extra.get("sharedKeys", [])):
+                if shared not in expected:
+                    expected[shared] = self.store.get(shared)
+                    writes[shared] = None
         for name, key in keys.items():
             if rows[name] is not None:
                 expected[key] = rows[name]

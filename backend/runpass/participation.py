@@ -362,6 +362,145 @@ class ParticipationService:
             actor, "completeParticipation", key, payload, work, admitted=True
         )
 
+    # ---- publicações extras (várias por corrida) -------------------------------------------------------
+
+    @staticmethod
+    def _extra_view(item):
+        return {
+            k: item[k]
+            for k in (
+                "id",
+                "participationId",
+                "postText",
+                "taggedUserIds",
+                "publishedAt",
+                "version",
+            )
+            if k in item
+        } | {"hasPostImage": True}
+
+    def create_extra_post(self, actor, key, payload):
+        """Outra publicação de uma corrida que eu já concluí (além da que nasce ao concluir). Foto própria
+        obrigatória (diferente da medalha), texto e marcações opcionais. Não pede medalha nem mexe na
+        participação. Fica no feed como as outras e sai junto com a participação ou a conta."""
+        pk = "USER#" + actor.subject
+        participation_id = payload["participationId"]
+
+        def work(read, write, account, now, replay):
+            if replay is not None:
+                item = read(("history", pk, "XP#" + replay["id"]))
+                if not item:
+                    raise Problem(404, "POST_NOT_FOUND")
+                return self._extra_view(item), replay
+            owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
+            part = read(("history", pk, "P#" + participation_id + "#PART"))
+            if not owner or owner.get("owner") != actor.subject or not part:
+                raise Problem(404, "PARTICIPATION_NOT_FOUND")
+            if part.get("state") != "completed":
+                raise Problem(409, "PARTICIPATION_NOT_COMPLETED")
+            image_key, image = self._post_image(
+                read, actor.subject, payload["postImageReference"], part.get("medalImageReference")
+            )
+            post_id = "x-" + uuid4().hex[:24]
+            published = stamp(now)
+            owner_key = ("history", "XPOST#" + post_id, "OWNER")
+            feed_key = ("history", "FEED#PUBLIC", f"T#{published}#{post_id}")
+            item = {
+                "id": post_id,
+                "participationId": participation_id,
+                "postImageReference": payload["postImageReference"],
+                "publishedAt": published,
+                "version": 1,
+                # Linhas da conta guardadas fora da partição dela: a exclusão da conta apaga junto.
+                "sharedKeys": [list(owner_key), list(feed_key)],
+            }
+            if payload.get("postText"):
+                item["postText"] = payload["postText"]
+            if payload.get("taggedUserIds"):
+                item["taggedUserIds"] = self._tags(read, actor, payload["taggedUserIds"])
+            for k in (owner_key, feed_key):
+                read(k)
+            write(("history", pk, "XP#" + post_id), item)
+            write(owner_key, {"owner": actor.subject, "participationId": participation_id})
+            write(
+                feed_key,
+                {"owner": actor.subject, "id": post_id, "completedAt": published, "extra": True},
+            )
+            write(image_key, {**image, "refs": image.get("refs", 0) + 1})
+            return self._extra_view(item), {"id": post_id}
+
+        return self.identity.transact(actor, "createExtraPost", key, payload, work, admitted=True)
+
+    def _my_extra(self, read, actor, post_id):
+        item = read(("history", "USER#" + actor.subject, "XP#" + post_id))
+        pointer = read(("history", "XPOST#" + post_id, "OWNER"))
+        if not item or not pointer or pointer.get("owner") != actor.subject:
+            raise Problem(404, "POST_NOT_FOUND")
+        return item
+
+    def update_extra_post(self, actor, post_id, key, payload):
+        pk = "USER#" + actor.subject
+
+        def work(read, write, account, now, replay):
+            item = self._my_extra(read, actor, post_id)
+            if replay is not None:
+                return self._extra_view(item), replay
+            if item["version"] != payload["expectedVersion"]:
+                raise Problem(409, "VERSION_CONFLICT")
+            new = dict(item)
+            if "postText" in payload:
+                if payload["postText"]:
+                    new["postText"] = payload["postText"]
+                else:
+                    new.pop("postText", None)
+            if "taggedUserIds" in payload:
+                tags = self._tags(read, actor, payload["taggedUserIds"] or [])
+                if tags:
+                    new["taggedUserIds"] = tags
+                else:
+                    new.pop("taggedUserIds", None)
+            if (
+                payload.get("postImageReference")
+                and payload["postImageReference"] != item["postImageReference"]
+            ):
+                part = read(("history", pk, "P#" + item["participationId"] + "#PART")) or {}
+                image_key, image = self._post_image(
+                    read,
+                    actor.subject,
+                    payload["postImageReference"],
+                    part.get("medalImageReference"),
+                )
+                write(image_key, {**image, "refs": image.get("refs", 0) + 1})
+                old_key = ("operations", pk, "IMAGE#" + item["postImageReference"])
+                old = read(old_key)
+                if old:
+                    write(old_key, {**old, "refs": max(0, old.get("refs", 0) - 1)})
+                new["postImageReference"] = payload["postImageReference"]
+            new["version"] = item["version"] + 1
+            write(("history", pk, "XP#" + post_id), new)
+            return self._extra_view(new), {"id": post_id}
+
+        return self.identity.transact(actor, "updateExtraPost", key, payload, work, admitted=True)
+
+    def delete_extra_post(self, actor, post_id, key):
+        pk = "USER#" + actor.subject
+
+        def work(read, write, account, now, replay):
+            if replay is not None:
+                return {"deleted": post_id}, replay
+            item = self._my_extra(read, actor, post_id)
+            for shared in map(tuple, item.get("sharedKeys", [])):
+                read(shared)
+                write(shared, None)
+            write(("history", pk, "XP#" + post_id), None)
+            image_key = ("operations", pk, "IMAGE#" + item["postImageReference"])
+            image = read(image_key)
+            if image:
+                write(image_key, {**image, "refs": max(0, image.get("refs", 0) - 1)})
+            return {"deleted": post_id}, {"id": post_id}
+
+        return self.identity.transact(actor, "deleteExtraPost", key, {}, work, admitted=True)
+
     def publish(self, actor, participation_id, key, payload):
         """Publica no feed uma participacao ja concluida e ainda nao publicada, com uma foto propria (a da medalha
         nao entra). Mesmo ponteiro do feed que a conclusao grava; a leitura reconfere a visibilidade."""

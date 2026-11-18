@@ -754,6 +754,126 @@ class ParticipationTests(unittest.TestCase):
             blobs.derived[ref] = {"owner": "owner", "contentType": "image/png", "data": b"x"}
         return done, blobs, post_ref
 
+    # ---- várias publicações da mesma corrida ----
+    def _image(self, ref, owner="owner"):
+        key = ("operations", "USER#" + owner, "IMAGE#" + ref)
+        self.store.commit(
+            {key: None}, {key: {"owner": owner, "origin": "runner", "state": "valid", "refs": 0}}
+        )
+
+    def test_varias_publicacoes_da_mesma_corrida_no_feed_com_curtida_comentario_e_foto(self):
+        from runpass.social import SocialService
+        from runpass.upload import MemoryBlobStore, UploadService
+
+        social = SocialService(self.identity)
+        done, _, _ = self._published_with_images()
+        extra_ref = "img_" + "d" * 64
+        self._image(extra_ref)
+        extra = self.service.create_extra_post(
+            self.actor,
+            "xp-1",
+            {
+                "participationId": done["id"],
+                "postImageReference": extra_ref,
+                "postText": "Outra foto",
+            },
+        )
+        self.assertTrue(extra["id"].startswith("x-"))
+        # mesma chave: não cria outra
+        again = self.service.create_extra_post(
+            self.actor,
+            "xp-1",
+            {
+                "participationId": done["id"],
+                "postImageReference": extra_ref,
+                "postText": "Outra foto",
+            },
+        )
+        self.assertEqual(again["id"], extra["id"])
+        viewer = self.admit("viewer")
+        feed = social.feed(viewer)["items"]
+        ids = [p["id"] for p in feed]
+        self.assertIn(done["id"], ids)
+        self.assertIn(extra["id"], ids)
+        post = social.post(viewer, extra["id"])
+        self.assertTrue(post["extra"])
+        self.assertEqual(post["participation"]["id"], done["id"])
+        self.assertEqual(post["comment"], "Outra foto")
+        self.assertTrue(post["hasPostImage"])
+        social.like(viewer, extra["id"], "l1")
+        social.comment(viewer, extra["id"], "c1", "Linda")
+        post = social.post(self.actor, extra["id"])
+        self.assertEqual((post["likeCount"], post["commentCount"]), (1, 1))
+        blobs = MemoryBlobStore()
+        blobs.derived[extra_ref] = {"owner": "owner", "contentType": "image/png", "data": b"x"}
+        uploads = UploadService(self.identity, blobs, may_view=social.may_view_photo)
+        self.assertIn("url", uploads.extra_post_image(viewer, extra["id"]))
+        # editar e remover
+        changed = self.service.update_extra_post(
+            self.actor, extra["id"], "xp-e", {"expectedVersion": 1, "postText": ""}
+        )
+        self.assertNotIn("postText", changed)
+        self.service.delete_extra_post(self.actor, extra["id"], "xp-d")
+        self.assertNotIn(extra["id"], [p["id"] for p in social.feed(viewer)["items"]])
+        with self.assertRaises(Problem):
+            social.post(viewer, extra["id"])
+        self.assertEqual(
+            self.store.get(("operations", "USER#owner", "IMAGE#" + extra_ref))["refs"], 0
+        )
+
+    def test_publicacao_extra_so_de_corrida_minha_concluida_e_foto_diferente_da_medalha(self):
+        done, _, _ = self._published_with_images()
+        other = self.admit("other")
+        ref = "img_" + "e" * 64
+        self._image(ref, "other")
+        with self.assertRaises(Problem) as caught:
+            self.service.create_extra_post(
+                other, "o1", {"participationId": done["id"], "postImageReference": ref}
+            )
+        self.assertEqual(caught.exception.code, "PARTICIPATION_NOT_FOUND")
+        draft = self.service.create(self.actor, "d-x", self.payload(editionId="synthetic-sp-2025"))
+        mine = "img_" + "f" * 64
+        self._image(mine)
+        with self.assertRaises(Problem) as caught:
+            self.service.create_extra_post(
+                self.actor, "o2", {"participationId": draft["id"], "postImageReference": mine}
+            )
+        self.assertEqual(caught.exception.code, "PARTICIPATION_NOT_COMPLETED")
+
+    def test_publicacoes_extras_saem_com_a_participacao_e_com_a_conta(self):
+        from runpass.erasure import ErasureProcessor
+
+        done, blobs, _ = self._published_with_images()
+        ref = "img_" + "a" * 64
+        self._image(ref)
+        extra = self.service.create_extra_post(
+            self.actor, "xe", {"participationId": done["id"], "postImageReference": ref}
+        )
+        self.service.delete(self.actor, done["id"], "x-del", done["version"])
+        ErasureProcessor(self.identity, blobs).run_pending_participations()
+        self.assertIsNone(self.store.get(("history", "USER#owner", "XP#" + extra["id"])))
+        self.assertIsNone(self.store.get(("history", "XPOST#" + extra["id"], "OWNER")))
+        self.assertFalse(
+            [k for k in self.store.items if k[1] == "FEED#PUBLIC" and extra["id"] in k[2]]
+        )
+        # pela conta: outra corrida com publicação extra some quando a conta é apagada
+        d2 = self.service.create(self.actor, "d2", self.payload(editionId="synthetic-sp-2025"))
+        medal = "img_" + "9" * 64
+        self._image(medal)
+        body = self.completion(d2, medalImageReference=medal)
+        done2 = self.service.complete(self.actor, d2["id"], "c2", body)
+        ref2 = "img_" + "8" * 64
+        self._image(ref2)
+        extra2 = self.service.create_extra_post(
+            self.actor, "xe2", {"participationId": done2["id"], "postImageReference": ref2}
+        )
+        self.identity.delete_account(self.actor, "del-owner")
+        ErasureProcessor(self.identity, blobs).run_pending()
+        self.assertIsNone(self.store.get(("history", "XPOST#" + extra2["id"], "OWNER")))
+        self.assertFalse(
+            [k for k in self.store.items if k[1] == "FEED#PUBLIC" and extra2["id"] in k[2]]
+        )
+
     def test_participation_erasure_executor_removes_data_and_completes_the_operation(self):
         from runpass.erasure import ErasureProcessor
 

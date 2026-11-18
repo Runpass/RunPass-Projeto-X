@@ -189,6 +189,31 @@ class UploadService:
             "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
         }
 
+    def extra_post_image(self, actor, post_id):
+        """Link curto da foto de uma publicação extra; a publicação é pública enquanto a corrida estiver
+        concluída e a conta do autor ativa (mesma regra das outras publicações)."""
+
+        def work(read, write, account, now, replay):
+            pointer = read(("history", "XPOST#" + post_id, "OWNER"))
+            if not pointer:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            subject = pointer["owner"]
+            item = read(("history", "USER#" + subject, "XP#" + post_id))
+            part = read(("history", "USER#" + subject, "P#" + pointer["participationId"] + "#PART"))
+            if not item or not part or part.get("state") != "completed":
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            if not self.may_view(read, actor, subject, {**part, "publishToFeed": True}):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            return {"owner": subject, "reference": item["postImageReference"], "now": now}, {}
+
+        found = self.identity.transact(actor, "getExtraPostImage", None, {}, work, admitted=True)
+        link = self.blobs.view_url(found["owner"], found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
+
     def medal_display_image(self, actor, participation_id):
         """Foto da prateleira: o recorte reposicionado pela pessoa quando existir, senao a
         mesma foto sanitizada de medal_image. A foto oficial nunca e alterada por isso."""
