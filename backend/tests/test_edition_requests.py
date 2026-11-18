@@ -145,9 +145,9 @@ class EditionRequestTests(unittest.TestCase):
         self.assertEqual(body["details"]["state"], "SP")
         self.assertNotIn("owner", body)
         self.assertNotIn("sharedKeys", body)
-        # Nao vira edicao publica: o catalogo continua com as 5 sinteticas.
+        # Nao vira edicao publica: o catalogo continua com as 4 sinteticas listaveis (a arquivada nao lista).
         listing = self.client.get("/editions", headers=self.headers()).json()
-        self.assertEqual(len(listing["items"]), 5)
+        self.assertEqual(len(listing["items"]), 4)
 
     def test_login_and_admission_required(self):
         self.assertEqual(self.client.post("/edition-requests", json=BODY).status_code, 401)
@@ -399,7 +399,7 @@ class EditionRequestTests(unittest.TestCase):
         self.assertEqual((audit["operator"], audit["decision"]), ("op", "approve"))
         # Resolver o pedido nao cria participacao nem publica nova edicao.
         self.assertEqual(
-            len(self.client.get("/editions", headers=self.headers()).json()["items"]), 5
+            len(self.client.get("/editions", headers=self.headers()).json()["items"]), 4
         )
 
     def test_decisions_are_revalidated_against_current_state(self):

@@ -222,13 +222,16 @@ class SearchRouteTests(unittest.TestCase):
     def test_lambda_down_or_unconfigured_falls_back_to_name_search(self):
         self.identity.admit(self.actor, "admit", ADULT)
         for client in (self.client(Unavailable()), self.client("semfn")):
-            response = self.search(client, phrase="Sintética Arquivada")
+            response = self.search(client, phrase="Desafio Sintético da Orla")
             self.assertEqual(response.status_code, 200, response.text)
             body = response.json()
             self.valid(body)
             self.assertEqual(body["search"]["source"], "text")
-            self.assertEqual(body["search"]["filters"], {"q": "sintetica arquivada"})
-            self.assertEqual([e["id"] for e in body["items"]], ["synthetic-archived"])
+            self.assertEqual(body["search"]["filters"], {"q": "desafio sintetico da orla"})
+            self.assertEqual([e["id"] for e in body["items"]], ["synthetic-rj-2026"])
+            # Arquivada nao aparece nem buscando pelo nome dela.
+            gone = self.search(client, phrase="Sintética Arquivada").json()
+            self.assertEqual(gone["items"], [])
 
     def test_filters_from_the_ai_outside_catalog_limits_fall_back_instead_of_failing(self):
         self.identity.admit(self.actor, "admit", ADULT)
