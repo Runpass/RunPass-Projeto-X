@@ -1,11 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/home_screen.dart';
+import 'package:runpass/post_card.dart' show postPhotoFrameRatio;
 import 'package:runpass/my_races.dart' show MedalPhoto;
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/runpass_theme.dart';
 
 void main() {
+  test('quadro da foto: a proporção da foto, entre 4:5 e 1,91:1', () {
+    expect(postPhotoFrameRatio(null), 4 / 5); // ainda sem saber: retrato
+    expect(postPhotoFrameRatio(1), 1); // quadrada, inteira
+    expect(
+      postPhotoFrameRatio(4 / 3),
+      closeTo(4 / 3, 1e-9),
+    ); // horizontal, inteira
+    expect(postPhotoFrameRatio(3), 1.91); // muito larga: limita
+    expect(postPhotoFrameRatio(0.5), 4 / 5); // muito alta: limita
+  });
+
   testWidgets(
     'publicacao de amigo mostra a foto da medalha e o ultimo comentario em destaque',
     (tester) async {
@@ -210,11 +222,10 @@ void main() {
         ),
         findsNothing,
       );
-      // O nome da corrida fica na foto, na parte de cima (e não mais na legenda, embaixo).
+      // O nome da corrida fica ACIMA da foto, fora dela (não por cima da imagem).
       final name = tester.getRect(find.byKey(const Key('post-race-p1')));
-      expect(name.top, greaterThanOrEqualTo(photo.top));
-      expect(name.bottom, lessThan(photo.top + photo.height / 2));
-      expect(name.width, closeTo(photo.width, 1));
+      expect(name.bottom, lessThanOrEqualTo(photo.top));
+      // Sem a foto carregada, o quadro fica em 4:5 (retrato); com foto, acompanha a proporção dela.
       await tester.ensureVisible(find.byKey(const Key('post-race-p1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-race-p1')));
