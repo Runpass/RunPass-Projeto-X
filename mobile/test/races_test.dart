@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart' show CupertinoPicker;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
@@ -324,7 +325,7 @@ void main() {
       ); // botão removido
       final manual = find.byKey(const Key('medal-scan-request'));
       await tester.ensureVisible(manual);
-      expect(find.text('Fazer o cadastro manual'), findsOneWidget);
+      expect(find.text('Cadastrar esta corrida'), findsOneWidget);
       await tester.tap(manual);
       await tester.pumpAndSettle();
       expect(find.byType(EditionRequestFormScreen), findsOneWidget);
@@ -469,7 +470,76 @@ void main() {
   );
 
   testWidgets(
-    'tocar numa corrida que já existe vai direto para a participação (tempo, km, avaliação e foto do post)',
+    'tempo, pace, colocação e peito preenchidos na medalha chegam preenchidos na participação',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Meia Maratona de São Paulo',
+            'date': '2026-09-20',
+            'city': 'São Paulo',
+            'state': 'SP',
+            'distances': [
+              {'id': '21k', 'kilometers': 21.0975},
+            ],
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['Meia Maratona']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
+      await tester.tap(find.byKey(const Key('medal-match-a')));
+      await tester.pumpAndSettle();
+      // Os dados da prova ficam na mesma tela da escolha e são todos opcionais.
+      // O tempo usa o mesmo seletor de rolagem do rascunho da participação.
+      await tester.ensureVisible(find.byKey(const Key('time-field')));
+      await tester.tap(find.byKey(const Key('time-field')));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.byType(CupertinoPicker).at(1),
+        const Offset(0, -32.0 * 45),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('duration-confirm')));
+      await tester.pumpAndSettle();
+      for (final (key, value) in [
+        ('medal-data-pace', '5:20'),
+        ('medal-data-placement', '42'),
+        ('medal-data-bib', 'A-1234'),
+      ]) {
+        final field = find.byKey(Key(key));
+        await tester.ensureVisible(field);
+        await tester.enterText(field, value);
+        await tester.pump();
+      }
+      await tester.ensureVisible(find.byKey(const Key('medal-scan-conclude')));
+      await tester.tap(find.byKey(const Key('medal-scan-conclude')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      String valueOf(Finder finder) =>
+          tester.widget<TextField>(finder).controller!.text;
+      expect(find.text('0:45:00'), findsOneWidget);
+      expect(valueOf(find.byKey(const Key('pace-field'))), '5:20');
+      expect(find.text('42'), findsOneWidget);
+      expect(find.text('A-1234'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'escolher a corrida achada abre os dados da prova e segue para a participação (tempo, km, avaliação e foto do post)',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3600);
       tester.view.devicePixelRatio = 1;
@@ -500,10 +570,8 @@ void main() {
       await tester.pumpAndSettle();
       await tapAdd(tester);
       expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
-      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
-      await tester.tap(find.byKey(const Key('medal-match-a')));
-      await tester.pumpAndSettle();
-      // Sem passo intermediário: já está no rascunho da participação nessa corrida.
+      await chooseMatch(tester);
+      // Depois dos dados da prova (opcionais), está no rascunho da participação nessa corrida.
       expect(find.byType(ParticipationDraftScreen), findsOneWidget);
       expect(find.text('Rascunho da participação'), findsOneWidget);
       expect(find.byType(EditionScreen), findsNothing);
@@ -549,9 +617,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tapAdd(tester);
-      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
-      await tester.tap(find.byKey(const Key('medal-match-a')));
-      await tester.pumpAndSettle();
+      await chooseMatch(tester);
       // A lista tem duas distâncias e nenhuma foi informada: pergunta ali mesmo, sem sair para a corrida.
       expect(find.text('Qual distância você correu?'), findsOneWidget);
       expect(find.byType(EditionScreen), findsNothing);
@@ -591,9 +657,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tapAdd(tester);
-      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
-      await tester.tap(find.byKey(const Key('medal-match-a')));
-      await tester.pumpAndSettle();
+      await chooseMatch(tester);
       expect(find.byType(ParticipationDraftScreen), findsOneWidget);
       expect(find.byType(EditionScreen), findsNothing);
     },
@@ -630,9 +694,7 @@ void main() {
       await tapAdd(tester);
       // A lista ja diz que esta medalha e minha.
       expect(find.textContaining('Já cadastrada por você'), findsOneWidget);
-      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
-      await tester.tap(find.byKey(const Key('medal-match-a')));
-      await tester.pumpAndSettle();
+      await chooseMatch(tester);
       // Nao abre a participacao sozinha: avisa.
       expect(find.byKey(const Key('medal-already')), findsOneWidget);
       expect(find.text('Essa medalha já está cadastrada'), findsOneWidget);
@@ -643,9 +705,7 @@ void main() {
       expect(find.byKey(const Key('medal-already')), findsNothing);
       expect(find.byType(ParticipationDraftScreen), findsNothing);
       // Editar: so por escolha explicita.
-      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
-      await tester.tap(find.byKey(const Key('medal-match-a')));
-      await tester.pumpAndSettle();
+      await chooseMatch(tester);
       await tester.tap(find.byKey(const Key('medal-already-edit')));
       await tester.pumpAndSettle();
       expect(find.byType(ParticipationDraftScreen), findsOneWidget);
@@ -722,9 +782,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tapAdd(tester);
-      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
-      await tester.tap(find.byKey(const Key('medal-match-a')));
-      await tester.pumpAndSettle();
+      await chooseMatch(tester);
       expect(find.text('Rascunho da participação'), findsOneWidget);
       await tester.tap(find.text('Selecionar foto'));
       await tester.pumpAndSettle();
@@ -807,7 +865,7 @@ void main() {
       );
       await tester.enterText(field, '   ');
       await tester.pump();
-      expect(tester.widget<OutlinedButton>(web).onPressed, isNull);
+      expect(tester.widget<TextButton>(web).onPressed, isNull);
     },
   );
 
@@ -2061,4 +2119,19 @@ class _FakeReader implements MedalTextReader {
     if (unavailable) throw MedalReadUnavailable();
     return lines;
   }
+}
+
+/// Escolhe a corrida achada na medalha e segue para a participação: o toque marca a corrida e abre
+/// os dados da prova (tempo, pace, colocação, peito, todos opcionais); "Continuar" segue a jornada.
+Future<void> chooseMatch(
+  WidgetTester tester, [
+  String key = 'medal-match-a',
+]) async {
+  await tester.ensureVisible(find.byKey(Key(key)));
+  await tester.tap(find.byKey(Key(key)));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('medal-race-data')), findsOneWidget);
+  await tester.ensureVisible(find.byKey(const Key('medal-scan-conclude')));
+  await tester.tap(find.byKey(const Key('medal-scan-conclude')));
+  await tester.pumpAndSettle();
 }

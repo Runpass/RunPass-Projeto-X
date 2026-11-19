@@ -325,102 +325,105 @@ class EditionCompactCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 76,
-                  height: 76,
-                  child: EditionCover(gateway: gateway, edition: edition),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$when · $where',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: archived ? context.archivedText : runPassOrange,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      edition['name'] as String? ?? 'Corrida',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                        height: 1.2,
-                        color: archived ? context.archivedText : null,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    if (chips.isEmpty)
-                      Text(
-                        'Distância a confirmar',
-                        style: TextStyle(color: muted, fontSize: 12.5),
-                      )
-                    else
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          for (final chip in chips)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: context.panel,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                chip,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    if (rating != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        rating!,
-                        style: TextStyle(color: muted, fontSize: 12.5),
-                      ),
-                    ],
-                    if (archived)
-                      Text(
-                        'Arquivada',
-                        style: TextStyle(
-                          color: context.archivedText,
-                          fontSize: 12.5,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // A imagem ocupa a largura inteira do cartao (mesma lista em todas as telas).
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: EditionCover(gateway: gateway, edition: edition),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$when · $where',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: archived
+                                ? context.archivedText
+                                : runPassOrange,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12.5,
+                          ),
                         ),
-                      ),
-                    if (actions != null) ...[
-                      const SizedBox(height: 8),
-                      actions!,
-                    ],
-                  ],
-                ),
+                        const SizedBox(height: 2),
+                        Text(
+                          edition['name'] as String? ?? 'Corrida',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            height: 1.2,
+                            color: archived ? context.archivedText : null,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        if (chips.isEmpty)
+                          Text(
+                            'Distância a confirmar',
+                            style: TextStyle(color: muted, fontSize: 12.5),
+                          )
+                        else
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: [
+                              for (final chip in chips)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: context.panel,
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    chip,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        if (rating != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            rating!,
+                            style: TextStyle(color: muted, fontSize: 12.5),
+                          ),
+                        ],
+                        if (archived)
+                          Text(
+                            'Arquivada',
+                            style: TextStyle(
+                              color: context.archivedText,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        if (actions != null) ...[
+                          const SizedBox(height: 8),
+                          actions!,
+                        ],
+                      ],
+                    ),
+                  ),
+                  ?trailing,
+                ],
               ),
-              ?trailing,
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

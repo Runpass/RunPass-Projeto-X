@@ -596,9 +596,13 @@ void main() {
       final list = find.byType(Scrollable).first;
       final declaration = find.text('Declaro que concluí esta corrida');
       final finish = find.text('Concluir participação');
-      await tester.scrollUntilVisible(finish, 200, scrollable: list);
+      // A avaliação vem depois de publicar a foto da corrida; a declaração e o Concluir, no fim.
+      await tester.scrollUntilVisible(
+        find.text('Avaliação (opcional)'),
+        200,
+        scrollable: list,
+      );
       await rateAll(tester, skip: 'Segurança');
-      await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tapStar(tester, 'rating-Segurança-4');
       await tester.pump();
       await tester.scrollUntilVisible(declaration, 200, scrollable: list);
@@ -1164,7 +1168,7 @@ void main() {
   }
 
   testWidgets(
-    'foto da medalha já enviada no começo: sem "Selecionar foto"; há Concluir, Salvar como rascunho e Excluir',
+    'foto da medalha já enviada no começo: sem "Selecionar foto"; há Concluir, Sair e continuar depois e Excluir',
     (tester) async {
       final gateway = await draftPhotoGateway([]);
       await openDraftWithInitialPhoto(tester, gateway);
@@ -1181,13 +1185,13 @@ void main() {
       );
       expect(find.text('Concluir participação'), findsOneWidget);
       expect(find.byKey(const Key('save-draft')), findsOneWidget);
-      expect(find.text('Salvar como rascunho'), findsOneWidget);
+      expect(find.text('Sair e continuar depois'), findsOneWidget);
       expect(find.text('Excluir rascunho'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'Salvar como rascunho grava os dados e a foto da medalha, não conclui e volta para Medalhas',
+    'Sair e continuar depois grava os dados e a foto da medalha, não conclui e volta para Medalhas',
     (tester) async {
       final patches = <Map<String, dynamic>>[];
       final gateway = await draftPhotoGateway(patches);
