@@ -326,28 +326,52 @@ void main() {
             ),
           );
           expect(withPhoto.width, 1080);
-          expect(
-            withPhoto.height,
-            1350 + 260,
-          ); // foto 4:5 + rodapé (informações e logo)
-          // Os lados e o meio da foto são da própria foto (vermelha): nenhuma faixa preta.
+          // Nome (190) + foto quadrada na proporção dela (1080) + rodapé com informações e logo (260).
+          expect(withPhoto.height, 190 + 1080 + 260);
+          // Os cantos e o meio da foto são da própria foto (vermelha): nenhuma faixa preta.
           for (final (x, y) in [
-            (2, 700),
-            (1077, 700),
-            (540, 1340),
-            (2, 1340),
+            (2, 200),
+            (1077, 200),
+            (540, 700),
+            (2, 1260),
+            (1077, 1260),
           ]) {
             final c = await pixel(withPhoto, x, y);
             expect(c.r, greaterThan(0.9), reason: 'pixel $x,$y');
             expect(c.g, lessThan(0.1), reason: 'pixel $x,$y');
           }
 
+          // Foto na horizontal (2:1): o quadro acompanha a proporção, limitada a 1,91:1, sem cortar o resto.
+          final wideRecorder = ui.PictureRecorder();
+          Canvas(wideRecorder, const Rect.fromLTWH(0, 0, 8, 4)).drawRect(
+            const Rect.fromLTWH(0, 0, 8, 4),
+            Paint()..color = const Color(0xff0000ff),
+          );
+          final wideImage = await wideRecorder.endRecording().toImage(8, 4);
+          final widePng = (await wideImage.toByteData(
+            format: ui.ImageByteFormat.png,
+          ))!.buffer.asUint8List();
+          final wide = await decode(
+            await buildShareCard(
+              title: 'Corrida A',
+              line: '5 km',
+              photoBytes: widePng,
+            ),
+          );
+          final wideHeight = (1080 / 1.91).roundToDouble().toInt();
+          expect(wide.height, 190 + wideHeight + 260);
+          final wideEdge = await pixel(wide, 2, 190 + wideHeight - 4);
+          expect(
+            wideEdge.b,
+            greaterThan(0.9),
+          ); // a foto vai até a borda de baixo do quadro
+
           // Sem foto e sem informações ainda gera a imagem (marcador no lugar da foto).
           final withoutPhoto = await decode(
             await buildShareCard(title: 'Corrida A', line: ''),
           );
           expect(withoutPhoto.width, 1080);
-          expect(withoutPhoto.height, 1350 + 260);
+          expect(withoutPhoto.height, 190 + 1350 + 260); // sem foto, quadro 4:5
         });
       },
     );

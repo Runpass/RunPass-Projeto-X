@@ -678,12 +678,16 @@ class SignedPhoto extends StatefulWidget {
   final String? endpoint;
   final Widget fallback;
   final BoxFit fit;
+
+  /// Chamado uma vez por foto carregada com largura / altura dela (o feed ajusta o quadro à foto).
+  final ValueChanged<double>? onAspect;
   const SignedPhoto({
     super.key,
     required this.gateway,
     required this.endpoint,
     required this.fallback,
     this.fit = BoxFit.cover,
+    this.onAspect,
   });
 
   @override
@@ -716,6 +720,21 @@ void forgetProfilePhoto(String profileId) =>
 
 class _SignedPhotoState extends State<SignedPhoto> {
   String? url;
+  String? _aspectFor;
+
+  /// Descobre a proporção da foto (a imagem é a mesma do Image.network, então vem do cache) e avisa.
+  void _reportAspect(String link) {
+    if (widget.onAspect == null || _aspectFor == link) return;
+    _aspectFor = link;
+    final stream = NetworkImage(link).resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener((info, _) {
+      stream.removeListener(listener);
+      final h = info.image.height;
+      if (mounted && h > 0) widget.onAspect?.call(info.image.width / h);
+    }, onError: (_, _) => stream.removeListener(listener));
+    stream.addListener(listener);
+  }
 
   @override
   void initState() {
@@ -783,6 +802,9 @@ class _SignedPhotoState extends State<SignedPhoto> {
   Widget build(BuildContext context) {
     final link = url;
     if (link == null) return widget.fallback;
+    if (widget.onAspect != null && _aspectFor != link) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _reportAspect(link));
+    }
     return Image.network(
       link,
       fit: widget.fit,
@@ -815,6 +837,9 @@ class MedalPhoto extends StatelessWidget {
 
   /// Endereço da foto quando não é da participação (ex.: publicação extra, `/posts/{id}/image`).
   final String? endpoint;
+
+  /// Recebe a proporção (largura / altura) da foto quando ela carrega.
+  final ValueChanged<double>? onAspect;
   const MedalPhoto({
     super.key,
     required this.gateway,
@@ -825,6 +850,7 @@ class MedalPhoto extends StatelessWidget {
     this.useDisplayImage = false,
     this.usePostImage = false,
     this.revision = 0,
+    this.onAspect,
   });
 
   @override
@@ -841,6 +867,7 @@ class MedalPhoto extends StatelessWidget {
                   '${usePostImage ? 'post-image' : (useDisplayImage ? 'display-image' : 'image')}'),
     fallback: MedalArt(size: size),
     fit: fit,
+    onAspect: onAspect,
   );
 }
 

@@ -103,6 +103,16 @@ FeedEntry entryFromPost(
   );
 }
 
+/// Proporção do quadro da foto no feed, como no Instagram: a da própria foto, entre 4:5 (retrato) e
+/// 1,91:1 (paisagem). Assim a foto aparece inteira, sem faixas pretas; só passa disso é que corta.
+const double postPhotoMinRatio = 4 / 5;
+const double postPhotoMaxRatio = 1.91;
+double postPhotoFrameRatio(double? aspect) =>
+    (aspect ?? postPhotoMinRatio).clamp(postPhotoMinRatio, postPhotoMaxRatio);
+
+/// Proporção já descoberta de cada foto (por endereço e versão), para o quadro não pular ao rolar o feed.
+final Map<String, double> _postPhotoAspects = {};
+
 /// Abre a folha de compartilhamento do sistema. Trocavel nos testes.
 typedef ShareFunction = Future<ShareResult> Function(ShareParams params);
 ShareFunction shareFunction = (params) => SharePlus.instance.share(params);
@@ -116,10 +126,10 @@ typedef ShareCardBuilder = Future<Uint8List> Function({
 ShareCardBuilder shareCardBuilder = buildShareCard;
 
 const double _cardSide = 1080;
-// Foto de ponta a ponta no quadro 4:5 do feed; embaixo, só as informações e a marca.
-const double _cardPhotoHeight = 1350;
+// Nome da corrida em cima, a foto de ponta a ponta no meio (na proporção dela) e, embaixo, só as
+// informações e a marca.
+const double _cardHeaderHeight = 190;
 const double _cardFooterHeight = 260;
-const double _cardTotalHeight = _cardPhotoHeight + _cardFooterHeight;
 
 /// Carrega um asset de imagem (ex. a logo da marca) como ui.Image, para desenhar no canvas.
 Future<ui.Image?> _loadAssetImage(String path) async {
@@ -145,20 +155,33 @@ Rect _coverSrcRect(ui.Image image, Rect dst) {
   return Rect.fromLTWH(0, (image.height - h) / 2, image.width.toDouble(), h);
 }
 
-/// Imagem para compartilhar: a foto de ponta a ponta (sem faixas pretas), o nome da corrida no alto,
-/// e embaixo só as informações (km, tempo, pace) e o logo. Sem curtir, comentar, marcar nem
-/// compartilhar, e sem o nome de quem publicou. Garante que o compartilhamento sempre leve uma
-/// imagem, que é o que Instagram e Facebook aceitam.
+/// Imagem para compartilhar: o nome da corrida em cima, a foto de ponta a ponta (sem faixas pretas, no
+/// quadro da própria proporção dela, de 4:5 a 1,91:1) e, embaixo, só as informações (km, tempo, pace) e o
+/// logo. Sem curtir, comentar, marcar nem compartilhar, e sem o nome de quem publicou. Garante que o
+/// compartilhamento sempre leve uma imagem, que é o que Instagram e Facebook aceitam.
 Future<Uint8List> buildShareCard({
   required String title,
   required String line,
   Uint8List? photoBytes,
 }) async {
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(
-    recorder,
-    const Rect.fromLTWH(0, 0, _cardSide, _cardTotalHeight),
+  ui.Image? photo;
+  if (photoBytes != null) {
+    try {
+      final codec = await ui.instantiateImageCodec(photoBytes);
+      photo = (await codec.getNextFrame()).image;
+    } on Object {
+      photo = null;
+    }
+  }
+  // Altura da foto: a da própria proporção (de 4:5 a 1,91:1); sem foto, 4:5.
+  final ratio = postPhotoFrameRatio(
+    photo == null ? null : photo.width / photo.height,
   );
+  final photoHeight = (_cardSide / ratio).roundToDouble();
+  final totalHeight = _cardHeaderHeight + photoHeight + _cardFooterHeight;
+
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _cardSide, totalHeight));
 
   void bg(Rect rect) => canvas.drawRect(
     rect,
@@ -201,17 +224,12 @@ Future<Uint8List> buildShareCard({
     painter.paint(canvas, Offset((_cardSide - painter.width) / 2, y));
   }
 
+  // Cabeçalho: só o nome da corrida.
+  bg(const Rect.fromLTWH(0, 0, _cardSide, _cardHeaderHeight));
+  text(title, 34, 56, weight: FontWeight.w900);
+
   // Foto de ponta a ponta; sem foto, usa um marcador no lugar.
-  const photoRect = Rect.fromLTWH(0, 0, _cardSide, _cardPhotoHeight);
-  ui.Image? photo;
-  if (photoBytes != null) {
-    try {
-      final codec = await ui.instantiateImageCodec(photoBytes);
-      photo = (await codec.getNextFrame()).image;
-    } on Object {
-      photo = null;
-    }
-  }
+  final photoRect = Rect.fromLTWH(0, _cardHeaderHeight, _cardSide, photoHeight);
   if (photo != null) {
     canvas.drawImageRect(
       photo,
@@ -223,7 +241,7 @@ Future<Uint8List> buildShareCard({
     bg(photoRect);
     text(
       String.fromCharCode(Icons.emoji_events.codePoint),
-      photoRect.height / 2 - 130,
+      photoRect.top + photoRect.height / 2 - 130,
       260,
       color: runPassGold,
       family: Icons.emoji_events.fontFamily,
@@ -231,21 +249,9 @@ Future<Uint8List> buildShareCard({
     );
   }
 
-  // Nome da corrida no alto da foto, sobre um degradê escuro para ler bem em qualquer imagem.
-  const scrimHeight = 380.0;
-  canvas.drawRect(
-    const Rect.fromLTWH(0, 0, _cardSide, scrimHeight),
-    Paint()
-      ..shader = ui.Gradient.linear(Offset.zero, const Offset(0, scrimHeight), [
-        Colors.black.withValues(alpha: 0.7),
-        Colors.transparent,
-      ]),
-  );
-  text(title, 56, 60, weight: FontWeight.w900);
-
   // Rodapé: as informações da corrida (quando houver) e o logo.
-  const footerTop = _cardPhotoHeight;
-  bg(const Rect.fromLTWH(0, footerTop, _cardSide, _cardFooterHeight));
+  final footerTop = _cardHeaderHeight + photoHeight;
+  bg(Rect.fromLTWH(0, footerTop, _cardSide, _cardFooterHeight));
   if (line.isNotEmpty) {
     text(
       line,
@@ -286,7 +292,7 @@ Future<Uint8List> buildShareCard({
 
   final image = await recorder.endRecording().toImage(
     _cardSide.toInt(),
-    _cardTotalHeight.toInt(),
+    totalHeight.toInt(),
   );
   final data = await image.toByteData(format: ui.ImageByteFormat.png);
   return data!.buffer.asUint8List();
@@ -747,6 +753,7 @@ class _PostCardState extends State<PostCard> {
     if (removed) return const SizedBox.shrink();
     final race = entry.race;
     final km = race.kilometers;
+    final aspectKey = '${entry.photoEndpoint}#${entry.version}';
     final subtitle = [
       if (entry.publishedAt != null) timeAgo(entry.publishedAt!),
       if (entry.place != null) entry.place!,
@@ -818,68 +825,51 @@ class _PostCardState extends State<PostCard> {
               ],
             ),
           ),
-          // Foto como no Instagram: quadro 4:5 de ponta a ponta do cartão, preenchido sem faixas pretas, com o
-          // nome da corrida no alto (tocar nele abre as informações da corrida).
-          AspectRatio(
-            aspectRatio: 4 / 5,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                MedalPhoto(
-                  key: Key('post-photo-${entry.postId}'),
-                  gateway: widget.gateway,
-                  participationId: entry.race.participation['id'] as String?,
-                  endpoint: entry.extra ? entry.photoEndpoint : null,
-                  size: 72,
-                  usePostImage: entry.race.hasPostImage,
-                  fit: BoxFit.cover,
-                ),
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: DecoratedBox(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Color(0xb3000000), Color(0x00000000)],
-                      ),
-                    ),
-                    child: InkWell(
-                      key: Key('post-race-${entry.postId}'),
-                      onTap: entry.race.participation['editionId'] is String
-                          ? () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => EditionScreen(
-                                  gateway: widget.gateway,
-                                  editionId:
-                                      entry.race.participation['editionId']
-                                          as String,
-                                ),
-                              ),
-                            )
-                          : null,
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-                        child: Text(
-                          entry.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 18,
-                            shadows: [
-                              Shadow(blurRadius: 6, color: Colors.black54),
-                            ],
+          // Nome da corrida acima da foto (tocar abre as informações da corrida).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: InkWell(
+                key: Key('post-race-${entry.postId}'),
+                borderRadius: BorderRadius.circular(6),
+                onTap: entry.race.participation['editionId'] is String
+                    ? () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => EditionScreen(
+                            gateway: widget.gateway,
+                            editionId:
+                                entry.race.participation['editionId'] as String,
                           ),
                         ),
-                      ),
-                    ),
+                      )
+                    : null,
+                child: Text(
+                  entry.title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 17,
                   ),
                 ),
-              ],
+              ),
+            ),
+          ),
+          // Foto de ponta a ponta do cartão, no quadro da própria proporção da foto (de 4:5 a 1,91:1), sem
+          // faixas pretas e sem cortar.
+          AspectRatio(
+            aspectRatio: postPhotoFrameRatio(_postPhotoAspects[aspectKey]),
+            child: MedalPhoto(
+              key: Key('post-photo-${entry.postId}'),
+              gateway: widget.gateway,
+              participationId: entry.race.participation['id'] as String?,
+              endpoint: entry.extra ? entry.photoEndpoint : null,
+              size: 72,
+              usePostImage: entry.race.hasPostImage,
+              fit: BoxFit.cover,
+              onAspect: (aspect) {
+                if (_postPhotoAspects[aspectKey] == aspect) return;
+                setState(() => _postPhotoAspects[aspectKey] = aspect);
+              },
             ),
           ),
           // Ações logo abaixo da foto e, depois, a legenda (prova, texto, números e último comentário).

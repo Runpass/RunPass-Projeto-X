@@ -103,6 +103,15 @@ int? parsePace(String value) {
   return seconds >= 60 && seconds <= 3600 ? seconds : -1;
 }
 
+/// Pace (segundos por km) calculado pelo tempo ("h:mm:ss") e pela distância em km. Nulo se faltar o tempo ou
+/// o km, ou se der fora do que o servidor aceita (de 1:00 a 60:00 por km).
+int? paceFromTime(String timeText, double? km) {
+  final seconds = parseDuration(timeText);
+  if (seconds == null || seconds < 1 || km == null || km <= 0) return null;
+  final perKm = (seconds / km).round();
+  return perKm >= 60 && perKm <= 3600 ? perKm : null;
+}
+
 /// Aceita "1:30:00", "45:10" ou segundos puros. Vazio vira null; inválido ou zero vira -1.
 int? parseDuration(String value) {
   final text = value.trim();
@@ -3711,6 +3720,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       text: draft['placement']?.toString() ?? '',
     );
     bib = TextEditingController(text: draft['bibNumber'] as String? ?? '');
+    time.addListener(() {
+      recomputePace();
+      if (mounted) setState(() {});
+    });
     comment = TextEditingController();
     final saved = draftFormCache[draft['id']];
     if (saved != null && draft['state'] == 'draft') {
@@ -3866,6 +3879,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           if (parsed != null && draft['state'] == 'draft') editionDate = parsed;
           distances = list;
           editionName = edition['name'] as String?;
+          recomputePace();
         });
       }
     } on Exception {
@@ -3899,6 +3913,36 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     super.dispose();
   }
 
+  /// Km da distância escolhida (ou da única da corrida); nulo enquanto não se sabe.
+  double? get paceKm {
+    if (distances.isEmpty) return null;
+    final picked = distances.firstWhere(
+      (d) => d['id'] == distanceId,
+      orElse: () => distances.length == 1 ? distances.first : const {},
+    );
+    final km = picked['kilometers'];
+    return km is num && km > 0 ? km.toDouble() : null;
+  }
+
+  /// O pace vem do tempo e da distância: assim que os dois existem, ele é calculado e não se digita.
+  bool get paceIsComputed => paceFromTime(time.text, paceKm) != null;
+  bool _paceAuto = false;
+
+  void recomputePace() {
+    final value = paceFromTime(time.text, paceKm);
+    if (value == null) {
+      // Tempo ou distância saiu: o pace que era calculado some junto (o digitado à mão fica).
+      if (_paceAuto) {
+        pace.clear();
+        _paceAuto = false;
+      }
+      return;
+    }
+    final text = formatPace(value).replaceAll('/km', '');
+    if (pace.text != text) pace.text = text;
+    _paceAuto = true;
+  }
+
   int? positive(String value) {
     if (value.trim().isEmpty) return null;
     final parsed = int.tryParse(value);
@@ -3921,18 +3965,26 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         ],
         onChanged: saving
             ? null
-            : (value) => setState(() => distanceId = value),
+            : (value) => setState(() {
+                distanceId = value;
+                recomputePace();
+              }),
       ),
     DurationField(controller: time, enabled: !saving),
     TextField(
       key: const Key('pace-field'),
       controller: pace,
       enabled: !saving,
+      // Calculado pelo tempo e pela distância: sem digitar. Só se digita se faltar um dos dois.
+      readOnly: paceIsComputed,
       keyboardType: TextInputType.datetime,
-      decoration: const InputDecoration(
-        labelText: 'Pace (opcional)',
+      decoration: InputDecoration(
+        labelText: paceIsComputed ? 'Pace (calculado)' : 'Pace (opcional)',
         hintText: 'Ex.: 5:30',
         suffixText: 'min/km',
+        helperText: paceIsComputed
+            ? 'Calculado pelo tempo e pela distância.'
+            : 'Com o tempo e a distância, o pace é calculado sozinho.',
       ),
     ),
     TextField(
