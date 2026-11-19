@@ -1020,6 +1020,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Selecionar foto'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Selecionar foto'));
     await tester.pumpAndSettle();
   }
@@ -1401,16 +1403,25 @@ void main() {
         find.widgetWithText(TextField, 'Número de peito (opcional)'),
         '4821',
       );
+      // 1:30:00 em 5 km: o pace é calculado sozinho (18:00 por km) e não se digita.
+      expect(
+        tester.widget<TextField>(find.byKey(const Key('pace-field'))).readOnly,
+        isTrue,
+      );
+      expect(find.text('Pace (calculado)'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('Salvar dados da corrida'),
         200,
         scrollable: list,
       );
+      await tester.ensureVisible(find.text('Salvar dados da corrida'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Salvar dados da corrida'));
       await tester.pumpAndSettle();
       expect(patched?['expectedVersion'], 3);
       expect(patched?['distanceId'], '5k');
       expect(patched?['timeSeconds'], 5400);
+      expect(patched?['paceSecondsPerKm'], 1080);
       expect(patched?['bibNumber'], '4821');
       // Depois de salvar, vai para a tela de Medalhas (com o aviso lá).
       expect(find.byType(MedalCollectionScreen), findsOneWidget);
@@ -1418,6 +1429,20 @@ void main() {
       expect(find.text('Dados da corrida salvos.'), findsOneWidget);
     },
   );
+
+  test('pace calculado pelo tempo e pela distância', () {
+    expect(paceFromTime('1:00:00', 10), 360); // 6:00 por km
+    expect(paceFromTime('0:25:00', 5), 300); // 5:00 por km
+    expect(paceFromTime('1:52:30', 21.0975), 320); // arredonda: 319,9
+    expect(paceFromTime('', 10), isNull); // sem tempo
+    expect(paceFromTime('1:00:00', null), isNull); // sem distância
+    expect(paceFromTime('1:00:00', 0), isNull);
+    expect(
+      paceFromTime('0:00:30', 10),
+      isNull,
+    ); // 3 s por km: fora do que se aceita
+    expect(formatPace(paceFromTime('0:25:00', 5)!), '5:00/km');
+  });
 
   test('duration parser accepts h:mm:ss, mm:ss and seconds', () {
     expect(parseDuration('1:30:00'), 5400);
