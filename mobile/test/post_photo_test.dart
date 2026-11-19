@@ -288,9 +288,11 @@ void main() {
       await tester.tap(find.byKey(const Key('new-post')));
       await tester.pumpAndSettle();
       expect(find.byType(NewPostScreen), findsOneWidget);
-      expect(find.byKey(const Key('new-post-race-c1')), findsOneWidget);
-      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
-      expect(find.textContaining('vira mais uma publicação'), findsOneWidget);
+      // A jornada comeca pela foto: a lista das corridas so aparece depois dela.
+      expect(find.text('1. A foto da corrida'), findsOneWidget);
+      expect(find.byKey(const Key('new-post-photo')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c1')), findsNothing);
+      expect(find.byKey(const Key('new-post-race-c2')), findsNothing);
     },
   );
 
@@ -321,9 +323,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('new-post-race-c2')));
-      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('new-post-photo')));
+      await tester.pumpAndSettle();
+      // Com a foto escolhida, a lista traz as corridas concluidas; a ja publicada ganha mais uma.
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      expect(find.textContaining('vira mais uma publicação'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('new-post-race-c2')));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const Key('new-post-text')),
@@ -369,20 +374,18 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const Key('new-post-photo')),
+        find.byKey(const Key('new-post-race-c1')),
         findsNothing,
-      ); // antes de escolher a corrida
-      await tester.tap(find.byKey(const Key('new-post-race-c1')));
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<FilledButton>(find.byKey(const Key('new-post-publish')))
-            .onPressed,
-        isNull,
-      ); // sem foto, não publica
+      ); // antes de escolher a foto
       await tester.tap(find.byKey(const Key('new-post-photo')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('new-post-preview')), findsOneWidget);
+      expect(
+        find.byKey(const Key('new-post-publish')),
+        findsNothing,
+      ); // sem corrida escolhida, nao ha o que publicar
+      await tester.tap(find.byKey(const Key('new-post-race-c1')));
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const Key('new-post-text')),
         'Minha prova',
@@ -620,8 +623,15 @@ void main() {
           },
       ];
       await tester.pumpWidget(
-        MaterialApp(home: NewPostScreen(gateway: gateway)),
+        MaterialApp(
+          home: NewPostScreen(
+            gateway: gateway,
+            photoSelector: (_) async => jpeg,
+          ),
+        ),
       );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post-photo')));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const Key('new-post-search')),

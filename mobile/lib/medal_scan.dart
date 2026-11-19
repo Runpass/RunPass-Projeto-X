@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'catalog_screen.dart';
+import 'duration_field.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
@@ -277,6 +278,16 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   final matches = <Map<String, dynamic>>[];
   String? chosenId; // corrida do catálogo que preencheu o cadastro
 
+  /// Todo o texto lido da medalha, linha por linha, para a pessoa conferir e para a busca.
+  List<String> allLines = const [];
+  bool showAllLines = false;
+
+  /// Meus dados desta prova, todos opcionais; seguem para a participação e aparecem na publicação.
+  final time = TextEditingController();
+  final pace = TextEditingController();
+  final placement = TextEditingController();
+  final bib = TextEditingController();
+
   // O que a medalha mostra, para a pessoa conferir e corrigir antes de buscar de novo ou concluir.
   final name = TextEditingController();
   final date = TextEditingController(); // dd/mm/aaaa
@@ -292,7 +303,17 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
 
   @override
   void dispose() {
-    for (final c in [name, date, distance, city, state]) {
+    for (final c in [
+      name,
+      date,
+      distance,
+      city,
+      state,
+      time,
+      pace,
+      placement,
+      bib,
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -336,7 +357,9 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   Future<void> scan() async {
     try {
       final lines = await widget.reader.read(widget.photoPath);
-      queries = medalQueries(lines);
+      allLines = lines;
+      // Todo o texto da medalha vira busca, do trecho mais específico ao menos específico.
+      queries = medalQueries(lines, max: 6);
       details = medalDetails(lines, queries);
       name.text = details['name'] ?? '';
       date.text = requestDateToDisplay(details['date'] ?? '');
@@ -475,6 +498,10 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             initial: draft,
             initialPhoto: photo,
             photoSelector: widget.draftPhotoSelector,
+            initialTime: time.text,
+            initialPace: pace.text,
+            initialPlacement: placement.text,
+            initialBib: bib.text,
           ),
         ),
       );
@@ -645,6 +672,116 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     ),
   );
 
+  /// Meus dados desta corrida, na mesma tela da escolha: todos opcionais. O que for preenchido vai para a
+  /// participação e aparece na publicação.
+  Widget raceDataCard() => Card(
+    key: const Key('medal-race-data'),
+    child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Seus dados nesta corrida',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Tudo opcional. O que você preencher aparece na sua publicação.',
+            style: TextStyle(fontSize: 12, color: context.muted),
+          ),
+          const SizedBox(height: 6),
+          DurationField(key: const Key('medal-data-time'), controller: time),
+          TextField(
+            key: const Key('medal-data-pace'),
+            controller: pace,
+            keyboardType: TextInputType.datetime,
+            decoration: const InputDecoration(
+              labelText: 'Pace (opcional)',
+              hintText: 'Ex.: 5:30',
+              suffixText: 'min/km',
+            ),
+          ),
+          TextField(
+            key: const Key('medal-data-placement'),
+            controller: placement,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Colocação (opcional)',
+            ),
+          ),
+          TextField(
+            key: const Key('medal-data-bib'),
+            controller: bib,
+            maxLength: 40,
+            decoration: const InputDecoration(
+              labelText: 'Número de peito (opcional)',
+              counterText: '',
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              TextButton.icon(
+                key: const Key('medal-scan-other-race'),
+                onPressed: () => setState(() => chosenId = null),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  textStyle: const TextStyle(fontSize: 12.5),
+                ),
+                icon: const Icon(Icons.search_rounded, size: 16),
+                label: const Text('Outra corrida'),
+              ),
+              const Spacer(),
+              FilledButton.tonalIcon(
+                key: const Key('medal-scan-conclude'),
+                onPressed: concludeChosen,
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  textStyle: const TextStyle(fontSize: 13),
+                ),
+                icon: const Icon(Icons.arrow_forward_rounded, size: 16),
+                label: const Text('Continuar'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+
+  /// Todo o texto que o aparelho leu na medalha, para conferir sem sair da tela.
+  Widget readLinesTile() => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextButton.icon(
+          key: const Key('medal-scan-lines-toggle'),
+          onPressed: () => setState(() => showAllLines = !showAllLines),
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(fontSize: 12.5),
+          ),
+          icon: Icon(
+            showAllLines ? Icons.expand_less : Icons.expand_more,
+            size: 16,
+          ),
+          label: Text('Texto lido da medalha (${allLines.length})'),
+        ),
+        if (showAllLines)
+          Padding(
+            padding: const EdgeInsets.only(left: 8, bottom: 4),
+            child: Text(
+              allLines.join(' · '),
+              key: const Key('medal-scan-lines'),
+              style: TextStyle(fontSize: 12.5, color: context.muted),
+            ),
+          ),
+      ],
+    ),
+  );
+
   /// Campos editáveis com o que foi lido da medalha.
   Widget readCard() => Card(
     key: const Key('medal-scan-edit'),
@@ -698,28 +835,34 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
               ),
             ),
           ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              key: const Key('medal-scan-search-again'),
-              onPressed: searchAgain,
-              icon: const Icon(Icons.search_rounded),
-              label: const Text('Buscar de novo com este nome'),
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Sempre à mão, já na primeira tela: pesquisa o nome digitado na internet.
-          Align(
-            alignment: Alignment.centerLeft,
-            child: ListenableBuilder(
-              listenable: name,
-              builder: (context, _) => OutlinedButton.icon(
-                key: const Key('medal-scan-web-search'),
-                onPressed: name.text.trim().isEmpty ? null : searchWeb,
-                icon: const Icon(Icons.public_rounded),
-                label: const Text('Pesquisar este nome na internet'),
+          Wrap(
+            spacing: 4,
+            children: [
+              TextButton.icon(
+                key: const Key('medal-scan-search-again'),
+                onPressed: searchAgain,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  textStyle: const TextStyle(fontSize: 12.5),
+                ),
+                icon: const Icon(Icons.search_rounded, size: 16),
+                label: const Text('Buscar de novo'),
               ),
-            ),
+              // Sempre à mão, já na primeira tela: pesquisa o nome digitado na internet.
+              ListenableBuilder(
+                listenable: name,
+                builder: (context, _) => TextButton.icon(
+                  key: const Key('medal-scan-web-search'),
+                  onPressed: name.text.trim().isEmpty ? null : searchWeb,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(fontSize: 12.5),
+                  ),
+                  icon: const Icon(Icons.public_rounded, size: 16),
+                  label: const Text('Procurar na internet'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -816,12 +959,8 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                         'Já cadastrada por você',
                     ].join(' · '),
                   ),
-                  // Corrida que já existe: segue direto para a minha participação (tempo, km, avaliação e, se
-                  // quiser, a foto do post), sem passo intermediário.
-                  onTap: () {
-                    fillFrom(edition);
-                    concludeChosen();
-                  },
+                  // Toque escolhe a corrida e abre, logo abaixo, os dados da prova (todos opcionais).
+                  onTap: () => fillFrom(edition),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -860,21 +999,8 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                 ),
               ),
             if (chosenId != null) ...[
-              // Escolhi a corrida: o próximo passo é a minha participação nela (tempo, percurso, avaliação, medalha).
               const SizedBox(height: 4),
-              FilledButton.icon(
-                key: const Key('medal-scan-conclude'),
-                onPressed: concludeChosen,
-                icon: const Icon(Icons.arrow_forward_rounded),
-                label: const Text('Continuar: tempo e avaliação'),
-              ),
-              const Padding(
-                padding: EdgeInsets.only(top: 6, bottom: 4),
-                child: Text(
-                  'Vou usar esta corrida e a sua foto da medalha. No próximo passo você coloca o tempo, o percurso e a avaliação.',
-                  style: TextStyle(fontSize: 12),
-                ),
-              ),
+              raceDataCard(),
             ],
           ],
           if (note != null)
@@ -882,6 +1008,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(note!, key: const Key('medal-scan-note')),
             ),
+          if (allLines.isNotEmpty) readLinesTile(),
           readCard(),
           const SizedBox(height: 8),
           if (matches.isEmpty)
@@ -907,11 +1034,18 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             ),
           const SizedBox(height: 8),
           // Sempre disponível, depois da busca pela foto: cadastro manual com os campos (editáveis) acima.
-          FilledButton.icon(
-            key: const Key('medal-scan-request'),
-            onPressed: requestRace,
-            icon: const Icon(Icons.edit_note_rounded),
-            label: const Text('Fazer o cadastro manual'),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              key: const Key('medal-scan-request'),
+              onPressed: requestRace,
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(fontSize: 13),
+              ),
+              icon: const Icon(Icons.edit_note_rounded, size: 18),
+              label: const Text('Cadastrar esta corrida'),
+            ),
           ),
         ],
       ],

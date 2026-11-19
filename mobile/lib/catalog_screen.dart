@@ -360,6 +360,22 @@ class RaceArt extends StatelessWidget {
               .toUpperCase();
   }
 
+  /// Cidade e estado em caixa alta, para a capa generica ter cara de cartao postal.
+  String? get postcardCity {
+    final city = '${edition['city'] ?? ''}'.trim();
+    if (city.isEmpty) return null;
+    final state = '${edition['state'] ?? ''}'.trim();
+    return state.isEmpty
+        ? city.toUpperCase()
+        : '${city.toUpperCase()} · $state';
+  }
+
+  /// Local da prova (quando o catalogo tem), embaixo da cidade.
+  String? get postcardVenue {
+    final venue = '${edition['venue'] ?? ''}'.trim();
+    return venue.isEmpty ? null : venue;
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = label;
@@ -417,6 +433,65 @@ class RaceArt extends StatelessWidget {
                       painter: _ArtLabelPainter(text, left: labelAtLeft),
                     ),
                   ),
+                // Capa generica (nao ha imagem autorizada da prova): no formato de cartao postal, com a
+                // cidade e o local, e rotulada como arte do app.
+                if (!small) ...[
+                  Positioned(
+                    left: 14,
+                    right: 14,
+                    bottom: 12,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (postcardCity != null)
+                          Text(
+                            postcardCity!,
+                            key: const Key('race-art-city'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 20,
+                              letterSpacing: 1.5,
+                              shadows: [
+                                Shadow(blurRadius: 8, color: Colors.black54),
+                              ],
+                            ),
+                          ),
+                        if (postcardVenue != null)
+                          Text(
+                            postcardVenue!,
+                            key: const Key('race-art-venue'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .85),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12.5,
+                              shadows: const [
+                                Shadow(blurRadius: 6, color: Colors.black54),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    right: 10,
+                    top: 8,
+                    child: Text(
+                      'arte do app',
+                      key: const Key('race-art-tag'),
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: .6),
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           );
@@ -3512,6 +3587,10 @@ class ParticipationDraftScreen extends StatefulWidget {
   /// Foto já escolhida (ex.: a da medalha, vinda de "Adicionar medalha"): é enviada ao abrir o rascunho.
   final List<int>? initialPhoto;
 
+  /// Tempo, pace, colocação e número de peito já digitados no cadastro da medalha: chegam preenchidos
+  /// aqui (todos opcionais) para a pessoa não digitar duas vezes.
+  final String? initialTime, initialPace, initialPlacement, initialBib;
+
   /// Ajuste (recorte) da foto inicial antes do envio; nulo se a pessoa desistir. Trocável nos testes.
   final Future<List<int>?> Function(BuildContext context, List<int> photo)
   initialPhotoCropper;
@@ -3527,6 +3606,10 @@ class ParticipationDraftScreen extends StatefulWidget {
     this.postPhotoLoader = loadPostPhotoBytes,
     this.postPhotoCropper = cropPostPhoto,
     this.initialPhoto,
+    this.initialTime,
+    this.initialPace,
+    this.initialPlacement,
+    this.initialBib,
     this.initialPhotoCropper = cropRacePhoto,
   });
 
@@ -3608,6 +3691,17 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       text: draft['placement']?.toString() ?? '',
     );
     bib = TextEditingController(text: draft['bibNumber'] as String? ?? '');
+    // Veio do cadastro da medalha: o que já foi digitado lá aparece aqui.
+    for (final (field, value) in [
+      (time, widget.initialTime),
+      (pace, widget.initialPace),
+      (placement, widget.initialPlacement),
+      (bib, widget.initialBib),
+    ]) {
+      if (field.text.isEmpty && (value ?? '').trim().isNotEmpty) {
+        field.text = value!.trim();
+      }
+    }
     comment = TextEditingController();
     final saved = draftFormCache[draft['id']];
     if (saved != null && draft['state'] == 'draft') {
@@ -5224,47 +5318,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 child: const Text('Consultar processamento da foto'),
               ),
           ],
-          // Avaliação e comentário aparecem antes da foto (dá para preencher já); concluir só com a foto validada.
+          // Ordem da jornada: meus dados -> publicar a foto da corrida -> avaliação -> concluir ou sair.
           if (draft['state'] == 'draft' && !upcoming) ...[
+            // Publicar a foto da corrida (outra foto, nao a da medalha) vem antes da avaliacao:
+            // e a ordem da jornada em toda tela de cadastro de medalha.
             const Divider(height: 32),
-            const Text(
-              'Avaliação (opcional)',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            Text(
-              'Dê nota aos 8 critérios ou deixe em branco e avalie depois.',
-              key: const Key('rating-optional-hint'),
-              style: TextStyle(color: context.muted, fontSize: 12),
-            ),
-            SameRatingPicker(
-              onPick: (n) => setState(() {
-                for (final key in ratings.keys.toList()) {
-                  ratings[key] = n;
-                }
-              }),
-            ),
-            for (final (key, label, icon) in _EditionScreenState.criteria)
-              RatingInput(
-                label: label,
-                icon: icon,
-                value: ratings[key] ?? 0,
-                onChanged: saving
-                    ? null
-                    : (value) => setState(() => ratings[key] = value),
-              ),
-            TextField(
-              controller: comment,
-              maxLength: 2000,
-              decoration: const InputDecoration(
-                labelText: 'Comentário (opcional)',
-              ),
-            ),
-            CheckboxListTile(
-              value: declaredCompleted,
-              onChanged: (value) =>
-                  setState(() => declaredCompleted = value ?? false),
-              title: const Text('Declaro que concluí esta corrida'),
-            ),
             CheckboxListTile(
               key: const Key('publish-to-feed'),
               value: publishToFeed,
@@ -5326,6 +5384,45 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 ),
               ),
             ],
+            const Divider(height: 32),
+            const Text(
+              'Avaliação (opcional)',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            Text(
+              'Dê nota aos 8 critérios ou deixe em branco e avalie depois.',
+              key: const Key('rating-optional-hint'),
+              style: TextStyle(color: context.muted, fontSize: 12),
+            ),
+            SameRatingPicker(
+              onPick: (n) => setState(() {
+                for (final key in ratings.keys.toList()) {
+                  ratings[key] = n;
+                }
+              }),
+            ),
+            for (final (key, label, icon) in _EditionScreenState.criteria)
+              RatingInput(
+                label: label,
+                icon: icon,
+                value: ratings[key] ?? 0,
+                onChanged: saving
+                    ? null
+                    : (value) => setState(() => ratings[key] = value),
+              ),
+            TextField(
+              controller: comment,
+              maxLength: 2000,
+              decoration: const InputDecoration(
+                labelText: 'Comentário (opcional)',
+              ),
+            ),
+            CheckboxListTile(
+              value: declaredCompleted,
+              onChanged: (value) =>
+                  setState(() => declaredCompleted = value ?? false),
+              title: const Text('Declaro que concluí esta corrida'),
+            ),
             if (imageReference == null)
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
@@ -5356,7 +5453,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             OutlinedButton(
               key: const Key('save-draft'),
               onPressed: saving || uploading ? null : saveAsDraft,
-              child: const Text('Salvar como rascunho'),
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(fontSize: 13),
+              ),
+              // Sai da jornada guardando o que já foi preenchido; concluir fica para depois.
+              child: const Text('Sair e continuar depois'),
             ),
           ],
           if (draft['state'] == 'draft')
