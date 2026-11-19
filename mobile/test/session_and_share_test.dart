@@ -363,8 +363,8 @@ void main() {
             ),
           );
           expect(withPhoto.width, 1080);
-          // Nome (190) + foto quadrada na proporção dela (1080) + rodapé com os três números e o logo (340).
-          expect(withPhoto.height, 190 + 1080 + 340);
+          // Nome (190) + foto quadrada na proporção dela (1080) + rodapé com os três números e o logo (380).
+          expect(withPhoto.height, 190 + 1080 + 380);
           // Os cantos e o meio da foto são da própria foto (vermelha): nenhuma faixa preta.
           for (final (x, y) in [
             (2, 200),
@@ -388,12 +388,34 @@ void main() {
             greaterThan(0),
             reason: 'nome da corrida em preto',
           );
-          const footer = Rect.fromLTWH(0, 190 + 1080, 1080, 340);
+          const footer = Rect.fromLTWH(0, 190 + 1080, 1080, 380);
           expect(
             await count(withPhoto, footer, black),
             greaterThan(0),
             reason: 'números em preto',
           );
+          // Logo grande no pé do rodapé (abaixo dos números): ocupa quase 112 px de altura.
+          final raw = (await withPhoto.toByteData())!;
+          var logoTop = 1 << 30, logoBottom = -1;
+          for (
+            var y = footer.top.toInt() + 200;
+            y < footer.bottom.toInt();
+            y++
+          ) {
+            for (var x = 140; x < 940; x++) {
+              final i = (y * withPhoto.width + x) * 4;
+              final white =
+                  raw.getUint8(i) > 245 &&
+                  raw.getUint8(i + 1) > 245 &&
+                  raw.getUint8(i + 2) > 245;
+              if (!white) {
+                if (y < logoTop) logoTop = y;
+                if (y > logoBottom) logoBottom = y;
+              }
+            }
+          }
+          expect(logoBottom, greaterThan(0), reason: 'logo desenhado');
+          expect(logoBottom - logoTop, greaterThan(80), reason: 'logo grande');
           // Os três ícones, um em cada terço do rodapé.
           for (final third in [0, 1, 2]) {
             expect(
@@ -427,7 +449,7 @@ void main() {
             ),
           );
           final wideHeight = (1080 / 1.91).roundToDouble().toInt();
-          expect(wide.height, 190 + wideHeight + 340);
+          expect(wide.height, 190 + wideHeight + 380);
           final wideEdge = await pixel(wide, 2, 190 + wideHeight - 4);
           expect(
             wideEdge.b,
@@ -444,7 +466,7 @@ void main() {
             ),
           );
           expect(withoutPhoto.width, 1080);
-          expect(withoutPhoto.height, 190 + 1350 + 340); // sem foto, quadro 4:5
+          expect(withoutPhoto.height, 190 + 1350 + 380); // sem foto, quadro 4:5
         });
       },
     );

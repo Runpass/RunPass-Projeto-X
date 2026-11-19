@@ -132,7 +132,9 @@ const double _cardSide = 1080;
 // Nome da corrida em cima, a foto de ponta a ponta no meio (na proporção dela) e, embaixo, só as
 // informações e a marca.
 const double _cardHeaderHeight = 190;
-const double _cardFooterHeight = 340;
+const double _cardFooterHeight = 380;
+// Logo do rodapé, em tamanho de marca (o dobro do que era).
+const double _cardLogoHeight = 112;
 
 /// Carrega um asset de imagem (ex. a logo da marca) como ui.Image, para desenhar no canvas.
 Future<ui.Image?> _loadAssetImage(String path) async {
@@ -295,14 +297,14 @@ Future<Uint8List> buildShareCard({
   // motivo, cai para o texto "+1Pódio".
   final logo = await _loadAssetImage('assets/brand/logo-light.png');
   if (logo != null) {
-    const logoHeight = 56.0;
+    const logoHeight = _cardLogoHeight;
     final logoWidth = logo.width * (logoHeight / logo.height);
     canvas.drawImageRect(
       logo,
       Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
       Rect.fromLTWH(
         (_cardSide - logoWidth) / 2,
-        footerTop + _cardFooterHeight - 84,
+        footerTop + _cardFooterHeight - logoHeight - 34,
         logoWidth,
         logoHeight,
       ),
@@ -311,8 +313,8 @@ Future<Uint8List> buildShareCard({
   } else {
     text(
       '+1Pódio',
-      footerTop + _cardFooterHeight - 84,
-      48,
+      footerTop + _cardFooterHeight - _cardLogoHeight - 34,
+      88,
       weight: FontWeight.w900,
       color: runPassOrange,
       maxLines: 1,
