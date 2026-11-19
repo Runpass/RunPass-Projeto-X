@@ -75,13 +75,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'O acesso será bloqueado imediatamente e a limpeza dos seus dados (perfil, participações, avaliações e fotos) será agendada. Isso não pode ser desfeito.',
         ),
         actions: [
+          // Ação sem volta: o botão de destaque é o que mantém a conta; excluir fica em vermelho, discreto.
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
+            key: const Key('delete-account-confirm'),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Excluir minha conta'),
+          ),
+          FilledButton(
+            key: const Key('delete-account-cancel'),
+            style: FilledButton.styleFrom(minimumSize: const Size(120, 44)),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Manter minha conta'),
           ),
         ],
       ),

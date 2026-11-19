@@ -67,11 +67,18 @@ void main() {
       );
       expect(find.text('Foi lindo'), findsOneWidget);
       expect(find.byKey(const Key('post-tagged-p1')), findsOneWidget);
-      // Fica na linha das ações (logo abaixo da foto, como no Instagram), acima da legenda.
-      expect(
-        tester.getTopLeft(find.byKey(const Key('post-tagged-p1'))).dy,
-        lessThan(tester.getTopLeft(find.text('Foi lindo')).dy),
-      );
+      // Ordem do cartão: título, texto da publicação, foto e, na linha das ações abaixo da foto, os marcados.
+      final title = tester.getTopLeft(find.byKey(const Key('post-race-p1'))).dy;
+      final text = tester.getTopLeft(find.text('Foi lindo')).dy;
+      final photo = tester
+          .getTopLeft(find.byKey(const Key('post-photo-p1')))
+          .dy;
+      final tagged = tester
+          .getTopLeft(find.byKey(const Key('post-tagged-p1')))
+          .dy;
+      expect(title, lessThan(text));
+      expect(text, lessThan(photo));
+      expect(photo, lessThan(tagged));
       await tester.ensureVisible(find.byKey(const Key('post-tagged-p1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-tagged-p1')));

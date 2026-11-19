@@ -72,6 +72,28 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.service.profile(self.actor)["birthDate"], ADULT["birthDate"])
         self.assertNotIn("email", self.service.profile(self.actor))
 
+    def test_minor_is_admitted_with_private_profile_and_adult_stays_public(self):
+        # NOW e 28/10/2026: 17 anos (faz 18 no dia seguinte), 18 exatos e adulto. Dados sinteticos.
+        cases = [("minor", "2008-10-29", True), ("eighteen", "2008-10-28", None)]
+        for subject, birth, expected in cases:
+            actor = self.create(subject)
+            before = self.service.profile(actor)["version"]
+            self.service.admit(
+                actor, "admit-" + subject, {"birthDate": birth, "declaresAdult": True}
+            )
+            profile = self.service.profile(actor)
+            self.assertEqual(profile.get("isPrivate"), expected)
+            self.assertEqual(profile["version"], before + (1 if expected else 0))
+        # Repetir a admissao nao muda nada, e o menor pode tornar o perfil publico depois.
+        minor = Principal("minor", True)
+        self.service.admit(minor, "admit-minor", {"birthDate": "2008-10-29", "declaresAdult": True})
+        profile = self.service.profile(minor)
+        self.assertIs(profile["isPrivate"], True)
+        self.service.patch_profile(
+            minor, "open", {"expectedVersion": profile["version"], "isPrivate": False}
+        )
+        self.assertIs(self.service.profile(minor)["isPrivate"], False)
+
     def test_same_username_concurrently_casefolds_without_partial_account(self):
         def attempt(i):
             try:

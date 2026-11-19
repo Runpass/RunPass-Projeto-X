@@ -2006,7 +2006,7 @@ void main() {
   });
 
   testWidgets(
-    'ao abrir sem corridas não há mensagem; a busca sem resultado oferece pedir o cadastro',
+    'ao abrir sem corridas há só a orientação de buscar; a busca sem resultado oferece pedir o cadastro',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -2020,6 +2020,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Nenhuma corrida'), findsNothing);
       expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
+      // Tela não fica em branco: orienta a buscar pelo nome.
+      expect(find.byKey(const Key('catalog-opening-hint')), findsOneWidget);
       // O campo está sempre à vista e sem lupa.
       expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
       expect(find.byIcon(Icons.search_rounded), findsNothing);

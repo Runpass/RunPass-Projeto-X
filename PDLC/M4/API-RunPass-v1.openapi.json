@@ -4081,7 +4081,7 @@
         "tags": [
           "Beta"
         ],
-        "description": "Verified authenticated eligible user enters if capacity exists. Transaction reserves unique admission and increments total exactly once, including concurrent 50th/1000th transitions. Same replay never consumes a second slot. If full or closed return 409 with a stable error code; do not silently enroll in waitlist. Identity may exist before admission but product access remains blocked.",
+        "description": "Verified authenticated eligible user enters if capacity exists. Transaction reserves unique admission and increments total exactly once, including concurrent 50th/1000th transitions. Same replay never consumes a second slot. If full or closed return 409 with a stable error code; do not silently enroll in waitlist. Identity may exist before admission but product access remains blocked. A runner under 18 at admission gets isPrivate=true on the profile as a default (decision 2026-11-19), unless isPrivate was already set; the runner can change it later with PATCH /me.",
         "responses": {
           "201": {
             "description": "Authorized result",

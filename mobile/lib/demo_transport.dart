@@ -90,6 +90,97 @@ class DemoTransport {
 
   final likes = <String, Set<String>>{};
 
+  // Parte social da demonstração: quem a pessoa segue e a quem pediu amizade (e-mail -> ids).
+  final following = <String, Set<String>>{};
+  final friendRequests = <String, Set<String>>{};
+
+  /// Corredores fictícios da demonstração (os mesmos autores do feed), para buscar, seguir e abrir o perfil.
+  static const demoRunners = [
+    ('demo-author-1', 'Mariana Lopes', 'marianalopes', 'São Paulo', 'SP'),
+    ('demo-author-2', 'Juliana Martins', 'julianamartins', 'Campinas', 'SP'),
+    (
+      'demo-author-3',
+      'Carlos Menezes',
+      'carlosmenezes',
+      'Rio de Janeiro',
+      'RJ',
+    ),
+  ];
+
+  Map<String, dynamic> demoRunnerCard(
+    (String, String, String, String, String) runner,
+    String email,
+  ) {
+    final follows = following[email]?.contains(runner.$1) ?? false;
+    final asked = friendRequests[email]?.contains(runner.$1) ?? false;
+    return {
+      'id': runner.$1,
+      'displayName': runner.$2,
+      'username': runner.$3,
+      'city': runner.$4,
+      'state': runner.$5,
+      'bio': 'Corredor fictício da demonstração.',
+      'version': 1,
+      'isPrivate': false,
+      'canView': true,
+      'followState': follows ? 'active' : 'none',
+      'friendState': asked ? 'pending_out' : 'none',
+      'followersCount': follows ? 1 : 0,
+      'followingCount': 0,
+      'friendsCount': 0,
+      'participationCount': 1,
+    };
+  }
+
+  /// Rotas sociais da demonstração; nulo quando o caminho não é delas.
+  JsonReply? demoSocial(Uri uri, String method, String email) {
+    if (uri.path == '/profiles/suggestions' && method == 'GET') {
+      return JsonReply(200, {
+        'items': [for (final r in demoRunners) demoRunnerCard(r, email)],
+      });
+    }
+    if (uri.path == '/profiles' && method == 'GET') {
+      final q = normalize(uri.queryParameters['q'] ?? '');
+      if (q.length < 2) return failure('QUERY_TOO_SHORT', 422);
+      return JsonReply(200, {
+        'items': [
+          for (final r in demoRunners)
+            if (normalize(r.$2).contains(q) || r.$3.contains(q))
+              demoRunnerCard(r, email),
+        ],
+      });
+    }
+    if (uri.path == '/me/friend-requests' && method == 'GET') {
+      return const JsonReply(200, {'items': []});
+    }
+    final match = RegExp(
+      r'^/profiles/([^/]+)(?:/(participations|follow|friend))?$',
+    ).firstMatch(uri.path);
+    if (match == null) return null;
+    final found = demoRunners.where((r) => r.$1 == match.group(1));
+    if (found.isEmpty) return failure('PROFILE_NOT_FOUND', 404);
+    final runner = found.first;
+    switch (match.group(2)) {
+      case null when method == 'GET':
+        return JsonReply(200, demoRunnerCard(runner, email));
+      case 'participations' when method == 'GET':
+        final post = demoFeed(email)
+            .firstWhere((p) => (p['author'] as Map)['id'] == runner.$1);
+        return JsonReply(200, {
+          'items': [post['participation']],
+        });
+      case 'follow':
+        final mine = following.putIfAbsent(email, () => {});
+        method == 'DELETE' ? mine.remove(runner.$1) : mine.add(runner.$1);
+        return JsonReply(200, demoRunnerCard(runner, email));
+      case 'friend':
+        final mine = friendRequests.putIfAbsent(email, () => {});
+        method == 'DELETE' ? mine.remove(runner.$1) : mine.add(runner.$1);
+        return JsonReply(200, demoRunnerCard(runner, email));
+    }
+    return null;
+  }
+
   /// Fictional posts by other runners, plus the signed-in runner's own
   /// published races. Demonstration data only.
   List<Map<String, dynamic>> demoFeed(String email) {
@@ -404,6 +495,14 @@ class DemoTransport {
       account['admitted'] = true;
       // So no GET /me do proprio titular (decisao 06/11/2026), nunca em perfil publico.
       (account['profile'] as Map?)?['birthDate'] = data['birthDate'];
+      // Como no servidor: menor de 18 anos entra com o perfil privado (pode mudar em Configurações).
+      final profile = account['profile'] as Map?;
+      if (profile != null &&
+          !profile.containsKey('isPrivate') &&
+          birth.isAfter(DateTime(now.year - 18, now.month, now.day))) {
+        profile['isPrivate'] = true;
+        profile['version'] = ((profile['version'] as int?) ?? 1) + 1;
+      }
       return const JsonReply(201, {'admitted': true});
     }
     if (uri.path == '/me/waitlist' && method == 'DELETE') {
@@ -808,6 +907,8 @@ class DemoTransport {
         ],
       });
     }
+    final social = demoSocial(uri, method, email);
+    if (social != null) return social;
     final reviews = RegExp(r'^/editions/([^/]+)/reviews$').firstMatch(uri.path);
     if (reviews != null && method == 'GET') {
       final known = editions.any((e) => e['id'] == reviews.group(1));
@@ -816,9 +917,11 @@ class DemoTransport {
           : failure('EDITION_NOT_FOUND', 404);
     }
     final matches = editions.where((e) => uri.path == '/editions/${e['id']}');
-    return matches.isEmpty
+    if (matches.isNotEmpty) return JsonReply(200, matches.first);
+    // Só um caminho de corrida desconhecida é "corrida não encontrada"; o resto é função fora da demonstração.
+    return uri.path.startsWith('/editions/')
         ? failure('EDITION_NOT_FOUND', 404)
-        : JsonReply(200, matches.first);
+        : failure('NOT_IN_DEMO', 404);
   }
 
   String normalize(String text) => text

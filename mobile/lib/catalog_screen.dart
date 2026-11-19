@@ -1210,7 +1210,22 @@ class _CatalogScreenState extends State<CatalogScreen> {
           ],
           const SizedBox(height: 8),
           if (loading) const Center(child: CircularProgressIndicator()),
-          // Ao abrir (lista dos próximos 20 dias) não há mensagem; só a busca explica quando não acha nada.
+          // Ao abrir (lista dos próximos 20 dias) sem nenhuma corrida: uma orientação discreta, para a tela
+          // não ficar em branco. Não é erro nem "nada encontrado": só aponta a busca pelo nome.
+          if (!loading &&
+              error == null &&
+              items.isEmpty &&
+              nextCursor == null &&
+              upcomingWindow)
+            Padding(
+              padding: const EdgeInsets.only(top: 24),
+              child: Text(
+                'Sem corridas nos próximos dias por aqui.\nBusque pelo nome no campo acima.',
+                key: const Key('catalog-opening-hint'),
+                textAlign: TextAlign.center,
+                style: TextStyle(color: context.muted),
+              ),
+            ),
           if (!loading && error == null && items.isEmpty && !upcomingWindow)
             Text(
               nextCursor == null
@@ -4335,7 +4350,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       if (bytes == null) {
         if (mounted) {
           setState(
-            () => message = 'Não consegui carregar a foto da medalha. Escolha outra foto para o post.',
+            () => message = 'Não consegui carregar a foto da medalha. Escolha outra foto para a publicação.',
           );
         }
         return;
@@ -4350,7 +4365,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       final reference = await uploadPostBytes(bytes);
       if (reference != null) {
         postImageReference = reference;
-        message = 'A foto da medalha será a foto do post. Você pode trocá-la quando quiser.';
+        message = 'A foto da medalha será a foto da publicação. Você pode trocá-la quando quiser.';
       }
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
@@ -4833,7 +4848,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         // (ao voltar, ela mostrava a lista de antes) e sem seta de voltar.
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute<void>(
-            builder: (_) => MedalCollectionScreen(gateway: widget.gateway),
+            builder: (_) => MedalCollectionScreen(
+              gateway: widget.gateway,
+              justEarned: editionName ?? 'Sua corrida',
+            ),
           ),
           (route) => false,
         );
@@ -5073,7 +5091,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 ? (uploadingPost
                       ? 'Preparando a foto da publicação...'
                       : 'Escolha a foto da publicação ou use a da medalha.')
-                : 'A foto da medalha será a foto do post. Você pode trocar por outra.',
+                : 'A foto da medalha será a foto da publicação. Você pode trocar por outra.',
             key: const Key('publish-panel-hint'),
           ),
           const SizedBox(height: 8),
@@ -5481,7 +5499,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               ),
               if (postImageReference != null)
                 const Text(
-                  'Foto da publicação validada. Ela é uma cópia: trocar a foto do post não muda a da medalha.',
+                  'Foto da publicação validada. Ela é uma cópia: trocar a foto da publicação não muda a da medalha.',
                   key: Key('post-photo-ok'),
                 )
               else
@@ -5496,7 +5514,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                       ? null
                       : useMedalPhotoForPost,
                   icon: const Icon(Icons.workspace_premium_outlined),
-                  label: const Text('Usar a foto da medalha no post'),
+                  label: const Text('Usar a foto da medalha na publicação'),
                 ),
               tagButton(saveNow: false),
               const SizedBox(height: 8),
