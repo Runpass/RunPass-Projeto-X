@@ -3736,6 +3736,47 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
+  /// Nome da corrida: tocar abre as informações da corrida (a mesma tela do catálogo).
+  Widget raceNameLink() => Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: InkWell(
+      key: const Key('race-name-open'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () {
+        final id = draft['editionId'] as String?;
+        if (id == null) return;
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                EditionScreen(gateway: widget.gateway, editionId: id),
+          ),
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(
+                editionName!,
+                key: const Key('race-name-under-photo'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(Icons.open_in_new, size: 16, color: context.muted),
+          ],
+        ),
+      ),
+    ),
+  );
+
   /// Devolve ao formulário o que foi guardado (na memória ou no aparelho).
   void applySavedForm(Map<String, dynamic> saved) {
     imageReference =
@@ -4904,16 +4945,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             ),
           ),
         ),
-        if (editionName != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(
-              editionName!,
-              key: const Key('race-name-under-photo'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
-            ),
-          ),
+        if (editionName != null) raceNameLink(),
         const SizedBox(height: 12),
         OutlinedButton.icon(
           key: const Key('change-medal-photo'),
@@ -5071,19 +5103,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               ),
             ),
             // Nome da corrida logo abaixo da foto.
-            if (editionName != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  editionName!,
-                  key: const Key('race-name-under-photo'),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
-                  ),
-                ),
-              ),
+            if (editionName != null) raceNameLink(),
             const SizedBox(height: 8),
             if (widget.fromPost) ...[
               // Editar a publicação: o tamanho da foto publicada (a medalha se edita em Medalhas).
