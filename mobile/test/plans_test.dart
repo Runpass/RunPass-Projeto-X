@@ -460,10 +460,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       final before = calls.length;
-      // O campo de nome só aparece ao tocar na lupa.
-      expect(find.byKey(const Key('catalog-name-search')), findsNothing);
-      await tester.tap(find.byKey(const Key('catalog-search-toggle')));
-      await tester.pumpAndSettle();
+      // O campo de nome está sempre à vista, sem lupa.
+      expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
       await tester.enterText(
         find.byKey(const Key('catalog-name-search')),
         'circuito',
@@ -778,8 +776,6 @@ void searchTests() {
     });
     await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('catalog-search-toggle')));
-    await tester.pumpAndSettle();
     return calls;
   }
 
@@ -787,10 +783,6 @@ void searchTests() {
     'incluir corrida e minhas solicitações ficam num só "+" na barra superior',
     (tester) async {
       await openForm(tester);
-      await tester.tap(
-        find.byKey(const Key('catalog-search-toggle')),
-      ); // fecha a lupa
-      await tester.pumpAndSettle();
       // Um só "+" na barra (com a agenda e os avisos): abre "Incluir uma corrida" e "Minhas solicitações".
       final bar = tester.getRect(find.byType(AppBar));
       for (final key in ['catalog-request-new', 'catalog-agenda']) {

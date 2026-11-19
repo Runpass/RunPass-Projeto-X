@@ -126,8 +126,8 @@ Future<void> rateAll(WidgetTester tester, {int stars = 5, String? skip}) async {
   }
 }
 
+/// A busca por nome está sempre à vista (sem lupa): só garante que a tela terminou de carregar.
 Future<void> openSearch(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('catalog-search-toggle')));
   await tester.pumpAndSettle();
 }
 
@@ -596,13 +596,9 @@ void main() {
       final list = find.byType(Scrollable).first;
       final declaration = find.text('Declaro que concluí esta corrida');
       final finish = find.text('Concluir participação');
-      // A avaliação vem depois de publicar a foto da corrida; a declaração e o Concluir, no fim.
-      await tester.scrollUntilVisible(
-        find.text('Avaliação (opcional)'),
-        200,
-        scrollable: list,
-      );
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await rateAll(tester, skip: 'Segurança');
+      await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tapStar(tester, 'rating-Segurança-4');
       await tester.pump();
       await tester.scrollUntilVisible(declaration, 200, scrollable: list);
@@ -1731,13 +1727,10 @@ void main() {
           MaterialApp(home: CatalogScreen(gateway: gateway)),
         );
         await tester.pumpAndSettle();
-        expect(find.byKey(const Key('catalog-name-search')), findsNothing);
-        await openSearch(tester);
+        // O campo está sempre à vista, sem lupa; o cadastro manual só aparece quando a busca não acha.
         expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
-        expect(
-          find.byKey(const Key('catalog-request-from-search')),
-          findsOneWidget,
-        );
+        expect(find.byIcon(Icons.search_rounded), findsNothing);
+        expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
         // Nada além do nome: sem frase livre, estado, cidade, distância nem inscrições.
         expect(find.byKey(const Key('catalog-phrase')), findsNothing);
         expect(find.text('Encontre sua próxima conquista'), findsNothing);
@@ -1750,8 +1743,8 @@ void main() {
         await tester.pumpAndSettle();
         // A busca por nome vale para o catálogo todo: sem cidade do perfil nem janela de 20 dias.
         expect(calls.last, {'q': 'meia', 'limit': '20'});
-        // Fechar a lupa volta à lista padrão.
-        await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+        // Limpar a busca volta à lista padrão.
+        await tester.tap(find.byKey(const Key('catalog-search-clear')));
         await tester.pumpAndSettle();
         expect(calls.last['dateFrom'], upcomingRange().from);
         expect(calls.last.containsKey('q'), isFalse);
@@ -1776,7 +1769,10 @@ void main() {
           find.byKey(const Key('catalog-name-search')),
           'Corrida Nova',
         );
-        await tester.tap(find.byKey(const Key('catalog-request-from-search')));
+        await tester.testTextInput.receiveAction(TextInputAction.search);
+        await tester.pumpAndSettle();
+        // Sem resultado: habilita o cadastro manual, já com o nome digitado.
+        await tester.tap(find.byKey(const Key('catalog-request-empty')));
         await tester.pumpAndSettle();
         expect(
           find.widgetWithText(TextFormField, 'Corrida Nova'),
@@ -1994,11 +1990,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Nenhuma corrida'), findsNothing);
       expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
-      // Busca aberta: o X fica no lugar da lupa.
-      await tester.tap(find.byKey(const Key('catalog-search-toggle')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('catalog-search-toggle')), findsOneWidget);
-      expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+      // O campo está sempre à vista e sem lupa.
+      expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
       expect(find.byIcon(Icons.search_rounded), findsNothing);
       await tester.enterText(
         find.byKey(const Key('catalog-name-search')),
@@ -2008,6 +2001,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.text('Nenhuma corrida encontrada com esses filtros.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Não encontrou? Cadastrar a corrida manualmente'),
         findsOneWidget,
       );
       await tester.tap(find.byKey(const Key('catalog-request-empty')));

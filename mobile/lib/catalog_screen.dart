@@ -656,7 +656,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
   bool loading = false;
-  bool showFilters = false;
 
   /// A lista mostra só as corridas dos próximos 20 dias; as outras aparecem pela busca por nome.
   bool get upcomingWindow => fields['q']!.text.trim().isEmpty;
@@ -947,12 +946,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
   static int reviewsOf(Map<String, dynamic> edition) =>
       ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
 
-  /// Abre/fecha a busca por nome; ao fechar com busca ativa, volta à lista padrão.
-  void toggleSearch() {
+  /// Limpa a busca por nome e volta à lista padrão (próximos 20 dias).
+  void clearSearch() {
     final hadName = fields['q']!.text.trim().isNotEmpty;
     fields['q']!.clear();
-    setState(() => showFilters = !showFilters);
-    if (showFilters == false && hadName) load();
+    setState(() {});
+    if (hadName) load();
   }
 
   Future<void> load({bool more = false}) async {
@@ -1111,50 +1110,45 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Busca por nome (só aparece ao tocar na lupa) e, se não achar, pedir o cadastro da corrida.
-          if (showFilters) ...[
-            TextField(
-              key: const Key('catalog-name-search'),
-              controller: fields['q'],
-              autofocus: true,
-              maxLength: 160,
-              buildCounter: (
-                _, {
-                required currentLength,
-                required isFocused,
-                maxLength,
-              }) => null,
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => load(),
-              onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(
-                labelText: 'Nome da corrida',
-                // Busca aberta: o X fica no lugar da lupa e fecha a busca.
-                prefixIcon: IconButton(
-                  key: const Key('catalog-search-toggle'),
-                  tooltip: 'Fechar a busca',
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: toggleSearch,
-                ),
-                suffixIcon: IconButton(
-                  key: const Key('catalog-name-search-go'),
-                  tooltip: 'Buscar',
-                  icon: const Icon(Icons.arrow_forward_rounded),
-                  onPressed: loading ? null : load,
-                ),
+          // Busca por nome sempre à vista, sem lupa. Se não achar a corrida, aparece o cadastro manual.
+          TextField(
+            key: const Key('catalog-name-search'),
+            controller: fields['q'],
+            maxLength: 160,
+            buildCounter: (
+              _, {
+              required currentLength,
+              required isFocused,
+              maxLength,
+            }) => null,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) => load(),
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              hintText: 'Nome da corrida',
+              isDense: true,
+              border: const OutlineInputBorder(),
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (fields['q']!.text.isNotEmpty)
+                    IconButton(
+                      key: const Key('catalog-search-clear'),
+                      tooltip: 'Limpar a busca',
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: clearSearch,
+                    ),
+                  IconButton(
+                    key: const Key('catalog-name-search-go'),
+                    tooltip: 'Buscar',
+                    icon: const Icon(Icons.arrow_forward_rounded),
+                    onPressed: loading ? null : load,
+                  ),
+                ],
               ),
             ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                key: const Key('catalog-request-from-search'),
-                onPressed: loading ? null : requestRace,
-                icon: const Icon(Icons.add_circle_outline),
-                label: const Text('Não encontrou? Incluir uma corrida'),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
+          ),
+          const SizedBox(height: 8),
           // Mesmo espaço (12) entre "Minhas solicitações", o público e o ano.
           // Falha passageira com nova tentativa automática em curso: espera em silêncio, sem mensagem.
           if (error != null && retryPending)
@@ -1166,18 +1160,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: const Text('Tentar novamente'),
             ),
           ],
-          // Lupa: busca por nome (as corridas fora dos próximos 20 dias aparecem por ela). Aberta, vira o X do campo.
-          if (!showFilters)
-            Row(
-              children: [
-                IconButton(
-                  key: const Key('catalog-search-toggle'),
-                  tooltip: 'Buscar corridas por nome',
-                  icon: const Icon(Icons.search_rounded),
-                  onPressed: toggleSearch,
-                ),
-              ],
-            ),
           const SizedBox(height: 8),
           if (loading) const Center(child: CircularProgressIndicator()),
           // Ao abrir (lista dos próximos 20 dias) não há mensagem; só a busca explica quando não acha nada.
@@ -1197,7 +1179,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
               child: TextButton(
                 key: const Key('catalog-request-empty'),
                 onPressed: requestRace,
-                child: const Text('Não encontrou? Pedir cadastro da corrida'),
+                child: const Text(
+                  'Não encontrou? Cadastrar a corrida manualmente',
+                ),
               ),
             ),
           ...editionViews(),
@@ -3587,10 +3571,6 @@ class ParticipationDraftScreen extends StatefulWidget {
   /// Foto já escolhida (ex.: a da medalha, vinda de "Adicionar medalha"): é enviada ao abrir o rascunho.
   final List<int>? initialPhoto;
 
-  /// Tempo, pace, colocação e número de peito já digitados no cadastro da medalha: chegam preenchidos
-  /// aqui (todos opcionais) para a pessoa não digitar duas vezes.
-  final String? initialTime, initialPace, initialPlacement, initialBib;
-
   /// Ajuste (recorte) da foto inicial antes do envio; nulo se a pessoa desistir. Trocável nos testes.
   final Future<List<int>?> Function(BuildContext context, List<int> photo)
   initialPhotoCropper;
@@ -3606,10 +3586,6 @@ class ParticipationDraftScreen extends StatefulWidget {
     this.postPhotoLoader = loadPostPhotoBytes,
     this.postPhotoCropper = cropPostPhoto,
     this.initialPhoto,
-    this.initialTime,
-    this.initialPace,
-    this.initialPlacement,
-    this.initialBib,
     this.initialPhotoCropper = cropRacePhoto,
   });
 
@@ -3691,17 +3667,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       text: draft['placement']?.toString() ?? '',
     );
     bib = TextEditingController(text: draft['bibNumber'] as String? ?? '');
-    // Veio do cadastro da medalha: o que já foi digitado lá aparece aqui.
-    for (final (field, value) in [
-      (time, widget.initialTime),
-      (pace, widget.initialPace),
-      (placement, widget.initialPlacement),
-      (bib, widget.initialBib),
-    ]) {
-      if (field.text.isEmpty && (value ?? '').trim().isNotEmpty) {
-        field.text = value!.trim();
-      }
-    }
     comment = TextEditingController();
     final saved = draftFormCache[draft['id']];
     if (saved != null && draft['state'] == 'draft') {
@@ -5318,11 +5283,47 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 child: const Text('Consultar processamento da foto'),
               ),
           ],
-          // Ordem da jornada: meus dados -> publicar a foto da corrida -> avaliação -> concluir ou sair.
+          // Ordem da jornada: meus dados -> avaliação -> opção de postar uma foto da corrida -> concluir ou sair.
           if (draft['state'] == 'draft' && !upcoming) ...[
-            // Publicar a foto da corrida (outra foto, nao a da medalha) vem antes da avaliacao:
-            // e a ordem da jornada em toda tela de cadastro de medalha.
             const Divider(height: 32),
+            const Text(
+              'Avaliação (opcional)',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            Text(
+              'Dê nota aos 8 critérios ou deixe em branco e avalie depois.',
+              key: const Key('rating-optional-hint'),
+              style: TextStyle(color: context.muted, fontSize: 12),
+            ),
+            SameRatingPicker(
+              onPick: (n) => setState(() {
+                for (final key in ratings.keys.toList()) {
+                  ratings[key] = n;
+                }
+              }),
+            ),
+            for (final (key, label, icon) in _EditionScreenState.criteria)
+              RatingInput(
+                label: label,
+                icon: icon,
+                value: ratings[key] ?? 0,
+                onChanged: saving
+                    ? null
+                    : (value) => setState(() => ratings[key] = value),
+              ),
+            TextField(
+              controller: comment,
+              maxLength: 2000,
+              decoration: const InputDecoration(
+                labelText: 'Comentário (opcional)',
+              ),
+            ),
+            CheckboxListTile(
+              value: declaredCompleted,
+              onChanged: (value) =>
+                  setState(() => declaredCompleted = value ?? false),
+              title: const Text('Declaro que concluí esta corrida'),
+            ),
             CheckboxListTile(
               key: const Key('publish-to-feed'),
               value: publishToFeed,
@@ -5384,45 +5385,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 ),
               ),
             ],
-            const Divider(height: 32),
-            const Text(
-              'Avaliação (opcional)',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            Text(
-              'Dê nota aos 8 critérios ou deixe em branco e avalie depois.',
-              key: const Key('rating-optional-hint'),
-              style: TextStyle(color: context.muted, fontSize: 12),
-            ),
-            SameRatingPicker(
-              onPick: (n) => setState(() {
-                for (final key in ratings.keys.toList()) {
-                  ratings[key] = n;
-                }
-              }),
-            ),
-            for (final (key, label, icon) in _EditionScreenState.criteria)
-              RatingInput(
-                label: label,
-                icon: icon,
-                value: ratings[key] ?? 0,
-                onChanged: saving
-                    ? null
-                    : (value) => setState(() => ratings[key] = value),
-              ),
-            TextField(
-              controller: comment,
-              maxLength: 2000,
-              decoration: const InputDecoration(
-                labelText: 'Comentário (opcional)',
-              ),
-            ),
-            CheckboxListTile(
-              value: declaredCompleted,
-              onChanged: (value) =>
-                  setState(() => declaredCompleted = value ?? false),
-              title: const Text('Declaro que concluí esta corrida'),
-            ),
             if (imageReference == null)
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
