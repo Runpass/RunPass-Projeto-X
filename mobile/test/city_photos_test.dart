@@ -38,7 +38,7 @@ void main() {
     },
   );
 
-  testWidgets('cartão sem banner usa a foto da cidade, rotulada', (
+  testWidgets('cartão sem banner usa a foto da cidade, sem texto por cima', (
     tester,
   ) async {
     final gateway = await signed(
@@ -61,8 +61,14 @@ void main() {
     );
     await tester.pump();
     expect(find.byKey(const Key('race-art-photo')), findsOneWidget);
-    expect(find.text('foto da cidade'), findsOneWidget);
+    // Foto limpa: nenhum texto por cima (nem cidade, nem local, nem rótulo).
+    expect(find.byKey(const Key('race-art-city')), findsNothing);
+    expect(find.byKey(const Key('race-art-venue')), findsNothing);
+    expect(find.byKey(const Key('race-art-tag')), findsNothing);
+    expect(find.text('foto da cidade'), findsNothing);
     expect(find.text('arte do app'), findsNothing);
+    // A data fica num selo sobre a foto.
+    expect(find.byKey(const Key('date-chip-EA')), findsOneWidget);
   });
 
   testWidgets('cidade sem foto continua com a arte do app', (tester) async {

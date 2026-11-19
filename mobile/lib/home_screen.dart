@@ -84,7 +84,7 @@ bool feedFilterMatches(
 /// redes sociais. Só entra em jogo quando não há nenhuma publicação da mesma cidade.
 const nearbyCityRadiusKm = 50.0;
 
-double _haversineKm(double lat1, double lon1, double lat2, double lon2) {
+double haversineKm(double lat1, double lon1, double lat2, double lon2) {
   const earthRadiusKm = 6371.0;
   final dLat = (lat2 - lat1) * math.pi / 180;
   final dLon = (lon2 - lon1) * math.pi / 180;
@@ -107,7 +107,7 @@ bool _withinNearbyRadius(Map<String, dynamic>? myProfile, FeedEntry entry) {
   final raceLat = (entry.race.edition?['latitude'] as num?)?.toDouble();
   final raceLon = (entry.race.edition?['longitude'] as num?)?.toDouble();
   if (raceLat == null || raceLon == null) return false;
-  return _haversineKm(myLat, myLon, raceLat, raceLon) <= nearbyCityRadiusKm;
+  return haversineKm(myLat, myLon, raceLat, raceLon) <= nearbyCityRadiusKm;
 }
 
 /// "Minha Cidade": publicações da mesma cidade têm prioridade; só quando não há nenhuma é que

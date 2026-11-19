@@ -10,12 +10,15 @@ import 'package:url_launcher/url_launcher.dart';
 import 'agenda.dart';
 import 'duration_field.dart';
 import 'edition_cards.dart';
+import 'br_locations.dart' show brCityCoordinates;
+import 'catalog_filters.dart';
 import 'city_photos.dart';
 import 'friends.dart';
 import 'grid_columns.dart';
 import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
+import 'location_picker.dart' show pickBrLocation;
 import 'my_races.dart';
 import 'post_preview.dart';
 import 'undo_delete.dart';
@@ -476,7 +479,8 @@ class RaceArt extends StatelessWidget {
                   ),
                 // Capa generica (nao ha imagem autorizada da prova): no formato de cartao postal, com a
                 // cidade e o local, e rotulada como arte do app.
-                if (!small) ...[
+                // Foto da cidade: limpa, sem texto por cima (o local e as distâncias ficam embaixo, no cartão).
+                if (!small && photo == null) ...[
                   Positioned(
                     left: 14,
                     right: 14,
@@ -524,7 +528,7 @@ class RaceArt extends StatelessWidget {
                     right: 10,
                     bottom: 8,
                     child: Text(
-                      photo != null ? 'foto da cidade' : 'arte do app',
+                      'arte do app',
                       key: const Key('race-art-tag'),
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: .6),
@@ -698,6 +702,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
   // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
   final items = <Map<String, dynamic>>[];
+  // Filtros em pílulas: "Perto de mim" (padrão: até 50 km da cidade do perfil), ano e localização escolhida.
+  bool nearMe = false;
+  int? year;
+  double? myLat, myLon;
+  String? myState;
+  // "Perto de mim" filtra no app (as corridas ainda não têm coordenada no catálogo): o que já passou pelo filtro e
+  // ainda não apareceu fica numa fila, e o cursor do servidor guarda de onde continuar.
+  final nearQueue = <Map<String, dynamic>>[];
+  String? nearCursor;
+  static const nearTarget = 20;
   Map<String, Map<String, dynamic>> mine = {};
   // Situação da pessoa em cada corrida (desejada ou inscrita): edição -> `wanted` | `registered`.
   Map<String, String> plans = {};
@@ -715,15 +729,27 @@ class _CatalogScreenState extends State<CatalogScreen> {
     loadMine();
   }
 
-  /// Primeira carga: se o perfil tem cidade, a lista abre nela (dá para trocar ou limpar em "Estado e cidade").
+  /// Primeira carga: se o perfil tem cidade, a lista abre com "Perto de mim" ligado (50 km); dá para trocar nas pílulas.
   Future<void> start() async {
     try {
       final me = await widget.gateway.request('/me');
       final city = (me['city'] as String?)?.trim() ?? '';
       final state = (me['state'] as String?)?.trim() ?? '';
       if (city.isNotEmpty && state.isNotEmpty && mounted) {
-        fields['city']!.text = city;
-        fields['state']!.text = state;
+        final center = brCityCoordinates['$state|$city'];
+        final lat = (me['latitude'] as num?)?.toDouble() ?? center?.lat;
+        final lon = (me['longitude'] as num?)?.toDouble() ?? center?.lon;
+        if (lat != null && lon != null) {
+          // Padrão: as 20 corridas mais próximas, até 50 km da cidade do perfil.
+          myLat = lat;
+          myLon = lon;
+          myState = state;
+          nearMe = true;
+        } else {
+          // Cidade sem coordenada conhecida: segue só na cidade do perfil, como antes.
+          fields['city']!.text = city;
+          fields['state']!.text = state;
+        }
       }
     } on Exception {
       // Sem perfil ou sem conexão: abre com todas as cidades.
@@ -1002,24 +1028,42 @@ class _CatalogScreenState extends State<CatalogScreen> {
     if (hadName) load();
   }
 
+  /// Há algum filtro ligado além da busca por nome (decide se "nenhuma corrida" é uma resposta ou só a lista vazia).
+  bool get hasFilter =>
+      nearMe ||
+      year != null ||
+      (fields['city']?.text.trim().isNotEmpty ?? false);
+
+  /// Datas do filtro de ano: o ano inteiro (no ano corrente, de hoje em diante); sem ano, de hoje em diante.
+  Map<String, String> dateFilters() {
+    final today = DateTime.now();
+    final todayIso = _isoDay(DateTime(today.year, today.month, today.day));
+    final y = year;
+    if (y == null) return {'dateFrom': todayIso};
+    final start = y == today.year ? todayIso : '$y-01-01';
+    return {'dateFrom': start, 'dateTo': '$y-12-31'};
+  }
+
   Future<void> load({bool more = false}) async {
     if (loading) return;
+    final name = fields['q']!.text.trim();
     if (!more) {
-      final name = fields['q']!.text.trim();
-      // Busca por nome vale para o catálogo todo; sem nome, a lista é da cidade do perfil e dos próximos 20 dias
-      // (ou do ano escolhido no calendário).
+      // Busca por nome vale para o catálogo todo; sem nome, valem as pílulas: "Perto de mim" (estado do perfil, o
+      // raio é conferido no app), a localização escolhida e o ano. Sem nenhuma, as próximas corridas.
       activeFilters = name.isNotEmpty
           ? {'q': name}
           : {
-              for (final key in ['city', 'state'])
-                if (fields[key]!.text.trim().isNotEmpty)
-                  key: fields[key]!.text.trim(),
-              if (upcomingWindow) ...{
-                'dateFrom': upcomingRange().from,
-                'dateTo': upcomingRange().to,
-              },
+              if (nearMe && myState != null)
+                'state': myState!
+              else
+                for (final key in ['city', 'state'])
+                  if (fields[key]!.text.trim().isNotEmpty)
+                    key: fields[key]!.text.trim(),
+              ...dateFilters(),
             };
       items.clear();
+      nearQueue.clear();
+      nearCursor = null;
       nextCursor = null;
     }
     setState(() {
@@ -1028,21 +1072,25 @@ class _CatalogScreenState extends State<CatalogScreen> {
     });
     transient = false;
     try {
-      final page = await widget.gateway.request(
-        '/editions',
-        query: {
-          ...activeFilters,
-          'limit': pageLimit,
-          if (more && nextCursor != null) 'cursor': nextCursor!,
-        },
-      );
-      if (!mounted) return;
       final known = items.map((e) => e['id']).toSet();
-      for (final entry
-          in (page['items'] as List).cast<Map<String, dynamic>>()) {
-        if (known.add(entry['id'])) items.add(entry);
+      if (name.isEmpty && nearMe && myLat != null && myLon != null) {
+        await loadNearby(more: more, known: known);
+      } else {
+        final page = await widget.gateway.request(
+          '/editions',
+          query: {
+            ...activeFilters,
+            'limit': pageLimit,
+            if (more && nextCursor != null) 'cursor': nextCursor!,
+          },
+        );
+        if (!mounted) return;
+        for (final entry
+            in (page['items'] as List).cast<Map<String, dynamic>>()) {
+          if (known.add(entry['id'])) items.add(entry);
+        }
+        nextCursor = page['nextCursor'] as String?;
       }
-      nextCursor = page['nextCursor'] as String?;
       autoRetried = false;
     } on IdentityIssue catch (issue) {
       if (mounted) error = catalogError(issue);
@@ -1068,6 +1116,167 @@ class _CatalogScreenState extends State<CatalogScreen> {
         if (error != null && !loading) load(more: retryMore);
       });
     }
+  }
+
+  /// "Perto de mim": busca as próximas corridas do estado e fica só com as que estão a até 50 km da cidade do perfil,
+  /// da mais próxima no tempo para a mais distante, mostrando [nearTarget] por vez.
+  Future<void> loadNearby({
+    required bool more,
+    required Set<Object?> known,
+  }) async {
+    var cursor = more ? nearCursor : null;
+    var pages = 0;
+    while (nearQueue.length < nearTarget && pages < 8) {
+      final page = await widget.gateway.request(
+        '/editions',
+        query: {...activeFilters, 'limit': '100', 'cursor': ?cursor},
+      );
+      if (!mounted) return;
+      for (final entry
+          in (page['items'] as List).cast<Map<String, dynamic>>()) {
+        if (withinRadiusOf(entry, myLat!, myLon!) && known.add(entry['id'])) {
+          nearQueue.add(entry);
+        }
+      }
+      cursor = page['nextCursor'] as String?;
+      pages++;
+      if (cursor == null) break;
+    }
+    final take = nearQueue.length < nearTarget ? nearQueue.length : nearTarget;
+    items.addAll(nearQueue.sublist(0, take));
+    nearQueue.removeRange(0, take);
+    nearCursor = cursor;
+    // O botão "Carregar mais" aparece enquanto sobrar fila ou páginas do servidor.
+    nextCursor = nearQueue.isNotEmpty || cursor != null
+        ? (cursor ?? 'fila')
+        : null;
+  }
+
+  void toggleNearMe() {
+    if (nearMe) {
+      setState(() => nearMe = false);
+      load();
+      return;
+    }
+    if (myLat == null || myLon == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Escolha a sua cidade no perfil para ver as corridas perto de você.',
+          ),
+        ),
+      );
+      return;
+    }
+    // Perto de mim e uma localização escolhida não valem juntos.
+    fields['city']!.clear();
+    fields['state']!.clear();
+    setState(() => nearMe = true);
+    load();
+  }
+
+  Future<void> pickYear() async {
+    final years = filterYears();
+    final picked = await showModalBottomSheet<int?>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('year-option-all'),
+              title: const Text('Todos os anos'),
+              trailing: year == null ? const Icon(Icons.check) : null,
+              onTap: () => Navigator.pop(sheet, 0),
+            ),
+            for (final y in years)
+              ListTile(
+                key: Key('year-option-$y'),
+                title: Text('$y'),
+                trailing: year == y ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(sheet, y),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return; // fechou sem escolher
+    setState(() => year = picked == 0 ? null : picked);
+    load();
+  }
+
+  Future<void> pickLocation() async {
+    final picked = await pickBrLocation(
+      context,
+      initialUf: fields['state']!.text.isEmpty ? null : fields['state']!.text,
+      initialCity: fields['city']!.text.isEmpty ? null : fields['city']!.text,
+    );
+    if (picked == null || !mounted) return;
+    fields['state']!.text = picked.$1;
+    fields['city']!.text = picked.$2;
+    setState(
+      () => nearMe = false,
+    ); // a localização escolhida vale no lugar de "perto de mim"
+    load();
+  }
+
+  void clearLocation() {
+    fields['city']!.clear();
+    fields['state']!.clear();
+    setState(() {});
+    load();
+  }
+
+  /// Pílulas de filtro (como "Esporte, Datas, Distância, Localização"): Perto de mim, Ano e Localização.
+  Widget filterPills() {
+    final city = fields['city']!.text.trim();
+    // Com busca por nome ligada as pílulas não valem (a busca é no catálogo todo): ficam apagadas.
+    final dimmed = !upcomingWindow;
+    return Opacity(
+      opacity: dimmed ? 0.4 : 1,
+      child: IgnorePointer(
+        ignoring: dimmed,
+        child: SizedBox(
+          height: 40,
+          child: ListView(
+            key: const Key('catalog-filter-pills'),
+            scrollDirection: Axis.horizontal,
+            children: [
+              FilterPill(
+                key: const Key('filter-near-me'),
+                icon: Icons.near_me_outlined,
+                label: nearMe
+                    ? 'Perto de mim · ${nearbyCityRadiusKm.round()} km'
+                    : 'Perto de mim',
+                active: nearMe,
+                onTap: toggleNearMe,
+                onClear: toggleNearMe,
+              ),
+              FilterPill(
+                key: const Key('filter-year'),
+                icon: Icons.calendar_today_outlined,
+                label: year == null ? 'Ano' : '$year',
+                active: year != null,
+                onTap: pickYear,
+                onClear: () {
+                  setState(() => year = null);
+                  load();
+                },
+              ),
+              FilterPill(
+                key: const Key('filter-location'),
+                icon: Icons.place_outlined,
+                label: city.isEmpty ? 'Localização' : city,
+                active: city.isNotEmpty,
+                onTap: pickLocation,
+                onClear: clearLocation,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// Uma nova tentativa automática por falha passageira (zera quando uma carga dá certo).
@@ -1196,7 +1405,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
+          filterPills(),
+          const SizedBox(height: 10),
           // Mesmo espaço (12) entre "Minhas solicitações", o público e o ano.
           // Falha passageira com nova tentativa automática em curso: espera em silêncio, sem mensagem.
           if (error != null && retryPending)
@@ -1226,10 +1437,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 style: TextStyle(color: context.muted),
               ),
             ),
-          if (!loading && error == null && items.isEmpty && !upcomingWindow)
+          if (!loading &&
+              error == null &&
+              items.isEmpty &&
+              (!upcomingWindow || hasFilter))
             Text(
+              key: const Key('catalog-empty'),
               nextCursor == null
-                  ? 'Nenhuma corrida encontrada com esses filtros.'
+                  ? (nearMe && upcomingWindow
+                        ? 'Nenhuma corrida a até ${nearbyCityRadiusKm.round()} km de você. Mude os filtros acima.'
+                        : 'Nenhuma corrida encontrada com esses filtros.')
                   : 'Nenhuma corrida nesta página. Continue a busca.',
             ),
           if (!loading &&

@@ -64,25 +64,33 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('no-plans')), findsNothing);
-      expect(find.text('Desejadas'), findsOneWidget);
+      // Título com "Ver todas" (leva à agenda); as inscritas num subtítulo.
+      expect(find.text('Quero correr'), findsOneWidget);
+      expect(find.text('Ver todas'), findsOneWidget);
+      expect(find.text('Desejadas'), findsNothing);
       expect(find.text('Inscritas'), findsOneWidget);
       Offset at(String id) =>
           tester.getTopLeft(find.byKey(Key('plan-$id'), skipOffstage: false));
-      // Só lista, no cartão compacto: da mais próxima para a mais distante, uma por linha.
+      // Em linha: da mais próxima para a mais distante, uma por linha, só as 3 primeiras.
       expect(at('b').dy, greaterThan(at('a').dy));
       expect(at('c').dy, greaterThan(at('b').dy));
-      expect(at('d').dy, greaterThan(at('c').dy));
       expect(at('a').dx, at('b').dx);
+      expect(
+        find.byKey(const Key('plan-d'), skipOffstage: false),
+        findsNothing,
+      ); // a quarta fica em "Ver todas"
       expect(
         find.byKey(const Key('plan-r'), skipOffstage: false),
         findsOneWidget,
       );
-      expect(find.text('Ver agenda'), findsNothing);
-      // Mesma arte padrão dos cartões da tela Corridas.
-      expect(
-        find.byKey(const Key('race-art'), skipOffstage: false),
-        findsNWidgets(5),
-      );
+      // Cada "Quero correr" tem o coração que tira da lista; a inscrita, não.
+      for (final id in ['a', 'b', 'c']) {
+        expect(find.byKey(Key('plan-heart-$id')), findsOneWidget);
+      }
+      expect(find.byKey(const Key('plan-heart-r')), findsNothing);
+      // Cada linha mostra a data por extenso e o local.
+      expect(find.text('10 de janeiro de 2027'), findsOneWidget);
+      expect(find.text('São Paulo, SP'), findsNWidgets(4));
     },
   );
 
@@ -102,7 +110,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final label = tester.getBottomLeft(find.text('Desejadas')).dy;
+      final label = tester.getBottomLeft(find.text('Quero correr')).dy;
       final tile = tester.getTopLeft(find.byKey(const Key('plan-a'))).dy;
       expect(tile - label, lessThan(12));
     },
@@ -203,7 +211,7 @@ void main() {
         find.byKey(const Key('view-menu-posts')),
         findsNothing,
       ); // publicações: sempre grade de 3
-      expect(find.byKey(const Key('compact-card-a')), findsOneWidget);
+      expect(find.byKey(const Key('plan-row-a')), findsOneWidget);
     },
   );
 }

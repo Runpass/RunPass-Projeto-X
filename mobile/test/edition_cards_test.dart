@@ -70,7 +70,13 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('Amanhã · Santos/SP'), findsOneWidget);
+    // A data vai num selo sobre a foto; o local e as distâncias, embaixo, com ícone.
+    expect(find.byKey(const Key('date-chip-EA')), findsOneWidget);
+    expect(find.text('Amanhã'), findsOneWidget);
+    expect(find.text('Santos, SP'), findsOneWidget);
+    expect(find.byIcon(Icons.place_outlined), findsOneWidget);
+    // O ícone de corrida aparece na linha das distâncias (e também na arte de tipo "rua").
+    expect(find.byIcon(Icons.directions_run), findsWidgets);
     expect(find.text('Corrida A'), findsOneWidget);
     // A pílula da distância (a imagem ocupa a largura inteira do cartão e desenha a distância).
     expect(find.text('5K'), findsOneWidget);

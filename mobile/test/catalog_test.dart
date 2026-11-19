@@ -1761,10 +1761,12 @@ void main() {
         expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
         expect(find.byIcon(Icons.search_rounded), findsNothing);
         expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
-        // Nada além do nome: sem frase livre, estado, cidade, distância nem inscrições.
+        // Sem frase livre; os filtros são as três pílulas: perto de mim, ano e localização.
         expect(find.byKey(const Key('catalog-phrase')), findsNothing);
         expect(find.text('Encontre sua próxima conquista'), findsNothing);
-        expect(find.byKey(const Key('filter-location')), findsNothing);
+        expect(find.byKey(const Key('filter-near-me')), findsOneWidget);
+        expect(find.byKey(const Key('filter-year')), findsOneWidget);
+        expect(find.byKey(const Key('filter-location')), findsOneWidget);
         await tester.enterText(
           find.byKey(const Key('catalog-name-search')),
           'meia',
