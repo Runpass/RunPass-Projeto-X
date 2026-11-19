@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/home_screen.dart';
+import 'package:runpass/my_races.dart' show MedalPhoto;
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/runpass_theme.dart';
 
@@ -190,7 +191,30 @@ void main() {
       );
       expect(title.style?.fontWeight, FontWeight.w800);
       expect(title.style?.decoration, isNull);
-      // O nome da corrida fica abaixo da foto (agora maior, como no Instagram).
+      // A foto preenche o quadro de ponta a ponta, sem faixas pretas (cobre e corta o excesso).
+      expect(
+        tester.widget<MedalPhoto>(find.byKey(const Key('post-photo-p1'))).fit,
+        BoxFit.cover,
+      );
+      expect(
+        find.descendant(
+          of: find
+              .ancestor(
+                of: find.byKey(const Key('post-photo-p1')),
+                matching: find.byType(AspectRatio),
+              )
+              .first,
+          matching: find.byWidgetPredicate(
+            (w) => w is ColoredBox && w.color == Colors.black,
+          ),
+        ),
+        findsNothing,
+      );
+      // O nome da corrida fica na foto, na parte de cima (e não mais na legenda, embaixo).
+      final name = tester.getRect(find.byKey(const Key('post-race-p1')));
+      expect(name.top, greaterThanOrEqualTo(photo.top));
+      expect(name.bottom, lessThan(photo.top + photo.height / 2));
+      expect(name.width, closeTo(photo.width, 1));
       await tester.ensureVisible(find.byKey(const Key('post-race-p1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-race-p1')));

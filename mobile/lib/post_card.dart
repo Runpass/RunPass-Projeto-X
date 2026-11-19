@@ -2,9 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -112,19 +110,16 @@ ShareFunction shareFunction = (params) => SharePlus.instance.share(params);
 /// Monta a imagem da publicacao para compartilhar. Trocavel nos testes.
 typedef ShareCardBuilder = Future<Uint8List> Function({
   required String title,
-  String? caption,
   required String line,
-  required String author,
   Uint8List? photoBytes,
 });
 ShareCardBuilder shareCardBuilder = buildShareCard;
 
 const double _cardSide = 1080;
-const double _cardHeaderHeight = 320;
-const double _cardFooterHeight = 320;
-const double _cardPhotoHeight = 1350 - _cardHeaderHeight - _cardFooterHeight;
-const double _cardTotalHeight =
-    _cardHeaderHeight + _cardPhotoHeight + _cardFooterHeight;
+// Foto de ponta a ponta no quadro 4:5 do feed; embaixo, só as informações e a marca.
+const double _cardPhotoHeight = 1350;
+const double _cardFooterHeight = 260;
+const double _cardTotalHeight = _cardPhotoHeight + _cardFooterHeight;
 
 /// Carrega um asset de imagem (ex. a logo da marca) como ui.Image, para desenhar no canvas.
 Future<ui.Image?> _loadAssetImage(String path) async {
@@ -137,32 +132,26 @@ Future<ui.Image?> _loadAssetImage(String path) async {
   }
 }
 
-/// Recorte "cover" (preenche sem distorcer, cortando o excesso) da imagem de origem para caber
-/// exatamente no retangulo de destino.
-/// Onde desenhar a foto INTEIRA dentro do quadro (sem cortar): centralizada, mantendo a proporção.
-Rect _containDstRect(ui.Image image, Rect dst) {
-  final scale = [
-    dst.width / image.width,
-    dst.height / image.height,
-  ].reduce((a, b) => a < b ? a : b);
-  final w = image.width * scale, h = image.height * scale;
-  return Rect.fromLTWH(
-    dst.left + (dst.width - w) / 2,
-    dst.top + (dst.height - h) / 2,
-    w,
-    h,
-  );
+/// Parte da imagem de origem que preenche o retângulo de destino sem distorcer, cortando o excesso
+/// (sem faixas pretas).
+Rect _coverSrcRect(ui.Image image, Rect dst) {
+  final srcAspect = image.width / image.height;
+  final dstAspect = dst.width / dst.height;
+  if (srcAspect > dstAspect) {
+    final w = image.height * dstAspect;
+    return Rect.fromLTWH((image.width - w) / 2, 0, w, image.height.toDouble());
+  }
+  final h = image.width / dstAspect;
+  return Rect.fromLTWH(0, (image.height - h) / 2, image.width.toDouble(), h);
 }
 
-/// Imagem da propria publicacao: titulo da corrida, texto que o autor escreveu ao publicar
-/// (quando houver), a foto da medalha (quando houver) e a distancia/tempo da corrida (quando
-/// houver), abaixo da foto. Garante que o compartilhamento sempre leve uma imagem, que e o que
-/// Instagram e Facebook aceitam.
+/// Imagem para compartilhar: a foto de ponta a ponta (sem faixas pretas), o nome da corrida no alto,
+/// e embaixo só as informações (km, tempo, pace) e o logo. Sem curtir, comentar, marcar nem
+/// compartilhar, e sem o nome de quem publicou. Garante que o compartilhamento sempre leve uma
+/// imagem, que é o que Instagram e Facebook aceitam.
 Future<Uint8List> buildShareCard({
   required String title,
-  String? caption,
   required String line,
-  required String author,
   Uint8List? photoBytes,
 }) async {
   final recorder = ui.PictureRecorder();
@@ -212,20 +201,8 @@ Future<Uint8List> buildShareCard({
     painter.paint(canvas, Offset((_cardSide - painter.width) / 2, y));
   }
 
-  // Cabecalho: titulo da corrida e o texto que o autor escreveu ao publicar.
-  bg(const Rect.fromLTWH(0, 0, _cardSide, _cardHeaderHeight));
-  text(title, 56, 56, weight: FontWeight.w900);
-  if (caption != null && caption.isNotEmpty) {
-    text(caption, 190, 32, weight: FontWeight.w500, color: Colors.white70);
-  }
-
-  // Foto da publicação (ou da medalha) inteira; sem foto, usa um marcador no lugar.
-  final photoRect = const Rect.fromLTWH(
-    0,
-    _cardHeaderHeight,
-    _cardSide,
-    _cardPhotoHeight,
-  );
+  // Foto de ponta a ponta; sem foto, usa um marcador no lugar.
+  const photoRect = Rect.fromLTWH(0, 0, _cardSide, _cardPhotoHeight);
   ui.Image? photo;
   if (photoBytes != null) {
     try {
@@ -236,19 +213,17 @@ Future<Uint8List> buildShareCard({
     }
   }
   if (photo != null) {
-    // A foto inteira (sem cortar), centralizada sobre fundo escuro, como no feed.
-    canvas.drawRect(photoRect, Paint()..color = Colors.black);
     canvas.drawImageRect(
       photo,
-      Rect.fromLTWH(0, 0, photo.width.toDouble(), photo.height.toDouble()),
-      _containDstRect(photo, photoRect),
+      _coverSrcRect(photo, photoRect),
+      photoRect,
       Paint()..filterQuality = FilterQuality.high,
     );
   } else {
     bg(photoRect);
     text(
       String.fromCharCode(Icons.emoji_events.codePoint),
-      photoRect.top + photoRect.height / 2 - 130,
+      photoRect.height / 2 - 130,
       260,
       color: runPassGold,
       family: Icons.emoji_events.fontFamily,
@@ -256,21 +231,28 @@ Future<Uint8List> buildShareCard({
     );
   }
 
-  // Rodape: distancia/tempo da corrida (quando houver) e marca.
-  final footerTop = _cardHeaderHeight + _cardPhotoHeight;
-  bg(Rect.fromLTWH(0, footerTop, _cardSide, _cardFooterHeight));
-  var y = footerTop + 50;
+  // Nome da corrida no alto da foto, sobre um degradê escuro para ler bem em qualquer imagem.
+  const scrimHeight = 380.0;
+  canvas.drawRect(
+    const Rect.fromLTWH(0, 0, _cardSide, scrimHeight),
+    Paint()
+      ..shader = ui.Gradient.linear(Offset.zero, const Offset(0, scrimHeight), [
+        Colors.black.withValues(alpha: 0.7),
+        Colors.transparent,
+      ]),
+  );
+  text(title, 56, 60, weight: FontWeight.w900);
+
+  // Rodapé: as informações da corrida (quando houver) e o logo.
+  const footerTop = _cardPhotoHeight;
+  bg(const Rect.fromLTWH(0, footerTop, _cardSide, _cardFooterHeight));
   if (line.isNotEmpty) {
-    text(line, y, 44, weight: FontWeight.w700, color: runPassGold, maxLines: 1);
-    y += 70;
-  }
-  if (author.isNotEmpty) {
     text(
-      author,
-      y,
-      32,
-      weight: FontWeight.w500,
-      color: Colors.white70,
+      line,
+      footerTop + 40,
+      48,
+      weight: FontWeight.w700,
+      color: runPassGold,
       maxLines: 1,
     );
   }
@@ -285,7 +267,7 @@ Future<Uint8List> buildShareCard({
       Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
       Rect.fromLTWH(
         (_cardSide - logoWidth) / 2,
-        footerTop + _cardFooterHeight - 78,
+        footerTop + _cardFooterHeight - 90,
         logoWidth,
         logoHeight,
       ),
@@ -294,7 +276,7 @@ Future<Uint8List> buildShareCard({
   } else {
     text(
       '+1Pódio',
-      footerTop + _cardFooterHeight - 70,
+      footerTop + _cardFooterHeight - 90,
       48,
       weight: FontWeight.w900,
       color: runPassGold,
@@ -308,66 +290,6 @@ Future<Uint8List> buildShareCard({
   );
   final data = await image.toByteData(format: ui.ImageByteFormat.png);
   return data!.buffer.asUint8List();
-}
-
-/// Imagem do post exatamente como aparece no Início (capturada da própria tela) com o logo do app embaixo.
-/// Nulo se não der para capturar (ex.: post fora da tela); quem chama usa o cartão desenhado.
-Future<Uint8List?> capturePostWithLogo(
-  GlobalKey boundaryKey, {
-  required Color background,
-  required bool dark,
-}) async {
-  final boundary =
-      boundaryKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-  if (boundary == null || !boundary.hasSize) return null;
-  // O toque no botão (efeito de toque) pede um novo quadro: em modo de depuração a captura exige o quadro
-  // pintado, então espera ele terminar (em produção a captura usa o último quadro).
-  if (kDebugMode && boundary.debugNeedsPaint) {
-    await WidgetsBinding.instance.endOfFrame.timeout(
-      const Duration(milliseconds: 100),
-      onTimeout: () {},
-    );
-  }
-  const pixelRatio = 3.0;
-  final post = await boundary.toImage(pixelRatio: pixelRatio);
-  final logo = await _loadAssetImage(
-    dark ? 'assets/brand/logo-dark.png' : 'assets/brand/logo-light.png',
-  );
-  const bandHeight = 64.0 * pixelRatio;
-  final width = post.width.toDouble();
-  final height = post.height + bandHeight;
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, width, height));
-  canvas.drawRect(
-    Rect.fromLTWH(0, 0, width, height),
-    Paint()..color = background,
-  );
-  canvas.drawImage(
-    post,
-    Offset.zero,
-    Paint()..filterQuality = FilterQuality.high,
-  );
-  if (logo != null) {
-    const logoHeight = 30.0 * pixelRatio;
-    final logoWidth = logo.width * (logoHeight / logo.height);
-    canvas.drawImageRect(
-      logo,
-      Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
-      Rect.fromLTWH(
-        (width - logoWidth) / 2,
-        post.height + (bandHeight - logoHeight) / 2,
-        logoWidth,
-        logoHeight,
-      ),
-      Paint()..filterQuality = FilterQuality.high,
-    );
-  }
-  final image = await recorder.endRecording().toImage(
-    width.toInt(),
-    height.toInt(),
-  );
-  final data = await image.toByteData(format: ui.ImageByteFormat.png);
-  return data?.buffer.asUint8List();
 }
 
 /// Linha de números da imagem de compartilhamento: km, tempo e pace (só o que houver).
@@ -693,31 +615,14 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
-  /// Monta a imagem da propria publicacao (titulo, texto que o autor escreveu ao publicar,
-  /// foto da medalha e distancia/tempo da corrida, quando houver) para compartilhar.
-  /// Chave do post na tela: o compartilhamento usa a imagem do próprio post (igual ao Início).
-  final GlobalKey shareBoundary = GlobalKey();
-
+  /// Monta a imagem para compartilhar: a foto, o nome da corrida e as informações, com o logo.
+  /// Nada de curtir, comentar, marcar ou compartilhar na imagem.
   Future<XFile> shareImage() async {
-    try {
-      final captured = await capturePostWithLogo(
-        shareBoundary,
-        background: Theme.of(context).cardColor,
-        dark: Theme.of(context).brightness == Brightness.dark,
-      );
-      if (captured != null) {
-        return await _writeShareFile(captured, 'image/png', 'runpass.png');
-      }
-    } on Object {
-      // Sem captura (ex.: post fora da tela): usa o cartão desenhado abaixo.
-    }
     soon('Preparando para compartilhar...');
     final photoBytes = await _fetchPhotoBytes();
     final card = await shareCardBuilder(
       title: entry.title,
-      caption: entry.comment,
       line: shareLine(),
-      author: entry.mine ? '' : entry.author,
       photoBytes: photoBytes,
     );
     return _writeShareFile(card, 'image/png', 'runpass.png');
@@ -728,7 +633,6 @@ class _PostCardState extends State<PostCard> {
     final origin = box == null
         ? null
         : box.localToGlobal(Offset.zero) & box.size;
-    // A captura do post vem antes de qualquer aviso na tela (um aviso pede um novo quadro e a captura falha).
     final text = shareText();
     try {
       final image = await shareImage();
@@ -847,224 +751,241 @@ class _PostCardState extends State<PostCard> {
       if (entry.publishedAt != null) timeAgo(entry.publishedAt!),
       if (entry.place != null) entry.place!,
     ].join('  •  ');
-    // O compartilhamento captura este quadro: a imagem sai igual ao post do Início.
-    return RepaintBoundary(
-      key: shareBoundary,
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Cabeçalho: quem publicou, quando e onde.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
-              child: Row(
-                children: [
-                  InkWell(
-                    key: Key('post-author-${entry.postId}'),
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Cabeçalho: quem publicou, quando e onde.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
+            child: Row(
+              children: [
+                InkWell(
+                  key: Key('post-author-${entry.postId}'),
+                  onTap: openProfile,
+                  borderRadius: BorderRadius.circular(40),
+                  child: ProfileAvatar(
+                    gateway: widget.gateway,
+                    profile: entry.authorProfile,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: InkWell(
                     onTap: openProfile,
-                    borderRadius: BorderRadius.circular(40),
-                    child: ProfileAvatar(
-                      gateway: widget.gateway,
-                      profile: entry.authorProfile,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.author,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        if (subtitle.isNotEmpty)
+                          Text(
+                            subtitle,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).hintColor,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
+                ),
+                if (entry.mine)
+                  PopupMenuButton<String>(
+                    key: Key('post-menu-${entry.postId}'),
+                    tooltip: 'Opções da publicação',
+                    icon: const Icon(Icons.more_horiz),
+                    onSelected: (value) =>
+                        value == 'edit' ? editMine() : removeMine(),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        key: Key('post-menu-edit'),
+                        value: 'edit',
+                        child: Text('Editar'),
+                      ),
+                      PopupMenuItem(
+                        key: Key('post-menu-remove'),
+                        value: 'remove',
+                        child: Text('Remover'),
+                      ),
+                    ],
+                  )
+                else
+                  const Icon(Icons.more_horiz),
+              ],
+            ),
+          ),
+          // Foto como no Instagram: quadro 4:5 de ponta a ponta do cartão, preenchido sem faixas pretas, com o
+          // nome da corrida no alto (tocar nele abre as informações da corrida).
+          AspectRatio(
+            aspectRatio: 4 / 5,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                MedalPhoto(
+                  key: Key('post-photo-${entry.postId}'),
+                  gateway: widget.gateway,
+                  participationId: entry.race.participation['id'] as String?,
+                  endpoint: entry.extra ? entry.photoEndpoint : null,
+                  size: 72,
+                  usePostImage: entry.race.hasPostImage,
+                  fit: BoxFit.cover,
+                ),
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xb3000000), Color(0x00000000)],
+                      ),
+                    ),
                     child: InkWell(
-                      onTap: openProfile,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            entry.author,
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                          if (subtitle.isNotEmpty)
-                            Text(
-                              subtitle,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).hintColor,
+                      key: Key('post-race-${entry.postId}'),
+                      onTap: entry.race.participation['editionId'] is String
+                          ? () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => EditionScreen(
+                                  gateway: widget.gateway,
+                                  editionId:
+                                      entry.race.participation['editionId']
+                                          as String,
+                                ),
                               ),
-                            ),
+                            )
+                          : null,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+                        child: Text(
+                          entry.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 18,
+                            shadows: [
+                              Shadow(blurRadius: 6, color: Colors.black54),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Ações logo abaixo da foto e, depois, a legenda (prova, texto, números e último comentário).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    InkWell(
+                      onTap: entry.postId == null ? null : toggleLike,
+                      child: Row(
+                        children: [
+                          Icon(
+                            entry.liked
+                                ? Icons.favorite
+                                : Icons.favorite_border,
+                            color: runPassOrange,
+                          ),
+                          const SizedBox(width: 6),
+                          Text('${entry.likes}'),
                         ],
                       ),
                     ),
-                  ),
-                  if (entry.mine)
-                    PopupMenuButton<String>(
-                      key: Key('post-menu-${entry.postId}'),
-                      tooltip: 'Opções da publicação',
-                      icon: const Icon(Icons.more_horiz),
-                      onSelected: (value) =>
-                          value == 'edit' ? editMine() : removeMine(),
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
-                          key: Key('post-menu-edit'),
-                          value: 'edit',
-                          child: Text('Editar'),
-                        ),
-                        PopupMenuItem(
-                          key: Key('post-menu-remove'),
-                          value: 'remove',
-                          child: Text('Remover'),
-                        ),
-                      ],
-                    )
-                  else
-                    const Icon(Icons.more_horiz),
-                ],
-              ),
-            ),
-            // Foto como no Instagram: de ponta a ponta do cartão, mais alta (4:5) e sempre inteira (sem cortar).
-            AspectRatio(
-              aspectRatio: 4 / 5,
-              child: ColoredBox(
-                color: Colors.black,
-                child: SizedBox.expand(
-                  child: MedalPhoto(
-                    key: Key('post-photo-${entry.postId}'),
-                    gateway: widget.gateway,
-                    participationId: entry.race.participation['id'] as String?,
-                    endpoint: entry.extra ? entry.photoEndpoint : null,
-                    size: 72,
-                    usePostImage: entry.race.hasPostImage,
-                    // Sempre a foto inteira, sem cortar (a da publicação e a da medalha).
-                    fit: BoxFit.contain,
-                  ),
-                ),
-              ),
-            ),
-            // Ações logo abaixo da foto e, depois, a legenda (prova, texto, números e último comentário).
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      InkWell(
-                        onTap: entry.postId == null ? null : toggleLike,
-                        child: Row(
-                          children: [
-                            Icon(
-                              entry.liked
-                                  ? Icons.favorite
-                                  : Icons.favorite_border,
-                              color: runPassOrange,
-                            ),
-                            const SizedBox(width: 6),
-                            Text('${entry.likes}'),
-                          ],
-                        ),
+                    const SizedBox(width: 22),
+                    InkWell(
+                      onTap: openComments,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.chat_bubble_outline),
+                          const SizedBox(width: 6),
+                          Text('${entry.comments}'),
+                        ],
                       ),
+                    ),
+                    // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
+                    // Na minha publicação o ícone aparece sempre e é um atalho para marcar alguém.
+                    if ((entry.tagged.isNotEmpty || entry.mine) &&
+                        entry.postId != null) ...[
                       const SizedBox(width: 22),
-                      InkWell(
-                        onTap: openComments,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.chat_bubble_outline),
-                            const SizedBox(width: 6),
-                            Text('${entry.comments}'),
-                          ],
-                        ),
-                      ),
-                      // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
-                      // Na minha publicação o ícone aparece sempre e é um atalho para marcar alguém.
-                      if ((entry.tagged.isNotEmpty || entry.mine) &&
-                          entry.postId != null) ...[
-                        const SizedBox(width: 22),
-                        TaggedLink(
-                          gateway: widget.gateway,
-                          postId: entry.postId!,
-                          tagged: entry.tagged,
-                          onTag: entry.mine ? tagPeople : null,
-                        ),
-                      ],
-                      const SizedBox(width: 12),
-                      const Spacer(),
-                      Semantics(
-                        label: 'Compartilhar',
-                        button: true,
-                        child: InkWell(
-                          key: Key('share-${entry.race.participation['id']}'),
-                          onTap: share,
-                          customBorder: const CircleBorder(),
-                          child: const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: Tooltip(
-                              message: 'Compartilhar',
-                              child: Icon(Icons.ios_share, size: 22),
-                            ),
-                          ),
-                        ),
+                      TaggedLink(
+                        gateway: widget.gateway,
+                        postId: entry.postId!,
+                        tagged: entry.tagged,
+                        onTag: entry.mine ? tagPeople : null,
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                  // Em negrito, sem sublinhado: tocar no nome da corrida abre as informações dela.
-                  InkWell(
-                    key: Key('post-race-${entry.postId}'),
-                    borderRadius: BorderRadius.circular(6),
-                    onTap: entry.race.participation['editionId'] is String
-                        ? () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => EditionScreen(
-                                gateway: widget.gateway,
-                                editionId:
-                                    entry.race.participation['editionId']
-                                        as String,
-                              ),
-                            ),
-                          )
-                        : null,
-                    child: Text(
-                      entry.title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17,
+                    const SizedBox(width: 12),
+                    const Spacer(),
+                    Semantics(
+                      label: 'Compartilhar',
+                      button: true,
+                      child: InkWell(
+                        key: Key('share-${entry.race.participation['id']}'),
+                        onTap: share,
+                        customBorder: const CircleBorder(),
+                        child: const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Tooltip(
+                            message: 'Compartilhar',
+                            child: Icon(Icons.ios_share, size: 22),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                  if (entry.comment != null) ...[
-                    const SizedBox(height: 6),
-                    Text(entry.comment!),
                   ],
-                  if (km != null ||
-                      race.timeSeconds != null ||
-                      race.paceSecondsPerKm != null) ...[
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        if (km != null)
-                          statItem(
-                            Icons.directions_run,
-                            formatKilometers(km),
-                            'Distância',
-                          ),
-                        if (race.timeSeconds != null)
-                          statItem(
-                            Icons.timer_outlined,
-                            formatDuration(race.timeSeconds!),
-                            'Tempo',
-                          ),
-                        if (race.paceSecondsPerKm != null)
-                          statItem(
-                            Icons.speed,
-                            formatPace(race.paceSecondsPerKm!),
-                            'Pace',
-                          ),
-                      ],
-                    ),
-                  ],
-                  const SizedBox(height: 14),
-                  if (entry.lastComment != null) lastCommentBox(),
+                ),
+                const SizedBox(height: 8),
+                if (entry.comment != null) ...[
+                  const SizedBox(height: 6),
+                  Text(entry.comment!),
                 ],
-              ),
+                if (km != null ||
+                    race.timeSeconds != null ||
+                    race.paceSecondsPerKm != null) ...[
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      if (km != null)
+                        statItem(
+                          Icons.directions_run,
+                          formatKilometers(km),
+                          'Distância',
+                        ),
+                      if (race.timeSeconds != null)
+                        statItem(
+                          Icons.timer_outlined,
+                          formatDuration(race.timeSeconds!),
+                          'Tempo',
+                        ),
+                      if (race.paceSecondsPerKm != null)
+                        statItem(
+                          Icons.speed,
+                          formatPace(race.paceSecondsPerKm!),
+                          'Pace',
+                        ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 14),
+                if (entry.lastComment != null) lastCommentBox(),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
