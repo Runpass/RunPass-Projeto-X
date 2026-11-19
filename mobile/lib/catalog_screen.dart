@@ -5104,11 +5104,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 key: const Key('replace-post-photo'),
                 onPressed: saving || uploadingPost ? null : replacePostPhoto,
                 icon: const Icon(Icons.photo_library_outlined),
-                label: Text(
-                  !hasPostPhoto
-                      ? 'Escolher a foto da publicação'
-                      : 'Trocar a foto da publicação',
-                ),
+                label: const Text('Incluir foto da publicação'),
               ),
               const SizedBox(height: 8),
               tagButton(saveNow: true),
@@ -5392,9 +5388,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 label: Text(
                   uploadingPost
                       ? 'Enviando foto da publicação...'
-                      : (postImageReference == null
-                            ? 'Escolher a foto da publicação'
-                            : 'Trocar a foto da publicação'),
+                      : 'Incluir foto da publicação',
                 ),
               ),
               if (postImageReference != null)

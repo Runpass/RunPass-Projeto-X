@@ -263,11 +263,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
                 ),
                 icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
                 label: Text(
-                  uploading
-                      ? 'Enviando foto...'
-                      : (postImageReference == null
-                            ? 'Escolher a foto'
-                            : 'Trocar a foto'),
+                  uploading ? 'Enviando foto...' : 'Incluir foto da publicação',
                 ),
               ),
             ),
@@ -278,54 +274,90 @@ class _NewPostScreenState extends State<NewPostScreen> {
               ),
             if (postImageReference != null) ...[
               const SizedBox(height: 16),
-              const Text(
-                '2. Escolha a corrida',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                key: const Key('new-post-search'),
-                decoration: const InputDecoration(
-                  hintText: 'Buscar corrida pelo nome',
-                  prefixIcon: Icon(Icons.search),
-                  border: OutlineInputBorder(),
-                  isDense: true,
+              Text(
+                chosen == null ? '2. Escolha a corrida' : '2. Corrida',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
                 ),
-                textInputAction: TextInputAction.search,
-                onChanged: (value) => setState(() => query = value),
               ),
               const SizedBox(height: 8),
-              if (filterRaces(list, query, keep: chosen).isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(
-                    'Nenhuma corrida sua com esse nome.',
-                    key: const Key('new-post-search-empty'),
-                    style: TextStyle(color: context.muted),
+              // Escolhida a corrida, ficam só ela e os botões; "Trocar corrida" reabre a lista.
+              if (chosen == null) ...[
+                TextField(
+                  key: const Key('new-post-search'),
+                  decoration: const InputDecoration(
+                    hintText: 'Buscar corrida pelo nome',
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                    isDense: true,
                   ),
+                  textInputAction: TextInputAction.search,
+                  onChanged: (value) => setState(() => query = value),
                 ),
-              for (final race in filterRaces(list, query, keep: chosen))
+                const SizedBox(height: 8),
+                if (filterRaces(list, query, keep: chosen).isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      'Nenhuma corrida sua com esse nome.',
+                      key: const Key('new-post-search-empty'),
+                      style: TextStyle(color: context.muted),
+                    ),
+                  ),
+                for (final race in filterRaces(list, query))
+                  KeyedSubtree(
+                    key: Key('new-post-race-${race.participation['id']}'),
+                    child: EditionCompactCard(
+                      gateway: widget.gateway,
+                      // Cartao menor e sem imagem, so nesta tela (data, cidade e distancias).
+                      showImage: false,
+                      edition:
+                          race.edition ??
+                          {
+                            'id': race.participation['editionId'],
+                            'name': race.name,
+                          },
+                      trailing: Icon(
+                        chosen == race
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked,
+                        key: chosen == race
+                            ? const Key('new-post-race-chosen')
+                            : null,
+                        color: chosen == race ? runPassOrange : context.muted,
+                      ),
+                      actions: race.participation['publishToFeed'] == true
+                          ? Text(
+                              'Já no feed: vira mais uma publicação',
+                              style: TextStyle(
+                                color: context.muted,
+                                fontSize: 12.5,
+                              ),
+                            )
+                          : null,
+                      onTap: () => setState(() => chosen = race),
+                    ),
+                  ),
+                Align(alignment: Alignment.centerLeft, child: addRaceButton()),
+              ] else ...[
                 KeyedSubtree(
-                  key: Key('new-post-race-${race.participation['id']}'),
+                  key: Key('new-post-race-${chosen!.participation['id']}'),
                   child: EditionCompactCard(
                     gateway: widget.gateway,
-                    // Mesmo cartao das outras listas de corridas (capa, data, cidade e distancias).
+                    showImage: false,
                     edition:
-                        race.edition ??
+                        chosen!.edition ??
                         {
-                          'id': race.participation['editionId'],
-                          'name': race.name,
+                          'id': chosen!.participation['editionId'],
+                          'name': chosen!.name,
                         },
-                    trailing: Icon(
-                      chosen == race
-                          ? Icons.check_circle
-                          : Icons.radio_button_unchecked,
-                      key: chosen == race
-                          ? const Key('new-post-race-chosen')
-                          : null,
-                      color: chosen == race ? runPassOrange : context.muted,
+                    trailing: const Icon(
+                      Icons.check_circle,
+                      key: Key('new-post-race-chosen'),
+                      color: runPassOrange,
                     ),
-                    actions: race.participation['publishToFeed'] == true
+                    actions: chosen!.participation['publishToFeed'] == true
                         ? Text(
                             'Já no feed: vira mais uma publicação',
                             style: TextStyle(
@@ -334,10 +366,24 @@ class _NewPostScreenState extends State<NewPostScreen> {
                             ),
                           )
                         : null,
-                    onTap: () => setState(() => chosen = race),
                   ),
                 ),
-              Align(alignment: Alignment.centerLeft, child: addRaceButton()),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const Key('new-post-change-race'),
+                    onPressed: publishing
+                        ? null
+                        : () => setState(() => chosen = null),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      textStyle: const TextStyle(fontSize: 12.5),
+                    ),
+                    icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+                    label: const Text('Trocar corrida'),
+                  ),
+                ),
+              ],
             ],
             if (chosen != null && postImageReference != null) ...[
               const SizedBox(height: 16),

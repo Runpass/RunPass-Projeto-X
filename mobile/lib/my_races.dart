@@ -2756,18 +2756,18 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                         ],
                       ),
                     ),
-                    TextButton.icon(
+                    // Só o ícone; a dica diz a ordem atual, sempre pela data da corrida (não pela do cadastro).
+                    IconButton(
+                      key: const Key('medal-sort'),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: newestFirst
+                          ? 'Corridas mais recentes'
+                          : 'Corridas mais antigas',
                       onPressed: () => setState(
                         () =>
                             newestFirst = _lastMedalNewestFirst = !newestFirst,
                       ),
-                      icon: const Icon(Icons.swap_vert, size: 18),
-                      label: Text(
-                        // A ordem é sempre pela data da corrida (não pela data do cadastro).
-                        newestFirst
-                            ? 'Corridas mais recentes'
-                            : 'Corridas mais antigas',
-                      ),
+                      icon: const Icon(Icons.swap_vert, size: 22),
                     ),
                   ],
                 ),

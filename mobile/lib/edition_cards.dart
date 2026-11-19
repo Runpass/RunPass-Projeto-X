@@ -298,6 +298,10 @@ class EditionCompactCard extends StatelessWidget {
 
   /// Canto direito do cartão (ex.: menu da agenda).
   final Widget? trailing;
+
+  /// Sem a imagem e menor: só para a escolha da corrida na nova publicação (nas outras listas a imagem
+  /// ocupa a largura inteira do cartão).
+  final bool showImage;
   const EditionCompactCard({
     super.key,
     required this.gateway,
@@ -307,6 +311,7 @@ class EditionCompactCard extends StatelessWidget {
     this.rating,
     this.now,
     this.trailing,
+    this.showImage = true,
   });
 
   @override
@@ -322,19 +327,20 @@ class EditionCompactCard extends StatelessWidget {
     return Card(
       key: Key('compact-card-${edition['id']}'),
       clipBehavior: Clip.antiAlias,
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: EdgeInsets.only(bottom: showImage ? 10 : 6),
       child: InkWell(
         onTap: onTap,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // A imagem ocupa a largura inteira do cartao (mesma lista em todas as telas).
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: EditionCover(gateway: gateway, edition: edition),
-            ),
+            if (showImage)
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: EditionCover(gateway: gateway, edition: edition),
+              ),
             Padding(
-              padding: const EdgeInsets.all(10),
+              padding: EdgeInsets.all(showImage ? 10 : 8),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -357,11 +363,11 @@ class EditionCompactCard extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           edition['name'] as String? ?? 'Corrida',
-                          maxLines: 2,
+                          maxLines: showImage ? 2 : 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontWeight: FontWeight.w800,
-                            fontSize: 16,
+                            fontSize: showImage ? 16 : 14.5,
                             height: 1.2,
                             color: archived ? context.archivedText : null,
                           ),
