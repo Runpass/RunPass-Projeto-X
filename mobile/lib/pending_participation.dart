@@ -210,10 +210,11 @@ class _PendingParticipationScreenState
           authorName: (profile?['displayName'] as String?) ?? 'Você',
           username: (profile?['username'] as String?) ?? '',
           raceName: widget.raceName,
-          details: [
-            if (widget.distanceLabel != null) widget.distanceLabel!,
-            if (seconds is int && seconds > 0) formatDuration(seconds),
-          ].join(' · '),
+          distance: widget.distanceLabel,
+          time: seconds is int && seconds > 0 ? formatDuration(seconds) : null,
+          pace: paceFromTime(time.text, km) == null
+              ? null
+              : formatPace(paceFromTime(time.text, km)!),
           text: postText.text,
           photo: postBytes,
         ),

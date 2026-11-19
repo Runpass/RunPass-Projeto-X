@@ -14,6 +14,7 @@ import 'identity_gateway.dart';
 import 'my_races.dart';
 import 'tagged_people.dart';
 import 'undo_delete.dart' show deleteWithUndo, pendingDeletions;
+import 'post_stats.dart';
 import 'runpass_theme.dart';
 
 /// Um cartao do Inicio. Vem de uma publicacao (`/feed`, `/posts/{id}`) ou de uma corrida
@@ -120,7 +121,9 @@ ShareFunction shareFunction = (params) => SharePlus.instance.share(params);
 /// Monta a imagem da publicacao para compartilhar. Trocavel nos testes.
 typedef ShareCardBuilder = Future<Uint8List> Function({
   required String title,
-  required String line,
+  required String distance,
+  required String time,
+  required String pace,
   Uint8List? photoBytes,
 });
 ShareCardBuilder shareCardBuilder = buildShareCard;
@@ -129,7 +132,7 @@ const double _cardSide = 1080;
 // Nome da corrida em cima, a foto de ponta a ponta no meio (na proporção dela) e, embaixo, só as
 // informações e a marca.
 const double _cardHeaderHeight = 190;
-const double _cardFooterHeight = 260;
+const double _cardFooterHeight = 340;
 
 /// Carrega um asset de imagem (ex. a logo da marca) como ui.Image, para desenhar no canvas.
 Future<ui.Image?> _loadAssetImage(String path) async {
@@ -161,7 +164,9 @@ Rect _coverSrcRect(ui.Image image, Rect dst) {
 /// compartilhamento sempre leve uma imagem, que é o que Instagram e Facebook aceitam.
 Future<Uint8List> buildShareCard({
   required String title,
-  required String line,
+  required String distance,
+  required String time,
+  required String pace,
   Uint8List? photoBytes,
 }) async {
   ui.Image? photo;
@@ -183,7 +188,7 @@ Future<Uint8List> buildShareCard({
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _cardSide, totalHeight));
 
-  // Fundo branco (antes era um degradê escuro até o laranja): o nome e os números vão em azul-marinho.
+  // Fundo branco com o texto preto: o nome da corrida e os números.
   void bg(Rect rect, {Color color = Colors.white}) =>
       canvas.drawRect(rect, Paint()..color = color);
 
@@ -192,7 +197,7 @@ Future<Uint8List> buildShareCard({
     double y,
     double size, {
     FontWeight weight = FontWeight.w700,
-    Color color = runPassNavy,
+    Color color = Colors.black,
     int maxLines = 2,
     String? family,
   }) {
@@ -240,12 +245,52 @@ Future<Uint8List> buildShareCard({
     );
   }
 
-  // Rodapé: as informações da corrida (quando houver) e o logo.
+  // Rodapé: distância, tempo e pace, cada um com o seu ícone (sempre os três, com "--" quando falta o
+  // dado) e, embaixo, o logo.
   final footerTop = _cardHeaderHeight + photoHeight;
   bg(Rect.fromLTWH(0, footerTop, _cardSide, _cardFooterHeight));
-  if (line.isNotEmpty) {
-    text(line, footerTop + 40, 48, weight: FontWeight.w700, maxLines: 1);
+  void stat(double centerX, IconData icon, String value, String label) {
+    final iconPainter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontSize: 56,
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          color: runPassOrange,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    iconPainter.paint(
+      canvas,
+      Offset(centerX - iconPainter.width / 2, footerTop + 30),
+    );
+    for (final (y, size, weight, content) in [
+      (100.0, 44.0, FontWeight.w800, value),
+      (156.0, 28.0, FontWeight.w500, label),
+    ]) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: content,
+          style: TextStyle(
+            fontSize: size,
+            fontWeight: weight,
+            color: Colors.black,
+          ),
+        ),
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+        ellipsis: '…',
+      )..layout(maxWidth: _cardSide / 3 - 40);
+      painter.paint(canvas, Offset(centerX - painter.width / 2, footerTop + y));
+    }
   }
+
+  stat(_cardSide / 6, statDistanceIcon, distance, 'Distância');
+  stat(_cardSide / 2, statTimeIcon, time, 'Tempo');
+  stat(_cardSide * 5 / 6, statPaceIcon, pace, 'Pace');
   // Logo da marca na versão para fundo claro; sem o asset carregar por algum
   // motivo, cai para o texto "+1Pódio".
   final logo = await _loadAssetImage('assets/brand/logo-light.png');
@@ -257,7 +302,7 @@ Future<Uint8List> buildShareCard({
       Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
       Rect.fromLTWH(
         (_cardSide - logoWidth) / 2,
-        footerTop + _cardFooterHeight - 90,
+        footerTop + _cardFooterHeight - 84,
         logoWidth,
         logoHeight,
       ),
@@ -266,7 +311,7 @@ Future<Uint8List> buildShareCard({
   } else {
     text(
       '+1Pódio',
-      footerTop + _cardFooterHeight - 90,
+      footerTop + _cardFooterHeight - 84,
       48,
       weight: FontWeight.w900,
       color: runPassOrange,
@@ -280,16 +325,6 @@ Future<Uint8List> buildShareCard({
   );
   final data = await image.toByteData(format: ui.ImageByteFormat.png);
   return data!.buffer.asUint8List();
-}
-
-/// Linha de números da imagem de compartilhamento: km, tempo e pace (só o que houver).
-String shareLineOf(RaceRecord race) {
-  final km = race.kilometers;
-  return [
-    if (km != null) formatKilometers(km),
-    if (race.timeSeconds != null) formatDuration(race.timeSeconds!),
-    if (race.paceSecondsPerKm != null) formatPace(race.paceSecondsPerKm!),
-  ].join(' · ');
 }
 
 class PostCard extends StatefulWidget {
@@ -549,8 +584,6 @@ class _PostCardState extends State<PostCard> {
     widget.onChanged?.call();
   }
 
-  String shareLine() => shareLineOf(entry.race);
-
   /// Texto da publicacao para compartilhar (WhatsApp, e-mail, Instagram, Facebook...).
   String shareText() {
     final km = entry.race.kilometers;
@@ -612,7 +645,15 @@ class _PostCardState extends State<PostCard> {
     final photoBytes = await _fetchPhotoBytes();
     final card = await shareCardBuilder(
       title: entry.title,
-      line: shareLine(),
+      distance: entry.race.kilometers == null
+          ? statEmpty
+          : formatKilometers(entry.race.kilometers!),
+      time: entry.race.timeSeconds == null
+          ? statEmpty
+          : formatDuration(entry.race.timeSeconds!),
+      pace: entry.race.paceSecondsPerKm == null
+          ? statEmpty
+          : formatPace(entry.race.paceSecondsPerKm!),
       photoBytes: photoBytes,
     );
     return _writeShareFile(card, 'image/png', 'runpass.png');
@@ -651,30 +692,6 @@ class _PostCardState extends State<PostCard> {
       }
     }
   }
-
-  Widget statItem(IconData icon, String value, String label) => Expanded(
-    child: Row(
-      children: [
-        Icon(icon, size: 22),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Theme.of(context).hintColor,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
 
   /// Comentario mais recente em destaque; os demais ficam atras do botao de comentarios.
   Widget lastCommentBox() {
@@ -838,57 +855,32 @@ class _PostCardState extends State<PostCard> {
               ),
             ),
           ),
-          // Junto do título, antes da foto e nesta ordem: o texto da publicação e, depois, km, tempo e pace.
-          if (entry.comment != null ||
-              km != null ||
-              race.timeSeconds != null ||
-              race.paceSecondsPerKm != null ||
-              race.placement != null)
-            Padding(
-              key: Key('post-summary-${entry.postId}'),
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (entry.comment != null)
-                    Text(entry.comment!, key: Key('post-text-${entry.postId}')),
-                  if (km != null ||
-                      race.timeSeconds != null ||
-                      race.paceSecondsPerKm != null ||
-                      race.placement != null) ...[
-                    if (entry.comment != null) const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        if (km != null)
-                          statItem(
-                            Icons.directions_run,
-                            formatKilometers(km),
-                            'Distância',
-                          ),
-                        if (race.timeSeconds != null)
-                          statItem(
-                            Icons.timer_outlined,
-                            formatDuration(race.timeSeconds!),
-                            'Tempo',
-                          ),
-                        if (race.paceSecondsPerKm != null)
-                          statItem(
-                            Icons.speed,
-                            formatPace(race.paceSecondsPerKm!),
-                            'Pace',
-                          ),
-                        if (race.placement != null)
-                          statItem(
-                            Icons.emoji_events_outlined,
-                            '${race.placement}º',
-                            'Colocação',
-                          ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
+          // Junto do título, antes da foto e nesta ordem: o texto da publicação e, depois, distância, tempo e
+          // pace, que aparecem sempre (com "--" quando faltam) para manter o mesmo padrão.
+          Padding(
+            key: Key('post-summary-${entry.postId}'),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (entry.comment != null)
+                  Text(entry.comment!, key: Key('post-text-${entry.postId}')),
+                if (entry.comment != null) const SizedBox(height: 10),
+                PostStats(
+                  distance: km == null ? null : formatKilometers(km),
+                  time: race.timeSeconds == null
+                      ? null
+                      : formatDuration(race.timeSeconds!),
+                  pace: race.paceSecondsPerKm == null
+                      ? null
+                      : formatPace(race.paceSecondsPerKm!),
+                  placement: race.placement == null
+                      ? null
+                      : '${race.placement}º',
+                ),
+              ],
             ),
+          ),
           // Foto de ponta a ponta do cartão, no quadro da própria proporção da foto (de 4:5 a 1,91:1), sem
           // faixas pretas e sem cortar.
           AspectRatio(

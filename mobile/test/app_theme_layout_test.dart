@@ -46,7 +46,8 @@ void main() {
                     authorName: 'Ana',
                     username: 'ana',
                     raceName: 'Corrida Teste',
-                    details: '10K · 58:23',
+                    distance: '10 km',
+                    time: '58:23',
                   ),
                 ),
                 child: const Text('abrir'),
@@ -65,7 +66,7 @@ void main() {
         find.byKey(const Key('post-preview-race')),
       );
       final details = tester.getTopLeft(
-        find.byKey(const Key('post-preview-details')),
+        find.byKey(const Key('post-preview-stats')),
       );
       expect(race.dy, lessThan(details.dy));
     },
