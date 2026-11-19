@@ -2763,7 +2763,10 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                       ),
                       icon: const Icon(Icons.swap_vert, size: 18),
                       label: Text(
-                        newestFirst ? 'Mais recentes' : 'Mais antigas',
+                        // A ordem é sempre pela data da corrida (não pela data do cadastro).
+                        newestFirst
+                            ? 'Corridas mais recentes'
+                            : 'Corridas mais antigas',
                       ),
                     ),
                   ],

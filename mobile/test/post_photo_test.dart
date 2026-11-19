@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/identity_gateway.dart';
+import 'package:runpass/medal_scan.dart';
 import 'package:runpass/new_post.dart';
 
 const jpeg = [0xff, 0xd8, 0xff, 0xd9];
@@ -284,8 +285,16 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('new-post')), findsOneWidget);
-      expect(find.byTooltip('Nova postagem'), findsOneWidget);
+      expect(
+        find.byTooltip('Cadastrar medalha ou postar foto'),
+        findsOneWidget,
+      );
       await tester.tap(find.byKey(const Key('new-post')));
+      await tester.pumpAndSettle();
+      // O + da Início tem duas opções: cadastrar medalha ou postar foto.
+      expect(find.text('Cadastrar medalha'), findsOneWidget);
+      expect(find.text('Postar foto'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('home-add-photo')));
       await tester.pumpAndSettle();
       expect(find.byType(NewPostScreen), findsOneWidget);
       // A jornada comeca pela foto: a lista das corridas so aparece depois dela.
@@ -293,6 +302,32 @@ void main() {
       expect(find.byKey(const Key('new-post-photo')), findsOneWidget);
       expect(find.byKey(const Key('new-post-race-c1')), findsNothing);
       expect(find.byKey(const Key('new-post-race-c2')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    '"+" da Home: cadastrar medalha começa pela foto e abre o cadastro',
+    (tester) async {
+      tall(tester);
+      final (gateway, _) = await setup();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RunPassHomeScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: const _NoText(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-add-medal')));
+      await tester.pumpAndSettle();
+      expect(find.byType(MedalScanScreen), findsOneWidget);
+      // Só um campo: o nome da corrida.
+      expect(find.byKey(const Key('medal-edit-name')), findsOneWidget);
+      expect(find.byKey(const Key('medal-edit-date')), findsNothing);
     },
   );
 
@@ -657,4 +692,10 @@ void main() {
     expect(foldName('  São   Silvestre '), 'sao silvestre');
     expect(foldName('Corrida Ç'), 'corrida c');
   });
+}
+
+class _NoText implements MedalTextReader {
+  const _NoText();
+  @override
+  Future<List<String>> read(String path) async => const [];
 }

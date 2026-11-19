@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:flutter/cupertino.dart' show CupertinoPicker;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
@@ -297,7 +296,7 @@ void main() {
       find.byType(CatalogScreen),
       findsNothing,
     ); // não vai direto às corridas
-    expect(find.text('Adicionar medalha'), findsOneWidget);
+    expect(find.text('Cadastrar medalha'), findsOneWidget);
     expect(find.byKey(const Key('medal-scan-found')), findsOneWidget);
     expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
     expect(searched, ['/tmp/medalha.jpg']);
@@ -350,21 +349,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tapAdd(tester);
+      // Não achou: só o campo do nome na tela e a opção de cadastrar a corrida.
       expect(find.byKey(const Key('medal-scan-suggest')), findsOneWidget);
-      expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('medal-edit-distance')))
-            .controller!
-            .text,
-        '10',
-      );
-      expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('medal-edit-date')))
-            .controller!
-            .text,
-        '22/11/2026',
-      );
+      expect(find.byKey(const Key('medal-edit-date')), findsNothing);
+      expect(find.byKey(const Key('medal-edit-distance')), findsNothing);
       await tester.ensureVisible(find.byKey(const Key('medal-scan-request')));
       await tester.tap(find.byKey(const Key('medal-scan-request')));
       await tester.pumpAndSettle();
@@ -375,7 +363,7 @@ void main() {
   );
 
   testWidgets(
-    'dá para corrigir o que foi lido, buscar de novo e concluir com os dados editados',
+    'dá para corrigir o nome lido, buscar de novo e cadastrar a corrida com o nome corrigido',
     (tester) async {
       final gateway = await runner(
         found: [
@@ -415,131 +403,21 @@ void main() {
       await tester.tap(find.byKey(const Key('medal-scan-search-again')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('medal-match-a')), findsOneWidget);
-      // Corrige de novo, completa data e cidade e conclui: o formulário leva os dados editados.
+      // Não era essa: corrige o nome e cadastra a corrida; o formulário leva o nome corrigido e o km lido.
       await tester.enterText(nameField, 'Meia São Paulo 2026');
-      await tester.enterText(
-        find.byKey(const Key('medal-edit-date')),
-        '15/03/2026',
-      );
-      // Estado e cidade na rolagem (sem digitar): confirma a primeira da lista.
-      await tester.ensureVisible(find.byKey(const Key('medal-edit-location')));
-      await tester.tap(find.byKey(const Key('medal-edit-location')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('location-done')));
-      await tester.pumpAndSettle();
-      expect(find.text('AC - Acrelândia'), findsOneWidget);
       final conclude = find.byKey(const Key('medal-scan-request'));
       await tester.ensureVisible(conclude);
       await tester.tap(conclude);
       await tester.pumpAndSettle();
       expect(find.byType(EditionRequestFormScreen), findsOneWidget);
-      for (final text in ['Meia São Paulo 2026', '15/03/2026', '10']) {
+      for (final text in ['Meia São Paulo 2026', '10']) {
         expect(find.text(text), findsWidgets, reason: text);
       }
-      // Cidade e UF escolhidas na rolagem seguem para o formulário.
-      expect(find.textContaining('Acrelândia'), findsWidgets);
     },
   );
 
   testWidgets(
-    'a data do cadastro só aceita números e coloca as barras sozinha',
-    (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: MedalCollectionScreen(
-            gateway: await runner(),
-            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
-            medalTextReader: _FakeReader(['Meia Maratona']),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tapAdd(tester);
-      String valueOf(String key) =>
-          tester.widget<TextField>(find.byKey(Key(key))).controller!.text;
-      expect(valueOf('medal-edit-name'), 'Meia Maratona');
-      final date = find.byKey(const Key('medal-edit-date'));
-      await tester.ensureVisible(date);
-      await tester.enterText(date, '15032026');
-      await tester.pump();
-      expect(valueOf('medal-edit-date'), '15/03/2026');
-      await tester.enterText(date, '1503');
-      await tester.pump();
-      expect(valueOf('medal-edit-date'), '15/03');
-    },
-  );
-
-  testWidgets(
-    'tempo, pace, colocação e peito preenchidos na medalha chegam preenchidos na participação',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 3600);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final gateway = await runner(
-        found: [
-          {
-            'id': 'a',
-            'name': 'Meia Maratona de São Paulo',
-            'date': '2026-09-20',
-            'city': 'São Paulo',
-            'state': 'SP',
-            'distances': [
-              {'id': '21k', 'kilometers': 21.0975},
-            ],
-          },
-        ],
-      );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: MedalCollectionScreen(
-            gateway: gateway,
-            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
-            medalTextReader: _FakeReader(['Meia Maratona']),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tapAdd(tester);
-      await tester.ensureVisible(find.byKey(const Key('medal-match-a')));
-      await tester.tap(find.byKey(const Key('medal-match-a')));
-      await tester.pumpAndSettle();
-      // Os dados da prova ficam na mesma tela da escolha e são todos opcionais.
-      // O tempo usa o mesmo seletor de rolagem do rascunho da participação.
-      await tester.ensureVisible(find.byKey(const Key('time-field')));
-      await tester.tap(find.byKey(const Key('time-field')));
-      await tester.pumpAndSettle();
-      await tester.drag(
-        find.byType(CupertinoPicker).at(1),
-        const Offset(0, -32.0 * 45),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('duration-confirm')));
-      await tester.pumpAndSettle();
-      for (final (key, value) in [
-        ('medal-data-pace', '5:20'),
-        ('medal-data-placement', '42'),
-        ('medal-data-bib', 'A-1234'),
-      ]) {
-        final field = find.byKey(Key(key));
-        await tester.ensureVisible(field);
-        await tester.enterText(field, value);
-        await tester.pump();
-      }
-      await tester.ensureVisible(find.byKey(const Key('medal-scan-conclude')));
-      await tester.tap(find.byKey(const Key('medal-scan-conclude')));
-      await tester.pumpAndSettle();
-      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
-      String valueOf(Finder finder) =>
-          tester.widget<TextField>(finder).controller!.text;
-      expect(find.text('0:45:00'), findsOneWidget);
-      expect(valueOf(find.byKey(const Key('pace-field'))), '5:20');
-      expect(find.text('42'), findsOneWidget);
-      expect(find.text('A-1234'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'escolher a corrida achada abre os dados da prova e segue para a participação (tempo, km, avaliação e foto do post)',
+    'tocar na corrida achada vai direto para a participação (tempo, km, avaliação e foto do post)',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3600);
       tester.view.devicePixelRatio = 1;
@@ -898,57 +776,6 @@ void main() {
     },
   );
 
-  testWidgets(
-    'edição diferente da que quero: usar como base copia os dados para os campos e segue no cadastro manual',
-    (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: MedalCollectionScreen(
-            gateway: await runner(
-              found: [
-                {
-                  'id': 'a',
-                  'name': 'Meia Maratona de São Paulo',
-                  'date': '2024-09-20',
-                  'city': 'São Paulo',
-                  'state': 'SP',
-                  'distances': [
-                    {'id': '21k', 'kilometers': 21.0975},
-                  ],
-                },
-              ],
-            ),
-            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
-            medalTextReader: _FakeReader(['Meia Maratona']),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tapAdd(tester);
-      String valueOf(String key) =>
-          tester.widget<TextField>(find.byKey(Key(key))).controller!.text;
-      await tester.ensureVisible(find.byKey(const Key('medal-base-a')));
-      await tester.tap(find.byKey(const Key('medal-base-a')));
-      await tester.pumpAndSettle();
-      // Copiou os dados da edição achada, sem sair da tela nem ir para a participação.
-      expect(find.byType(ParticipationDraftScreen), findsNothing);
-      expect(valueOf('medal-edit-name'), 'Meia Maratona de São Paulo');
-      expect(valueOf('medal-edit-date'), '20/09/2024');
-      // Ajusta o que é diferente (outro ano) e segue com o cadastro manual.
-      final date = find.byKey(const Key('medal-edit-date'));
-      await tester.ensureVisible(date);
-      await tester.enterText(date, '19092025');
-      await tester.pump();
-      final manual = find.byKey(const Key('medal-scan-request'));
-      await tester.ensureVisible(manual);
-      await tester.tap(manual);
-      await tester.pumpAndSettle();
-      expect(find.byType(EditionRequestFormScreen), findsOneWidget);
-      expect(find.text('19/09/2025'), findsWidgets);
-      expect(find.text('Meia Maratona de São Paulo'), findsWidgets);
-    },
-  );
-
   testWidgets('aparelho sem leitor de texto avisa e ainda leva às corridas', (
     tester,
   ) async {
@@ -1091,7 +918,7 @@ void main() {
   );
 
   testWidgets(
-    'seta de voltar só existe nas corridas abertas pelo "+", não nas abas',
+    'seta de voltar só existe no cadastro aberto pelo "+", não nas abas',
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -1118,13 +945,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(BackButton), findsNothing);
       await tapAdd(tester);
-      // O ícone da corrida abre a corrida por cima (com seta de voltar).
-      await tester.ensureVisible(find.byKey(const Key('medal-open-a')));
-      await tester.tap(find.byKey(const Key('medal-open-a')));
-      await tester.pumpAndSettle();
-      expect(find.byType(EditionScreen), findsOneWidget);
+      // O cadastro da medalha abre por cima (com seta de voltar).
+      expect(find.byType(MedalScanScreen), findsOneWidget);
+      expect(find.byType(BackButton), findsOneWidget);
       final navigator = tester.state<NavigatorState>(find.byType(Navigator));
       expect(navigator.canPop(), isTrue); // dá para voltar às medalhas
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
       await tester.tap(find.text('Perfil'));
       await tester.pumpAndSettle();
       expect(find.byType(RunnerProfileScreen), findsOneWidget);
@@ -2121,17 +1949,12 @@ class _FakeReader implements MedalTextReader {
   }
 }
 
-/// Escolhe a corrida achada na medalha e segue para a participação: o toque marca a corrida e abre
-/// os dados da prova (tempo, pace, colocação, peito, todos opcionais); "Continuar" segue a jornada.
+/// Toca na corrida achada na medalha: segue direto para tempo, lugar, km, pace, peito e avaliação.
 Future<void> chooseMatch(
   WidgetTester tester, [
   String key = 'medal-match-a',
 ]) async {
   await tester.ensureVisible(find.byKey(Key(key)));
   await tester.tap(find.byKey(Key(key)));
-  await tester.pumpAndSettle();
-  expect(find.byKey(const Key('medal-race-data')), findsOneWidget);
-  await tester.ensureVisible(find.byKey(const Key('medal-scan-conclude')));
-  await tester.tap(find.byKey(const Key('medal-scan-conclude')));
   await tester.pumpAndSettle();
 }

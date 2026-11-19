@@ -229,11 +229,11 @@ void main() {
     await open();
     expect(selected('Todas'), isTrue);
     await tester.tap(find.text('Por ano'));
-    await tester.tap(find.text('Mais recentes'));
+    await tester.tap(find.text('Corridas mais recentes'));
     await tester.pumpAndSettle();
     await open(); // a tela e recriada ao trocar de aba
     expect(selected('Por ano'), isTrue);
-    expect(find.text('Mais antigas'), findsOneWidget);
+    expect(find.text('Corridas mais antigas'), findsOneWidget);
   });
 
   testWidgets('sem medalhas, so existe o botao grande de adicionar', (

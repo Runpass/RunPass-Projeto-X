@@ -20,16 +20,20 @@ Telas que fazem a mesma coisa têm **a mesma funcionalidade e o mesmo desenho**.
 uma delas, procure as outras que fazem o mesmo e mude todas, ou extraia um widget comum. Vale para
 cadastro de medalha, cadastro/pedido de corrida, publicação de foto, escolha de corrida e avaliação.
 
-- **A jornada começa sempre pela foto.** O `+` (perfil, início e tela da corrida) abre o cadastro da
-  medalha pela foto da medalha; publicar uma experiência começa pela foto da corrida. Nunca começa
+- **A jornada começa sempre pela foto.** O `+` do perfil abre direto o cadastro da medalha (foto da
+  medalha). O `+` da Início tem **duas opções**: *Cadastrar medalha* e *Postar foto*. Nunca começa
   pela escolha da corrida.
-- **Ordem do cadastro da medalha, igual em toda tela que o tenha:** foto da medalha → leitura de
-  *todo* o texto da medalha → busca da corrida no catálogo → escolher a corrida (ou buscar de novo,
-  ou cadastrar uma corrida nova) → tempo, colocação, número do peito e pace, todos **opcionais** →
-  oferecer publicar uma foto da corrida (outra foto, não a da medalha) → avaliação da corrida →
-  **Concluir** ou **Sair**.
+- **Cadastro da medalha, igual em toda tela que o tenha:** foto da medalha → leitura de todo o
+  texto da medalha → **um único campo**, o nome da corrida (já preenchido com o que foi lido), e a
+  lista de corridas achadas → tocar na corrida segue para **tempo, lugar, km, pace, número de peito
+  e avaliação** (tela da participação, tudo opcional) → *depois da avaliação*, a opção de postar uma
+  foto da corrida (outra foto, não a da medalha) na linha do tempo → **Concluir** ou **Sair**.
+  Não achou a corrida: buscar de novo com outro nome ou **cadastrar a corrida manualmente**.
+- Em **Corridas**, o campo de busca por nome fica sempre à vista, sem lupa; sem resultado, aparece
+  o cadastro manual da corrida.
 - O que foi preenchido (tempo, distância, pace, colocação, peito) aparece na publicação.
-- Ao publicar a foto, só envia a foto e segue na jornada: **não** joga a pessoa na Início.
+- Postar só a foto **não** joga a pessoa na Início com os dados preenchidos; ela segue na jornada.
+- Medalhas: a ordem padrão é pela **data da corrida**, não pela data do cadastro.
 - **Lista de corridas é uma só**, o mesmo cartão em todas as telas (`EditionCompactCard`), com a
   imagem ocupando a largura inteira do cartão.
 - **Ícones e botões discretos:** texto pequeno, sem botão grande colorido onde um ícone resolve.

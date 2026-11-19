@@ -7,6 +7,13 @@ import 'catalog_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart';
+import 'medal_scan.dart'
+    show
+        MedalPhotoPicker,
+        MedalScanScreen,
+        MedalTextReader,
+        PlatformMedalTextReader,
+        pickMedalPhotoPath;
 import 'new_post.dart';
 import 'notifications.dart';
 import 'post_card.dart';
@@ -213,7 +220,16 @@ Future<FeedLoad> loadFeed(
 
 class RunPassHomeScreen extends StatefulWidget {
   final IdentityGateway gateway;
-  const RunPassHomeScreen({super.key, required this.gateway});
+
+  /// Escolha da foto da medalha e leitura do texto dela (só os testes trocam).
+  final MedalPhotoPicker medalPhotoPicker;
+  final MedalTextReader medalTextReader;
+  const RunPassHomeScreen({
+    super.key,
+    required this.gateway,
+    this.medalPhotoPicker = pickMedalPhotoPath,
+    this.medalTextReader = const PlatformMedalTextReader(),
+  });
 
   @override
   State<RunPassHomeScreen> createState() => _RunPassHomeScreenState();
@@ -287,6 +303,66 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     runPassRouteObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// O + da Início: duas opções. Cadastrar medalha começa pela foto da medalha e segue para a corrida, o
+  /// tempo e a avaliação; postar foto começa pela foto da corrida e vai para a linha do tempo.
+  Future<void> addMenu() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('home-add-medal'),
+              leading: const Icon(Icons.workspace_premium_outlined),
+              title: const Text('Cadastrar medalha'),
+              onTap: () => Navigator.pop(sheet, 'medal'),
+            ),
+            ListTile(
+              key: const Key('home-add-photo'),
+              leading: const Icon(Icons.add_photo_alternate_outlined),
+              title: const Text('Postar foto'),
+              onTap: () => Navigator.pop(sheet, 'photo'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'photo') {
+      final published = await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(
+          builder: (_) => NewPostScreen(gateway: widget.gateway),
+        ),
+      );
+      if (published == true) reload(); // a postagem nova aparece no feed
+      return;
+    }
+    final path = await widget.medalPhotoPicker(context);
+    if (path == null || !mounted) return;
+    final registered = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute<Object?>(
+        builder: (_) => MedalScanScreen(
+          gateway: widget.gateway,
+          photoPath: path,
+          reader: widget.medalTextReader,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (registered == 'request') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Pedido enviado. A medalha fica em análise até a equipe aprovar a corrida.',
+          ),
+        ),
+      );
+    }
+    if (registered != null) reload();
   }
 
   void reload() {
@@ -477,16 +553,9 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
         IconButton(
           key: const Key('new-post'),
           visualDensity: VisualDensity.compact,
-          tooltip: 'Nova postagem',
+          tooltip: 'Cadastrar medalha ou postar foto',
           icon: const Icon(Icons.add_circle_outline_rounded),
-          onPressed: () async {
-            final published = await Navigator.of(context).push<bool>(
-              MaterialPageRoute<bool>(
-                builder: (_) => NewPostScreen(gateway: widget.gateway),
-              ),
-            );
-            if (published == true) reload(); // a postagem nova aparece no feed
-          },
+          onPressed: addMenu,
         ),
         IconButton(
           key: const Key('find-friends'),
