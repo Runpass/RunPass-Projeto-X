@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'agenda.dart';
 import 'duration_field.dart';
 import 'edition_cards.dart';
+import 'city_photos.dart';
 import 'friends.dart';
 import 'grid_columns.dart';
 import 'home_screen.dart';
@@ -298,7 +299,15 @@ class RaceArt extends StatelessWidget {
 
   /// A distância fica no canto superior esquerdo, na lista e no banner da corrida; o corredor, à direita.
   final bool labelAtLeft;
-  const RaceArt({super.key, required this.edition, this.labelAtLeft = false});
+
+  /// Foto de cartão postal da cidade: entra no lugar do degradê quando a corrida não tem banner autorizado.
+  final CityPhoto? photo;
+  const RaceArt({
+    super.key,
+    required this.edition,
+    this.labelAtLeft = false,
+    this.photo,
+  });
 
   static const kindPalettes = {
     RaceKind.rua: [
@@ -396,17 +405,40 @@ class RaceArt extends StatelessWidget {
           return ClipRect(
             child: Stack(
               children: [
-                Positioned(
-                  right: small ? -6 : -14,
-                  bottom: small ? -10 : -26,
-                  child: Icon(
-                    kindIcons[kind],
-                    key: Key('race-art-${kind.name}'),
-                    size: small ? 56 : 170,
-                    color: Colors.white.withValues(alpha: small ? .18 : .13),
+                if (photo != null) ...[
+                  Positioned.fill(
+                    child: Image.asset(
+                      photo!.asset,
+                      key: const Key('race-art-photo'),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                    ),
                   ),
-                ),
-                if (text != null && small)
+                  // Escurece o pé da foto para o nome da cidade e o local ficarem legíveis.
+                  const Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Colors.black54],
+                          stops: [0.45, 1],
+                        ),
+                      ),
+                    ),
+                  ),
+                ] else
+                  Positioned(
+                    right: small ? -6 : -14,
+                    bottom: small ? -10 : -26,
+                    child: Icon(
+                      kindIcons[kind],
+                      key: Key('race-art-${kind.name}'),
+                      size: small ? 56 : 170,
+                      color: Colors.white.withValues(alpha: small ? .18 : .13),
+                    ),
+                  ),
+                if (text != null && small && photo == null)
                   Center(
                     child: Padding(
                       padding: const EdgeInsets.all(6),
@@ -427,7 +459,7 @@ class RaceArt extends StatelessWidget {
                       ),
                     ),
                   )
-                else if (text != null)
+                else if (text != null && photo == null)
                   Positioned.fill(
                     child: CustomPaint(
                       painter: _ArtLabelPainter(text, left: labelAtLeft),
@@ -482,7 +514,7 @@ class RaceArt extends StatelessWidget {
                     right: 10,
                     top: 8,
                     child: Text(
-                      'arte do app',
+                      photo != null ? 'foto da cidade' : 'arte do app',
                       key: const Key('race-art-tag'),
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: .6),
@@ -584,7 +616,13 @@ class _EditionCoverState extends State<EditionCover> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        RaceArt(edition: widget.edition, labelAtLeft: true),
+        RaceArt(
+          edition: widget.edition,
+          labelAtLeft: true,
+          photo: widget.edition['imageReference'] == null
+              ? cityPhotoFor(widget.edition)
+              : null,
+        ),
         if (url != null)
           Image.network(
             url!,
@@ -1717,7 +1755,13 @@ class _EditionScreenState extends State<EditionScreen> {
       child: Stack(
         children: [
           // Base: arte padrão da corrida; a imagem aprovada, quando existe, cobre por cima.
-          Positioned.fill(child: RaceArt(edition: body, labelAtLeft: true)),
+          Positioned.fill(
+            child: RaceArt(
+              edition: body,
+              labelAtLeft: true,
+              photo: body['imageReference'] == null ? cityPhotoFor(body) : null,
+            ),
+          ),
           if (bannerUrl != null)
             Positioned.fill(
               child: Image.network(
