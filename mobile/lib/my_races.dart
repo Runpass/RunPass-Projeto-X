@@ -87,6 +87,9 @@ class RaceRecord {
   num? get timeSeconds => participation['timeSeconds'] as num?;
   num? get paceSecondsPerKm => participation['paceSecondsPerKm'] as num?;
 
+  /// Colocação na prova; só vem quando a pessoa informou e o servidor a libera para quem está vendo.
+  num? get placement => participation['placement'] as num?;
+
   // Customizacao da medalha na prateleira: cada campo tem o dado do catalogo
   // como padrao e so usa o valor salvo quando a pessoa o personalizou.
   String get medalFrameId =>

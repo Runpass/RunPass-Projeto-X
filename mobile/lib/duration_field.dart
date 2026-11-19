@@ -91,6 +91,11 @@ class DurationField extends StatelessWidget {
                   const Spacer(),
                   FilledButton(
                     key: const Key('duration-confirm'),
+                    // O tema do app pede largura total nos botões cheios; numa linha com Spacer isso é
+                    // largura infinita e o seletor não abre. Aqui o botão tem o tamanho do rótulo.
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(96, 44),
+                    ),
                     onPressed: () =>
                         Navigator.of(sheet)
                             .pop(chosen == Duration.zero ? '' : format(chosen)),

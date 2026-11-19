@@ -66,7 +66,8 @@ class _NewPostScreenState extends State<NewPostScreen> {
     });
   }
 
-  Widget addRaceButton() => OutlinedButton.icon(
+  /// [first]: a pessoa ainda não tem corrida para publicar, então não é "outra".
+  Widget addRaceButton({bool first = false}) => OutlinedButton.icon(
     key: const Key('new-post-add-race'),
     onPressed: publishing ? null : addOtherRace,
     style: OutlinedButton.styleFrom(
@@ -74,7 +75,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
       textStyle: const TextStyle(fontSize: 13),
     ),
     icon: const Icon(Icons.add_location_alt_outlined, size: 18),
-    label: const Text('Cadastrar outra corrida'),
+    label: Text(first ? 'Cadastrar corrida' : 'Cadastrar outra corrida'),
   );
   RaceRecord? chosen;
   String query = '';
@@ -217,7 +218,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
                     style: TextStyle(color: context.muted),
                   ),
                   const SizedBox(height: 12),
-                  addRaceButton(),
+                  addRaceButton(first: true),
                   if (message != null) ...[
                     const SizedBox(height: 8),
                     Text(message!, key: const Key('new-post-message')),

@@ -527,32 +527,42 @@ class CropAspectBar extends StatelessWidget {
   const CropAspectBar({super.key, required this.selected, this.onSelected});
 
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-    child: Row(
-      children: [
-        for (final (index, option) in RacePhotoCropScreen.aspects.indexed)
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: ChoiceChip(
-              key: Key('crop-aspect-$index'),
-              label: Text(option.$1),
-              labelStyle: TextStyle(
-                fontSize: 12,
-                color: selected == index ? Colors.black : Colors.white70,
+  Widget build(BuildContext context) => Theme(
+    // O chip se apoia num fundo com a cor de tela do tema (branca no tema claro), o que deixava as
+    // opções não escolhidas brancas com o rótulo claro, ilegíveis. Nesta barra escura o fundo é transparente.
+    data: Theme.of(context).copyWith(canvasColor: Colors.transparent),
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      child: Row(
+        children: [
+          for (final (index, option) in RacePhotoCropScreen.aspects.indexed)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: ChoiceChip(
+                key: Key('crop-aspect-$index'),
+                label: Text(option.$1),
+                labelStyle: TextStyle(
+                  fontSize: 12,
+                  color: selected == index ? Colors.black : Colors.white70,
+                ),
+                color: WidgetStateProperty.resolveWith(
+                  (states) => states.contains(WidgetState.selected)
+                      ? Colors.white
+                      : Colors.white12,
+                ),
+                side: BorderSide.none,
+                showCheckmark: false,
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                selected: selected == index,
+                onSelected: onSelected == null
+                    ? null
+                    : (_) => onSelected!(index),
               ),
-              selectedColor: Colors.white,
-              backgroundColor: Colors.white12,
-              side: BorderSide.none,
-              showCheckmark: false,
-              visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              selected: selected == index,
-              onSelected: onSelected == null ? null : (_) => onSelected!(index),
             ),
-          ),
-      ],
+        ],
+      ),
     ),
   );
 }

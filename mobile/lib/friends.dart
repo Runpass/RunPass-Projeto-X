@@ -227,6 +227,8 @@ class ProfilePhotoViewer extends StatelessWidget {
                           key: const Key('profile-photo-change'),
                           style: FilledButton.styleFrom(
                             backgroundColor: runPassOrange,
+                            // Sem isto o tema estica o botão na largura toda e empurra "Remover foto".
+                            minimumSize: const Size(0, 44),
                           ),
                           onPressed: () =>
                               Navigator.pop(context, ProfilePhotoAction.change),

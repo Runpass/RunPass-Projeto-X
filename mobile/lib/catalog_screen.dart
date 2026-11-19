@@ -519,9 +519,10 @@ class RaceArt extends StatelessWidget {
                       ],
                     ),
                   ),
+                  // No canto de baixo: no alto, na tela da corrida, ficava por cima do ícone de compartilhar.
                   Positioned(
                     right: 10,
-                    top: 8,
+                    bottom: 8,
                     child: Text(
                       photo != null ? 'foto da cidade' : 'arte do app',
                       key: const Key('race-art-tag'),
@@ -1579,11 +1580,13 @@ class _EditionScreenState extends State<EditionScreen> {
               key: const Key('plan-note'),
             ),
           ),
-        if (!past && !archived && selectedDistance == null)
+        // Vale também para a corrida que já aconteceu: é nela que se chega por "Já corri" na lista.
+        if (mine == null && !archived && selectedDistance == null)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
               'Escolha uma distância para registrar que você já correu.',
+              key: const Key('pick-distance-hint'),
               style: TextStyle(color: context.muted),
             ),
           ),
@@ -1824,17 +1827,21 @@ class _EditionScreenState extends State<EditionScreen> {
                         onPressed: () => Navigator.of(context).maybePop(),
                       ),
                       const Spacer(),
-                      IconButton(
-                        key: const Key('hero-wanted'),
-                        tooltip: wanted
-                            ? 'Tirar de Quero correr'
-                            : 'Quero correr',
-                        color: Colors.white,
-                        icon: Icon(
-                          wanted ? Icons.favorite : Icons.favorite_border,
+                      // Corrida que já aconteceu não entra em "Quero correr" (só sai, se já estava).
+                      if (body['status'] != 'past' || wanted)
+                        IconButton(
+                          key: const Key('hero-wanted'),
+                          tooltip: wanted
+                              ? 'Tirar de Quero correr'
+                              : 'Quero correr',
+                          color: Colors.white,
+                          icon: Icon(
+                            wanted ? Icons.favorite : Icons.favorite_border,
+                          ),
+                          onPressed: savingPlan
+                              ? null
+                              : () => setPlan('wanted'),
                         ),
-                        onPressed: savingPlan ? null : () => setPlan('wanted'),
-                      ),
                       // Site da corrida em todas as corridas: o oficial, quando cadastrado; senão uma busca na internet.
                       IconButton(
                         key: const Key('hero-site'),
@@ -3283,13 +3290,15 @@ class _EditionScreenState extends State<EditionScreen> {
                       indicatorColor: runPassOrange,
                       labelStyle: const TextStyle(
                         fontWeight: FontWeight.w900,
-                        fontSize: 15,
+                        fontSize: 14,
                       ),
                       unselectedLabelStyle: const TextStyle(
                         fontWeight: FontWeight.w800,
-                        fontSize: 15,
+                        fontSize: 14,
                       ),
                       unselectedLabelColor: context.onSurfaceText,
+                      // Quatro abas em telas estreitas: sem a folga lateral padrão os nomes cabem inteiros.
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 2),
                       tabs: [
                         Tab(text: 'Sobre'),
                         Tab(text: 'Avaliações'),
@@ -3987,6 +3996,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             : 'Com o tempo e a distância, o pace é calculado sozinho.',
       ),
     ),
+    // Respiro: a ajuda do pace não encosta no rótulo do campo seguinte.
+    const SizedBox(height: 10),
     TextField(
       controller: placement,
       keyboardType: TextInputType.number,
@@ -5348,8 +5359,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           const SizedBox(height: 8),
           const Text('Privado · não gera medalha, avaliação ou publicação.'),
           const SizedBox(height: 4),
-          const Text(
-            'Rascunho criado. Preencha o que quiser e toque em Salvar rascunho.',
+          Text(
+            upcoming
+                ? 'Rascunho criado. Preencha o que quiser e toque em Salvar rascunho.'
+                : 'Preencha o que quiser. Os dados são gravados ao concluir ou ao sair.',
+            key: const Key('draft-hint'),
           ),
           if (message != null)
             Padding(
@@ -5362,6 +5376,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             ),
           // Corrida já realizada: sem "Salvar rascunho"; o tempo, a colocação e o peito seguem junto ao concluir.
           // Corrida futura não se conclui ainda, então ali o rascunho precisa do botão para guardar.
+          // Respiro: o rótulo flutuante do primeiro campo não fica por cima do texto acima.
+          const SizedBox(height: 14),
           ...raceDataFields(saveLabel: upcoming ? 'Salvar rascunho' : null),
           const SizedBox(height: 12),
           if (upcoming && draft['state'] == 'draft')
