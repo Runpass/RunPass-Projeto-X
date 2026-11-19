@@ -194,6 +194,20 @@ void main() {
         photo.width,
         closeTo(card.width - 8, 1),
       ); // o Card tem 4 de margem de cada lado
+      // Título, texto e números (km, tempo, pace) ficam juntos, antes da foto.
+      final summary = tester.getRect(find.byKey(const Key('post-summary-p1')));
+      expect(
+        tester.getRect(find.byKey(const Key('post-race-p1'))).bottom,
+        lessThanOrEqualTo(summary.top),
+      );
+      expect(summary.bottom, lessThanOrEqualTo(photo.top));
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('post-summary-p1')),
+          matching: find.text('Distância'),
+        ),
+        findsOneWidget,
+      );
       // Em negrito e sem sublinhado: o link é só o nome da corrida.
       final title = tester.widget<Text>(
         find.descendant(

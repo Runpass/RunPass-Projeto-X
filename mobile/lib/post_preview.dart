@@ -98,6 +98,37 @@ Future<bool> confirmPostPreview(
                               ),
                             ),
                           ),
+                          // Mesma ordem do cartão do Início: texto, números da corrida e, depois, a foto.
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if ((data.text ?? '').trim().isNotEmpty)
+                                  Text(
+                                    data.text!.trim(),
+                                    key: const Key('post-preview-text'),
+                                  ),
+                                if (data.details.isNotEmpty) ...[
+                                  if ((data.text ?? '').trim().isNotEmpty)
+                                    const SizedBox(height: 8),
+                                  Text(
+                                    data.details,
+                                    key: const Key('post-preview-details'),
+                                    style: TextStyle(color: sheet.muted),
+                                  ),
+                                ],
+                                if (data.tagged.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Com ${data.tagged.map((u) => '@$u').join(', ')}',
+                                    key: const Key('post-preview-tagged'),
+                                    style: TextStyle(color: sheet.muted),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
                           AspectRatio(
                             aspectRatio: 16 / 10,
                             child: data.photo == null
@@ -128,35 +159,6 @@ Future<bool> confirmPostPreview(
                                           ),
                                         ),
                                   ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (data.details.isNotEmpty)
-                                  Text(
-                                    data.details,
-                                    key: const Key('post-preview-details'),
-                                    style: TextStyle(color: sheet.muted),
-                                  ),
-                                if ((data.text ?? '').trim().isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    data.text!.trim(),
-                                    key: const Key('post-preview-text'),
-                                  ),
-                                ],
-                                if (data.tagged.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Com ${data.tagged.map((u) => '@$u').join(', ')}',
-                                    key: const Key('post-preview-tagged'),
-                                    style: TextStyle(color: sheet.muted),
-                                  ),
-                                ],
-                              ],
-                            ),
                           ),
                         ],
                       ),
