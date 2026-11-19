@@ -641,6 +641,58 @@ void main() {
   );
 
   testWidgets(
+    'nova postagem: a lista usa cartão menor sem imagem e, escolhida a corrida, ficam só ela e os botões',
+    (tester) async {
+      tall(tester);
+      final (gateway, b) = await setup();
+      b.participations = [
+        for (final (id, edition) in [('c1', 'E1'), ('c2', 'E2')])
+          {
+            'id': id,
+            'editionId': edition,
+            'distanceId': '5k',
+            'state': 'completed',
+            'version': 1,
+            'publishToFeed': false,
+            'completedAt': '2026-10-01T10:00:00Z',
+          },
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NewPostScreen(
+            gateway: gateway,
+            photoSelector: (_) async => jpeg,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post-photo')));
+      await tester.pumpAndSettle();
+      // Lista: cartão menor, sem a imagem (nem a arte da corrida), só nesta tela.
+      expect(find.byKey(const Key('new-post-race-c1')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      expect(find.byKey(const Key('race-art')), findsNothing);
+      await tester.tap(find.byKey(const Key('new-post-race-c2')));
+      await tester.pumpAndSettle();
+      // Escolhida: só a corrida e os botões (sem busca, sem as outras corridas).
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c1')), findsNothing);
+      expect(find.byKey(const Key('new-post-search')), findsNothing);
+      expect(find.byKey(const Key('new-post-add-race')), findsNothing);
+      expect(find.byKey(const Key('new-post-race-chosen')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-tag')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-publish')), findsOneWidget);
+      // Trocar a corrida reabre a lista.
+      await tester.tap(find.byKey(const Key('new-post-change-race')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-post-race-c1')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-search')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-publish')), findsNothing);
+    },
+  );
+
+  testWidgets(
     'nova postagem: busca a corrida pelo nome, sem acento e em qualquer ordem',
     (tester) async {
       tall(tester);

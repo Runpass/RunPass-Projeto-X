@@ -272,11 +272,7 @@ class _PendingParticipationScreenState
             onPressed: uploadingPost ? null : pickPostPhoto,
             icon: const Icon(Icons.add_photo_alternate_outlined),
             label: Text(
-              uploadingPost
-                  ? 'Enviando foto...'
-                  : (postImageReference == null
-                        ? 'Escolher a foto da publicação'
-                        : 'Trocar a foto da publicação'),
+              uploadingPost ? 'Enviando foto...' : 'Incluir foto da publicação',
             ),
           ),
           if (postImageReference != null)
