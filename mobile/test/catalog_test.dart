@@ -1020,7 +1020,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Selecionar foto'));
+    // A lista é montada sob demanda: rola até o botão existir, em vez de supor que já está na árvore.
+    await tester.scrollUntilVisible(
+      find.text('Selecionar foto'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Selecionar foto'));
     await tester.pumpAndSettle();

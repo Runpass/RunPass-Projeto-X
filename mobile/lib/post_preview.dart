@@ -82,10 +82,20 @@ Future<bool> confirmPostPreview(
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
-                            subtitle: Text(
-                              data.username.isEmpty
-                                  ? 'concluiu ${data.raceName}'
-                                  : '@${data.username} · concluiu ${data.raceName}',
+                            subtitle: data.username.isEmpty
+                                ? null
+                                : Text('@${data.username}'),
+                          ),
+                          // Como no cartão do Início: o nome da corrida fica acima da foto.
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                            child: Text(
+                              data.raceName,
+                              key: const Key('post-preview-race'),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                              ),
                             ),
                           ),
                           AspectRatio(
@@ -124,13 +134,6 @@ Future<bool> confirmPostPreview(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  data.raceName,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 16,
-                                  ),
-                                ),
                                 if (data.details.isNotEmpty)
                                   Text(
                                     data.details,

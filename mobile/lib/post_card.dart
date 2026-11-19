@@ -945,7 +945,8 @@ class _PostCardState extends State<PostCard> {
                 ],
                 if (km != null ||
                     race.timeSeconds != null ||
-                    race.paceSecondsPerKm != null) ...[
+                    race.paceSecondsPerKm != null ||
+                    race.placement != null) ...[
                   const SizedBox(height: 14),
                   Row(
                     children: [
@@ -966,6 +967,12 @@ class _PostCardState extends State<PostCard> {
                           Icons.speed,
                           formatPace(race.paceSecondsPerKm!),
                           'Pace',
+                        ),
+                      if (race.placement != null)
+                        statItem(
+                          Icons.emoji_events_outlined,
+                          '${race.placement}º',
+                          'Colocação',
                         ),
                     ],
                   ),
