@@ -495,6 +495,14 @@ class DemoTransport {
       account['admitted'] = true;
       // So no GET /me do proprio titular (decisao 06/11/2026), nunca em perfil publico.
       (account['profile'] as Map?)?['birthDate'] = data['birthDate'];
+      // Como no servidor: menor de 18 anos entra com o perfil privado (pode mudar em Configurações).
+      final profile = account['profile'] as Map?;
+      if (profile != null &&
+          !profile.containsKey('isPrivate') &&
+          birth.isAfter(DateTime(now.year - 18, now.month, now.day))) {
+        profile['isPrivate'] = true;
+        profile['version'] = ((profile['version'] as int?) ?? 1) + 1;
+      }
       return const JsonReply(201, {'admitted': true});
     }
     if (uri.path == '/me/waitlist' && method == 'DELETE') {
