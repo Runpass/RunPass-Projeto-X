@@ -3,6 +3,7 @@ import 'dart:typed_data' show Uint8List;
 import 'package:flutter/material.dart';
 
 import 'friends.dart' show ProfileAvatar;
+import 'post_stats.dart';
 import 'runpass_theme.dart';
 
 /// O que aparece na prévia da publicação: o mesmo que vai para o Feed.
@@ -11,8 +12,8 @@ class PostPreviewData {
   final String username;
   final String raceName;
 
-  /// "10 km · 58:23", só o que a pessoa informou.
-  final String details;
+  /// Distância, tempo e pace como aparecem no feed ("10 km", "58:23", "5:50/km"); nulos aparecem como "--".
+  final String? distance, time, pace;
   final String? text;
 
   /// Usuários marcados (sem o @).
@@ -24,7 +25,9 @@ class PostPreviewData {
     required this.authorName,
     required this.username,
     required this.raceName,
-    this.details = '',
+    this.distance,
+    this.time,
+    this.pace,
     this.text,
     this.tagged = const [],
     this.photo,
@@ -109,15 +112,15 @@ Future<bool> confirmPostPreview(
                                     data.text!.trim(),
                                     key: const Key('post-preview-text'),
                                   ),
-                                if (data.details.isNotEmpty) ...[
-                                  if ((data.text ?? '').trim().isNotEmpty)
-                                    const SizedBox(height: 8),
-                                  Text(
-                                    data.details,
-                                    key: const Key('post-preview-details'),
-                                    style: TextStyle(color: sheet.muted),
-                                  ),
-                                ],
+                                if ((data.text ?? '').trim().isNotEmpty)
+                                  const SizedBox(height: 10),
+                                // Os três ícones aparecem sempre, como no feed.
+                                PostStats(
+                                  key: const Key('post-preview-stats'),
+                                  distance: data.distance,
+                                  time: data.time,
+                                  pace: data.pace,
+                                ),
                                 if (data.tagged.isNotEmpty) ...[
                                   const SizedBox(height: 8),
                                   Text(

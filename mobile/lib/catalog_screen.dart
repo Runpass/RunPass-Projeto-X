@@ -4407,7 +4407,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         authorName: (profile?['displayName'] as String?) ?? 'Você',
         username: (profile?['username'] as String?) ?? '',
         raceName: editionName ?? 'Sua corrida',
-        details: '',
         text: postText.text,
         tagged: [
           for (final person in tagged)
@@ -4509,10 +4508,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       authorName: (profile?['displayName'] as String?) ?? 'Você',
       username: (profile?['username'] as String?) ?? '',
       raceName: editionName ?? 'Sua corrida',
-      details: [
-        if (km != null) distanceLabel(km.toDouble()),
-        if (seconds is int && seconds > 0) formatDuration(seconds),
-      ].join(' · '),
+      distance: km == null ? null : formatKilometers(km.toDouble()),
+      time: seconds is int && seconds > 0 ? formatDuration(seconds) : null,
+      pace: paceFromTime(time.text, km?.toDouble()) == null
+          ? null
+          : formatPace(paceFromTime(time.text, km?.toDouble())!),
       text: postText.text,
       tagged: [
         for (final person in tagged)

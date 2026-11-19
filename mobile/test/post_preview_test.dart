@@ -83,7 +83,8 @@ void main() {
                   authorName: '[FICTICIA] Ana',
                   username: 'ana',
                   raceName: 'Corrida do Parque',
-                  details: '10 km · 58:23',
+                  distance: '10 km',
+                  time: '58:23',
                   text: 'Que corrida!',
                   tagged: ['beto', 'caio'],
                   photo: jpeg,
@@ -99,7 +100,13 @@ void main() {
       expect(find.text('Prévia da publicação'), findsOneWidget);
       expect(find.text('[FICTICIA] Ana'), findsOneWidget);
       expect(find.text('Corrida do Parque'), findsOneWidget);
-      expect(find.text('10 km · 58:23'), findsOneWidget);
+      // Os três ícones aparecem sempre; o que falta (o pace) fica com "--".
+      expect(find.text('10 km'), findsOneWidget);
+      expect(find.text('58:23'), findsOneWidget);
+      expect(find.text('--'), findsOneWidget);
+      expect(find.byIcon(Icons.directions_run), findsOneWidget);
+      expect(find.byIcon(Icons.timer_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.speed), findsOneWidget);
       expect(find.text('Que corrida!'), findsOneWidget);
       expect(find.text('Com @beto, @caio'), findsOneWidget);
       await tester.tap(find.byKey(const Key('post-preview-confirm')));

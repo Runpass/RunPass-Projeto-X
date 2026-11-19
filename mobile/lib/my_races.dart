@@ -85,7 +85,17 @@ class RaceRecord {
   }
 
   num? get timeSeconds => participation['timeSeconds'] as num?;
-  num? get paceSecondsPerKm => participation['paceSecondsPerKm'] as num?;
+
+  /// O guardado; se a inscrição ainda não tem pace mas tem tempo e distância, o calculado (tempo / km),
+  /// no intervalo que o servidor aceita (de 1:00 a 60:00 por km).
+  num? get paceSecondsPerKm {
+    final stored = participation['paceSecondsPerKm'] as num?;
+    if (stored != null) return stored;
+    final seconds = timeSeconds, km = kilometers;
+    if (seconds == null || seconds <= 0 || km == null || km <= 0) return null;
+    final perKm = (seconds / km).round();
+    return perKm >= 60 && perKm <= 3600 ? perKm : null;
+  }
 
   /// Colocação na prova; só vem quando a pessoa informou e o servidor a libera para quem está vendo.
   num? get placement => participation['placement'] as num?;
