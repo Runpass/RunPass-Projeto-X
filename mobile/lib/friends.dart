@@ -449,8 +449,8 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Não foi possível carregar as sugestões agora'
-                  '${suggestionsIssue == null ? '' : ' ($suggestionsIssue)'}.',
+                  // Sem o código interno do erro: ele não diz nada a quem usa o app.
+                  'Não foi possível carregar as sugestões agora.',
                 ),
                 TextButton(
                   key: const Key('friend-suggestions-retry'),

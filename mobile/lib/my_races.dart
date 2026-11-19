@@ -917,6 +917,55 @@ class Stars extends StatelessWidget {
 
 String decimalPt(num value) => value.toStringAsFixed(1).replaceAll('.', ',');
 
+/// Rascunhos de corridas que já aconteceram (a participação foi começada e não concluída), para a
+/// prateleira oferecer "Continuar". Os de corrida futura ficam na agenda e não entram aqui.
+/// Qualquer falha devolve lista vazia: é um atalho, não pode derrubar a prateleira.
+Future<List<RaceRecord>> loadMyDrafts(IdentityGateway gateway) async {
+  try {
+    final page = await gateway.request(
+      '/me/participations',
+      query: {'state': 'draft', 'limit': '20', 'expand': 'edition'},
+    );
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final drafts = <RaceRecord>[];
+    for (final item in (page['items'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      if (map['state'] != 'draft' || pendingDeletions.contains(map['id'])) {
+        continue;
+      }
+      final edition = map.remove('edition');
+      final record = RaceRecord(
+        map,
+        edition is Map ? Map<String, dynamic>.from(edition) : null,
+      );
+      final date = record.date;
+      if (date != null && date.compareTo(today) > 0) continue;
+      drafts.add(record);
+    }
+    // Servidor que não devolve a corrida junto: busca o que faltou, para o cartão mostrar o nome.
+    final missing = [
+      for (final d in drafts)
+        if (d.edition == null) '${d.participation['editionId']}',
+    ];
+    if (missing.isNotEmpty) {
+      final found = await loadEditions(gateway, missing);
+      return [
+        for (final d in drafts)
+          d.edition != null
+              ? d
+              : RaceRecord(
+                  d.participation,
+                  found[d.participation['editionId']],
+                ),
+      ];
+    }
+    return drafts;
+  } on Exception {
+    return const [];
+  }
+}
+
 /// Every completed participation of the signed-in runner, newest edition first.
 /// Edition lookups that fail leave the record without edition details.
 Future<List<RaceRecord>> loadMyRaces(IdentityGateway gateway) async {
@@ -1730,6 +1779,9 @@ class MedalCollectionScreen extends StatefulWidget {
 
   /// Carrega a foto da medalha provisória. Trocável nos testes (o link assinado não roda lá).
   final Future<List<int>?> Function(IdentityGateway, String) pendingPhotoLoader;
+
+  /// Nome da corrida que acabou de ser concluída: a prateleira abre com o aviso da conquista.
+  final String? justEarned;
   const MedalCollectionScreen({
     super.key,
     required this.gateway,
@@ -1739,6 +1791,7 @@ class MedalCollectionScreen extends StatefulWidget {
     this.medalTextReader = const PlatformMedalTextReader(),
     this.draftPhotoSelector,
     this.pendingPhotoLoader = loadRequestMedalPhoto,
+    this.justEarned,
   });
 
   @override
@@ -1750,9 +1803,114 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late Future<List<Map<String, dynamic>>> pendingMedals = loadPendingMedals(
     widget.gateway,
   );
+  late Future<List<RaceRecord>> drafts = loadMyDrafts(widget.gateway);
+  late bool showEarned = widget.justEarned != null;
   MedalGrouping grouping = _lastMedalGrouping;
   bool newestFirst = _lastMedalNewestFirst;
   bool _applying = false;
+
+  /// Aviso da conquista, no alto da prateleira, logo depois de concluir uma corrida.
+  Widget earnedBanner() => Container(
+    key: const Key('medal-earned-banner'),
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+    decoration: BoxDecoration(
+      color: runPassOrange.withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: runPassOrange.withValues(alpha: .5)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.emoji_events, color: runPassGold, size: 34),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Medalha conquistada!',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
+              Text('${widget.justEarned} entrou na sua coleção.'),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Fechar',
+          icon: const Icon(Icons.close, size: 20),
+          onPressed: () => setState(() => showEarned = false),
+        ),
+      ],
+    ),
+  );
+
+  /// Rascunhos de corridas já realizadas: um atalho para concluir o que ficou pela metade.
+  /// [done]: as medalhas já concluídas; corrida que já tem medalha não volta como rascunho.
+  Widget draftsStrip(List<RaceRecord> done) => FutureBuilder<List<RaceRecord>>(
+    future: drafts,
+    builder: (context, snapshot) {
+      final earned = {
+        for (final race in done) '${race.participation['editionId']}',
+      };
+      final list = [
+        for (final draft in snapshot.data ?? const <RaceRecord>[])
+          if (!earned.contains('${draft.participation['editionId']}')) draft,
+      ];
+      if (list.isEmpty) return const SizedBox.shrink();
+      return Column(
+        key: const Key('medal-drafts'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Para concluir',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+          ),
+          const SizedBox(height: 6),
+          for (final draft in list)
+            Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                key: Key('medal-draft-${draft.participation['id']}'),
+                leading: const Icon(Icons.edit_note, color: runPassOrange),
+                title: Text(
+                  draft.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: const Text('Rascunho · falta concluir'),
+                trailing: const Text(
+                  'Continuar',
+                  style: TextStyle(
+                    color: runPassOrange,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                onTap: () => continueDraft(draft),
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
+      );
+    },
+  );
+
+  Future<void> continueDraft(RaceRecord draft) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: draft.participation,
+          photoSelector: widget.draftPhotoSelector,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      drafts = loadMyDrafts(widget.gateway);
+      races = loadMyRaces(widget.gateway);
+    });
+  }
 
   @override
   void initState() {
@@ -2475,6 +2633,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (showEarned) earnedBanner(),
+              draftsStrip(data),
               if (data.isEmpty) ...[
                 if (pending.isNotEmpty) grid(const [], pending),
                 emptyShelf(),

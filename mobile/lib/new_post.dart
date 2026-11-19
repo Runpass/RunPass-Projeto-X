@@ -143,8 +143,8 @@ class _NewPostScreenState extends State<NewPostScreen> {
     if (race == null || reference == null || publishing) return;
     if (reference == race.participation['medalImageReference']) {
       setState(
-        () =>
-            message = 'Escolha uma foto diferente da medalha para a postagem.',
+        () => message =
+            'Escolha uma foto diferente da medalha para a publicação.',
       );
       return;
     }
@@ -172,7 +172,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Postagem publicada no feed.')),
+        const SnackBar(content: Text('Publicação feita no feed.')),
       );
       Navigator.of(context).pop(true);
     } on IdentityIssue catch (issue) {
@@ -193,7 +193,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Nova postagem')),
+    appBar: AppBar(title: const Text('Nova publicação')),
     body: FutureBuilder<List<RaceRecord>>(
       future: races,
       builder: (context, snapshot) {
@@ -400,7 +400,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
                 minLines: 1,
                 maxLines: 4,
                 decoration: const InputDecoration(
-                  labelText: 'Texto da postagem (opcional)',
+                  labelText: 'Texto da publicação (opcional)',
                 ),
               ),
               OutlinedButton.icon(
