@@ -19,6 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
+from .catalog import haversine_km
 from .participation import post_image_count
 from .profile_index import MIN_TOKEN, fold, profile_tokens, tokens
 from .service import IdentityService, Problem, stamp
@@ -187,25 +188,129 @@ class SocialService:
             raise Problem(422, "QUERY_TOO_SHORT")
         lead = max(seeds, key=len)
         rows = self._list("identity", "PIDX#" + lead[:MIN_TOKEN], lead, SEARCH_SCAN)
-        found, seen = [], set()
+        subjects = []
         for sk, _ in rows:
             subject = sk.split("#", 1)[1]
-            if subject in seen or subject == actor.subject:
-                continue
-            seen.add(subject)
-            profile = self._active_profile(self.store.get, subject)
-            if not profile:
-                continue
+            if subject != actor.subject and subject not in subjects:
+                subjects.append(subject)
+        found = []
+        for profile in self._profiles(subjects).values():
             have = profile_tokens(profile["username"], profile["displayName"])
             if all(any(t.startswith(w) for t in have) for w in words if w):
                 found.append(profile)
-        found.sort(key=lambda p: (fold(p["displayName"]), p["username"]))
-        return {"items": [self._card(p, actor.subject) for p in found[:limit]]}
+        # Amigos, amigos dos meus amigos e gente perto primeiro; depois por nome.
+        ctx = self._closeness(actor.subject)
+        found.sort(key=lambda p: (*self._affinity(p, ctx), fold(p["displayName"]), p["username"]))
+        return {"items": self._cards(found[:limit], actor.subject, ctx)}
+
+    # ---- leituras em lote e afinidade (busca e sugestoes) ---------------------------------
+
+    NEARBY_KM = 50
+
+    def _profiles(self, subjects):
+        """Perfis ativos de varios ids, lidos em paralelo (na ordem pedida)."""
+        keys = []
+        for subject in subjects:
+            keys += [
+                ("identity", "USER#" + subject, "ACCOUNT"),
+                ("identity", "USER#" + subject, "PROFILE"),
+            ]
+        got = self.store.batch_get(keys) if keys else {}
+        out = {}
+        for subject in subjects:
+            profile = self._active_profile(got.get, subject)
+            if profile:
+                out[subject] = profile
+        return out
+
+    def _cards(self, profiles, viewer, ctx=None):
+        """O mesmo que `_card` para varios perfis, com as relacoes lidas em paralelo. Com `ctx`, diz
+        quantos amigos em comum e se a pessoa e de perto (motivo da indicacao no app)."""
+        keys = []
+        for p in profiles:
+            keys += [
+                ("identity", "USER#" + p["id"], "FOLLOWER#" + viewer),
+                ("identity", "USER#" + viewer, "FRIEND#" + p["id"]),
+            ]
+        got = self.store.batch_get(keys) if keys else {}
+        cards = []
+        for p in profiles:
+            card = IdentityService.public_profile(p)
+            card["isPrivate"] = bool(p.get("isPrivate", False))
+            card["followState"] = self._follow_state(got.get, viewer, p["id"])
+            card["friendState"] = self._friend_state(got.get, viewer, p["id"])
+            if ctx is not None:
+                mutual = ctx["mutual"].get(p["id"], 0)
+                if mutual:
+                    card["mutualFriends"] = mutual
+                if self._distance_tier(p, ctx) == 0:
+                    card["nearby"] = True
+            cards.append(card)
+        return cards
+
+    def _closeness(self, me):
+        """Quem esta perto de mim na rede: meus amigos, os amigos deles (com quantos em comum) e quem
+        as pessoas que eu sigo seguem; e onde eu moro (do meu perfil)."""
+        friends = set(self._friend_ids(me))
+        following = self._relation_subjects(me, "FOLLOWING#", "active")
+        vias = sorted(friends)[:30]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            their_friends = list(pool.map(self._friend_ids, vias))
+            their_follows = list(
+                pool.map(
+                    lambda v: self._relation_subjects(v, "FOLLOWING#", "active"), following[:20]
+                )
+            )
+        mutual = {}
+        for ids in their_friends:
+            for subject in ids:
+                if subject != me:
+                    mutual[subject] = mutual.get(subject, 0) + 1
+        second = {s for ids in their_follows for s in ids[:20] if s != me}
+        return {
+            "me": self.store.get(("identity", "USER#" + me, "PROFILE")) or {},
+            "friends": friends,
+            "mutual": mutual,
+            "second": second,
+        }
+
+    def _distance_tier(self, profile, ctx):
+        """0 perto (ate NEARBY_KM ou mesma cidade), 1 mesmo estado, 2 longe ou sem local."""
+        me = ctx["me"]
+        coords = [me.get("latitude"), me.get("longitude")]
+        coords += [profile.get("latitude"), profile.get("longitude")]
+        if all(v is not None for v in coords):
+            km = haversine_km(*(float(v) for v in coords))
+            if km <= self.NEARBY_KM:
+                return 0
+        elif (
+            me.get("city")
+            and fold(me.get("city", "")) == fold(profile.get("city", ""))
+            and (me.get("state") == profile.get("state"))
+        ):
+            return 0
+        if me.get("state") and me.get("state") == profile.get("state"):
+            return 1
+        return 2
+
+    def _affinity(self, profile, ctx):
+        """Chave de ordem: amigo, amigo de amigo (mais em comum antes), quem meus seguidos seguem,
+        e dentro de cada grupo quem esta perto."""
+        subject = profile["id"]
+        if subject in ctx["friends"]:
+            group = 0
+        elif ctx["mutual"].get(subject):
+            group = 1
+        elif subject in ctx["second"]:
+            group = 2
+        else:
+            group = 3
+        return (group, -ctx["mutual"].get(subject, 0), self._distance_tier(profile, ctx))
 
     # O indice de busca e por prefixo de duas letras (`PIDX#xx`): para "listar" gente sem
     # consulta, descobrimos quais particoes existem (uma varredura paralela, guardada por
     # alguns minutos) e so entao lemos as que tem perfis. Adequado ao beta pequeno.
-    PARTITION_TTL = 600
+    PARTITION_TTL = 3600
 
     def _index_partitions(self):
         cached = getattr(self, "_pidx_cache", None)
@@ -224,57 +329,43 @@ class SocialService:
         self._pidx_cache = (now + self.PARTITION_TTL, found)
         return found
 
+    SUGGESTION_POOL = 60
+
     def suggestions(self, actor, limit=12):
-        """Sugestoes de gente para seguir, sem consulta: amigos de amigos e quem o usuario
-        segue seguem (2o grau), depois quem segue o usuario e, por fim, perfis do indice
-        de busca. Nunca inclui o proprio usuario nem quem ja e seguido ou amigo."""
+        """Sugestoes de gente para seguir, sem consulta. Primeiro amigos dos meus amigos (mais amigos
+        em comum antes), depois quem as pessoas que eu sigo seguem, e dentro de cada grupo quem mora
+        perto; completa com quem me segue e com perfis do indice de busca (perto antes). Nunca inclui
+        o proprio usuario nem quem ja e seguido ou amigo."""
         self.identity.authorize(actor, admitted=True)
         me = actor.subject
-        known = {me}
+        ctx = self._closeness(me)
+        known = {me} | ctx["friends"]
         known.update(self._relation_subjects(me, "FOLLOWING#", "active"))
         known.update(self._relation_subjects(me, "FOLLOWING#", "pending"))
-        known.update(self._friend_ids(me))
-        order = []
-        seen = set()
+        order, seen = [], set()
 
         def consider(subject):
             if subject not in known and subject not in seen:
                 seen.add(subject)
                 order.append(subject)
 
-        direct = sorted(
-            set(self._relation_subjects(me, "FOLLOWING#", "active")) | set(self._friend_ids(me))
-        )
-        for via in direct[:20]:
-            for subject in self._relation_subjects(via, "FOLLOWING#", "active")[:20]:
-                consider(subject)
-            for subject in self._friend_ids(via)[:20]:
-                consider(subject)
+        for subject in sorted(ctx["mutual"]):
+            consider(subject)
+        for subject in sorted(ctx["second"]):
+            consider(subject)
         for subject in self._relation_subjects(me, "FOLLOWER#", "active"):
             consider(subject)
-        items = []
-        for subject in order:
-            profile = self._active_profile(self.store.get, subject)
-            if profile:
-                items.append(profile)
-            if len(items) >= limit:
-                break
-        if len(items) < limit:
-            have = {p["id"] for p in items}
+        if len(order) < self.SUGGESTION_POOL:
             for prefix in self._index_partitions():
                 for sk, _ in self._list("identity", "PIDX#" + prefix, None, 20):
-                    subject = sk.split("#", 1)[1]
-                    if subject in known or subject in seen or subject in have:
-                        continue
-                    profile = self._active_profile(self.store.get, subject)
-                    if profile:
-                        have.add(subject)
-                        items.append(profile)
-                    if len(items) >= limit:
-                        break
-                if len(items) >= limit:
+                    consider(sk.split("#", 1)[1])
+                if len(order) >= self.SUGGESTION_POOL:
                     break
-        return {"items": [self._card(p, me) for p in items[:limit]]}
+        profiles = list(self._profiles(order[: self.SUGGESTION_POOL * 2]).values())
+        profiles.sort(
+            key=lambda p: (*self._affinity(p, ctx), fold(p["displayName"]), p["username"])
+        )
+        return {"items": self._cards(profiles[:limit], me, ctx)}
 
     def profile_view(self, actor, subject):
         self.identity.authorize(actor, admitted=True)
