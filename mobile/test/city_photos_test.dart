@@ -28,7 +28,7 @@ void main() {
   test(
     'toda foto tem licença livre sem crédito obrigatório e arquivo próprio',
     () {
-      expect(cityPhotoList.where((p) => !p.isIllustration), hasLength(6));
+      expect(cityPhotoList.where((p) => !p.isIllustration), hasLength(21));
       expect(cityPhotoList.where((p) => p.isIllustration), hasLength(10));
       for (final photo in cityPhotoList) {
         expect(
