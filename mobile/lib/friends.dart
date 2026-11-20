@@ -307,19 +307,32 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
   // Sugestoes: loading -> ok | failed (a busca segue valendo em qualquer caso).
   String suggestionsState = 'loading';
   String? suggestionsIssue;
+  // Busca enquanto digita: espera uma pausa curta e descarta respostas de buscas antigas.
+  Timer? typing;
+  int searchSeq = 0;
+
+  /// Últimas sugestões de cada sessão: reabrir a tela mostra na hora e atualiza por trás.
+  static final _suggestionCache = Expando<List<Map<String, dynamic>>>();
 
   @override
   void initState() {
     super.initState();
-    loadSuggestions();
+    final cached = _suggestionCache[widget.gateway];
+    if (cached != null) {
+      suggestions = cached;
+      suggestionsState = 'ok';
+    }
+    loadSuggestions(quiet: cached != null);
   }
 
   /// Sugestões já na tela, antes de qualquer busca.
-  Future<void> loadSuggestions() async {
-    setState(() {
-      suggestionsState = 'loading';
-      suggestionsIssue = null;
-    });
+  Future<void> loadSuggestions({bool quiet = false}) async {
+    if (!quiet) {
+      setState(() {
+        suggestionsState = 'loading';
+        suggestionsIssue = null;
+      });
+    }
     try {
       final page = await widget.gateway.request(
         '/profiles/suggestions',
@@ -330,7 +343,9 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
         suggestions = (page['items'] as List).cast<Map<String, dynamic>>();
         suggestionsState = 'ok';
       });
+      _suggestionCache[widget.gateway] = suggestions;
     } on IdentityIssue catch (issue) {
+      if (quiet) return; // já há sugestões na tela
       if (mounted) {
         setState(() {
           suggestionsState = 'failed';
@@ -338,6 +353,7 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
         });
       }
     } on Object catch (error) {
+      if (quiet) return;
       if (mounted) {
         setState(() {
           suggestionsState = 'failed';
@@ -349,11 +365,31 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
 
   @override
   void dispose() {
+    typing?.cancel();
     query.dispose();
     super.dispose();
   }
 
+  /// Digitando: com 2 letras ou mais busca sozinho depois de uma pausa curta; apagou tudo, volta às
+  /// sugestões.
+  void onTyping(String value) {
+    typing?.cancel();
+    final text = value.trim();
+    if (text.isEmpty) {
+      searchSeq++;
+      setState(() {
+        results = null;
+        error = null;
+        loading = false;
+      });
+      return;
+    }
+    if (text.length < 2) return;
+    typing = Timer(const Duration(milliseconds: 300), search);
+  }
+
   Future<void> search() async {
+    typing?.cancel();
     final text = query.text.trim();
     if (text.length < 2) {
       setState(
@@ -361,6 +397,7 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
       );
       return;
     }
+    final seq = ++searchSeq;
     setState(() {
       loading = true;
       error = null;
@@ -370,18 +407,32 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
         '/profiles',
         query: {'q': text, 'limit': '30'},
       );
-      if (!mounted) return;
+      if (!mounted || seq != searchSeq) return;
       setState(
         () => results = (page['items'] as List).cast<Map<String, dynamic>>(),
       );
     } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
+      if (mounted && seq == searchSeq) {
+        setState(() => error = friendsError(issue));
+      }
     } on Exception {
-      if (mounted)
+      if (mounted && seq == searchSeq) {
         setState(() => error = friendsError(const IdentityIssue('')));
+      }
     } finally {
-      if (mounted) setState(() => loading = false);
+      if (mounted && seq == searchSeq) setState(() => loading = false);
     }
+  }
+
+  /// Por que a pessoa aparece: amigos em comum e se é de perto.
+  static String? closeness(Map<String, dynamic> profile) {
+    final mutual = profile['mutualFriends'];
+    final parts = [
+      if (mutual is num && mutual > 0)
+        mutual == 1 ? '1 amigo em comum' : '${mutual.toInt()} amigos em comum',
+      if (profile['nearby'] == true) 'Perto de você',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   Future<void> open(Map<String, dynamic> profile) async {
@@ -407,6 +458,7 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
           key: const Key('friend-search-field'),
           controller: query,
           textInputAction: TextInputAction.search,
+          onChanged: onTyping,
           onSubmitted: (_) => search(),
           decoration: InputDecoration(
             labelText: 'Nome ou usuário',
@@ -421,7 +473,8 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
         ),
         const SizedBox(height: 12),
         if (error != null) Text(error!, key: const Key('friend-error')),
-        if (loading) const Center(child: CircularProgressIndicator()),
+        // Discreto: a lista anterior continua na tela enquanto a busca nova chega.
+        if (loading) const LinearProgressIndicator(minHeight: 2),
         if (!loading && results != null && results!.isEmpty)
           const Text(
             'Ninguém encontrado. Confira a escrita ou tente só o primeiro nome.',
@@ -481,13 +534,22 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
             in results ??
                 (loading ? const <Map<String, dynamic>>[] : suggestions))
           Card(
+            // Espaço entre um perfil e outro.
+            margin: const EdgeInsets.only(bottom: 10),
             child: ListTile(
               key: Key('friend-${profile['id']}'),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 6,
+              ),
               leading: ProfileAvatar(gateway: widget.gateway, profile: profile),
               title: Text(profile['displayName'] as String? ?? ''),
               subtitle: Text(
-                '@${profile['username']}'
-                '${profile['isPrivate'] == true ? ' · perfil privado' : ''}',
+                [
+                  '@${profile['username']}'
+                      '${profile['isPrivate'] == true ? ' · perfil privado' : ''}',
+                  ?closeness(profile),
+                ].join('\n'),
               ),
               trailing: profile['friendState'] == 'friends'
                   ? const Chip(label: Text('Amigo'))
