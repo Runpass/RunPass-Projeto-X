@@ -200,6 +200,8 @@ void main() {
           required time,
           required pace,
           photoBytes,
+          medalBytes,
+          medalFrame,
         }) async => Uint8List.fromList([1, 2, 3]);
         addTearDown(() {
           shareFunction = (params) => SharePlus.instance.share(params);
@@ -257,6 +259,8 @@ void main() {
         required time,
         required pace,
         photoBytes,
+        medalBytes,
+        medalFrame,
       }) async => Uint8List.fromList([1]);
       addTearDown(() {
         shareFunction = (params) => SharePlus.instance.share(params);
@@ -467,6 +471,46 @@ void main() {
           );
           expect(withoutPhoto.width, 1080);
           expect(withoutPhoto.height, 190 + 1350 + 380); // sem foto, quadro 4:5
+
+          // Com a foto da medalha (verde): a medalha, na moldura do modelo, aparece no canto de baixo da
+          // foto (vermelha), à direita; o canto de baixo à esquerda continua sendo a foto.
+          final greenRecorder = ui.PictureRecorder();
+          Canvas(greenRecorder, const Rect.fromLTWH(0, 0, 4, 4)).drawRect(
+            const Rect.fromLTWH(0, 0, 4, 4),
+            Paint()..color = const Color(0xff00ff00),
+          );
+          final greenImage = await greenRecorder.endRecording().toImage(4, 4);
+          final greenPng = (await greenImage.toByteData(
+            format: ui.ImageByteFormat.png,
+          ))!.buffer.asUint8List();
+          final withMedal = await decode(
+            await buildShareCard(
+              title: 'Corrida A',
+              distance: '10 km',
+              time: '58:23',
+              pace: '5:50/km',
+              photoBytes: photo,
+              medalBytes: greenPng,
+              medalFrame: medalFrameFor(null),
+            ),
+          );
+          expect(withMedal.height, 190 + 1080 + 380);
+          const medalArea = Rect.fromLTWH(540, 190 + 540, 540, 540);
+          bool green(Color c) => c.g > 0.9 && c.r < 0.1 && c.b < 0.1;
+          expect(
+            await count(withMedal, medalArea, green),
+            greaterThan(1000),
+            reason: 'a foto da medalha dentro do furo da moldura',
+          );
+          expect(
+            await count(
+              withMedal,
+              const Rect.fromLTWH(0, 190 + 540, 400, 540),
+              green,
+            ),
+            0,
+            reason: 'à esquerda é só a foto do post',
+          );
         });
       },
     );

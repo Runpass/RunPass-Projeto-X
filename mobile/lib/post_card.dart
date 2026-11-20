@@ -142,6 +142,8 @@ typedef ShareCardBuilder = Future<Uint8List> Function({
   required String time,
   required String pace,
   Uint8List? photoBytes,
+  Uint8List? medalBytes,
+  MedalFrame? medalFrame,
 });
 ShareCardBuilder shareCardBuilder = buildShareCard;
 
@@ -187,6 +189,8 @@ Future<Uint8List> buildShareCard({
   required String time,
   required String pace,
   Uint8List? photoBytes,
+  Uint8List? medalBytes,
+  MedalFrame? medalFrame,
 }) async {
   ui.Image? photo;
   if (photoBytes != null) {
@@ -262,6 +266,11 @@ Future<Uint8List> buildShareCard({
       family: Icons.emoji_events.fontFamily,
       maxLines: 1,
     );
+  }
+
+  // A medalha, com a moldura do modelo escolhido, no canto de baixo da foto.
+  if (medalBytes != null && medalFrame != null) {
+    await _drawMedal(canvas, photoRect, medalBytes, medalFrame);
   }
 
   // Rodapé: distância, tempo e pace, cada um com o seu ícone (sempre os três, com "--" quando falta o
@@ -599,11 +608,27 @@ class _PostCardState extends State<PostCard> {
     return XFile(file.path, mimeType: mimeType, name: name);
   }
 
+  /// Foto da MEDALHA (o recorte da prateleira, quando houver; senão a foto inteira), para desenhar com a
+  /// moldura na imagem de compartilhar. Sem acesso, sem rede ou demora: nulo (a imagem sai sem a medalha).
+  Future<Uint8List?> _fetchMedalBytes() async {
+    final id = entry.race.participation['id'];
+    if (id is! String) return null;
+    final kind = entry.race.medalDisplayImageReference != null
+        ? 'display-image'
+        : 'image';
+    return _fetchBytes('/participations/${Uri.encodeComponent(id)}/$kind');
+  }
+
   /// Bytes da foto da medalha pelo link assinado; sem foto, sem rede ou demora, retorna nulo
   /// (o cartao e montado sem foto nesse caso, nao se compartilha a foto crua sozinha).
   Future<Uint8List?> _fetchPhotoBytes() async {
     final endpoint = entry.photoEndpoint;
     if (endpoint == null) return null;
+    return _fetchBytes(endpoint);
+  }
+
+  /// Baixa uma imagem do app pelo link assinado; sem acesso, sem rede ou demora, nulo.
+  Future<Uint8List?> _fetchBytes(String endpoint) async {
     try {
       final reply = await widget.gateway
           .request(endpoint)
@@ -634,6 +659,7 @@ class _PostCardState extends State<PostCard> {
   Future<XFile> shareImage() async {
     soon('Preparando para compartilhar...');
     final photoBytes = await _fetchPhotoBytes();
+    final medalBytes = await _fetchMedalBytes();
     final card = await shareCardBuilder(
       title: entry.title,
       distance: entry.race.kilometers == null
@@ -646,6 +672,10 @@ class _PostCardState extends State<PostCard> {
           ? statEmpty
           : formatPace(entry.race.paceSecondsPerKm!),
       photoBytes: photoBytes,
+      medalBytes: medalBytes,
+      medalFrame: medalBytes == null
+          ? null
+          : medalFrameFor(entry.race.medalFrameId),
     );
     return _writeShareFile(card, 'image/png', 'runpass.png');
   }
@@ -1237,4 +1267,66 @@ class _PostPhotoCarouselState extends State<PostPhotoCarousel> {
       ],
     );
   }
+}
+
+/// Desenha a medalha (a foto da medalha dentro do furo e a moldura do modelo por cima) no canto inferior
+/// direito da foto. Sem conseguir abrir a foto ou a moldura, não desenha nada (a imagem sai sem a medalha).
+Future<void> _drawMedal(
+  Canvas canvas,
+  Rect photoRect,
+  Uint8List medalBytes,
+  MedalFrame frame,
+) async {
+  ui.Image? medal;
+  try {
+    final codec = await ui.instantiateImageCodec(medalBytes);
+    medal = (await codec.getNextFrame()).image;
+  } on Object {
+    return;
+  }
+  final art = await _loadAssetImage(frame.asset);
+  if (art == null) return;
+  final height = (photoRect.height * 0.42).clamp(220.0, 440.0);
+  final width = height * frame.aspectRatio;
+  const margin = 28.0;
+  final box = Rect.fromLTWH(
+    photoRect.right - width - margin,
+    photoRect.bottom - height - margin,
+    width,
+    height,
+  );
+  // Furo da moldura, nas coordenadas da caixa.
+  final Path hole;
+  if (frame.shape == MedalHoleShape.polygon) {
+    hole = medalHolePath(frame, box.size).shift(box.topLeft);
+  } else {
+    final holeW = frame.holeHalfWidthFrac * width * 2;
+    final holeH = frame.holeHalfHeightFrac * width * 2;
+    final left = box.left + frame.holeCenterXFrac * width - holeW / 2;
+    final top = box.top + frame.holeCenterYFrac * width - holeH / 2;
+    hole = medalHolePath(frame, Size(holeW, holeH)).shift(Offset(left, top));
+  }
+  // Sombra leve para a medalha se destacar da foto.
+  canvas.drawPath(
+    hole,
+    Paint()
+      ..color = const Color(0x66000000)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18),
+  );
+  canvas.save();
+  canvas.clipPath(hole);
+  final bounds = hole.getBounds();
+  canvas.drawImageRect(
+    medal,
+    _coverSrcRect(medal, bounds),
+    bounds,
+    Paint()..filterQuality = FilterQuality.high,
+  );
+  canvas.restore();
+  canvas.drawImageRect(
+    art,
+    Rect.fromLTWH(0, 0, art.width.toDouble(), art.height.toDouble()),
+    box,
+    Paint()..filterQuality = FilterQuality.high,
+  );
 }
