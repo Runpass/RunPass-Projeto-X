@@ -407,6 +407,18 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
+  /// Dois toques na foto curtem (como no Instagram): só curte, nunca descurte, e mostra um coração.
+  bool heartVisible = false;
+
+  Future<void> likeByDoubleTap() async {
+    if (entry.postId == null) return;
+    setState(() => heartVisible = true);
+    Future<void>.delayed(const Duration(milliseconds: 700), () {
+      if (mounted) setState(() => heartVisible = false);
+    });
+    if (!entry.liked) await toggleLike();
+  }
+
   Future<void> openComments() async {
     final id = entry.postId;
     if (id == null) {
@@ -917,30 +929,66 @@ class _PostCardState extends State<PostCard> {
           // faixas pretas e sem cortar.
           AspectRatio(
             aspectRatio: postPhotoFrameRatio(_postPhotoAspects[aspectKey]),
-            child: entry.photoCount > 1 && entry.race.hasPostImage
-                ? PostPhotoCarousel(
-                    key: Key('post-photo-${entry.postId}'),
-                    gateway: widget.gateway,
-                    entry: entry,
-                    onPage: (index) => shownPhoto = index,
-                    onAspect: (aspect) {
-                      if (_postPhotoAspects[aspectKey] == aspect) return;
-                      setState(() => _postPhotoAspects[aspectKey] = aspect);
-                    },
-                  )
-                : MedalPhoto(
-                    key: Key('post-photo-${entry.postId}'),
-                    gateway: widget.gateway,
-                    participationId: entry.race.participation['id'] as String?,
-                    endpoint: entry.extra ? entry.photoEndpoint : null,
-                    size: 72,
-                    usePostImage: entry.race.hasPostImage,
-                    fit: BoxFit.cover,
-                    onAspect: (aspect) {
-                      if (_postPhotoAspects[aspectKey] == aspect) return;
-                      setState(() => _postPhotoAspects[aspectKey] = aspect);
-                    },
+            child: GestureDetector(
+              key: Key('post-photo-double-tap-${entry.postId}'),
+              onDoubleTap: likeByDoubleTap,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  entry.photoCount > 1 && entry.race.hasPostImage
+                      ? PostPhotoCarousel(
+                          key: Key('post-photo-${entry.postId}'),
+                          gateway: widget.gateway,
+                          entry: entry,
+                          onPage: (index) => shownPhoto = index,
+                          onAspect: (aspect) {
+                            if (_postPhotoAspects[aspectKey] == aspect) return;
+                            setState(
+                              () => _postPhotoAspects[aspectKey] = aspect,
+                            );
+                          },
+                        )
+                      : MedalPhoto(
+                          key: Key('post-photo-${entry.postId}'),
+                          gateway: widget.gateway,
+                          participationId:
+                              entry.race.participation['id'] as String?,
+                          endpoint: entry.extra ? entry.photoEndpoint : null,
+                          size: 72,
+                          usePostImage: entry.race.hasPostImage,
+                          fit: BoxFit.cover,
+                          onAspect: (aspect) {
+                            if (_postPhotoAspects[aspectKey] == aspect) return;
+                            setState(
+                              () => _postPhotoAspects[aspectKey] = aspect,
+                            );
+                          },
+                        ),
+                  // Coração ao curtir com dois toques.
+                  IgnorePointer(
+                    child: Center(
+                      child: AnimatedOpacity(
+                        opacity: heartVisible ? 1 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: AnimatedScale(
+                          scale: heartVisible ? 1 : 0.6,
+                          duration: const Duration(milliseconds: 200),
+                          child: const Icon(
+                            Icons.favorite,
+                            key: Key('double-tap-heart'),
+                            color: Colors.white,
+                            size: 96,
+                            shadows: [
+                              Shadow(blurRadius: 12, color: Colors.black45),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
+                ],
+              ),
+            ),
           ),
           // Ações logo abaixo da foto e, depois, a legenda (prova, texto, números e último comentário).
           Padding(

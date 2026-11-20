@@ -130,4 +130,52 @@ void main() {
     });
     expect(asked, contains('2')); // a 3ª foto, a que está na tela
   });
+
+  testWidgets('dois toques na foto curtem (e não descurtem)', (tester) async {
+    tester.view.physicalSize = const Size(800, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final likes = <String>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path.endsWith('/like')) {
+        likes.add(method);
+        return const JsonReply(200, {});
+      }
+      return const JsonReply(404, {'code': 'IMAGE_NOT_AVAILABLE'});
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListView(
+            children: [PostCard(gateway: gateway, entry: entry(1))],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final photo = find.byKey(const Key('post-photo-double-tap-p1'));
+    await tester.tap(photo);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(photo);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(likes, ['PUT']);
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(
+              of: find.byKey(const Key('double-tap-heart')),
+              matching: find.byType(AnimatedOpacity),
+            ),
+          )
+          .opacity,
+      1,
+    );
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    // Já curtida: dois toques de novo não descurtem.
+    await tester.tap(photo);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(photo);
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    expect(likes, ['PUT']);
+  });
 }
