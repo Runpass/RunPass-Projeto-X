@@ -16,6 +16,7 @@ import 'friends.dart';
 import 'grid_columns.dart';
 import 'home_screen.dart';
 import 'edition_requests.dart';
+import 'extra_post_edit.dart' show PostPhotosEditor, askPostPhotoAction;
 import 'identity_gateway.dart';
 import 'location_picker.dart' show pickBrLocation;
 import 'medal_scan.dart' show chooseDistance, editionDistances;
@@ -4978,38 +4979,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
 
   /// Foto a mais já escolhida ou publicada: ajustar (o mesmo editor), trocar por outra ou remover.
   Future<void> editMorePostPhoto(int index, {required bool saveNow}) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheet) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              key: const Key('more-photo-adjust'),
-              leading: const Icon(Icons.crop_rounded),
-              title: const Text('Ajustar foto'),
-              onTap: () => Navigator.pop(sheet, 'adjust'),
-            ),
-            ListTile(
-              key: const Key('more-photo-replace'),
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Trocar foto'),
-              onTap: () => Navigator.pop(sheet, 'replace'),
-            ),
-            ListTile(
-              key: const Key('more-photo-remove'),
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text(
-                'Remover foto',
-                style: TextStyle(color: Colors.red),
-              ),
-              onTap: () => Navigator.pop(sheet, 'remove'),
-            ),
-          ],
-        ),
-      ),
-    );
+    final action = await askPostPhotoAction(context, canRemove: true);
     if (action == null || !mounted) return;
     if (action == 'remove') return removeMorePostPhoto(index, saveNow: saveNow);
     setState(() {
@@ -5076,6 +5046,56 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         'morePostImageReferences': morePostRefs,
       }, 'Foto removida da publicação.');
     }
+  }
+
+  /// Fotos da publicação na edição do post (o mesmo editor da publicação a mais): a capa e as fotos a
+  /// mais; tocar abre Ajustar, Trocar ou Remover; "Mais fotos" inclui outra.
+  Widget postPhotosEditor() {
+    final id = draft['id'] as String?;
+    final published = (draft['postImageCount'] as num?)?.toInt() ?? 1;
+    final hidden = published > 1 + morePostRefs.length
+        ? published - 1 - morePostRefs.length
+        : 0;
+    Widget extra(int i) => morePostBytes[i] != null
+        ? Image.memory(
+            Uint8List.fromList(morePostBytes[i]!),
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => ColoredBox(color: context.softFill),
+          )
+        : MedalPhoto(
+            gateway: widget.gateway,
+            participationId: id,
+            endpoint: id == null
+                ? null
+                : '/participations/${Uri.encodeComponent(id)}/post-image?index=${i + 1}',
+            size: 24,
+          );
+    return PostPhotosEditor(
+      busy: saving || uploadingPost || addingMorePhoto,
+      hiddenMore: hidden,
+      photos: [
+        if (hasPostPhoto)
+          MedalPhoto(
+            key: ValueKey('post-cover-$photoRevision'),
+            gateway: widget.gateway,
+            participationId: id,
+            usePostImage: true,
+            size: 24,
+          ),
+        if (hasPostPhoto && hidden == 0)
+          for (var i = 0; i < morePostRefs.length; i++) extra(i),
+      ],
+      onOpen: (index) async {
+        if (index > 0) return editMorePostPhoto(index - 1, saveNow: true);
+        final action = await askPostPhotoAction(context, canRemove: false);
+        if (!mounted || action == null) return;
+        if (action == 'adjust') return adjustPostPhoto();
+        return replacePostPhoto();
+      },
+      onAdd: hasPostPhoto
+          ? () => addMorePostPhoto(saveNow: true)
+          : replacePostPhoto,
+    );
   }
 
   /// Miniaturas das fotos a mais (com × para tirar) e o botão para incluir outra, até 5 no total.
@@ -5759,54 +5779,38 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         body: ListView(
           padding: const EdgeInsets.all(24),
           children: [
-            SizedBox(
-              height: 220,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: ColoredBox(
-                  color: context.softFill,
-                  child: MedalPhoto(
-                    key: ValueKey(
-                      'medal-photo-$photoRevision-${widget.fromPost}',
+            // Edição do post: as fotos ficam no editor de fotos (como na publicação a mais), sem a foto grande.
+            if (!widget.fromPost)
+              SizedBox(
+                height: 220,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: ColoredBox(
+                    color: context.softFill,
+                    child: MedalPhoto(
+                      key: ValueKey(
+                        'medal-photo-$photoRevision-${widget.fromPost}',
+                      ),
+                      gateway: widget.gateway,
+                      participationId: draft['id'] as String?,
+                      size: 72,
+                      // No topo está a foto da MEDALHA. A da publicação só aparece aqui quando a tela foi aberta a
+                      // partir de um post do Feed; a foto do post tem a seção própria mais abaixo.
+                      usePostImage: hasPostPhoto && widget.fromPost,
+                      fit: hasPostPhoto && widget.fromPost
+                          ? BoxFit.contain
+                          : BoxFit.cover,
                     ),
-                    gateway: widget.gateway,
-                    participationId: draft['id'] as String?,
-                    size: 72,
-                    // No topo está a foto da MEDALHA. A da publicação só aparece aqui quando a tela foi aberta a
-                    // partir de um post do Feed; a foto do post tem a seção própria mais abaixo.
-                    usePostImage: hasPostPhoto && widget.fromPost,
-                    fit: hasPostPhoto && widget.fromPost
-                        ? BoxFit.contain
-                        : BoxFit.cover,
                   ),
                 ),
               ),
-            ),
             // Nome da corrida logo abaixo da foto.
             if (editionName != null) raceNameLink(),
             const SizedBox(height: 8),
             if (widget.fromPost) ...[
-              // Editar a publicação: o tamanho da foto publicada (a medalha se edita em Medalhas).
-              if (hasPostPhoto) ...[
-                OutlinedButton.icon(
-                  key: const Key('adjust-post-photo'),
-                  onPressed: saving || uploadingPost ? null : adjustPostPhoto,
-                  icon: const Icon(Icons.crop_rounded),
-                  label: Text(
-                    uploadingPost
-                        ? 'Enviando foto...'
-                        : 'Ajustar o tamanho da foto da publicação',
-                  ),
-                ),
-                const SizedBox(height: 8),
-              ],
-              OutlinedButton.icon(
-                key: const Key('replace-post-photo'),
-                onPressed: saving || uploadingPost ? null : replacePostPhoto,
-                icon: const Icon(Icons.photo_library_outlined),
-                label: const Text('Incluir foto da publicação'),
-              ),
-              if (hasPostPhoto) morePostPhotos(saveNow: true),
+              // Editar a publicação: as fotos no mesmo editor de toda edição de post (a medalha se edita em
+              // Medalhas).
+              postPhotosEditor(),
               const SizedBox(height: 8),
               tagButton(saveNow: true),
               const SizedBox(height: 8),

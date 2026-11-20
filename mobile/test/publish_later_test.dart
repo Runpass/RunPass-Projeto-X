@@ -239,7 +239,7 @@ void main() {
       await tapKey(tester, const Key('edit-publication'));
       expect(log.calls, contains('GET /posts/m1'));
       expect(
-        find.byKey(const Key('replace-post-photo')),
+        find.byKey(const Key('post-photos-editor')),
         findsOneWidget,
       ); // a edição do post
       expect(find.byKey(const Key('post-text-edit')), findsOneWidget);
