@@ -6,6 +6,7 @@ import 'catalog_screen.dart' show catalogError;
 import 'identity_gateway.dart';
 import 'my_races.dart' show MedalPhoto, fetchImageBytes, imageContentType;
 import 'profile_photo.dart' show editPhoto, pickAndEditPhoto;
+import 'tagged_people.dart' show pickTaggedPeople;
 
 /// Editar uma publicação a mais (outra postagem da mesma corrida): as fotos (a capa e até 4 a mais: ajustar,
 /// trocar, remover e incluir) e o texto. Cada mudança de foto grava na hora; o texto, em "Salvar texto".
@@ -14,6 +15,17 @@ class ExtraPostEditScreen extends StatefulWidget {
   final String postId;
   final int version;
   final String? text;
+
+  /// Pessoas marcadas hoje na publicação (o feed já tem a lista).
+  final List<Map<String, dynamic>> tagged;
+
+  /// Escolhe as pessoas marcadas; nulo se desistir. Trocável nos testes.
+  final Future<List<Map<String, dynamic>>?> Function(
+    BuildContext context,
+    IdentityGateway gateway,
+    List<Map<String, dynamic>> selected,
+  )
+  tagPicker;
 
   /// Escolhe uma foto nova (trocar ou incluir); nulo se desistir. Trocável nos testes.
   final Future<List<int>?> Function(BuildContext context)? photoSelector;
@@ -31,6 +43,8 @@ class ExtraPostEditScreen extends StatefulWidget {
     required this.postId,
     required this.version,
     this.text,
+    this.tagged = const [],
+    this.tagPicker = pickTaggedPeople,
     this.photoSelector,
     this.photoLoader = loadExtraPostPhoto,
     this.photoEditor = _editPostPhoto,
@@ -163,6 +177,7 @@ class PostPhotosEditor extends StatelessWidget {
 class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
   late int version = widget.version;
   late final text = TextEditingController(text: widget.text ?? '');
+  late List<Map<String, dynamic>> tagged = [...widget.tagged];
 
   /// Fotos a mais (referências na ordem do carrossel) e os bytes das trocadas aqui, para a miniatura.
   List<String> more = [];
@@ -195,6 +210,12 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
           if (r is String) r,
       ];
       count = (post['postImageCount'] as num?)?.toInt() ?? 1 + refs.length;
+      if (post['tagged'] is List) {
+        tagged = [
+          for (final person in post['tagged'] as List)
+            if (person is Map) Map<String, dynamic>.from(person),
+        ];
+      }
       // Sem as referências (resposta antiga), só mostra quantas são: gravar a lista sem elas apagaria as fotos.
       refsKnown = post['morePostImageReferences'] is List || count <= 1;
       more = refs;
@@ -315,6 +336,18 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
     count = 1 + more.length;
   });
 
+  /// Marcar pessoas: o mesmo seletor da publicação da corrida; grava na hora.
+  Future<void> tagPeople() async {
+    final picked = await widget.tagPicker(context, widget.gateway, tagged);
+    if (picked == null || !mounted) return;
+    await run(() async {
+      await patch({
+        'taggedUserIds': [for (final p in picked) p['id']],
+      }, 'Marcações salvas.');
+      tagged = picked;
+    });
+  }
+
   Future<void> saveText() => run(() async {
     await patch({
       'postText': text.text.trim().isEmpty ? null : text.text.trim(),
@@ -357,7 +390,19 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
                 onOpen: openPhoto,
                 onAdd: addPhoto,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+              // Igual à edição da publicação da corrida.
+              OutlinedButton.icon(
+                key: const Key('tag-people'),
+                onPressed: busy ? null : tagPeople,
+                icon: const Icon(Icons.local_offer_outlined),
+                label: Text(
+                  tagged.isEmpty
+                      ? 'Marcar pessoas'
+                      : 'Marcados: ${tagged.map((p) => '@${p['username']}').join(', ')}',
+                ),
+              ),
+              const SizedBox(height: 16),
               TextField(
                 key: const Key('extra-post-text'),
                 controller: text,

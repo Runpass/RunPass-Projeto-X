@@ -450,6 +450,7 @@ class _PostCardState extends State<PostCard> {
           postId: entry.postId!,
           version: entry.version ?? 1,
           text: entry.comment,
+          tagged: entry.tagged,
         ),
       ),
     );
