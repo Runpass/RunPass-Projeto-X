@@ -155,6 +155,7 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
     'Sua conta ainda não foi liberada para consultar as corridas.',
   'INVALID_CURSOR' => 'A busca ficou aberta por muito tempo e expirou. Toque em Buscar para começar de novo.',
   'POST_IMAGE_DUPLICATE' => 'Esta foto já está na publicação. Escolha outra.',
+  'INVALID_VERSION' => 'A corrida acabou de ser atualizada. Tente de novo.',
   'POST_IMAGE_MUST_DIFFER' =>
     'Escolha uma foto diferente da medalha para a publicação.',
   'INVALID_INPUT' || 'INVALID_FILTERS' => 'Algum campo está inválido (data, distância ou texto fora do limite). Confira os filtros e tente de novo.',

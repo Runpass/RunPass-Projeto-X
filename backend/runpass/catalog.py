@@ -553,7 +553,7 @@ class CatalogService:
             try:
                 return CatalogImporter(self, allow_system=True).put(
                     payload,
-                    expected_version=body["version"],
+                    expected_version=int(body["version"]),
                     origin="https://corredor.runpass.invalid/distancia",
                     actor=actor_runner,
                 )
