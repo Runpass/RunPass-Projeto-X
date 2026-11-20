@@ -143,7 +143,7 @@ Future<void> pickFilterLocation(WidgetTester tester) async {
 
 /// O nome é o único campo obrigatório do formulário de filtros.
 Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
-  final field = find.widgetWithText(TextFormField, 'Nome da corrida');
+  final field = find.widgetWithText(TextFormField, 'Busca corrida');
   await reveal(tester, field, backwards: true);
   await tester.enterText(field, name);
 }
@@ -2088,8 +2088,9 @@ void main() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      double top(String text) =>
-          tester.getTopLeft(find.textContaining(text)).dy;
+      double top(String text) => tester
+          .getTopLeft(find.textContaining(text))
+          .dx; // mesma cidade: a ordem é da esquerda para a direita na faixa
       expect(top('Corrida A') < top('Corrida B'), isTrue);
       expect(top('Corrida B') < top('Corrida C'), isTrue);
       expect(find.byKey(const Key('catalog-sort')), findsNothing);
@@ -2322,7 +2323,7 @@ void priorityOrderTests() {
       );
       await tester.pumpAndSettle();
       double top(String id) =>
-          tester.getTopLeft(find.byKey(Key('quick-ran-E$id'))).dy;
+          tester.getTopLeft(find.byKey(Key('quick-ran-E$id'))).dx;
       List<String> order() =>
           (['A', 'B', 'C', 'D', 'E', 'F']
             ..sort((a, b) => top(a).compareTo(top(b))));
@@ -2355,9 +2356,56 @@ void defaultOrderTests() {
     await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
     expect(limits.first, '20');
-    double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
+    double top(String text) => tester.getTopLeft(find.textContaining(text)).dx;
     expect(top('Corrida A') < top('Corrida B'), isTrue);
   });
+
+  testWidgets(
+    'lista em faixas por cidade: rola na horizontal dentro da cidade, na vertical entre cidades',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              {
+                ...entry('A'),
+                'id': 'EA',
+                'date': '2026-12-01',
+                'city': 'Santos',
+              },
+              {...entry('B'), 'id': 'EB', 'date': '2026-12-02'},
+              {...entry('C'), 'id': 'EC', 'date': '2026-12-03'},
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      // São Paulo (2 corridas) vem antes de Santos (1); cada cidade é uma faixa com título e contagem.
+      final sp = find.byKey(const Key('catalog-city-São Paulo, SP'));
+      final santos = find.byKey(const Key('catalog-city-Santos, SP'));
+      expect(sp, findsOneWidget);
+      expect(santos, findsOneWidget);
+      expect(tester.getTopLeft(sp).dy < tester.getTopLeft(santos).dy, isTrue);
+      expect(find.text('2 corridas'), findsOneWidget);
+      expect(find.text('1 corrida'), findsOneWidget);
+      // Na mesma cidade, lado a lado (mesma altura), da data mais próxima para a mais distante.
+      final b = tester.getTopLeft(find.text('Corrida B'));
+      final c = tester.getTopLeft(find.text('Corrida C'));
+      expect(b.dy, c.dy);
+      expect(b.dx < c.dx, isTrue);
+      final row = tester.widget<SingleChildScrollView>(
+        find.byKey(const Key('catalog-row-São Paulo, SP')),
+      );
+      expect(row.scrollDirection, Axis.horizontal);
+    },
+  );
 
   testWidgets(
     'cartão da lista: ícone do link da prova só quando há link https',
