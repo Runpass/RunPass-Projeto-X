@@ -622,8 +622,13 @@ class _PostCardState extends State<PostCard> {
 
   /// Bytes da foto da medalha pelo link assinado; sem foto, sem rede ou demora, retorna nulo
   /// (o cartao e montado sem foto nesse caso, nao se compartilha a foto crua sozinha).
+  /// Foto do carrossel que está na tela (0 é a capa): é a que vai na imagem de compartilhar.
+  int shownPhoto = 0;
+
   Future<Uint8List?> _fetchPhotoBytes() async {
-    final endpoint = entry.photoEndpoint;
+    final endpoint = entry.photoCount > 1 && entry.race.hasPostImage
+        ? entry.photoEndpointAt(shownPhoto.clamp(0, entry.photoCount - 1))
+        : entry.photoEndpoint;
     if (endpoint == null) return null;
     return _fetchBytes(endpoint);
   }
@@ -631,8 +636,13 @@ class _PostCardState extends State<PostCard> {
   /// Baixa uma imagem do app pelo link assinado; sem acesso, sem rede ou demora, nulo.
   Future<Uint8List?> _fetchBytes(String endpoint) async {
     try {
+      // O endereço pode trazer `?index=N` (a foto N de uma publicação com várias).
+      final parts = Uri.parse(endpoint);
       final reply = await widget.gateway
-          .request(endpoint)
+          .request(
+            parts.path,
+            query: parts.queryParameters.isEmpty ? null : parts.queryParameters,
+          )
           .timeout(const Duration(seconds: 6));
       final url = Uri.tryParse(reply['url'] as String? ?? '');
       if (url == null || url.scheme != 'https') return null;
@@ -912,6 +922,7 @@ class _PostCardState extends State<PostCard> {
                     key: Key('post-photo-${entry.postId}'),
                     gateway: widget.gateway,
                     entry: entry,
+                    onPage: (index) => shownPhoto = index,
                     onAspect: (aspect) {
                       if (_postPhotoAspects[aspectKey] == aspect) return;
                       setState(() => _postPhotoAspects[aspectKey] = aspect);
@@ -1188,11 +1199,15 @@ class PostPhotoCarousel extends StatefulWidget {
   final IdentityGateway gateway;
   final FeedEntry entry;
   final ValueChanged<double>? onAspect;
+
+  /// Foto que está na tela (0 é a capa), para compartilhar a que a pessoa está vendo.
+  final ValueChanged<int>? onPage;
   const PostPhotoCarousel({
     super.key,
     required this.gateway,
     required this.entry,
     this.onAspect,
+    this.onPage,
   });
 
   @override
@@ -1212,7 +1227,10 @@ class _PostPhotoCarouselState extends State<PostPhotoCarousel> {
         PageView.builder(
           key: const Key('post-photo-pages'),
           itemCount: count,
-          onPageChanged: (index) => setState(() => page = index),
+          onPageChanged: (index) {
+            setState(() => page = index);
+            widget.onPage?.call(index);
+          },
           itemBuilder: (context, index) => MedalPhoto(
             key: Key('post-photo-page-$index'),
             gateway: widget.gateway,

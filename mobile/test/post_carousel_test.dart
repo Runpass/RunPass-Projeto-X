@@ -86,4 +86,48 @@ void main() {
     expect(find.byType(PostPhotoCarousel), findsNothing);
     expect(find.byType(MedalPhoto), findsWidgets);
   });
+
+  testWidgets('compartilhar leva a foto do carrossel que está na tela', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final asked = <String>[];
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path.endsWith('/post-image')) {
+        asked.add(uri.queryParameters['index'] ?? '0');
+      }
+      return const JsonReply(404, {'code': 'IMAGE_NOT_AVAILABLE'});
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListView(
+            children: [PostCard(gateway: gateway, entry: entry(3))],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 2; i++) {
+      await tester.drag(
+        find.byKey(const Key('post-photo-pages')),
+        const Offset(-700, 0),
+      );
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('3/3'), findsOneWidget);
+    final state = tester.state(find.byType(PostCard)) as dynamic;
+    expect(state.shownPhoto, 2);
+    asked.clear();
+    await tester.runAsync(() async {
+      try {
+        await state.shareImage();
+      } on Object {
+        // Sem a pasta temporária no teste, a gravação do arquivo falha; a foto já foi pedida antes.
+      }
+    });
+    expect(asked, contains('2')); // a 3ª foto, a que está na tela
+  });
 }
