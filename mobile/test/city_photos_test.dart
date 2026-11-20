@@ -270,7 +270,7 @@ void main() {
   testWidgets('créditos das fotos listam autor e licença de cada cidade', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(800, 9000);
+    tester.view.physicalSize = const Size(800, 20000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(const MaterialApp(home: PhotoCreditsScreen()));
