@@ -302,6 +302,10 @@ class EditionCompactCard extends StatelessWidget {
   /// Sem a imagem e menor: só para a escolha da corrida na nova publicação (nas outras listas a imagem
   /// ocupa a largura inteira do cartão).
   final bool showImage;
+
+  /// Mesmo tamanho para todos os cartões de uma faixa: o nome reserva sempre duas linhas e o cartão ocupa a
+  /// altura que receber (a faixa dá a altura do mais alto).
+  final bool uniform;
   const EditionCompactCard({
     super.key,
     required this.gateway,
@@ -312,6 +316,7 @@ class EditionCompactCard extends StatelessWidget {
     this.now,
     this.trailing,
     this.showImage = true,
+    this.uniform = false,
   });
 
   @override
@@ -327,7 +332,7 @@ class EditionCompactCard extends StatelessWidget {
     return Card(
       key: Key('compact-card-${edition['id']}'),
       clipBehavior: Clip.antiAlias,
-      margin: EdgeInsets.only(bottom: showImage ? 10 : 6),
+      margin: EdgeInsets.only(bottom: uniform ? 0 : (showImage ? 10 : 6)),
       child: InkWell(
         onTap: onTap,
         child: Column(
@@ -392,15 +397,24 @@ class EditionCompactCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 2),
                         ],
-                        Text(
-                          edition['name'] as String? ?? 'Corrida',
-                          maxLines: showImage ? 2 : 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: showImage ? 16 : 14.5,
-                            height: 1.2,
-                            color: archived ? context.archivedText : null,
+                        SizedBox(
+                          // Duas linhas sempre reservadas: nome curto ou longo, o cartão fica igual.
+                          height: uniform
+                              ? MediaQuery.textScalerOf(context).scale(16) *
+                                        1.2 *
+                                        2 +
+                                    1
+                              : null,
+                          child: Text(
+                            edition['name'] as String? ?? 'Corrida',
+                            maxLines: showImage ? 2 : 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: showImage ? 16 : 14.5,
+                              height: 1.2,
+                              color: archived ? context.archivedText : null,
+                            ),
                           ),
                         ),
                         if (!showImage) ...[

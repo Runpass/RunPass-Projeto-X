@@ -783,6 +783,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
         );
       });
     final width = (MediaQuery.sizeOf(context).width * .82).clamp(240.0, 360.0);
+    // Fotos sem repetir na tela, na ordem em que as corridas aparecem.
+    chooseDistinctCovers([for (final label in order) ...groups[label]!]);
     return [
       for (final label in order) ...[
         Padding(
@@ -815,15 +817,21 @@ class _CatalogScreenState extends State<CatalogScreen> {
           scrollDirection: Axis.horizontal,
           // Sai da margem da lista para a faixa encostar nas bordas da tela ao rolar.
           clipBehavior: Clip.none,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final edition in groups[label]!)
-                Padding(
-                  padding: const EdgeInsets.only(right: 10),
-                  child: SizedBox(width: width, child: editionCard(edition)),
-                ),
-            ],
+          // Todos os cartões da faixa com a mesma altura (a do mais alto).
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final edition in groups[label]!)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: SizedBox(
+                      width: width,
+                      child: editionCard(edition, uniform: true),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -931,9 +939,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 
   /// Cartão compacto: miniatura, quando e onde, nome, distâncias e as ações com rótulo.
-  Widget editionCard(Map<String, dynamic> edition) {
+  Widget editionCard(Map<String, dynamic> edition, {bool uniform = false}) {
     final score = scoreOf(edition);
     return EditionCompactCard(
+      uniform: uniform,
       gateway: widget.gateway,
       edition: edition,
       rating: score == null

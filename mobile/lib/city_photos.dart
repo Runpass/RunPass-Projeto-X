@@ -597,29 +597,73 @@ final allCoverPhotos = <CityPhoto>[
   _genericNight,
 ];
 
-/// A imagem da capa da corrida, sempre presente (regra: nenhuma corrida sem imagem).
-/// Ordem: corrida noturna ganha foto noturna (da cidade, ou a genérica da noite); na capital, o ponto pelo
-/// local ou nome da prova, ou uma das fotos da capital; fora dela, a foto da cidade; sem foto, a capa
-/// genérica do tipo (rua ou trilha).
-CityPhoto coverPhotoFor(Map<String, dynamic> edition) {
+/// Fotos da capital usadas quando a corrida não tem local conhecido (ou o ponto dela já apareceu na lista).
+const _spOthers = <CityPhoto>[
+  _spVillaLobos,
+  _spParqueDoPovo,
+  _spPacaembu,
+  _spMorumbi,
+  _spCampoDeMarte,
+];
+
+/// Imagens possíveis para a corrida, da mais adequada para a menos (a primeira é a capa padrão).
+/// Corrida noturna: foto noturna da cidade, ou a genérica da noite. Capital: o ponto pelo local ou nome da
+/// prova, depois as fotos da capital (numa ordem própria de cada corrida). Fora dela: a foto da cidade e as
+/// genéricas de corrida (do tipo da prova primeiro).
+List<CityPhoto> coverCandidatesFor(Map<String, dynamic> edition) {
   final kind = raceKind(edition['name'] as String?);
   final state = '${edition['state'] ?? ''}'.trim().toUpperCase();
   final city = foldName('${edition['city'] ?? ''}'.trim());
   final inSp = state == 'SP';
   if (kind == RaceKind.noturna) {
-    return (inSp ? _nightByCity[city] : null) ?? _genericNight;
+    return [?(inSp ? _nightByCity[city] : null), _genericNight];
   }
   if (inSp && city == 'sao paulo') {
     final text = foldName('${edition['venue'] ?? ''} ${edition['name'] ?? ''}');
-    for (final (keys, photo) in spLandmarks) {
-      if (keys.any(text.contains)) return photo;
-    }
     final id = '${edition['id'] ?? edition['name'] ?? ''}';
     final seed = id.codeUnits.fold<int>(7, (h, c) => (h * 31 + c) & 0x7fffffff);
-    return spDefaultPhotos[seed % spDefaultPhotos.length];
+    final pool = [...spDefaultPhotos, ..._spOthers];
+    final start = seed % spDefaultPhotos.length;
+    return {
+      for (final (keys, photo) in spLandmarks)
+        if (keys.any(text.contains)) photo,
+      for (var k = 0; k < pool.length; k++) pool[(start + k) % pool.length],
+    }.toList();
   }
-  return cityPhotoFor(edition) ??
-      (kind == RaceKind.trilha ? _genericTrail : _genericStreet);
+  return [
+    ?cityPhotoFor(edition),
+    if (kind == RaceKind.trilha) _genericTrail,
+    _genericStreet,
+  ];
+}
+
+/// Capa escolhida para cada corrida numa lista (corrida -> foto), para a mesma corrida mostrar a mesma foto
+/// na lista e na tela dela.
+final coverChoices = <String, CityPhoto>{};
+
+/// A imagem da capa da corrida, sempre presente (regra: nenhuma corrida sem imagem): a escolhida pela lista,
+/// quando houver, ou a mais adequada.
+CityPhoto coverPhotoFor(Map<String, dynamic> edition) {
+  final id = edition['id'];
+  return (id is String ? coverChoices[id] : null) ??
+      coverCandidatesFor(edition).first;
+}
+
+/// Escolhe as capas de uma lista na ordem em que aparecem, sem repetir foto enquanto houver outra opção
+/// adequada (corridas da mesma cidade fora da capital podem repetir: há uma foto por cidade).
+void chooseDistinctCovers(Iterable<Map<String, dynamic>> editions) {
+  final used = <String>{};
+  for (final edition in editions) {
+    final id = edition['id'];
+    if (id is! String) continue;
+    final options = coverCandidatesFor(edition);
+    final pick = options.firstWhere(
+      (p) => !used.contains(p.asset),
+      orElse: () => options.first,
+    );
+    used.add(pick.asset);
+    coverChoices[id] = pick;
+  }
 }
 
 /// Cidade conquistada no passaporte: miniatura (a foto de cartão postal da cidade, ou uma arte com a

@@ -2377,7 +2377,12 @@ void defaultOrderTests() {
                 'city': 'Santos',
               },
               {...entry('B'), 'id': 'EB', 'date': '2026-12-02'},
-              {...entry('C'), 'id': 'EC', 'date': '2026-12-03'},
+              {
+                ...entry('C'),
+                'id': 'EC',
+                'date': '2026-12-03',
+                'name': 'Corrida C com um nome bem comprido que ocupa duas linhas no cartão',
+              },
             ],
           });
         }
@@ -2397,13 +2402,18 @@ void defaultOrderTests() {
       expect(find.text('1 corrida'), findsOneWidget);
       // Na mesma cidade, lado a lado (mesma altura), da data mais próxima para a mais distante.
       final b = tester.getTopLeft(find.text('Corrida B'));
-      final c = tester.getTopLeft(find.text('Corrida C'));
+      final c = tester.getTopLeft(find.textContaining('Corrida C'));
       expect(b.dy, c.dy);
       expect(b.dx < c.dx, isTrue);
       final row = tester.widget<SingleChildScrollView>(
         find.byKey(const Key('catalog-row-São Paulo, SP')),
       );
       expect(row.scrollDirection, Axis.horizontal);
+      // Mesmo tamanho: nome curto ao lado de nome longo, os cartões ficam com a mesma altura.
+      expect(
+        tester.getSize(find.byKey(const Key('compact-card-EB'))),
+        tester.getSize(find.byKey(const Key('compact-card-EC'))),
+      );
     },
   );
 
