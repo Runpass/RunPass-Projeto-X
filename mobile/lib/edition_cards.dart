@@ -533,7 +533,8 @@ class PlanRow extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: SizedBox(
-          height: 92,
+          // Cabe nome em duas linhas, a data e o local (antes, com 92, o texto estourava uns 6 px).
+          height: 104,
           child: Row(
             children: [
               SizedBox(

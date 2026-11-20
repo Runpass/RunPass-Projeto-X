@@ -286,7 +286,8 @@ class PhotoCreditsScreen extends StatelessWidget {
       children: [
         Text(
           'Quando uma corrida não tem banner autorizado, o cartão mostra uma foto da cidade. '
-          'Estas fotos têm licença livre (CC0 ou domínio público), da Wikimedia Commons.',
+          'As fotos têm licença livre (CC0 ou domínio público), da Wikimedia Commons. '
+          'Onde não há foto livre, usamos uma ilustração criada por IA, marcada como tal.',
           style: TextStyle(color: context.muted, fontSize: 13),
         ),
         const SizedBox(height: 12),
@@ -307,11 +308,17 @@ class PhotoCreditsScreen extends StatelessWidget {
               ),
               title: Text(photo.city),
               subtitle: Text(
-                '${photo.title}\nFoto: ${photo.author} · ${photo.license}',
+                photo.isIllustration
+                    ? '${photo.title}\n${photo.license}'
+                    : '${photo.title}\nFoto: ${photo.author} · ${photo.license}',
               ),
               isThreeLine: true,
-              trailing: const Icon(Icons.open_in_new, size: 18),
-              onTap: () => linkOpener(Uri.parse(photo.sourceUrl)),
+              trailing: photo.isIllustration
+                  ? null
+                  : const Icon(Icons.open_in_new, size: 18),
+              onTap: photo.isIllustration
+                  ? null
+                  : () => linkOpener(Uri.parse(photo.sourceUrl)),
             ),
           ),
       ],

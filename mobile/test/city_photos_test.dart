@@ -18,21 +18,30 @@ void main() {
     // Outro estado, cidade sem foto ou sem cidade: sem foto.
     expect(cityPhotoFor({'city': 'São Paulo', 'state': 'RJ'}), isNull);
     expect(cityPhotoFor({'city': 'Campinas', 'state': 'SP'}), isNull);
+    expect(
+      cityPhotoFor({'city': 'Bertioga', 'state': 'SP'})?.isIllustration,
+      isTrue,
+    );
     expect(cityPhotoFor({'state': 'SP'}), isNull);
   });
 
   test(
     'toda foto tem licença livre sem crédito obrigatório e arquivo próprio',
     () {
-      expect(cityPhotoList, hasLength(6));
+      expect(cityPhotoList.where((p) => !p.isIllustration), hasLength(6));
+      expect(cityPhotoList.where((p) => p.isIllustration), hasLength(10));
       for (final photo in cityPhotoList) {
         expect(
-          photo.license == 'CC0 1.0' || photo.license == 'Domínio público',
+          photo.isIllustration ||
+              photo.license == 'CC0 1.0' ||
+              photo.license == 'Domínio público',
           isTrue,
           reason: photo.city,
         );
         expect(photo.author, isNotEmpty);
-        expect(photo.sourceUrl, startsWith('https://commons.wikimedia.org/'));
+        if (!photo.isIllustration) {
+          expect(photo.sourceUrl, startsWith('https://commons.wikimedia.org/'));
+        }
         expect(photo.asset, startsWith('assets/cidades/'));
       }
     },
@@ -106,7 +115,14 @@ void main() {
       final tile = find.byKey(Key('photo-credit-${photo.city}'));
       expect(tile, findsOneWidget);
       expect(
-        find.textContaining('Foto: ${photo.author} · ${photo.license}'),
+        find.descendant(
+          of: tile,
+          matching: find.textContaining(
+            photo.isIllustration
+                ? photo.license
+                : 'Foto: ${photo.author} · ${photo.license}',
+          ),
+        ),
         findsOneWidget,
         reason: photo.city,
       );

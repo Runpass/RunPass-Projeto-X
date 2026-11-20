@@ -128,4 +128,39 @@ void main() {
       expect(find.text('SAN'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'linha de "Quero correr": nome em duas linhas, data e local cabem sem estourar',
+    (tester) async {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final gateway = await signed(
+        (uri, method, headers, body) async => const JsonReply(200, {}),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PlanRow(
+              gateway: gateway,
+              edition: {
+                ...entry('A'),
+                'id': 'EA',
+                'name': 'Circuito das Estações de Corrida de Rua - Etapa Outono 2027',
+                'date': '2027-03-14',
+                'city': 'São Bernardo do Campo',
+                'state': 'SP',
+              },
+              trailing: const Icon(Icons.favorite),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      // Sem "RenderFlex overflowed": o texto cabe na linha.
+      expect(tester.takeException(), isNull);
+      expect(find.text('14 de março de 2027'), findsOneWidget);
+      expect(find.text('São Bernardo do Campo, SP'), findsOneWidget);
+    },
+  );
 }

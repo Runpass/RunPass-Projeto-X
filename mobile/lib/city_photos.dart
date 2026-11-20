@@ -3,10 +3,15 @@ import 'package:flutter/material.dart';
 import 'new_post.dart' show foldName;
 
 /// Foto de cartão postal de uma cidade, usada como capa quando a corrida não tem banner autorizado.
-/// Só entram imagens com licença livre que dispensa crédito obrigatório (CC0 ou domínio público),
-/// aprovadas pelo dono da mídia. O crédito de cada uma aparece em Configurações > Créditos das fotos.
+/// Entram fotos com licença livre que dispensa crédito (CC0 ou domínio público) e, onde não há foto
+/// livre, ilustrações criadas por IA (identificadas como tal), aprovadas pelo dono da mídia. O crédito de cada uma aparece em Configurações > Créditos das fotos.
+const illustrationLicense = 'Ilustração criada por IA';
+
 class CityPhoto {
   final String city, asset, author, license, title, sourceUrl;
+
+  /// Ilustração criada por IA (não é foto): fica identificada nos créditos e não tem página de origem.
+  bool get isIllustration => license == illustrationLicense;
   const CityPhoto({
     required this.city,
     required this.asset,
@@ -67,6 +72,86 @@ const cityPhotoList = <CityPhoto>[
     title: 'Barueri',
     sourceUrl:
         'https://commons.wikimedia.org/wiki/File:Barueri_S%C3%A3o_Paulo.JPG',
+  ),
+  CityPhoto(
+    city: 'Bertioga',
+    asset: 'assets/cidades/bertioga.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Forte de Bertioga e a praia',
+    sourceUrl: '',
+  ),
+  CityPhoto(
+    city: 'Guaratinguetá',
+    asset: 'assets/cidades/guaratingueta.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Igreja e a serra',
+    sourceUrl: '',
+  ),
+  CityPhoto(
+    city: 'Barra Bonita',
+    asset: 'assets/cidades/barra-bonita.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Barco na eclusa do rio Tietê',
+    sourceUrl: '',
+  ),
+  CityPhoto(
+    city: 'Itanhaém',
+    asset: 'assets/cidades/itanhaem.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Convento no alto e a praia',
+    sourceUrl: '',
+  ),
+  CityPhoto(
+    city: 'Boituva',
+    asset: 'assets/cidades/boituva.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Paraquedas sobre os campos',
+    sourceUrl: '',
+  ),
+  CityPhoto(
+    city: 'Mongaguá',
+    asset: 'assets/cidades/mongagua.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Píer e a praia',
+    sourceUrl: '',
+  ),
+  CityPhoto(
+    city: 'Taciba',
+    asset: 'assets/cidades/taciba.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Capela e a praça',
+    sourceUrl: '',
+  ),
+  CityPhoto(
+    city: 'Mairinque',
+    asset: 'assets/cidades/mairinque.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Estação e o trem',
+    sourceUrl: '',
+  ),
+  CityPhoto(
+    city: 'Bananal',
+    asset: 'assets/cidades/bananal.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Casarão e o cafezal',
+    sourceUrl: '',
+  ),
+  CityPhoto(
+    city: 'Vinhedo',
+    asset: 'assets/cidades/vinhedo.jpg',
+    author: 'RunPass',
+    license: illustrationLicense,
+    title: 'Vinhedos',
+    sourceUrl: '',
   ),
 ];
 
