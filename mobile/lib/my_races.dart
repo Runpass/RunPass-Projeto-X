@@ -1508,7 +1508,12 @@ Future<List<int>?> openMedalCropScreen(
 ) => Navigator.of(context).push<List<int>>(
   MaterialPageRoute(
     fullscreenDialog: true,
-    builder: (_) => TouchCropScreen(image: image, frame: frame),
+    // O mesmo editor da foto da medalha e da publicação, aberto no formato "Prateleira".
+    builder: (_) => PhotoZoomScreen(
+      image: image,
+      title: 'Foto da medalha',
+      shelf: (key) => MedalShelfCrop(key: key, image: image, frame: frame),
+    ),
   ),
 );
 
@@ -1614,21 +1619,19 @@ class _FrameGuidePainter extends CustomPainter {
       oldDelegate.frame.id != frame.id;
 }
 
-/// Tela de reposicionamento por toque: arrastar com um dedo move a foto,
-/// pinçar com dois dedos amplia/reduz, e girar com dois dedos gira a foto —
-/// tudo junto, como em qualquer editor de foto. Devolve um PNG no mesmo
-/// formato do furo do modelo escolhido (circulo, hexagono, quadrada ou
-/// poligono — ver [medalCropAspectRatio]), ou nulo se a pessoa desistir.
-class TouchCropScreen extends StatefulWidget {
+/// Recorte no formato do furo da medalha (o "Prateleira" do editor de foto): arrastar com um dedo move a
+/// foto, pinçar amplia/reduz e girar com dois dedos gira, tudo junto. [export] devolve um PNG no mesmo
+/// formato do furo do modelo (círculo, hexágono, quadrada ou polígono — ver [medalCropAspectRatio]).
+class MedalShelfCrop extends StatefulWidget {
   final Uint8List image;
   final MedalFrame frame;
-  const TouchCropScreen({super.key, required this.image, required this.frame});
+  const MedalShelfCrop({super.key, required this.image, required this.frame});
 
   @override
-  State<TouchCropScreen> createState() => _TouchCropScreenState();
+  State<MedalShelfCrop> createState() => MedalShelfCropState();
 }
 
-class _TouchCropScreenState extends State<TouchCropScreen> {
+class MedalShelfCropState extends State<MedalShelfCrop> {
   ui.Image? decoded;
   double scale = 1;
   double rotation = 0;
@@ -1636,7 +1639,6 @@ class _TouchCropScreenState extends State<TouchCropScreen> {
   double _baseScale = 1;
   double _baseRotation = 0;
   Size viewportSize = const Size(320, 320);
-  bool busy = false;
 
   @override
   void initState() {
@@ -1651,158 +1653,82 @@ class _TouchCropScreenState extends State<TouchCropScreen> {
     setState(() => decoded = codecFrame.image);
   }
 
-  void _onScaleStart(ScaleStartDetails details) {
-    _baseScale = scale;
-    _baseRotation = rotation;
-  }
+  bool get ready => decoded != null;
 
-  void _onScaleUpdate(ScaleUpdateDetails details) {
-    setState(() {
-      scale = (_baseScale * details.scale).clamp(0.2, 8.0);
-      rotation = _baseRotation + details.rotation;
-      offset += details.focalPointDelta;
-    });
-  }
-
-  Future<void> _confirm(Size viewport) async {
+  /// PNG do que está dentro da área da prateleira; nulo se a foto ainda não carregou.
+  Future<List<int>?> export() async {
     final image = decoded;
-    if (image == null || busy) return;
-    setState(() => busy = true);
-    try {
-      final width = viewport.width.round();
-      final height = viewport.height.round();
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-      TouchCropPainter(
-        image: image,
-        scale: scale,
-        rotation: rotation,
-        offset: offset,
-      ).paint(canvas, viewport);
-      final output = await recorder.endRecording().toImage(width, height);
-      final data = await output.toByteData(format: ui.ImageByteFormat.png);
-      if (!mounted) return;
-      Navigator.of(context).pop<List<int>>(data!.buffer.asUint8List());
-    } on Exception {
-      if (!mounted) return;
-      setState(() => busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Não foi possível recortar a foto. Tente de novo.'),
-        ),
-      );
-    }
+    if (image == null) return null;
+    final viewport = viewportSize;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    TouchCropPainter(
+      image: image,
+      scale: scale,
+      rotation: rotation,
+      offset: offset,
+    ).paint(canvas, viewport);
+    final output = await recorder.endRecording().toImage(
+      viewport.width.round(),
+      viewport.height.round(),
+    );
+    final data = await output.toByteData(format: ui.ImageByteFormat.png);
+    return data?.buffer.asUint8List();
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: Colors.black,
-    appBar: AppBar(
-      backgroundColor: Colors.black,
-      foregroundColor: Colors.white,
-      title: const Text('Reposicionar foto'),
-    ),
-    body: SafeArea(
-      child: Column(
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: Text(
-              'Arraste para posicionar, pinça para o zoom e gire com dois '
-              'dedos. Essa área é o que aparece na prateleira de medalhas.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70),
-            ),
-          ),
-          Expanded(
-            child: decoded == null
-                ? const Center(
-                    child: CircularProgressIndicator(color: Colors.white),
-                  )
-                : LayoutBuilder(
-                    builder: (context, constraints) {
-                      final aspect = medalCropAspectRatio(widget.frame);
-                      final available = constraints.biggest;
-                      var viewport = Size(
-                        available.width,
-                        available.width / aspect,
-                      );
-                      if (viewport.height > available.height) {
-                        viewport = Size(
-                          available.height * aspect,
-                          available.height,
-                        );
-                      }
-                      viewportSize = viewport;
-                      return Center(
-                        child: ClipRect(
-                          child: GestureDetector(
-                            key: const Key('crop-touch-area'),
-                            onScaleStart: _onScaleStart,
-                            onScaleUpdate: _onScaleUpdate,
-                            child: SizedBox(
-                              width: viewport.width,
-                              height: viewport.height,
-                              child: Stack(
-                                children: [
-                                  CustomPaint(
-                                    size: viewport,
-                                    painter: TouchCropPainter(
-                                      image: decoded!,
-                                      scale: scale,
-                                      rotation: rotation,
-                                      offset: offset,
-                                    ),
-                                  ),
-                                  IgnorePointer(
-                                    child: CustomPaint(
-                                      size: viewport,
-                                      painter: _FrameGuidePainter(widget.frame),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+  Widget build(BuildContext context) => decoded == null
+      ? const Center(child: CircularProgressIndicator(color: Colors.white))
+      : LayoutBuilder(
+          builder: (context, constraints) {
+            final aspect = medalCropAspectRatio(widget.frame);
+            final available = constraints.biggest;
+            var viewport = Size(available.width, available.width / aspect);
+            if (viewport.height > available.height) {
+              viewport = Size(available.height * aspect, available.height);
+            }
+            viewportSize = viewport;
+            return Center(
+              child: ClipRect(
+                child: GestureDetector(
+                  key: const Key('crop-touch-area'),
+                  onScaleStart: (_) {
+                    _baseScale = scale;
+                    _baseRotation = rotation;
+                  },
+                  onScaleUpdate: (details) => setState(() {
+                    scale = (_baseScale * details.scale).clamp(0.2, 8.0);
+                    rotation = _baseRotation + details.rotation;
+                    offset += details.focalPointDelta;
+                  }),
+                  child: SizedBox(
+                    width: viewport.width,
+                    height: viewport.height,
+                    child: Stack(
+                      children: [
+                        CustomPaint(
+                          size: viewport,
+                          painter: TouchCropPainter(
+                            image: decoded!,
+                            scale: scale,
+                            rotation: rotation,
+                            offset: offset,
                           ),
                         ),
-                      );
-                    },
-                  ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('crop-cancel'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
+                        IgnorePointer(
+                          child: CustomPaint(
+                            size: viewport,
+                            painter: _FrameGuidePainter(widget.frame),
+                          ),
+                        ),
+                      ],
                     ),
-                    onPressed: busy ? null : () => Navigator.of(context).pop(),
-                    child: const Text('Cancelar'),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    key: const Key('crop-confirm'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: runPassOrange,
-                    ),
-                    onPressed: busy || decoded == null
-                        ? null
-                        : () => _confirm(viewportSize),
-                    child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
+              ),
+            );
+          },
+        );
 }
 
 class MedalCollectionScreen extends StatefulWidget {

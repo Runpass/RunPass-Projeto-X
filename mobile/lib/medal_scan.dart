@@ -243,8 +243,11 @@ Future<String?> pickMedalPhotoPath(BuildContext context) async {
     source: choice == PhotoChoice.camera
         ? ImageSource.camera
         : ImageSource.gallery,
-    maxWidth: 2000,
-    imageQuality: 90,
+    // Mesma resolução da foto da publicação (o editor e o envio são os mesmos).
+    maxWidth: 2800,
+    maxHeight: 2800,
+    imageQuality: 88,
+    requestFullMetadata: false,
   );
   return file?.path;
 }
