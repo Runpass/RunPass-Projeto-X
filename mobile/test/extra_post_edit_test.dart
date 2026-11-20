@@ -101,4 +101,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(patches.single['postImageReference'], 'img_new1');
   });
+
+  testWidgets('marcar pessoas na publicação a mais grava as marcações', (
+    tester,
+  ) async {
+    final (gateway, patches) = await setup();
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ExtraPostEditScreen(
+          gateway: gateway,
+          postId: 'x1',
+          version: 2,
+          tagPicker: (context, gateway, selected) async => [
+            {'id': 'u2', 'username': 'bia'},
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Marcar pessoas'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('tag-people')));
+    await tester.pumpAndSettle();
+    expect(patches.single['taggedUserIds'], ['u2']);
+    expect(find.text('Marcados: @bia'), findsOneWidget);
+  });
 }
