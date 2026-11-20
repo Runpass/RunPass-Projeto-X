@@ -153,6 +153,9 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   'BETA_ADMISSION_REQUIRED' =>
     'Sua conta ainda não foi liberada para consultar as corridas.',
   'INVALID_CURSOR' => 'A busca ficou aberta por muito tempo e expirou. Toque em Buscar para começar de novo.',
+  'POST_IMAGE_DUPLICATE' => 'Esta foto já está na publicação. Escolha outra.',
+  'POST_IMAGE_MUST_DIFFER' =>
+    'Escolha uma foto diferente da medalha para a publicação.',
   'INVALID_INPUT' || 'INVALID_FILTERS' => 'Algum campo está inválido (data, distância ou texto fora do limite). Confira os filtros e tente de novo.',
   'EDITION_NOT_FOUND' =>
     'Esta corrida não está mais no catálogo. Volte à lista e escolha outra.',
@@ -3975,6 +3978,22 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   String? imageReference, pendingUploadId;
   // Foto da publicação no feed: outra foto, separada da medalha.
   String? postImageReference;
+
+  /// Fotos a mais da publicação (até 4 além da capa, até 5 no total), na ordem do carrossel.
+  late List<String> morePostRefs = [
+    for (final r
+        in (widget.initial['morePostImageReferences'] as List? ?? const []))
+      if (r is String) r,
+  ];
+
+  /// Bytes das fotos a mais escolhidas nesta tela (para a miniatura); nulo nas que já estavam publicadas.
+  late List<List<int>?> morePostBytes = List.filled(
+    morePostRefs.length,
+    null,
+    growable: true,
+  );
+  bool addingMorePhoto = false;
+  static const maxPostPhotos = 5;
   List<Map<String, dynamic>> tagged = [];
   bool uploadingPost = false;
   final postText = TextEditingController();
@@ -4634,7 +4653,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
 
   /// Envia a foto da publicação e devolve a referência validada; nulo (com a mensagem na tela) se não servir,
   /// inclusive quando for a mesma foto da medalha.
-  Future<String?> uploadPostBytes(List<int> bytes) async {
+  Future<String?> uploadPostBytes(List<int> bytes, {bool cover = true}) async {
     final isJpeg =
         bytes.length >= 3 &&
         bytes[0] == 0xff &&
@@ -4660,7 +4679,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       message = 'Escolha uma foto diferente da medalha para a publicação.';
       return null;
     }
-    postPhotoBytes = bytes; // para a prévia antes de publicar
+    if (cover) postPhotoBytes = bytes; // para a prévia antes de publicar
     return reference;
   }
 
@@ -4763,6 +4782,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           else
             'expectedVersion': draft['version'],
           'postImageReference': postImageReference,
+          if (morePostRefs.isNotEmpty) 'morePostImageReferences': morePostRefs,
           if (postText.text.trim().isNotEmpty) 'postText': postText.text.trim(),
           if (tagged.isNotEmpty)
             'taggedUserIds': [for (final p in tagged) p['id']],
@@ -4883,6 +4903,142 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           : 'Marcados: ${tagged.map((p) => '@${p['username']}').join(', ')}',
     ),
   );
+
+  /// "Mais fotos": até 4 além da capa. [saveNow] grava na hora (edição da publicação já feita); senão vai junto
+  /// ao concluir ou publicar.
+  Future<void> addMorePostPhoto({required bool saveNow}) async {
+    if (morePostRefs.length + 1 >= maxPostPhotos) return;
+    setState(() {
+      addingMorePhoto = true;
+      message = null;
+    });
+    try {
+      final selector = widget.postPhotoSelector;
+      final bytes = selector != null
+          ? await selector()
+          : await pickAndEditPhoto(context, title: 'Foto da publicação');
+      if (bytes == null || !mounted) return;
+      final reference = await uploadPostBytes(bytes, cover: false);
+      if (reference == null || !mounted) return;
+      if (reference == postImageReference || morePostRefs.contains(reference)) {
+        message = 'Esta foto já está na publicação.';
+        return;
+      }
+      morePostRefs = [...morePostRefs, reference];
+      morePostBytes = [...morePostBytes, bytes];
+      if (saveNow) {
+        await patchPost({
+          'morePostImageReferences': morePostRefs,
+        }, 'Foto adicionada à publicação.');
+      }
+    } on IdentityIssue catch (issue) {
+      if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) message = 'Não foi possível enviar a foto. Tente de novo.';
+    } finally {
+      if (mounted) setState(() => addingMorePhoto = false);
+    }
+  }
+
+  Future<void> removeMorePostPhoto(int index, {required bool saveNow}) async {
+    setState(() {
+      morePostRefs = [...morePostRefs]..removeAt(index);
+      morePostBytes = [...morePostBytes]..removeAt(index);
+    });
+    if (saveNow) {
+      await patchPost({
+        'morePostImageReferences': morePostRefs,
+      }, 'Foto removida da publicação.');
+    }
+  }
+
+  /// Miniaturas das fotos a mais (com × para tirar) e o botão para incluir outra, até 5 no total.
+  Widget morePostPhotos({required bool saveNow}) {
+    final total = 1 + morePostRefs.length;
+    final id = draft['id'] as String?;
+    // Publicação já feita cujas fotos a mais não vieram do servidor: só mostra quantas são, sem editar
+    // (gravar a lista sem elas apagaria as que já estão no carrossel).
+    final published = (draft['postImageCount'] as num?)?.toInt() ?? 1;
+    if (saveNow && published > total) {
+      return Padding(
+        key: const Key('more-post-photos'),
+        padding: const EdgeInsets.only(top: 6, bottom: 6),
+        child: Text('Esta publicação tem $published fotos.'),
+      );
+    }
+    return Padding(
+      key: const Key('more-post-photos'),
+      padding: const EdgeInsets.only(top: 6, bottom: 6),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (var i = 0; i < morePostRefs.length; i++)
+            SizedBox(
+              key: Key('more-post-photo-$i'),
+              width: 64,
+              height: 64,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: morePostBytes[i] != null
+                        ? Image.memory(
+                            Uint8List.fromList(morePostBytes[i]!),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) =>
+                                ColoredBox(color: context.softFill),
+                          )
+                        : MedalPhoto(
+                            gateway: widget.gateway,
+                            participationId: id,
+                            endpoint: id == null
+                                ? null
+                                : '/participations/${Uri.encodeComponent(id)}/post-image?index=${i + 1}',
+                            size: 24,
+                          ),
+                  ),
+                  Positioned(
+                    top: 2,
+                    right: 2,
+                    child: InkWell(
+                      key: Key('more-post-photo-remove-$i'),
+                      onTap: saving || addingMorePhoto
+                          ? null
+                          : () => removeMorePostPhoto(i, saveNow: saveNow),
+                      child: const CircleAvatar(
+                        radius: 10,
+                        backgroundColor: Colors.black54,
+                        child: Icon(Icons.close, size: 14, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (total < maxPostPhotos)
+            TextButton.icon(
+              key: const Key('add-more-post-photo'),
+              onPressed: saving || uploadingPost || addingMorePhoto
+                  ? null
+                  : () => addMorePostPhoto(saveNow: saveNow),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(fontSize: 12.5),
+              ),
+              icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
+              label: Text(
+                addingMorePhoto
+                    ? 'Enviando…'
+                    : 'Mais fotos ($total de $maxPostPhotos)',
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   Future<bool> patchPost(Map<String, dynamic> changes, String done) async {
     setState(() {
@@ -5130,6 +5286,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           'medalImageReference': imageReference,
           'publishToFeed': publishToFeed,
           if (publishToFeed) 'postImageReference': postImageReference,
+          if (publishToFeed && morePostRefs.isNotEmpty)
+            'morePostImageReferences': morePostRefs,
           if (publishToFeed && postText.text.trim().isNotEmpty)
             'postText': postText.text.trim(),
           if (publishToFeed && tagged.isNotEmpty)
@@ -5409,6 +5567,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             icon: const Icon(Icons.add_photo_alternate_outlined),
             label: const Text('Escolher outra foto'),
           ),
+          if (postImageReference != null) morePostPhotos(saveNow: false),
           const SizedBox(height: 8),
           tagButton(saveNow: false),
           TextField(
@@ -5515,6 +5674,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 icon: const Icon(Icons.photo_library_outlined),
                 label: const Text('Incluir foto da publicação'),
               ),
+              if (hasPostPhoto) morePostPhotos(saveNow: true),
               const SizedBox(height: 8),
               tagButton(saveNow: true),
               const SizedBox(height: 8),
@@ -5805,12 +5965,13 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                       : 'Incluir foto da publicação',
                 ),
               ),
-              if (postImageReference != null)
+              if (postImageReference != null) ...[
                 const Text(
                   'Foto da publicação validada. Ela é uma cópia: trocar a foto da publicação não muda a da medalha.',
                   key: Key('post-photo-ok'),
-                )
-              else
+                ),
+                morePostPhotos(saveNow: false),
+              ] else
                 const Text(
                   'Escolha a foto da publicação ou use a da medalha.',
                   key: Key('post-photo-hint'),

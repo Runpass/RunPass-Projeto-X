@@ -19,6 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
+from .participation import post_image_count
 from .profile_index import MIN_TOKEN, fold, profile_tokens, tokens
 from .service import IdentityService, Problem, stamp
 from .store import Unavailable
@@ -147,6 +148,8 @@ class SocialService:
             "completedAt": item["publishedAt"],
             "publishToFeed": True,
             "postImageReference": item["postImageReference"],
+            # As extras do carrossel sao as da publicacao extra, nunca as da publicacao da corrida.
+            "morePostImageReferences": list(item.get("morePostImageReferences") or []),
             "taggedUserIds": item.get("taggedUserIds") or [],
             "version": item["version"],
             "extra": True,
@@ -571,6 +574,11 @@ class SocialService:
             post["comment"] = review["comment"]
         if part.get("postImageReference"):
             post["hasPostImage"] = True  # a publicacao tem foto propria, separada da medalha
+        # Quantas fotos o carrossel tem (cada uma em .../post-image?index=N ou /posts/{id}/image?index=N).
+        # As referencias em si so vao para o dono, que precisa delas para editar o carrossel.
+        post["postImageCount"] = post_image_count(part)
+        if part.get("owner") == viewer and part.get("postImageReference"):
+            post["morePostImageReferences"] = list(part.get("morePostImageReferences") or [])
         tagged = []
         for subject in part.get("taggedUserIds") or []:
             profile = self._active_profile(self.store.get, subject)
@@ -854,6 +862,7 @@ class SocialService:
             {
                 "participationId": part["id"],
                 "author": self._card(profile, actor.subject),
+                "postImageCount": post_image_count(part),
                 **{k: part[k] for k in ("distanceId", "completedAt") if k in part},
             }
             for part, profile in page

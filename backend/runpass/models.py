@@ -6,6 +6,10 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Username = Annotated[str, Field(min_length=3, max_length=30, pattern=r"^[A-Za-z0-9_]+$")]
+ImageReference = Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+# Fotos extras da publicacao (carrossel): a capa e `postImageReference`; aqui vao ate 4 a mais, na ordem
+# em que aparecem. Repetidas, iguais a capa ou a foto da medalha sao recusadas no servico.
+MorePostImages = Annotated[list[ImageReference], Field(max_length=4)]
 
 
 class Input(BaseModel):
@@ -133,6 +137,7 @@ class PatchParticipation(Input):
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
     # Foto e texto da publicacao no feed (so de participacao concluida e ja publicada).
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
     taggedUserIds: (
@@ -215,6 +220,7 @@ class CompleteParticipation(Input):
     comment: Annotated[str, Field(max_length=2000)] | None = None
     # Outra foto, separada da medalha, para a publicacao no feed. Exigida quando publishToFeed e verdadeiro.
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
     taggedUserIds: (
@@ -241,6 +247,7 @@ class PublishParticipation(Input):
 
     expectedVersion: Annotated[int, Field(ge=1)]
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
     taggedUserIds: (
@@ -357,6 +364,7 @@ class WebLookupRequest(Input):
 class CreateExtraPost(Input):
     participationId: Annotated[str, Field(min_length=1, max_length=100)]
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     taggedUserIds: (
         Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
@@ -367,6 +375,7 @@ class CreateExtraPost(Input):
 class PatchExtraPost(Input):
     expectedVersion: Annotated[int, Field(ge=1)]
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     taggedUserIds: (
         Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]

@@ -60,6 +60,7 @@ class ErasureProcessor:
                 (part or {}).get("medalImageReference"),
                 (part or {}).get("postImageReference"),
                 (part or {}).get("medalDisplayImageReference"),
+                *((part or {}).get("morePostImageReferences") or []),
                 (rows["medal"] or {}).get("imageReference")
                 if (rows["medal"] or {}).get("imageOrigin") == "runner"
                 else None,
