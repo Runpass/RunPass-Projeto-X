@@ -28,7 +28,7 @@ void main() {
   test(
     'toda foto tem licença livre sem crédito obrigatório e arquivo próprio',
     () {
-      expect(cityPhotoList.where((p) => !p.isIllustration), hasLength(21));
+      expect(cityPhotoList.where((p) => !p.isIllustration), hasLength(28));
       expect(cityPhotoList.where((p) => p.isIllustration), hasLength(10));
       for (final photo in cityPhotoList) {
         expect(
@@ -107,7 +107,7 @@ void main() {
   testWidgets('créditos das fotos listam autor e licença de cada cidade', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(800, 3200);
+    tester.view.physicalSize = const Size(800, 9000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(const MaterialApp(home: PhotoCreditsScreen()));
