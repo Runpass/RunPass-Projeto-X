@@ -3721,6 +3721,23 @@ Future<List<int>?> loadPostPhotoBytes(
   }
 }
 
+/// Foto [index] (1 a 4) de uma publicação com várias, para ajustar.
+Future<List<int>?> loadPostPhotoAt(
+  IdentityGateway gateway,
+  String participationId,
+  int index,
+) async {
+  try {
+    final link = await gateway.request(
+      '/participations/${Uri.encodeComponent(participationId)}/post-image',
+      query: {'index': '$index'},
+    );
+    return await fetchImageBytes(link['url'] as String);
+  } on Exception {
+    return null;
+  }
+}
+
 /// Foto da MEDALHA no editor único: abre inteira; o formato (recorte) é opcional. Nulo se cancelar.
 Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
     Navigator.of(context).push<List<int>>(
@@ -3839,12 +3856,13 @@ Future<List<Map>?> askRunnerDistance(
 
 /// Cadastro da corrida, igual em todas as telas (Corridas › Já corri, Postar foto e Cadastrar medalha terminam
 /// aqui): já tenho participação nesta corrida, abre a minha; senão escolhe a distância (pergunta se houver mais de
-/// uma; sem distância, pede o km) e abre o rascunho. [postPhoto]: foto da publicação já escolhida (Postar foto).
+/// uma; sem distância, pede o km) e abre o rascunho. [postPhotos]: fotos da publicação já escolhidas (Postar
+/// foto; a primeira é a capa).
 Future<void> openRaceRegistration(
   BuildContext context,
   IdentityGateway gateway,
   Map<String, dynamic> edition, {
-  List<int>? postPhoto,
+  List<List<int>>? postPhotos,
 }) async {
   final id = edition['id'] as String;
   final navigator = Navigator.of(context);
@@ -3857,8 +3875,8 @@ Future<void> openRaceRegistration(
         gateway: gateway,
         initial: mine,
         // Concluída: a tela da medalha, com o painel de publicação aberto quando veio uma foto do post.
-        medalMode: mine['state'] == 'completed' && postPhoto != null,
-        initialPostPhoto: postPhoto,
+        medalMode: mine['state'] == 'completed' && postPhotos != null,
+        initialPostPhotos: postPhotos,
       ),
     ),
   );
@@ -3896,7 +3914,7 @@ Future<void> openRaceRegistration(
         builder: (_) => ParticipationDraftScreen(
           gateway: gateway,
           initial: draft,
-          initialPostPhoto: postPhoto,
+          initialPostPhotos: postPhotos,
         ),
       ),
     );
@@ -3941,9 +3959,17 @@ class ParticipationDraftScreen extends StatefulWidget {
   /// Foto já escolhida (ex.: a da medalha, vinda de "Adicionar medalha"): é enviada ao abrir o rascunho.
   final List<int>? initialPhoto;
 
-  /// Foto da PUBLICAÇÃO já escolhida (Postar foto): é enviada ao abrir; no rascunho liga "Publicar no feed",
-  /// na corrida concluída abre o painel de publicação.
-  final List<int>? initialPostPhoto;
+  /// Fotos da PUBLICAÇÃO já escolhidas (Postar foto; a primeira é a capa): são enviadas ao abrir; no rascunho
+  /// liga "Publicar no feed", na corrida concluída abre o painel de publicação.
+  final List<List<int>>? initialPostPhotos;
+
+  /// Baixa a foto [index] (1 a 4) da publicação, para ajustar. Trocável nos testes.
+  final Future<List<int>?> Function(
+    IdentityGateway gateway,
+    String participationId,
+    int index,
+  )
+  postPhotoAtLoader;
 
   /// Ajuste (recorte) da foto inicial antes do envio; nulo se a pessoa desistir. Trocável nos testes.
   final Future<List<int>?> Function(BuildContext context, List<int> photo)
@@ -3960,7 +3986,8 @@ class ParticipationDraftScreen extends StatefulWidget {
     this.postPhotoLoader = loadPostPhotoBytes,
     this.postPhotoCropper = cropPostPhoto,
     this.initialPhoto,
-    this.initialPostPhoto,
+    this.initialPostPhotos,
+    this.postPhotoAtLoader = loadPostPhotoAt,
     this.initialPhotoCropper = cropRacePhoto,
   });
 
@@ -4085,25 +4112,34 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         imageReference == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => sendInitialPhoto());
     }
-    if (widget.initialPostPhoto != null) {
+    if (widget.initialPostPhotos?.isNotEmpty ?? false) {
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => sendInitialPostPhoto(),
       );
     }
   }
 
-  /// Postar foto: envia a foto da publicação escolhida antes de chegar aqui.
+  /// Postar foto: envia as fotos da publicação escolhidas antes de chegar aqui (a primeira é a capa).
   Future<void> sendInitialPostPhoto() async {
-    final bytes = widget.initialPostPhoto;
-    if (bytes == null || !mounted) return;
+    final photos = widget.initialPostPhotos ?? const <List<int>>[];
+    if (photos.isEmpty || !mounted) return;
     setState(() {
       uploadingPost = true;
       message = null;
     });
     try {
-      final reference = await uploadPostBytes(bytes);
+      final reference = await uploadPostBytes(photos.first);
       if (reference == null || !mounted) return;
       postImageReference = reference;
+      for (final more in photos.skip(1).take(maxPostPhotos - 1)) {
+        final ref = await uploadPostBytes(more, cover: false);
+        if (!mounted) return;
+        if (ref == null || ref == reference || morePostRefs.contains(ref)) {
+          continue;
+        }
+        morePostRefs = [...morePostRefs, ref];
+        morePostBytes = [...morePostBytes, more];
+      }
       if (draft['state'] == 'completed') {
         publishPanelOpen = true;
       } else {
@@ -4114,7 +4150,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     } on Exception {
       if (mounted) {
         message =
-            'Não foi possível enviar a foto da publicação. Tente de novo.';
+            'Não foi possível enviar as fotos da publicação. Tente de novo.';
       }
     } finally {
       if (mounted) setState(() => uploadingPost = false);
@@ -4940,6 +4976,96 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
+  /// Foto a mais já escolhida ou publicada: ajustar (o mesmo editor), trocar por outra ou remover.
+  Future<void> editMorePostPhoto(int index, {required bool saveNow}) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('more-photo-adjust'),
+              leading: const Icon(Icons.crop_rounded),
+              title: const Text('Ajustar foto'),
+              onTap: () => Navigator.pop(sheet, 'adjust'),
+            ),
+            ListTile(
+              key: const Key('more-photo-replace'),
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Trocar foto'),
+              onTap: () => Navigator.pop(sheet, 'replace'),
+            ),
+            ListTile(
+              key: const Key('more-photo-remove'),
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text(
+                'Remover foto',
+                style: TextStyle(color: Colors.red),
+              ),
+              onTap: () => Navigator.pop(sheet, 'remove'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    if (action == 'remove') return removeMorePostPhoto(index, saveNow: saveNow);
+    setState(() {
+      addingMorePhoto = true;
+      message = null;
+    });
+    try {
+      List<int>? bytes;
+      if (action == 'adjust') {
+        final id = draft['id'] as String?;
+        final current =
+            morePostBytes[index] ??
+            (id == null
+                ? null
+                : await widget.postPhotoAtLoader(
+                    widget.gateway,
+                    id,
+                    index + 1,
+                  ));
+        if (current == null) {
+          message = 'Não foi possível abrir a foto agora. Tente de novo.';
+          return;
+        }
+        if (!mounted) return;
+        bytes = await widget.postPhotoCropper(context, current);
+      } else {
+        final selector = widget.postPhotoSelector;
+        bytes = selector != null
+            ? await selector()
+            : await pickAndEditPhoto(context, title: 'Foto da publicação');
+      }
+      if (bytes == null || !mounted) return;
+      final reference = await uploadPostBytes(bytes, cover: false);
+      if (reference == null || !mounted) return;
+      if (reference == postImageReference ||
+          (morePostRefs.contains(reference) &&
+              morePostRefs.indexOf(reference) != index)) {
+        message = 'Esta foto já está na publicação.';
+        return;
+      }
+      morePostRefs = [...morePostRefs]..[index] = reference;
+      morePostBytes = [...morePostBytes]..[index] = bytes;
+      if (saveNow) {
+        await patchPost({
+          'morePostImageReferences': morePostRefs,
+        }, action == 'adjust' ? 'Foto ajustada.' : 'Foto trocada.');
+      }
+    } on IdentityIssue catch (issue) {
+      if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) message = 'Não foi possível enviar a foto. Tente de novo.';
+    } finally {
+      if (mounted) setState(() => addingMorePhoto = false);
+    }
+  }
+
   Future<void> removeMorePostPhoto(int index, {required bool saveNow}) async {
     setState(() {
       morePostRefs = [...morePostRefs]..removeAt(index);
@@ -4982,23 +5108,29 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: morePostBytes[i] != null
-                        ? Image.memory(
-                            Uint8List.fromList(morePostBytes[i]!),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) =>
-                                ColoredBox(color: context.softFill),
-                          )
-                        : MedalPhoto(
-                            gateway: widget.gateway,
-                            participationId: id,
-                            endpoint: id == null
-                                ? null
-                                : '/participations/${Uri.encodeComponent(id)}/post-image?index=${i + 1}',
-                            size: 24,
-                          ),
+                  InkWell(
+                    key: Key('more-post-photo-open-$i'),
+                    onTap: saving || addingMorePhoto
+                        ? null
+                        : () => editMorePostPhoto(i, saveNow: saveNow),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: morePostBytes[i] != null
+                          ? Image.memory(
+                              Uint8List.fromList(morePostBytes[i]!),
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) =>
+                                  ColoredBox(color: context.softFill),
+                            )
+                          : MedalPhoto(
+                              gateway: widget.gateway,
+                              participationId: id,
+                              endpoint: id == null
+                                  ? null
+                                  : '/participations/${Uri.encodeComponent(id)}/post-image?index=${i + 1}',
+                              size: 24,
+                            ),
+                    ),
                   ),
                   Positioned(
                     top: 2,
@@ -5555,7 +5687,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 ? (uploadingPost
                       ? 'Preparando a foto da publicação...'
                       : 'Escolha a foto da publicação ou use a da medalha.')
-                : widget.initialPostPhoto != null
+                : widget.initialPostPhotos != null
                 ? 'Esta é a foto da publicação. Você pode trocar por outra.'
                 : 'A foto da medalha será a foto da publicação. Você pode trocar por outra.',
             key: const Key('publish-panel-hint'),

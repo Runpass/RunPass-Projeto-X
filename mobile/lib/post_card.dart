@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'catalog_screen.dart'
     show EditionScreen, ParticipationDraftScreen, catalogError;
+import 'extra_post_edit.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
@@ -429,49 +430,21 @@ class _PostCardState extends State<PostCard> {
   bool removed = false;
 
   /// Editar a minha publicação: abre a participação concluída (tempo, foto, avaliação e comentário).
-  /// Publicação extra: edita só o texto (a foto e a corrida ficam).
+  /// Publicação extra: edita as fotos e o texto (a corrida fica).
   Future<void> editExtra() async {
-    final controller = TextEditingController(text: entry.comment ?? '');
-    final text = await showDialog<String>(
-      context: context,
-      builder: (dialog) => AlertDialog(
-        title: const Text('Editar publicação'),
-        content: TextField(
-          key: const Key('extra-post-text'),
-          controller: controller,
-          maxLength: 500,
-          minLines: 1,
-          maxLines: 4,
-          decoration: const InputDecoration(labelText: 'Texto da publicação'),
+    if (entry.postId == null) return;
+    // Fotos (capa e as a mais) e texto da publicação extra, na mesma tela.
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ExtraPostEditScreen(
+          gateway: widget.gateway,
+          postId: entry.postId!,
+          version: entry.version ?? 1,
+          text: entry.comment,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            key: const Key('extra-post-save'),
-            onPressed: () => Navigator.pop(dialog, controller.text.trim()),
-            child: const Text('Salvar'),
-          ),
-        ],
       ),
     );
-    controller.dispose();
-    if (text == null || !mounted || entry.postId == null) return;
-    try {
-      await widget.gateway.request(
-        '/posts/${Uri.encodeComponent(entry.postId!)}/extra',
-        method: 'PATCH',
-        body: {'expectedVersion': entry.version ?? 1, 'postText': text},
-      );
-      soon('Publicação atualizada.');
-      widget.onChanged?.call();
-    } on IdentityIssue catch (issue) {
-      soon(catalogError(issue));
-    } on Exception {
-      soon('Não foi possível salvar agora.');
-    }
+    if (mounted) widget.onChanged?.call();
   }
 
   Future<void> editMine() async {
