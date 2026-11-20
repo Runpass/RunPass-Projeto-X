@@ -399,7 +399,221 @@ const cityPhotoList = <CityPhoto>[
   ),
 ];
 
-final _byCity = {for (final p in cityPhotoList) foldName(p.city): p};
+// A principal de cada cidade; cidade só com fotos em [moreCityPhotos] usa uma delas (também no passaporte).
+final _byCity = {
+  for (final p in [...moreCityPhotos, ...cityPhotoList]) foldName(p.city): p,
+};
+
+/// Mais fotos das cidades com muitas corridas (além da principal, em [cityPhotoList]): assim a lista
+/// alterna as fotos em vez de repetir a mesma.
+const moreCityPhotos = <CityPhoto>[
+  CityPhoto(
+    city: 'Campinas',
+    asset: 'assets/cidades/campinas-2.jpg',
+    author: 'Parzeus',
+    license: 'CC BY-SA 4.0',
+    title: 'Catedral Metropolitana',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Catedral_Metropolitana_de_Campinas_-_29.05.2021_01.jpg',
+  ),
+  CityPhoto(
+    city: 'Campinas',
+    asset: 'assets/cidades/campinas-3.jpg',
+    author: 'Fasouzafreitas',
+    license: 'CC BY-SA 3.0',
+    title: 'Jardim Proença',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Campinas_-_SP_-_Jardim_Proen%C3%A7a_visto_da_Rua_Proen%C3%A7a.JPG',
+  ),
+  CityPhoto(
+    city: 'Campinas',
+    asset: 'assets/cidades/campinas-4.jpg',
+    author: 'Raphael Henrique Figueira',
+    license: 'CC BY-SA 4.0',
+    title: 'Lagoa do Taquaral',
+    sourceUrl:
+        'https://commons.wikimedia.org/wiki/File:Parque_Portugal_(7).jpg',
+  ),
+  CityPhoto(
+    city: 'Campinas',
+    asset: 'assets/cidades/campinas-5.jpg',
+    author: 'Elson Júnior',
+    license: 'CC BY 2.0',
+    title: 'Vista da cidade',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Campinas_skyline.jpg',
+  ),
+  CityPhoto(
+    city: 'Jundiaí',
+    asset: 'assets/cidades/jundiai-2.jpg',
+    author: 'Daniel Pavan e Silva',
+    license: 'CC BY-SA 3.0',
+    title: 'Avenida Nove de Julho',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Jundia%C3%AD2015.jpg',
+  ),
+  CityPhoto(
+    city: 'Jundiaí',
+    asset: 'assets/cidades/jundiai-3.jpg',
+    author: 'FernandoSantos',
+    license: 'CC BY-SA 3.0',
+    title: 'Jundiaí',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Jundia%C3%AD_-_SP_-_panoramio_(777).jpg',
+  ),
+  CityPhoto(
+    city: 'Sorocaba',
+    asset: 'assets/cidades/sorocaba-2.jpg',
+    author: 'RobSabino',
+    license: 'CC BY 2.0',
+    title: 'Rio Sorocaba',
+    sourceUrl:
+        'https://commons.wikimedia.org/wiki/File:Rio_Sorocaba_(cropped).jpg',
+  ),
+  CityPhoto(
+    city: 'Sorocaba',
+    asset: 'assets/cidades/sorocaba-3.jpg',
+    author: 'Setheus',
+    license: 'Domínio público',
+    title: 'Vista da cidade',
+    sourceUrl:
+        'https://commons.wikimedia.org/wiki/File:Sorocaba_view_flat2.jpg',
+  ),
+  CityPhoto(
+    city: 'Piracicaba',
+    asset: 'assets/cidades/piracicaba-2.jpg',
+    author: 'Ana Paula Hirama',
+    license: 'CC BY-SA 3.0',
+    title: 'Vista da cidade',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Piracicaba_(3).jpg',
+  ),
+  CityPhoto(
+    city: 'Piracicaba',
+    asset: 'assets/cidades/piracicaba-3.jpg',
+    author: 'Bruno.karklis',
+    license: 'CC BY-SA 3.0',
+    title: 'Rio Piracicaba',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Rio_Piracicaba.jpg',
+  ),
+  CityPhoto(
+    city: 'São Bernardo do Campo',
+    asset: 'assets/cidades/sao-bernardo-do-campo-2.jpg',
+    author: 'Lukaaz',
+    license: 'CC BY-SA 3.0',
+    title: 'Vista da cidade',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:S%C3%A3o_Bernardo_do_Campo_(S%C3%A3o_Paulo).jpg',
+  ),
+  CityPhoto(
+    city: 'Santos',
+    asset: 'assets/cidades/santos-2.jpg',
+    author: 'VicTrindade',
+    license: 'CC BY-SA 4.0',
+    title: 'Jardim da Praia',
+    sourceUrl:
+        'https://commons.wikimedia.org/wiki/File:Jardim_da_Praia_de_Santos.jpg',
+  ),
+  CityPhoto(
+    city: 'Santos',
+    asset: 'assets/cidades/santos-3.jpg',
+    author: 'VicTrindade',
+    license: 'CC BY-SA 4.0',
+    title: 'Praia de Santos',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Peda%C3%A7o_da_Praia_de_Santos.jpg',
+  ),
+  CityPhoto(
+    city: 'Guarulhos',
+    asset: 'assets/cidades/guarulhos-2.jpg',
+    author: 'FernandoSantos',
+    license: 'CC BY-SA 3.0',
+    title: 'Vista da cidade',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Guarulhos_-_SP_-_panoramio_(152).jpg',
+  ),
+  CityPhoto(
+    city: 'São José dos Campos',
+    asset: 'assets/cidades/sao-jose-dos-campos-2.jpg',
+    author: 'Mike Peel',
+    license: 'CC BY-SA 4.0',
+    title: 'Vista da cidade ao entardecer',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:At_S%C3%A3o_Jos%C3%A9_dos_Campos_2019_04.jpg',
+  ),
+  CityPhoto(
+    city: 'Indaiatuba',
+    asset: 'assets/cidades/indaiatuba-2.jpg',
+    author: 'Paulo Humberto',
+    license: 'CC BY-SA 3.0',
+    title: 'Rotatória',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Rotatoria_-_Indaiatuba_SP_-_panoramio.jpg',
+  ),
+  CityPhoto(
+    city: 'Barueri',
+    asset: 'assets/cidades/barueri-2.jpg',
+    author: 'Gervacio Rosales',
+    license: 'CC BY 3.0',
+    title: 'Alphaville',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Alphaville_Industrial,_Barueri_-_SP,_Brazil_-_panoramio_(3).jpg',
+  ),
+  CityPhoto(
+    city: 'Ribeirão Preto',
+    asset: 'assets/cidades/ribeirao-preto-2.jpg',
+    author: 'Anderson Bueno Pereira',
+    license: 'CC0 1.0',
+    title: 'Anel Viário Sul',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Anel_Vi%C3%A1rio_Sul_Ribeir%C3%A3o_Preto.jpg',
+  ),
+  CityPhoto(
+    city: 'Ribeirão Preto',
+    asset: 'assets/cidades/ribeirao-preto-3.jpg',
+    author: 'Fasouzafreitas',
+    license: 'CC BY-SA 4.0',
+    title: 'Avenida e o córrego',
+    sourceUrl:
+        'https://commons.wikimedia.org/wiki/File:Ribeir%C3%A3o_Preto_-_SP.JPG',
+  ),
+  CityPhoto(
+    city: 'Bertioga',
+    asset: 'assets/cidades/bertioga-2.jpg',
+    author: 'ThiagoALacerda',
+    license: 'CC BY-SA 4.0',
+    title: 'Parque Estadual Restinga de Bertioga',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Parque_Estadual_Restinga_de_Bertioga_-_Thiago_Altran_(01).jpg',
+  ),
+  CityPhoto(
+    city: 'Bertioga',
+    asset: 'assets/cidades/bertioga-3.jpg',
+    author: 'Daniel Souza Lima',
+    license: 'CC BY-SA 4.0',
+    title: 'Canal de Bertioga',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:SP_Bertioga_-_Canal_de_Bertioga.JPG',
+  ),
+  CityPhoto(
+    city: 'São José do Rio Preto',
+    asset: 'assets/cidades/sao-jose-do-rio-preto-2.jpg',
+    author: 'Creedence',
+    license: 'CC BY-SA 4.0',
+    title: 'Centro da cidade',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Centro_de_S%C3%A3o_Jos%C3%A9_do_Rio_Preto,_SP.jpg',
+  ),
+  CityPhoto(
+    city: 'Santo André',
+    asset: 'assets/cidades/santo-andre-2.jpg',
+    author: 'Ramon S. Lopes',
+    license: 'CC BY-SA 4.0',
+    title: 'Paço Municipal',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Pa%C3%A7o_Municipal_de_Santo_Andr%C3%A9_-_SP.jpg',
+  ),
+  CityPhoto(
+    city: 'Santo André',
+    asset: 'assets/cidades/santo-andre-3.jpg',
+    author: 'Rafael Vianna Croffi',
+    license: 'CC BY 2.0',
+    title: 'Parque Celso Daniel',
+    sourceUrl:
+        'https://commons.wikimedia.org/wiki/File:Santo_Andr%C3%A9_-_SP.jpg',
+  ),
+];
+
+final _moreByCity = () {
+  final map = <String, List<CityPhoto>>{};
+  for (final p in moreCityPhotos) {
+    map.putIfAbsent(foldName(p.city), () => []).add(p);
+  }
+  return map;
+}();
 
 /// A foto da cidade da corrida (só para corridas de SP, para não confundir cidades de mesmo nome).
 CityPhoto? cityPhotoFor(Map<String, dynamic> edition) {
@@ -580,6 +794,7 @@ const _genericNight = CityPhoto(
 /// Todas as imagens do app, na ordem dos créditos.
 final allCoverPhotos = <CityPhoto>[
   ...cityPhotoList,
+  ...moreCityPhotos,
   _spMasp,
   _spSe,
   _spLuz,
@@ -630,8 +845,15 @@ List<CityPhoto> coverCandidatesFor(Map<String, dynamic> edition) {
       for (var k = 0; k < pool.length; k++) pool[(start + k) % pool.length],
     }.toList();
   }
+  final more = state == 'SP'
+      ? _moreByCity[city] ?? const <CityPhoto>[]
+      : const <CityPhoto>[];
+  final id = '${edition['id'] ?? edition['name'] ?? ''}';
+  final seed = id.codeUnits.fold<int>(7, (h, c) => (h * 31 + c) & 0x7fffffff);
   return [
     ?cityPhotoFor(edition),
+    // As outras fotos da cidade, numa ordem própria de cada corrida.
+    for (var k = 0; k < more.length; k++) more[(seed + k) % more.length],
     if (kind == RaceKind.trilha) _genericTrail,
     _genericStreet,
   ];

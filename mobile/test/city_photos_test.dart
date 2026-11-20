@@ -228,9 +228,35 @@ void main() {
         coverPhotoFor(list[7]).asset,
         isNot('assets/cidades/sp-pacaembu.jpg'),
       );
-      // Segunda corrida da mesma cidade: a foto genérica de corrida, não a da cidade de novo.
+      // Segunda corrida da mesma cidade: outra foto da cidade, não a mesma de novo.
       expect(coverPhotoFor(list[8]).asset, 'assets/cidades/jundiai.jpg');
-      expect(coverPhotoFor(list[9]).asset, 'assets/cidades/generica-rua.jpg');
+      expect(
+        coverPhotoFor(list[9]).asset,
+        startsWith('assets/cidades/jundiai-'),
+      );
+      coverChoices.clear();
+    });
+
+    test('cidade sem foto principal usa uma das fotos extras; acabando as da cidade, a genérica', () {
+      coverChoices.clear();
+      final list = [
+        for (var i = 0; i < 3; i++)
+          {
+            'id': 'PI$i',
+            'name': 'Corrida Teste',
+            'city': 'Piracicaba',
+            'state': 'SP',
+          },
+      ];
+      chooseDistinctCovers(list);
+      final assets = [for (final e in list) coverPhotoFor(e).asset];
+      expect(
+        assets.take(2).every((a) => a.startsWith('assets/cidades/piracicaba')),
+        isTrue,
+      );
+      expect(assets.toSet(), hasLength(3));
+      expect(assets.last, 'assets/cidades/generica-rua.jpg');
+      expect(cityPhotoFor({'city': 'Piracicaba', 'state': 'SP'}), isNotNull);
       coverChoices.clear();
     });
 
