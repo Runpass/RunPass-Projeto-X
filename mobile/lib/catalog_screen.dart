@@ -18,6 +18,7 @@ import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
 import 'location_picker.dart' show pickBrLocation;
+import 'medal_scan.dart' show chooseDistance, editionDistances;
 import 'my_races.dart';
 import 'post_preview.dart';
 import 'undo_delete.dart';
@@ -890,42 +891,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
 
   /// "Já corri" na lista: com uma só distância cria o rascunho e abre o registro; com várias (ou se já
   /// existe registro) abre a corrida, onde a pessoa escolhe a distância.
+  /// "Já corri" na lista: vai direto ao cadastro da corrida (sem passar pelas informações da corrida). Já
+  /// cadastrada por mim ("Meu registro"): abre o meu cadastro.
   Future<void> markRan(Map<String, dynamic> edition) async {
-    final id = edition['id'] as String;
-    final distances = (edition['distances'] as List).cast<Map>();
-    if (!mine.containsKey(id) && distances.length == 1) {
-      try {
-        final draft = await widget.gateway.request(
-          '/participations',
-          method: 'POST',
-          body: {'editionId': id, 'distanceId': distances.first['id']},
-        );
-        if (!mounted) return;
-        await Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => ParticipationDraftScreen(
-              gateway: widget.gateway,
-              initial: draft,
-            ),
-          ),
-        );
-        loadMine();
-        return;
-      } on IdentityIssue catch (issue) {
-        if (issue.code != 'PARTICIPATION_EXISTS' && mounted) {
-          setState(() => error = catalogError(issue));
-          return;
-        }
-      } on Exception {
-        if (mounted) {
-          setState(
-            () => error = 'Sem conexão com o servidor. Verifique a internet e tente novamente.',
-          );
-        }
-        return;
-      }
-    }
-    await openEdition(id);
+    await openRaceRegistration(context, widget.gateway, edition);
+    loadMine();
   }
 
   Future<void> openEdition(String id) async {
@@ -2216,55 +2186,27 @@ class _EditionScreenState extends State<EditionScreen> {
 
   /// Corrida que veio sem distância: a pessoa informa o km ao se inscrever e ele passa a valer para a corrida.
   Future<void> addDistance() async {
-    final controller = TextEditingController();
-    final text = await showDialog<String>(
-      context: context,
-      builder: (dialog) => AlertDialog(
-        title: const Text('Qual a distância?'),
-        content: TextField(
-          key: const Key('add-distance-field'),
-          controller: controller,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: 'Distância em km',
-            hintText: 'Ex.: 10',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            key: const Key('add-distance-confirm'),
-            onPressed: () => Navigator.pop(dialog, controller.text.trim()),
-            child: const Text('Informar'),
-          ),
-        ],
-      ),
-    );
-    if (text == null || text.isEmpty || !mounted) return;
     try {
-      final result = await widget.gateway.request(
-        '/editions/${Uri.encodeComponent(widget.editionId)}/distances',
-        method: 'POST',
-        body: {'kilometers': text.replaceAll(',', '.')},
+      final list = await askRunnerDistance(
+        context,
+        widget.gateway,
+        widget.editionId,
       );
+      if (list == null || !mounted) return;
+      await load();
       if (!mounted) return;
       setState(() {
-        edition = result;
         error = null;
-        final list = (result['distances'] as List? ?? const []).cast<Map>();
-        final km = double.tryParse(text.replaceAll(',', '.'));
-        for (final d in list) {
-          if (km != null && ((d['kilometers'] as num) - km).abs() < 0.0001) {
-            selectedDistance = d['id'] as String;
-          }
-        }
+        if (list.length == 1) selectedDistance = list.first['id'] as String;
       });
     } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = catalogError(issue));
+      if (mounted) {
+        setState(
+          () => error = issue.code == 'INVALID_DISTANCE'
+              ? 'Informe a distância em km, por exemplo 10 ou 21,1.'
+              : catalogError(issue),
+        );
+      }
     } on Exception {
       if (mounted) {
         setState(
@@ -3836,6 +3778,136 @@ Future<void> forgetDraftForm(String id) async {
   }
 }
 
+/// Corrida que veio sem distância: pergunta o km e grava na corrida (vale para todos, marcada como informada
+/// por corredor). Devolve as distâncias da corrida depois de gravar, ou nulo se a pessoa desistir.
+Future<List<Map>?> askRunnerDistance(
+  BuildContext context,
+  IdentityGateway gateway,
+  String editionId,
+) async {
+  final controller = TextEditingController();
+  final text = await showDialog<String>(
+    context: context,
+    builder: (dialog) => AlertDialog(
+      title: const Text('Qual a distância?'),
+      content: TextField(
+        key: const Key('add-distance-field'),
+        controller: controller,
+        autofocus: true,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: const InputDecoration(
+          labelText: 'Distância em km',
+          hintText: 'Ex.: 10 ou 21,1',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialog),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          key: const Key('add-distance-confirm'),
+          onPressed: () => Navigator.pop(dialog, controller.text.trim()),
+          child: const Text('Informar'),
+        ),
+      ],
+    ),
+  );
+  if (text == null || text.isEmpty) return null;
+  final km = double.tryParse(
+    text
+        .replaceAll(RegExp(r'\s*km$', caseSensitive: false), '')
+        .replaceAll(',', '.'),
+  );
+  if (km == null || km <= 0 || km > 1000) {
+    throw const IdentityIssue('INVALID_DISTANCE');
+  }
+  // Vai como número (o servidor guarda a distância como decimal).
+  final result = await gateway.request(
+    '/editions/${Uri.encodeComponent(editionId)}/distances',
+    method: 'POST',
+    body: {'kilometers': km},
+  );
+  return [
+    for (final d in (result['distances'] as List? ?? const []))
+      if (d is Map && d['kilometers'] is num) d,
+  ];
+}
+
+/// Cadastro da corrida, igual em todas as telas (Corridas › Já corri, Postar foto e Cadastrar medalha terminam
+/// aqui): já tenho participação nesta corrida, abre a minha; senão escolhe a distância (pergunta se houver mais de
+/// uma; sem distância, pede o km) e abre o rascunho. [postPhoto]: foto da publicação já escolhida (Postar foto).
+Future<void> openRaceRegistration(
+  BuildContext context,
+  IdentityGateway gateway,
+  Map<String, dynamic> edition, {
+  List<int>? postPhoto,
+}) async {
+  final id = edition['id'] as String;
+  final navigator = Navigator.of(context);
+  final messenger = ScaffoldMessenger.of(context);
+  void say(String text) =>
+      messenger.showSnackBar(SnackBar(content: Text(text)));
+  Future<void> openMine(Map<String, dynamic> mine) => navigator.push(
+    MaterialPageRoute<void>(
+      builder: (_) => ParticipationDraftScreen(
+        gateway: gateway,
+        initial: mine,
+        // Concluída: a tela da medalha, com o painel de publicação aberto quando veio uma foto do post.
+        medalMode: mine['state'] == 'completed' && postPhoto != null,
+        initialPostPhoto: postPhoto,
+      ),
+    ),
+  );
+  try {
+    final existing = (await loadMyEditions(gateway))[id];
+    if (existing != null) {
+      await openMine(existing);
+      return;
+    }
+    if (!context.mounted) return;
+    var options = await editionDistances(gateway, id, edition);
+    if (!context.mounted) return;
+    if (options.isEmpty) {
+      final added = await askRunnerDistance(context, gateway, id);
+      if (added == null || !context.mounted) return;
+      options = added;
+    }
+    final picked = await chooseDistance(context, options);
+    if (picked == null || !context.mounted) return;
+    final Map<String, dynamic> draft;
+    try {
+      draft = await gateway.request(
+        '/participations',
+        method: 'POST',
+        body: {'editionId': id, 'distanceId': picked['id']},
+      );
+    } on IdentityIssue catch (issue) {
+      if (issue.code != 'PARTICIPATION_EXISTS') rethrow;
+      final mine = (await loadMyEditions(gateway))[id];
+      if (mine != null) await openMine(mine);
+      return;
+    }
+    await navigator.push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: gateway,
+          initial: draft,
+          initialPostPhoto: postPhoto,
+        ),
+      ),
+    );
+  } on IdentityIssue catch (issue) {
+    say(
+      issue.code == 'INVALID_DISTANCE'
+          ? 'Informe a distância em km, por exemplo 10 ou 21,1.'
+          : catalogError(issue),
+    );
+  } on Exception {
+    say('Sem conexão com o servidor. Verifique a internet e tente novamente.');
+  }
+}
+
 class ParticipationDraftScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> initial;
@@ -3866,6 +3938,10 @@ class ParticipationDraftScreen extends StatefulWidget {
   /// Foto já escolhida (ex.: a da medalha, vinda de "Adicionar medalha"): é enviada ao abrir o rascunho.
   final List<int>? initialPhoto;
 
+  /// Foto da PUBLICAÇÃO já escolhida (Postar foto): é enviada ao abrir; no rascunho liga "Publicar no feed",
+  /// na corrida concluída abre o painel de publicação.
+  final List<int>? initialPostPhoto;
+
   /// Ajuste (recorte) da foto inicial antes do envio; nulo se a pessoa desistir. Trocável nos testes.
   final Future<List<int>?> Function(BuildContext context, List<int> photo)
   initialPhotoCropper;
@@ -3881,6 +3957,7 @@ class ParticipationDraftScreen extends StatefulWidget {
     this.postPhotoLoader = loadPostPhotoBytes,
     this.postPhotoCropper = cropPostPhoto,
     this.initialPhoto,
+    this.initialPostPhoto,
     this.initialPhotoCropper = cropRacePhoto,
   });
 
@@ -3988,6 +4065,40 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         draft['state'] == 'draft' &&
         imageReference == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => sendInitialPhoto());
+    }
+    if (widget.initialPostPhoto != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => sendInitialPostPhoto(),
+      );
+    }
+  }
+
+  /// Postar foto: envia a foto da publicação escolhida antes de chegar aqui.
+  Future<void> sendInitialPostPhoto() async {
+    final bytes = widget.initialPostPhoto;
+    if (bytes == null || !mounted) return;
+    setState(() {
+      uploadingPost = true;
+      message = null;
+    });
+    try {
+      final reference = await uploadPostBytes(bytes);
+      if (reference == null || !mounted) return;
+      postImageReference = reference;
+      if (draft['state'] == 'completed') {
+        publishPanelOpen = true;
+      } else {
+        publishToFeed = true;
+      }
+    } on IdentityIssue catch (issue) {
+      if (mounted) message = catalogError(issue);
+    } on Exception {
+      if (mounted) {
+        message =
+            'Não foi possível enviar a foto da publicação. Tente de novo.';
+      }
+    } finally {
+      if (mounted) setState(() => uploadingPost = false);
     }
   }
 
@@ -4640,17 +4751,24 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       message = null;
     });
     try {
-      draft = await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(draft['id'] as String)}/publish',
+      final extra = isPublished; // já publicada: mais uma publicação da mesma corrida (outra foto)
+      final result = await widget.gateway.request(
+        extra
+            ? '/posts'
+            : '/participations/${Uri.encodeComponent(draft['id'] as String)}/publish',
         method: 'POST',
         body: {
-          'expectedVersion': draft['version'],
+          if (extra)
+            'participationId': draft['id']
+          else
+            'expectedVersion': draft['version'],
           'postImageReference': postImageReference,
           if (postText.text.trim().isNotEmpty) 'postText': postText.text.trim(),
           if (tagged.isNotEmpty)
             'taggedUserIds': [for (final p in tagged) p['id']],
         },
       );
+      if (!extra) draft = result;
       publishPanelOpen = false;
       photoRevision++;
       if (mounted) {
@@ -5272,13 +5390,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               publishPanelOpen ? 'Fechar publicação' : 'Publicar no feed',
             ),
           ),
-        if (!isPublished && publishPanelOpen) ...[
+        if (publishPanelOpen) ...[
           const SizedBox(height: 8),
           Text(
             postImageReference == null
                 ? (uploadingPost
                       ? 'Preparando a foto da publicação...'
                       : 'Escolha a foto da publicação ou use a da medalha.')
+                : widget.initialPostPhoto != null
+                ? 'Esta é a foto da publicação. Você pode trocar por outra.'
                 : 'A foto da medalha será a foto da publicação. Você pode trocar por outra.',
             key: const Key('publish-panel-hint'),
           ),

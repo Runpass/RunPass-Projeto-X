@@ -329,6 +329,24 @@ class PendingParticipation(Input):
 class AddDistance(Input):
     kilometers: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
 
+    @field_validator("kilometers", mode="before")
+    @classmethod
+    def kilometers_value(cls, value):
+        # O modo estrito so aceita Decimal, que o JSON nao tem: sem esta conversao todo pedido
+        # caia em 422 (o app mostrava erro ao informar o km de corrida sem distancia).
+        if isinstance(value, bool):
+            raise ValueError("Distancia invalida")
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, str):
+            value = value.strip().replace(",", ".")
+        elif not isinstance(value, int | float):
+            raise ValueError("Distancia invalida")
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError("Distancia invalida") from error
+
 
 class WebLookupRequest(Input):
     name: Annotated[str, Field(min_length=3, max_length=160)]

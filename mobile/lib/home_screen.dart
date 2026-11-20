@@ -14,7 +14,7 @@ import 'medal_scan.dart'
         MedalTextReader,
         PlatformMedalTextReader,
         pickMedalPhotoPath;
-import 'new_post.dart';
+import 'profile_photo.dart' show pickPostPhoto;
 import 'notifications.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
@@ -224,11 +224,15 @@ class RunPassHomeScreen extends StatefulWidget {
   /// Escolha da foto da medalha e leitura do texto dela (só os testes trocam).
   final MedalPhotoPicker medalPhotoPicker;
   final MedalTextReader medalTextReader;
+
+  /// Foto da publicação do "Postar foto" (só os testes trocam).
+  final Future<List<int>?> Function(BuildContext context) postPhotoPicker;
   const RunPassHomeScreen({
     super.key,
     required this.gateway,
     this.medalPhotoPicker = pickMedalPhotoPath,
     this.medalTextReader = const PlatformMedalTextReader(),
+    this.postPhotoPicker = pickPostPhoto,
   });
 
   @override
@@ -333,12 +337,16 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     );
     if (!mounted || choice == null) return;
     if (choice == 'photo') {
-      final published = await Navigator.of(context).push<bool>(
-        MaterialPageRoute<bool>(
-          builder: (_) => NewPostScreen(gateway: widget.gateway),
+      // Começa pela foto da publicação; depois a mesma escolha de corrida e o mesmo cadastro das outras telas.
+      final photo = await widget.postPhotoPicker(context);
+      if (photo == null || !mounted) return;
+      await Navigator.of(context).push<Object?>(
+        MaterialPageRoute<Object?>(
+          builder: (_) =>
+              MedalScanScreen(gateway: widget.gateway, postPhoto: photo),
         ),
       );
-      if (published == true) reload(); // a postagem nova aparece no feed
+      if (mounted) reload(); // a postagem nova aparece no feed
       return;
     }
     final path = await widget.medalPhotoPicker(context);

@@ -438,6 +438,10 @@ Future<List<int>?> pickAndEditPhoto(
   );
 }
 
+/// Foto da publicação (Postar foto): a mesma folha e o mesmo editor.
+Future<List<int>?> pickPostPhoto(BuildContext context) =>
+    pickAndEditPhoto(context, title: 'Foto da publicação');
+
 /// Editor único de foto (medalha e publicação). Abre sempre na foto inteira, com arrastar e zoom; o ícone
 /// "Formato" (discreto, no topo) mostra ou esconde a barra de formatos: Foto inteira, Prateleira (só na
 /// medalha, no formato do furo, com giro), Livre e as proporções. "Foto inteira" envia a original.
