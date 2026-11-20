@@ -25,7 +25,7 @@ from runpass.store import MemoryStore
 
 ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 11, 9, 15, tzinfo=timezone.utc)
-ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
+ADULT = {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
 BODY = {
     "name": "Night Run Sintética",
     "date": "2027-03-14",

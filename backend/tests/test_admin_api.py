@@ -375,7 +375,9 @@ class AdminApiTests(unittest.TestCase):
     def make_request(self):
         person = Principal("ana", True)
         self.identity.create_profile(person, "p", {"displayName": "Ana", "username": "ana_x"})
-        self.identity.admit(person, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            person, "a", {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
+        )
         fields = EditionRequestFields(
             name="Night Run Sintética",
             date="2027-03-14",
@@ -453,7 +455,11 @@ class AdminApiTests(unittest.TestCase):
         self.identity.create_profile(
             person, "p" + sub, {"displayName": sub.title(), "username": f"{sub}_x"}
         )
-        self.identity.admit(person, "a" + sub, {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            person,
+            "a" + sub,
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+        )
         reference = self.imagem_do_usuario(sub) if image else None
         fields = EditionRequestFields(
             name=name,
@@ -633,7 +639,11 @@ class AdminApiTests(unittest.TestCase):
         self.identity.create_profile(
             person, "p" + sub, {"displayName": sub.title(), "username": f"{sub}_x"}
         )
-        self.identity.admit(person, "a" + sub, {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            person,
+            "a" + sub,
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+        )
         return person
 
     def test_foto_de_medalha_no_pedido_fica_privada_e_o_banner_segue_a_fila(self):
@@ -758,7 +768,9 @@ class AdminApiTests(unittest.TestCase):
         # imagem de outra pessoa, inexistente ou ainda nao validada: recusada, nada e criado
         outra = Principal("jose", True)
         self.identity.create_profile(outra, "pj", {"displayName": "Jose", "username": "jose_x"})
-        self.identity.admit(outra, "aj", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            outra, "aj", {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
+        )
         alheia = EditionRequestFields(
             name="Roubada", date="2027-09-02", city="São Paulo", distanceKm=5, imageReference=ref
         )
@@ -1041,7 +1053,11 @@ class AdminApiTests(unittest.TestCase):
     def test_sugerir_banner_de_corrida_ja_cadastrada_vai_para_a_fila_da_equipe(self):
         person = Principal("rui", True)
         self.identity.create_profile(person, "pr", {"displayName": "Rui", "username": "rui_x"})
-        self.identity.admit(person, "ar", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            person,
+            "ar",
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+        )
         ref = self.imagem_do_usuario("rui")
         edition_id = "synthetic-sp-2026"
         sugestao = self.requests.suggest_banner(person, "sb1", edition_id, ref)

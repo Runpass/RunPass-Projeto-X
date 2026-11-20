@@ -41,6 +41,9 @@ class PatchProfile(Input):
     # Data de nascimento (so o proprio titular a ve): continua valendo a regra de idade minima
     # da admissao (13 anos), conferida no servico.
     birthDate: date | None = None
+    # Mesma visibilidade/obrigatoriedade do birthDate: owner-only, obrigatorio na admissao
+    # (decisao de produto de 20/11/2026), aqui so para edicao posterior pelo proprio titular.
+    gender: Literal["female", "male", "undisclosed"] | None = None
     photoReference: str | None = None
     bannerReference: str | None = None
     isPrivate: bool | None = None
@@ -81,6 +84,8 @@ class PatchProfile(Input):
 class Eligibility(Input):
     birthDate: date
     declaresAdult: bool
+    # Obrigatorio (decisao de produto de 20/11/2026): sem genero nao admite.
+    gender: Literal["female", "male", "undisclosed"]
 
     @field_validator("declaresAdult")
     @classmethod

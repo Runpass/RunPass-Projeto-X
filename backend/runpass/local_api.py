@@ -73,7 +73,11 @@ def create_runtime():
         "seed-profile",
         {"displayName": "Corredor Sintético", "username": "synthetic_admitted"},
     )
-    identity.admit(admitted, "seed-admission", {"birthDate": "1990-01-01", "declaresAdult": True})
+    identity.admit(
+        admitted,
+        "seed-admission",
+        {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+    )
     return LocalRuntime(
         create_app(
             identity,

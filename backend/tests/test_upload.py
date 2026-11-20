@@ -42,7 +42,7 @@ class UploadTests(unittest.TestCase):
         self.identity.admit(
             actor,
             "admit-" + subject,
-            {"birthDate": "1990-01-01", "declaresAdult": True},
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
         )
         return actor
 

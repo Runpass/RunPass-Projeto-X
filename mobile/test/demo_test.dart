@@ -57,14 +57,9 @@ void main() {
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.byKey(const Key('location-field')));
-      await tester.tap(find.byKey(const Key('location-field')));
-      await tester.pumpAndSettle();
-      // Aceita o estado/cidade padrao do seletor (primeiro da lista: Acre/Acrelândia).
-      await tester.tap(find.byKey(const Key('location-done')));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Continuar'));
-      await tester.tap(find.text('Continuar'));
+      // Admissao: genero (obrigatorio) + data de nascimento + declaracao de maioridade.
+      await tester.ensureVisible(find.text('Masculino'));
+      await tester.tap(find.text('Masculino'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const Key('birth-date-field')));
       await tester.tap(find.byKey(const Key('birth-date-field')));
@@ -78,17 +73,28 @@ void main() {
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
-      // Cadastro novo: a foto de perfil e obrigatoria antes de entrar.
-      expect(find.text('Sua foto de perfil'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('location-field')));
+      await tester.tap(find.byKey(const Key('location-field')));
+      await tester.pumpAndSettle();
+      // Aceita o estado/cidade padrao do seletor (primeiro da lista: Acre/Acrelândia).
+      await tester.tap(find.byKey(const Key('location-done')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
-      expect(find.text('Escolha uma foto para continuar.'), findsOneWidget);
+      // Foto de perfil: opcional, mas o roteiro da demonstracao escolhe uma.
+      expect(find.text('Sua foto de perfil'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('choose-photo')));
       await tester.tap(find.byKey(const Key('choose-photo')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('photo-gallery')));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      // Celebracao: "Começar minha jornada" leva ao Início.
+      await tester.ensureVisible(find.text('Começar minha jornada'));
+      await tester.tap(find.text('Começar minha jornada'));
       await tester.pumpAndSettle();
       // After admission the runner lands on Início, not on the catalog.
       // The demo feed carries fictional posts by other runners.
@@ -150,7 +156,11 @@ void main() {
       await gateway.request(
         '/beta/admissions',
         method: 'POST',
-        body: {'birthDate': '1990-01-01', 'declaresAdult': true},
+        body: {
+          'birthDate': '1990-01-01',
+          'declaresAdult': true,
+          'gender': 'undisclosed',
+        },
       );
 
       final catalog = await gateway.request('/editions');

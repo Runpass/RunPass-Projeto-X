@@ -51,7 +51,7 @@ Aceite: matriz rota → consulta/transação → chave/índice; nenhum acesso cr
 
 Resultado: aplicativo identifica o corredor e controla acesso conforme conta/admissão. Configuração declarativa de identidade separa corredores e operadores; integração real é verificada em S09.
 
-Trabalho: abstrair identidade validada, autenticação e recuperação via Cognito; verificar issuer/audience/expiração e estado atual na API. Implementar admissão transacional, e-mail confirmado, data de nascimento privada, 18 anos completos, teto de mil e marco do 50º. Fluxos de status/espera/exclusão não exigem vaga prévia; demais rotas exigem admissão quando previsto. Separar MFA administrativo por autenticador e autorização por função, sem criar painel completo.
+Trabalho: abstrair identidade validada, autenticação e recuperação via Cognito; verificar issuer/audience/expiração e estado atual na API. Implementar admissão transacional, e-mail confirmado, data de nascimento privada, 13 anos completos (decisão de produto de 07/11/2026, já refletida na SPEC e no código de `service.py`; este slice estava desalinhado), teto de mil e marco do 50º. Fluxos de status/espera/exclusão não exigem vaga prévia; demais rotas exigem admissão quando previsto. Separar MFA administrativo por autenticador e autorização por função, sem criar painel completo.
 
 Aceite: tokens inválidos ou destinados a outro cliente negados; usuário não admitido não acessa catálogo protegido; concorrência não ultrapassa mil nem perde o marco inicial; nascimento não aparece em resposta pública/log; conta bloqueada não opera com token anterior. Documentar/bootstrap e recuperação de operadores antes de ativar administração. Testes locais de regras não substituem prova real de MFA em S09.
 

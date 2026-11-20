@@ -113,7 +113,9 @@ class MonthlyUpdateTests(unittest.TestCase):
         runner = Principal("runner", True)
         identity = self.catalog.identity
         identity.create_profile(runner, "p", {"displayName": "Corredor", "username": "runner"})
-        identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        identity.admit(
+            runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
+        )
         self.catalog.add_runner_distance(runner, found["editionId"], "7")
         com = cand("[FICTICIA] Km Corredor", "2027-01-24", distancias_km=[7, 14])
         key2 = "semanal/2027-01-02/descoberta-mensal0300/relatorio.json"

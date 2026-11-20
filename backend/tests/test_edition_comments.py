@@ -20,7 +20,7 @@ from runpass.store import MemoryStore
 
 ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 11, 14, 15, tzinfo=timezone.utc)
-ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
+ADULT = {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
 
 
 class EditionCommentTests(unittest.TestCase):

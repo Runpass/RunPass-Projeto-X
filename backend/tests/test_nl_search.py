@@ -22,7 +22,7 @@ from runpass.store import MemoryStore, Unavailable
 
 ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 10, 28, 15, tzinfo=timezone.utc)
-ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
+ADULT = {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
 
 
 def answer(params=None, source="llm", applied=(), not_applied=(), empty=False):

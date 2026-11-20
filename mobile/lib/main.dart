@@ -13,6 +13,7 @@ import 'location_picker.dart';
 import 'notifications.dart';
 import 'password_policy.dart';
 import 'profile_photo.dart';
+import 'registration_card.dart';
 import 'runpass_theme.dart';
 
 Future<void> main() async {
@@ -109,9 +110,10 @@ enum Step {
   forgot,
   reset,
   profile,
-  location,
   admission,
+  location,
   photo,
+  celebration,
   ready,
   waiting,
   closed,
@@ -146,6 +148,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
   final form = GlobalKey<FormState>();
   Step step = Step.signIn;
   bool busy = false, adult = false, full = false;
+  // 'female' | 'male' | 'undisclosed'; obrigatorio para a admissao (decisao de 20/11/2026).
+  String? gender;
+  // Codigo de inscricao da ficha (sorteado pelo servidor, nunca sequencial); so leitura.
+  String? registrationCode;
+  // Verdadeiro so durante o cadastro que acabou de admitir: mostra a celebracao uma vez.
+  bool freshSignup = false;
   // Seletor nativo de rolagem (dia/mes/ano), igual ao Instagram; sem campo de texto livre.
   DateTime? birthDate;
   // Estado e cidade: so por rolagem (lista fechada do IBGE), igual a data de nascimento.
@@ -171,6 +179,13 @@ class _IdentityScreenState extends State<IdentityScreen> {
     message = widget.notice;
     email.addListener(() {
       if (mounted && step == Step.signIn) setState(() {});
+    });
+    // Ficha de inscricao: atualiza ao vivo conforme nome/usuario sao digitados.
+    name.addListener(() {
+      if (mounted && step == Step.profile) setState(() {});
+    });
+    username.addListener(() {
+      if (mounted && step == Step.profile) setState(() {});
     });
     loadSavedAccount();
     if (widget.autoRestore && (widget.gateway?.canRestore ?? false)) {
@@ -294,6 +309,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
       _ => Step.admission,
     };
     if (step == Step.ready && needsPhoto) step = Step.photo;
+    if (step == Step.ready && freshSignup) step = Step.celebration;
   }
 
   /// Uma vez, depois de entrar com "Manter conectado": oferece ligar a biometria.
@@ -554,6 +570,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
     try {
       final profile = await widget.gateway!.request('/me');
       displayName = profile['displayName'] as String?;
+      registrationCode = profile['registrationCode'] as String?;
       // Versao 1 sem foto: o cadastro nao foi concluido. Quem apagou a foto depois, nao.
       needsPhoto = profile['photoReference'] == null && profile['version'] == 1;
       await status();
@@ -677,34 +694,13 @@ class _IdentityScreenState extends State<IdentityScreen> {
         );
         displayName = profile['displayName'] as String?;
         needsPhoto = true;
-        step = Step.location;
-      case Step.location:
-        if (selectedUf == null || selectedCity == null) {
-          message = 'Selecione seu estado e cidade.';
-          return;
-        }
-        // So fica guardado aqui; o envio ao servidor espera a admissao (ver status()).
-        await status();
-      case Step.photo:
-        final photo = chosenPhoto;
-        if (photo == null) {
-          message = 'Escolha uma foto para continuar.';
-          return;
-        }
-        final reference = await uploadProfilePhoto(gateway, photo);
-        final current = await gateway.request('/me');
-        await gateway.request(
-          '/me',
-          method: 'PATCH',
-          body: {
-            'expectedVersion': current['version'],
-            'photoReference': reference,
-          },
-        );
-        needsPhoto = false;
-        chosenPhoto = null;
-        step = Step.ready;
+        freshSignup = true;
+        step = Step.admission;
       case Step.admission:
+        if (gender == null) {
+          message = 'Selecione seu gênero.';
+          return;
+        }
         final birth = birthDate;
         if (birth == null) {
           message = 'Selecione sua data de nascimento.';
@@ -717,11 +713,42 @@ class _IdentityScreenState extends State<IdentityScreen> {
         await gateway.request(
           full ? '/beta/waitlist' : '/beta/admissions',
           method: 'POST',
-          body: {'birthDate': isoBirthDate(birth), 'declaresAdult': adult},
+          body: {
+            'birthDate': isoBirthDate(birth),
+            'declaresAdult': adult,
+            'gender': gender,
+          },
         );
-        birthDate = null;
+        if (!full) {
+          final updated = await gateway.request('/me');
+          registrationCode = updated['registrationCode'] as String?;
+        }
+        step = Step.location;
+      case Step.location:
+        if (selectedUf == null || selectedCity == null) {
+          message = 'Selecione seu estado e cidade.';
+          return;
+        }
+        // So fica guardado aqui; o envio ao servidor espera a admissao (ver status()).
         await status();
-      case Step.ready || Step.waiting || Step.closed:
+      case Step.photo:
+        final photo = chosenPhoto;
+        if (photo != null) {
+          final reference = await uploadProfilePhoto(gateway, photo);
+          final current = await gateway.request('/me');
+          await gateway.request(
+            '/me',
+            method: 'PATCH',
+            body: {
+              'expectedVersion': current['version'],
+              'photoReference': reference,
+            },
+          );
+        }
+        needsPhoto = false;
+        chosenPhoto = null;
+        step = freshSignup ? Step.celebration : Step.ready;
+      case Step.ready || Step.waiting || Step.closed || Step.celebration:
         break;
     }
   }, validate: true);
@@ -754,6 +781,122 @@ class _IdentityScreenState extends State<IdentityScreen> {
     ),
   );
 
+  static const _signupSteps = [
+    Step.profile,
+    Step.admission,
+    Step.location,
+    Step.photo,
+  ];
+
+  Widget genderButton(
+    BuildContext context,
+    String value,
+    String label, {
+    bool fullWidth = false,
+  }) {
+    final selected = gender == value;
+    final button = OutlinedButton(
+      onPressed: busy ? null : () => setState(() => gender = value),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: selected ? context.softFill : context.panel,
+        side: BorderSide(
+          color: selected ? runPassOrange : Colors.transparent,
+          width: 2,
+        ),
+        foregroundColor: selected
+            ? runPassOrange
+            : (context.isDark ? Colors.white : runPassNavy),
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+    );
+    return fullWidth ? SizedBox(width: double.infinity, child: button) : button;
+  }
+
+  Widget celebrationView(BuildContext context) {
+    final trimmedDisplay = (displayName ?? '').trim();
+    final firstName = trimmedDisplay.isEmpty
+        ? null
+        : trimmedDisplay.split(RegExp(r'\s+')).first;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [runPassOrange, runPassGold],
+        ),
+      ),
+      child: Column(
+        children: [
+          RegistrationCard(
+            displayName: displayName,
+            username: username.text.trim().isEmpty
+                ? null
+                : username.text.trim(),
+            cityLabel: selectedUf == null || selectedCity == null
+                ? null
+                : '$selectedCity, $selectedUf',
+            birthDate: birthDate,
+            gender: gender,
+            registrationCode: registrationCode,
+            photo: chosenPhoto == null
+                ? null
+                : Uint8List.fromList(chosenPhoto!),
+            inscriptionDate: DateTime.now(),
+          ),
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: .18),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text(
+              'INSCRIÇÃO CONFIRMADA',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 11,
+                letterSpacing: .6,
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            firstName == null ? 'Bem-vindo!' : 'Bem-vindo\n$firstName',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 27,
+              fontWeight: FontWeight.w900,
+              height: 1.2,
+              color: runPassNavy,
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 32),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: runPassNavy,
+              minimumSize: const Size.fromHeight(54),
+            ),
+            onPressed: () async {
+              await offerBiometrics();
+              if (mounted) openHome();
+            },
+            child: const Text('Começar minha jornada'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final gateway = widget.gateway;
@@ -772,10 +915,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.setPassword => 'Crie sua senha',
       Step.forgot => 'Recupere sua senha',
       Step.reset => 'Defina uma nova senha',
-      Step.profile => 'Seu perfil de corredor',
-      Step.location => 'De onde você é?',
-      Step.admission => full ? 'Lista de espera' : 'Qual a sua idade?',
+      Step.profile => 'Como você quer ser chamado?',
+      Step.admission =>
+        full ? 'Lista de espera' : 'Gênero e data de nascimento',
+      Step.location => 'Qual a sua cidade?',
       Step.photo => 'Sua foto de perfil',
+      Step.celebration => '',
       Step.ready => 'Entrando, ${displayName ?? 'corredor'}…',
       Step.waiting => 'Você está na lista de espera',
       Step.closed => 'As entradas de novos usuários foram encerradas',
@@ -797,6 +942,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
                       padding: EdgeInsets.symmetric(vertical: 80),
                       child: Center(child: CircularProgressIndicator()),
                     )
+                  : step == Step.celebration
+                  ? celebrationView(context)
                   : Form(
                       key: form,
                       child: Column(
@@ -832,6 +979,22 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             ),
                           if (step == Step.signIn || step == Step.signUp)
                             const SizedBox(height: 24),
+                          if (_signupSteps.contains(step)) ...[
+                            RegistrationProgress(
+                              step: _signupSteps.indexOf(step) + 1,
+                            ),
+                            const SizedBox(height: 18),
+                            Text(
+                              'SUA FICHA DE INSCRIÇÃO',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1,
+                                color: runPassOrange,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                          ],
                           Text(
                             title,
                             style: Theme.of(context).textTheme.headlineSmall
@@ -843,6 +1006,28 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                 ),
                           ),
                           const SizedBox(height: 24),
+                          if (_signupSteps.contains(step)) ...[
+                            RegistrationCard(
+                              displayName: name.text.trim().isEmpty
+                                  ? displayName
+                                  : name.text.trim(),
+                              username: username.text.trim().isEmpty
+                                  ? null
+                                  : username.text.trim(),
+                              cityLabel:
+                                  selectedUf == null || selectedCity == null
+                                  ? null
+                                  : '$selectedCity, $selectedUf',
+                              birthDate: birthDate,
+                              gender: gender,
+                              registrationCode: registrationCode,
+                              photo: chosenPhoto == null
+                                  ? null
+                                  : Uint8List.fromList(chosenPhoto!),
+                              inscriptionDate: DateTime.now(),
+                            ),
+                            const SizedBox(height: 26),
+                          ],
                           if (initial) field(email, 'E-mail'),
                           if ([
                             Step.signIn,
@@ -944,6 +1129,41 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               const Text(
                                 'A lista de espera não garante vaga ou posição.',
                               ),
+                            Text(
+                              'Gênero',
+                              style: TextStyle(
+                                color: context.muted,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: genderButton(
+                                    context,
+                                    'female',
+                                    'Feminino',
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: genderButton(
+                                    context,
+                                    'male',
+                                    'Masculino',
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            genderButton(
+                              context,
+                              'undisclosed',
+                              'Prefiro não me identificar',
+                              fullWidth: true,
+                            ),
+                            const SizedBox(height: 22),
                             Padding(
                               padding: const EdgeInsets.only(bottom: 12),
                               child: InkWell(
@@ -1020,7 +1240,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                           ],
                           if (step == Step.photo) ...[
                             const Text(
-                              'Para seus amigos reconhecerem você, adicione uma foto. Ela é obrigatória e você poderá trocar ou remover depois, no perfil.',
+                              'Para seus amigos reconhecerem você. Você pode pular e adicionar depois, no perfil.',
                             ),
                             // A fita da medalha sobe acima da foto: o respiro evita que cubra o texto.
                             const SizedBox(height: 64),
@@ -1076,6 +1296,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             Step.ready,
                             Step.waiting,
                             Step.closed,
+                            Step.celebration,
                           ].contains(step))
                             FilledButton(
                               onPressed: busy ? null : submit,
@@ -1084,6 +1305,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     ? 'Aguarde…'
                                     : step == Step.admission && full
                                     ? 'Entrar na lista de espera'
+                                    : step == Step.photo && chosenPhoto == null
+                                    ? 'Pular por enquanto'
                                     : step == Step.signIn
                                     ? 'Entrar'
                                     : 'Continuar',

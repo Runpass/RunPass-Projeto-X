@@ -25,7 +25,7 @@ from runpass.service import IdentityService, Problem
 from runpass.store import DynamoStore, MemoryStore, Unavailable
 
 NOW = datetime(2026, 10, 28, 15, tzinfo=timezone.utc)
-ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
+ADULT = {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
 
 
 class ServiceTests(unittest.TestCase):
@@ -79,14 +79,20 @@ class ServiceTests(unittest.TestCase):
             actor = self.create(subject)
             before = self.service.profile(actor)["version"]
             self.service.admit(
-                actor, "admit-" + subject, {"birthDate": birth, "declaresAdult": True}
+                actor,
+                "admit-" + subject,
+                {"birthDate": birth, "declaresAdult": True, "gender": "undisclosed"},
             )
             profile = self.service.profile(actor)
             self.assertEqual(profile.get("isPrivate"), expected)
             self.assertEqual(profile["version"], before + (1 if expected else 0))
         # Repetir a admissao nao muda nada, e o menor pode tornar o perfil publico depois.
         minor = Principal("minor", True)
-        self.service.admit(minor, "admit-minor", {"birthDate": "2008-10-29", "declaresAdult": True})
+        self.service.admit(
+            minor,
+            "admit-minor",
+            {"birthDate": "2008-10-29", "declaresAdult": True, "gender": "undisclosed"},
+        )
         profile = self.service.profile(minor)
         self.assertIs(profile["isPrivate"], True)
         self.service.patch_profile(
@@ -252,10 +258,14 @@ class ServiceTests(unittest.TestCase):
         self.now = datetime(2026, 10, 29, 1, tzinfo=timezone.utc)  # still 28th in São Paulo
         with self.assertRaises(Problem):
             self.service.admit(
-                self.actor, "young", {"birthDate": "2013-10-29", "declaresAdult": True}
+                self.actor,
+                "young",
+                {"birthDate": "2013-10-29", "declaresAdult": True, "gender": "undisclosed"},
             )
         result = self.service.admit(
-            self.actor, "adult", {"birthDate": "2013-10-28", "declaresAdult": True}
+            self.actor,
+            "adult",
+            {"birthDate": "2013-10-28", "declaresAdult": True, "gender": "undisclosed"},
         )
         self.assertTrue(result["admitted"])
 
