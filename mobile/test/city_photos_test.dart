@@ -36,6 +36,9 @@ void main() {
       'CC BY 2.5',
       'CC BY 3.0',
       'CC BY 3.0 BR',
+      'CC BY 4.0',
+      'CC BY-SA 2.0',
+      'CC BY-SA 2.5',
       'CC BY-SA 3.0',
       'CC BY-SA 4.0',
     };
@@ -240,7 +243,7 @@ void main() {
     test('cidade sem foto principal usa uma das fotos extras; acabando as da cidade, a genérica', () {
       coverChoices.clear();
       final list = [
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < 4; i++)
           {
             'id': 'PI$i',
             'name': 'Corrida Teste',
@@ -251,10 +254,10 @@ void main() {
       chooseDistinctCovers(list);
       final assets = [for (final e in list) coverPhotoFor(e).asset];
       expect(
-        assets.take(2).every((a) => a.startsWith('assets/cidades/piracicaba')),
+        assets.take(3).every((a) => a.startsWith('assets/cidades/piracicaba')),
         isTrue,
       );
-      expect(assets.toSet(), hasLength(3));
+      expect(assets.toSet(), hasLength(4));
       expect(assets.last, 'assets/cidades/generica-rua.jpg');
       expect(cityPhotoFor({'city': 'Piracicaba', 'state': 'SP'}), isNotNull);
       coverChoices.clear();
