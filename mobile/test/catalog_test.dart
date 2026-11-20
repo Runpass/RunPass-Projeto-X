@@ -2418,7 +2418,7 @@ void defaultOrderTests() {
   );
 
   testWidgets(
-    'cartão da lista: ícone do link da prova só quando há link https',
+    'foto do cartão: inscrição pelo link da prova; sem link https, procurar a inscrição',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -2434,12 +2434,26 @@ void defaultOrderTests() {
         if (uri.path == '/editions') {
           return JsonReply(200, {
             'items': [
-              {...entry('A'), 'officialUrl': 'https://corrida.exemplo.test/'},
+              {
+                ...entry('A'),
+                'date': '2099-01-01',
+                'status': 'upcoming',
+                'officialUrl': 'https://corrida.exemplo.test/',
+              },
               {
                 ...entry('B'),
+                'date': '2099-01-02',
+                'status': 'upcoming',
+                'officialUrl': 'https://corrida.exemplo.test/b',
                 'registrationUrl': 'https://ingressos.exemplo.test/b',
               },
-              {...entry('C'), 'officialUrl': 'javascript:alert(1)'},
+              {
+                ...entry('C'),
+                'date': '2099-01-03',
+                'status': 'upcoming',
+                'officialUrl': 'javascript:alert(1)',
+              },
+              {...entry('D'), 'date': '2020-01-01'}, // já passou: sem inscrição
             ],
           });
         }
@@ -2449,16 +2463,25 @@ void defaultOrderTests() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('card-link-A')), findsOneWidget);
-      expect(find.byKey(const Key('card-link-B')), findsOneWidget);
-      expect(find.byKey(const Key('card-link-C')), findsNothing);
-      await tester.tap(find.byKey(const Key('card-link-A')));
-      await tester.tap(find.byKey(const Key('card-link-B')));
-      await tester.pump();
-      expect(opened.map((u) => u.toString()), [
-        'https://corrida.exemplo.test/',
-        'https://ingressos.exemplo.test/b',
-      ]);
+      Future<void> tapChip(String id) async {
+        final chip = find.byKey(Key('signup-$id'));
+        await tester.ensureVisible(chip);
+        await tester.pumpAndSettle();
+        await tester.tap(chip);
+        await tester.pump();
+      }
+
+      expect(find.byKey(const Key('signup-D')), findsNothing);
+      await tapChip('A');
+      await tapChip('B');
+      await tapChip('C');
+      expect(opened[0].toString(), 'https://corrida.exemplo.test/');
+      // A página de inscrição vem antes do site oficial.
+      expect(opened[1].toString(), 'https://ingressos.exemplo.test/b');
+      // Sem link https: busca a inscrição na internet (nunca inventa o link da prova).
+      expect(opened[2].host, 'www.google.com');
+      expect(opened[2].queryParameters['q'], contains('Corrida C'));
+      expect(find.text('Procurar inscrição'), findsOneWidget);
     },
   );
 }

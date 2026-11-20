@@ -787,7 +787,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
           '${groups[b]!.first['date']}',
         );
       });
-    final width = (MediaQuery.sizeOf(context).width * .82).clamp(240.0, 360.0);
+    // Cartão um pouco menor: dá para ver mais da próxima corrida da faixa.
+    final width = (MediaQuery.sizeOf(context).width * .76).clamp(230.0, 330.0);
     // Fotos sem repetir na tela, na ordem em que as corridas aparecem.
     chooseDistinctCovers([for (final label in order) ...groups[label]!]);
     return [
@@ -924,31 +925,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
           : '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
       onTap: loading ? null : () => openEdition(edition['id'] as String),
       actions: quickActions(edition),
-      trailing: raceLinkButton(edition),
     );
   }
 
   /// Ações da corrida com rótulo (não só ícone): Quero correr, Inscrito e Já corri. Marcada fica laranja.
-  /// Link da prova no cartão: o site oficial; sem ele, a página de inscrição. Sem link, nada aparece.
-  Widget? raceLinkButton(Map<String, dynamic> edition) {
-    final official = safeHttpsUri(edition['officialUrl']);
-    final link = official ?? safeHttpsUri(edition['registrationUrl']);
-    if (link == null) return null;
-    return IconButton(
-      key: Key('card-link-${edition['id']}'),
-      tooltip: official != null ? 'Site da corrida' : 'Página de inscrição',
-      visualDensity: VisualDensity.compact,
-      icon: const Icon(Icons.public_rounded, size: 20),
-      onPressed: () async {
-        if (!await linkOpener(link) && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Não foi possível abrir o link.')),
-          );
-        }
-      },
-    );
-  }
-
   Widget quickActions(Map<String, dynamic> edition) {
     final id = edition['id'] as String;
     final status = edition['status'];
@@ -974,16 +954,17 @@ class _CatalogScreenState extends State<CatalogScreen> {
             // Área de toque confortável mesmo com o texto curto.
             constraints: const BoxConstraints(minHeight: 34),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              // Compactos: os três cabem numa linha no cartão da faixa.
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(icon, size: 16, color: on ? Colors.white : null),
-                  const SizedBox(width: 4),
+                  Icon(icon, size: 15, color: on ? Colors.white : null),
+                  const SizedBox(width: 3),
                   Text(
                     label,
                     style: TextStyle(
-                      fontSize: 12.5,
+                      fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: on ? Colors.white : null,
                     ),
@@ -996,7 +977,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
       ),
     );
     return Wrap(
-      spacing: 6,
+      spacing: 4,
       runSpacing: 6,
       children: [
         if (upcoming) ...[
@@ -3467,20 +3448,41 @@ class _EditionScreenState extends State<EditionScreen> {
                       indicatorColor: runPassOrange,
                       labelStyle: const TextStyle(
                         fontWeight: FontWeight.w900,
-                        fontSize: 14,
+                        fontSize: 13,
                       ),
                       unselectedLabelStyle: const TextStyle(
                         fontWeight: FontWeight.w800,
-                        fontSize: 14,
+                        fontSize: 13,
                       ),
                       unselectedLabelColor: context.onSurfaceText,
-                      // Quatro abas em telas estreitas: sem a folga lateral padrão os nomes cabem inteiros.
+                      // Quatro abas em telas estreitas: sem folga lateral, letra 13 e, se ainda faltar espaço, o nome
+                      // encolhe (nunca corta).
                       labelPadding: const EdgeInsets.symmetric(horizontal: 2),
                       tabs: [
-                        Tab(text: 'Sobre'),
-                        Tab(text: 'Avaliações'),
-                        Tab(text: 'Fotos'),
-                        Tab(text: 'Participantes'),
+                        Tab(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('Sobre'),
+                          ),
+                        ),
+                        Tab(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('Avaliações'),
+                          ),
+                        ),
+                        Tab(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('Fotos'),
+                          ),
+                        ),
+                        Tab(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('Participantes'),
+                          ),
+                        ),
                       ],
                     ),
                   ),

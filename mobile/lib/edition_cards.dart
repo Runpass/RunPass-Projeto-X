@@ -346,6 +346,13 @@ class EditionCompactCard extends StatelessWidget {
                   fit: StackFit.expand,
                   children: [
                     EditionCover(gateway: gateway, edition: edition),
+                    // Inscrição na própria foto: o link da prova; sem link, procurar a inscrição na internet.
+                    if (!archived && signupOpen(edition, now))
+                      Positioned(
+                        left: 10,
+                        bottom: 10,
+                        child: SignupChip(edition: edition),
+                      ),
                     // Só a data sobre a foto; o resto das informações fica embaixo.
                     Positioned(
                       top: 10,
@@ -616,4 +623,81 @@ class _InfoLine extends StatelessWidget {
       ),
     ],
   );
+}
+
+/// A corrida ainda vai acontecer (hoje conta): vale mostrar a inscrição.
+bool signupOpen(Map<String, dynamic> edition, [DateTime? now]) {
+  final date = DateTime.tryParse('${edition['date'] ?? ''}');
+  if (date == null) return false;
+  final today = now ?? DateTime.now();
+  return !date.isBefore(DateTime(today.year, today.month, today.day));
+}
+
+/// Endereço da inscrição: a página de inscrição; sem ela, o site oficial; sem os dois, uma busca na internet
+/// pela inscrição (nunca inventa um link da prova).
+({Uri uri, bool search}) signupLink(Map<String, dynamic> edition) {
+  final link =
+      safeHttpsUri(edition['registrationUrl']) ??
+      safeHttpsUri(edition['officialUrl']);
+  if (link != null) return (uri: link, search: false);
+  final year = '${edition['date'] ?? ''}'.split('-').first;
+  final query = ['inscrição', edition['name'], edition['city'], year]
+      .whereType<Object>()
+      .map((v) => '$v'.trim())
+      .where((v) => v.isNotEmpty)
+      .join(' ');
+  return (
+    uri: Uri.https('www.google.com', '/search', {'q': query}),
+    search: true,
+  );
+}
+
+/// Selo de inscrição sobre a foto da corrida (canto de baixo à esquerda).
+class SignupChip extends StatelessWidget {
+  final Map<String, dynamic> edition;
+  const SignupChip({super.key, required this.edition});
+
+  @override
+  Widget build(BuildContext context) {
+    final target = signupLink(edition);
+    return Material(
+      color: target.search ? const Color(0xb3000000) : runPassOrange,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        key: Key('signup-${edition['id']}'),
+        borderRadius: BorderRadius.circular(999),
+        onTap: () async {
+          if (!await linkOpener(target.uri) && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Não foi possível abrir o link.')),
+            );
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                target.search
+                    ? Icons.search_rounded
+                    : Icons.open_in_new_rounded,
+                size: 15,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                target.search ? 'Procurar inscrição' : 'Inscrição',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

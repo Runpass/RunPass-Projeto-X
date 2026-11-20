@@ -43,7 +43,7 @@ void main() {
       'CC BY-SA 4.0',
     };
     for (final photo in allCoverPhotos) {
-      // Nada de ilustração (decisão de 20/11/2026): toda imagem é foto real.
+      // Nada de ilustração: lugares e temas são fotos reais (decisão de 20/11/2026).
       expect(photo.isIllustration, isFalse, reason: photo.asset);
       expect(licenses, contains(photo.license), reason: photo.asset);
       expect(photo.author, isNotEmpty, reason: photo.asset);
@@ -261,6 +261,55 @@ void main() {
       expect(assets.last, 'assets/cidades/generica-rua.jpg');
       expect(cityPhotoFor({'city': 'Piracicaba', 'state': 'SP'}), isNotNull);
       coverChoices.clear();
+    });
+
+    test('corrida temática ganha a capa do tema; as outras, a do lugar', () {
+      String? theme(String name) => themeCoverFor({'name': name})?.asset;
+      expect(theme('8ª Batman Run Series'), 'assets/cidades/tema-heroi.jpg');
+      expect(
+        theme('12ª Corrida Mulher Maravilha'),
+        'assets/cidades/tema-heroi.jpg',
+      );
+      expect(theme('Barbie Run São Paulo'), isNull); // sem foto real do tema
+      expect(theme('Corrida do Naruto - São Paulo'), isNull);
+      expect(
+        theme('Hot Wheels Run Experience'),
+        'assets/cidades/tema-brinquedo.jpg',
+      );
+      expect(
+        theme('Night Run Outubro Rosa e Novembro Azul'),
+        'assets/cidades/tema-outubro-rosa.jpg',
+      );
+      expect(
+        theme('10ª Corrida Novembro Azul'),
+        'assets/cidades/tema-novembro-azul.jpg',
+      );
+      expect(theme('Corrida de Natal 2026'), 'assets/cidades/tema-natal.jpg');
+      expect(
+        theme('Corrida da Virada 2026'),
+        'assets/cidades/tema-reveillon.jpg',
+      );
+      expect(
+        theme('Athenas Kids Run Faster 2027'),
+        'assets/cidades/tema-kids.jpg',
+      );
+      expect(
+        theme("Venus Women's Half Marathon"),
+        'assets/cidades/tema-mulheres.jpg',
+      );
+      expect(
+        theme('Tricolor Run'),
+        isNull,
+      ); // é do Morumbi, não corrida colorida
+      expect(theme('Meia Maratona de São Paulo'), isNull);
+      expect(
+        coverPhotoFor({
+          'name': 'Batman Run Teste',
+          'city': 'São Paulo',
+          'state': 'SP',
+        }).asset,
+        'assets/cidades/tema-heroi.jpg',
+      );
     });
 
     test('toda imagem tem arquivo no projeto', () {
