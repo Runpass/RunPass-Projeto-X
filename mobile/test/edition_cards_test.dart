@@ -80,10 +80,10 @@ void main() {
     expect(find.text('Corrida A'), findsOneWidget);
     // A pílula da distância (a imagem ocupa a largura inteira do cartão e desenha a distância).
     expect(find.text('5K'), findsOneWidget);
-    // Capa sem foto da prova: cartão postal com a cidade, rotulado como arte do app.
-    expect(find.byKey(const Key('race-art-city')), findsOneWidget);
-    expect(find.text('CAMPINAS · SP'), findsOneWidget);
-    expect(find.byKey(const Key('race-art-tag')), findsOneWidget);
+    // Cidade sem foto: capa genérica, no mesmo padrão das fotos (imagem limpa, sem texto por cima).
+    expect(find.byKey(const Key('race-art-photo')), findsOneWidget);
+    expect(find.byKey(const Key('race-art-city')), findsNothing);
+    expect(find.text('CAMPINAS · SP'), findsNothing);
   });
 
   test('tipo da prova pelo nome, para a arte padrão', () {

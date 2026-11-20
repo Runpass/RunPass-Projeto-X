@@ -519,10 +519,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(icon, findsOneWidget);
-      expect(
-        find.byKey(const Key('home-agenda')),
-        findsNothing,
-      ); // saiu da barra do topo
+      // A agenda também fica na barra do topo, ao lado do +.
+      expect(find.byKey(const Key('home-agenda')), findsOneWidget);
       final cidade = tester.getRect(find.text('Minha Cidade'));
       expect(
         tester.getRect(icon).left > cidade.right - 1,

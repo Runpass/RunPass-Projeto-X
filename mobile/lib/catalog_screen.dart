@@ -633,9 +633,8 @@ class _EditionCoverState extends State<EditionCover> {
         RaceArt(
           edition: widget.edition,
           labelAtLeft: true,
-          photo: widget.edition['imageReference'] == null
-              ? cityPhotoFor(widget.edition)
-              : null,
+          // Sempre uma imagem (regra): o banner autorizado, quando houver, cobre esta por cima.
+          photo: coverPhotoFor(widget.edition),
         ),
         if (url != null)
           Image.network(
@@ -758,29 +757,74 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 
   /// Corpo da lista (só lista, com seções por período).
+  /// Corridas por cidade: cada cidade é uma faixa que rola na horizontal (da data mais próxima para a mais
+  /// distante) e a tela rola na vertical entre as cidades. A cidade com mais corridas vem primeiro; empate,
+  /// a que tem a corrida mais próxima.
   List<Widget> editionViews() {
-    final shown = items;
-    // Seções por período (a lista já vem na ordem certa): Hoje, Amanhã, Este fim de semana...
-    final out = <Widget>[];
-    String? section;
-    for (final edition in shown) {
-      final period = periodOf('${edition['date']}');
-      if (period != section) {
-        section = period;
-        out.add(
-          Padding(
-            key: Key('catalog-section-$period'),
-            padding: const EdgeInsets.only(top: 6, bottom: 8),
-            child: Text(
-              period,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-            ),
-          ),
-        );
-      }
-      out.add(editionCard(edition));
+    final groups = <String, List<Map<String, dynamic>>>{};
+    for (final edition in items) {
+      final city = '${edition['city'] ?? ''}'.trim();
+      final state = '${edition['state'] ?? ''}'.trim();
+      final label = city.isEmpty
+          ? 'Outras cidades'
+          : (state.isEmpty ? city : '$city, $state');
+      groups.putIfAbsent(label, () => []).add(edition);
     }
-    return out;
+    final order = groups.keys.toList()
+      ..sort((a, b) {
+        final byCount = groups[b]!.length.compareTo(groups[a]!.length);
+        if (byCount != 0) return byCount;
+        return '${groups[a]!.first['date']}'.compareTo(
+          '${groups[b]!.first['date']}',
+        );
+      });
+    final width = (MediaQuery.sizeOf(context).width * .82).clamp(240.0, 360.0);
+    return [
+      for (final label in order) ...[
+        Padding(
+          key: Key('catalog-city-$label'),
+          padding: const EdgeInsets.only(top: 6, bottom: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              Text(
+                groups[label]!.length == 1
+                    ? '1 corrida'
+                    : '${groups[label]!.length} corridas',
+                style: TextStyle(color: context.muted, fontSize: 12.5),
+              ),
+            ],
+          ),
+        ),
+        SingleChildScrollView(
+          key: Key('catalog-row-$label'),
+          scrollDirection: Axis.horizontal,
+          // Sai da margem da lista para a faixa encostar nas bordas da tela ao rolar.
+          clipBehavior: Clip.none,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final edition in groups[label]!)
+                Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: SizedBox(width: width, child: editionCard(edition)),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    ];
   }
 
   Future<void> loadMine() async {
@@ -1382,7 +1426,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
             onSubmitted: (_) => load(),
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              hintText: 'Nome da corrida',
+              hintText: 'Busca corrida',
               isDense: true,
               border: const OutlineInputBorder(),
               suffixIcon: Row(
@@ -2003,7 +2047,7 @@ class _EditionScreenState extends State<EditionScreen> {
             child: RaceArt(
               edition: body,
               labelAtLeft: true,
-              photo: body['imageReference'] == null ? cityPhotoFor(body) : null,
+              photo: coverPhotoFor(body),
             ),
           ),
           if (bannerUrl != null)

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'catalog_screen.dart' show RaceKind, raceKind;
 import 'new_post.dart' show foldName;
 
 /// Foto de cartão postal de uma cidade, usada como capa quando a corrida não tem banner autorizado.
@@ -339,6 +340,236 @@ CityPhoto? cityPhotoFor(Map<String, dynamic> edition) {
   final state = '${edition['state'] ?? ''}'.trim().toUpperCase();
   if (state != 'SP') return null;
   return _byCity[foldName('${edition['city'] ?? ''}')];
+}
+
+/// Pontos da capital: a corrida vai para a imagem do lugar pelo local (ou pelo nome) da prova.
+/// Cada ponto lista as palavras (sem acento, em minúsculas) que o identificam.
+final spLandmarks = <(List<String>, CityPhoto)>[
+  (['ibirapuera', 'obelisco', 'pedro alvares cabral'], cityPhotoList.first),
+  (['pacaembu', 'charles miller', 'charles muller'], _spPacaembu),
+  (['morumbi', 'tricolor'], _spMorumbi),
+  (
+    [
+      'estaiada',
+      'rio pinheiros',
+      'run the bridge',
+      'vila olimpia',
+      'jk iguatemi',
+      'cidade jardim',
+      'vila nova conceicao',
+    ],
+    _spEstaiada,
+  ),
+  (['villa lobos', 'villa-lobos', 'vila lobos'], _spVillaLobos),
+  (['parque do povo'], _spParqueDoPovo),
+  (['ecologico do tiete', 'tiete'], _spTiete),
+  (['ceret', 'analia franco'], _spCeret),
+  (['campo de marte', 'santana', 'center norte'], _spCampoDeMarte),
+  (['paulista', 'masp', 'sao silvestre'], _spMasp),
+  (['anhangabau', 'patriarca', 'farol santander'], _spAnhangabau),
+  (['catedral da se', 'praca da se'], _spSe),
+  (['independencia', 'ipiranga'], _spIpiranga),
+  (['jardim da luz', 'parque da luz'], _spLuz),
+];
+
+const _spMasp = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-masp.jpg',
+  author: 'Wilfredor',
+  license: 'CC0 1.0',
+  title: 'MASP, na Avenida Paulista',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:MASP_Brazil.jpg',
+);
+const _spSe = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-se.jpg',
+  author: 'Helena Panzera',
+  license: 'CC0 1.0',
+  title: 'Catedral da Sé',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:Catedral_da_S%C3%A9_-_S%C3%A3o_Paulo,_Brasil.jpg',
+);
+const _spLuz = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-jardim-da-luz.jpg',
+  author: 'Marcos Elias de Oliveira Júnior',
+  license: 'CC0 1.0',
+  title: 'Jardim da Luz',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:Parque_Jardim_da_Luz,_S%C3%A3o_Paulo_(SP).jpg',
+);
+const _spEstaiada = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-ponte-estaiada.jpg',
+  author: 'ikedaleo',
+  license: 'CC0 1.0',
+  title: 'Ponte Estaiada e o Rio Pinheiros',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:Ponte_Oct%C3%A1vio_Frias_de_Oliveira,_S%C3%A3o_Paulo,_Brasil.jpg',
+);
+const _spAnhangabau = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-anhangabau.jpg',
+  author: 'Wilfredor',
+  license: 'CC0 1.0',
+  title: 'Vale do Anhangabaú',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:Vale_do_Anhangaba%C3%BA,_Sao_Paulo,_Brasil.jpg',
+);
+const _spIpiranga = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-ipiranga.jpg',
+  author: 'Enohlar',
+  license: 'CC0 1.0',
+  title: 'Museu do Ipiranga',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:Vis%C3%A3o_lateral_do_Museu_do_Ipiranga.jpg',
+);
+const _spPacaembu = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-pacaembu.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'Estádio do Pacaembu e a Praça Charles Miller',
+  sourceUrl: '',
+);
+const _spMorumbi = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-morumbi.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'Estádio do Morumbi',
+  sourceUrl: '',
+);
+const _spVillaLobos = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-villa-lobos.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'Parque Villa-Lobos',
+  sourceUrl: '',
+);
+const _spParqueDoPovo = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-parque-do-povo.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'Parque do Povo',
+  sourceUrl: '',
+);
+const _spTiete = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-parque-ecologico-tiete.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'Parque Ecológico do Tietê',
+  sourceUrl: '',
+);
+const _spCeret = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-ceret.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'CERET',
+  sourceUrl: '',
+);
+const _spCampoDeMarte = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-campo-de-marte.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'Campo de Marte',
+  sourceUrl: '',
+);
+
+/// Corrida da capital sem local conhecido: uma destas, sempre a mesma para a mesma corrida.
+final spDefaultPhotos = <CityPhoto>[
+  cityPhotoList.first,
+  _spMasp,
+  _spEstaiada,
+  _spSe,
+  _spAnhangabau,
+  _spIpiranga,
+  _spLuz,
+];
+
+/// Foto noturna da cidade, para corrida noturna.
+const _nightByCity = <String, CityPhoto>{'sao paulo': _spNoite};
+const _spNoite = CityPhoto(
+  city: 'São Paulo',
+  asset: 'assets/cidades/sp-noite.jpg',
+  author: 'Wilfredor',
+  license: 'CC0 1.0',
+  title: 'Rio Pinheiros à noite',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:Vista_Panor%C3%A2mica_de_S%C3%A3o_Paulo_Noite.jpg',
+);
+
+/// Capa genérica (ilustração) para quando a cidade ainda não tem foto: nenhuma corrida fica sem imagem.
+const _genericStreet = CityPhoto(
+  city: 'Capa genérica',
+  asset: 'assets/cidades/generica-rua.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'Corrida de rua',
+  sourceUrl: '',
+);
+const _genericTrail = CityPhoto(
+  city: 'Capa genérica',
+  asset: 'assets/cidades/generica-trilha.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'Corrida de trilha',
+  sourceUrl: '',
+);
+const _genericNight = CityPhoto(
+  city: 'Capa genérica',
+  asset: 'assets/cidades/generica-noite.jpg',
+  author: 'RunPass',
+  license: illustrationLicense,
+  title: 'Corrida noturna',
+  sourceUrl: '',
+);
+
+/// Todas as imagens do app, na ordem dos créditos.
+final allCoverPhotos = <CityPhoto>[
+  ...cityPhotoList,
+  _spMasp,
+  _spSe,
+  _spLuz,
+  _spEstaiada,
+  _spAnhangabau,
+  _spIpiranga,
+  _spNoite,
+  _spPacaembu,
+  _spMorumbi,
+  _spVillaLobos,
+  _spParqueDoPovo,
+  _spTiete,
+  _spCeret,
+  _spCampoDeMarte,
+  _genericStreet,
+  _genericTrail,
+  _genericNight,
+];
+
+/// A imagem da capa da corrida, sempre presente (regra: nenhuma corrida sem imagem).
+/// Ordem: corrida noturna ganha foto noturna (da cidade, ou a genérica da noite); na capital, o ponto pelo
+/// local ou nome da prova, ou uma das fotos da capital; fora dela, a foto da cidade; sem foto, a capa
+/// genérica do tipo (rua ou trilha).
+CityPhoto coverPhotoFor(Map<String, dynamic> edition) {
+  final kind = raceKind(edition['name'] as String?);
+  final state = '${edition['state'] ?? ''}'.trim().toUpperCase();
+  final city = foldName('${edition['city'] ?? ''}'.trim());
+  final inSp = state == 'SP';
+  if (kind == RaceKind.noturna) {
+    return (inSp ? _nightByCity[city] : null) ?? _genericNight;
+  }
+  if (inSp && city == 'sao paulo') {
+    final text = foldName('${edition['venue'] ?? ''} ${edition['name'] ?? ''}');
+    for (final (keys, photo) in spLandmarks) {
+      if (keys.any(text.contains)) return photo;
+    }
+    final id = '${edition['id'] ?? edition['name'] ?? ''}';
+    final seed = id.codeUnits.fold<int>(7, (h, c) => (h * 31 + c) & 0x7fffffff);
+    return spDefaultPhotos[seed % spDefaultPhotos.length];
+  }
+  return cityPhotoFor(edition) ??
+      (kind == RaceKind.trilha ? _genericTrail : _genericStreet);
 }
 
 /// Cidade conquistada no passaporte: miniatura (a foto de cartão postal da cidade, ou uma arte com a

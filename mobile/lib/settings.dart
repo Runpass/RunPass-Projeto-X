@@ -285,16 +285,18 @@ class PhotoCreditsScreen extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       children: [
         Text(
-          'Quando uma corrida não tem banner autorizado, o cartão mostra uma foto da cidade. '
+          'Quando uma corrida não tem banner autorizado, o cartão mostra uma foto da cidade '
+          '(na capital, do lugar da prova; corrida noturna, uma imagem à noite). '
+          'Cidade sem foto ganha uma capa genérica. '
           'As fotos têm licença livre (CC0 ou domínio público), da Wikimedia Commons. '
           'Onde não há foto livre, usamos uma ilustração criada por IA, marcada como tal.',
           style: TextStyle(color: context.muted, fontSize: 13),
         ),
         const SizedBox(height: 12),
-        for (final photo in cityPhotoList)
+        for (final photo in allCoverPhotos)
           Card(
             child: ListTile(
-              key: Key('photo-credit-${photo.city}'),
+              key: Key('photo-credit-${photo.asset}'),
               leading: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: Image.asset(
@@ -306,7 +308,12 @@ class PhotoCreditsScreen extends StatelessWidget {
                       const SizedBox(width: 56, height: 56),
                 ),
               ),
-              title: Text(photo.city),
+              title: Text(
+                photo.city == 'São Paulo' &&
+                        photo.asset != cityPhotoList.first.asset
+                    ? 'São Paulo · ${photo.title}'
+                    : photo.city,
+              ),
               subtitle: Text(
                 photo.isIllustration
                     ? '${photo.title}\n${photo.license}'
