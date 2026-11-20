@@ -59,6 +59,37 @@ void main() {
     },
   );
 
+  test('só indica corrida em que ainda dá para se inscrever e com motivo para a pessoa', () {
+    final list = rankRecommendations(
+      [
+        race('hoje', '2026-11-20'),
+        race('amanha', '2026-11-21'),
+        race('em-4-dias', '2026-11-24'),
+        race('em-5-dias', '2026-11-25'),
+        {...race('encerrada', '2026-12-10'), 'registrationStatus': 'closed'},
+        {...race('esgotada', '2026-12-10'), 'registrationStatus': 'sold_out'},
+        {...race('aberta', '2026-12-10'), 'registrationStatus': 'open'},
+        race('sem-motivo', '2026-12-10', km: [42]),
+      ],
+      preferredKm: 10,
+      now: now,
+    );
+    final ids = [for (final r in list) r.edition['id']];
+    expect(ids, containsAll(['em-5-dias', 'aberta']));
+    for (final out in [
+      'hoje',
+      'amanha',
+      'em-4-dias',
+      'encerrada',
+      'esgotada',
+      'sem-motivo',
+    ]) {
+      expect(ids, isNot(contains(out)));
+    }
+    expect(ids.first, 'aberta');
+    expect(list.first.reasons, contains('Inscrições abertas'));
+  });
+
   test('distância preferida: a mais corrida', () {
     expect(preferredDistanceKm([5, 10, 10, 21.1]), 10);
     expect(preferredDistanceKm([21.1, 21.0975]), 21.1);
