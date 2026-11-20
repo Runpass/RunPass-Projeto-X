@@ -298,6 +298,10 @@ class EditionCompactCard extends StatelessWidget {
 
   /// Canto direito do cartão (ex.: menu da agenda).
   final Widget? trailing;
+
+  /// Sem a imagem e menor: só para a escolha da corrida na nova publicação (nas outras listas a imagem
+  /// ocupa a largura inteira do cartão).
+  final bool showImage;
   const EditionCompactCard({
     super.key,
     required this.gateway,
@@ -307,6 +311,7 @@ class EditionCompactCard extends StatelessWidget {
     this.rating,
     this.now,
     this.trailing,
+    this.showImage = true,
   });
 
   @override
@@ -322,107 +327,278 @@ class EditionCompactCard extends StatelessWidget {
     return Card(
       key: Key('compact-card-${edition['id']}'),
       clipBehavior: Clip.antiAlias,
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: EdgeInsets.only(bottom: showImage ? 10 : 6),
       child: InkWell(
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 76,
-                  height: 76,
-                  child: EditionCover(gateway: gateway, edition: edition),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // A imagem ocupa a largura inteira do cartao (mesma lista em todas as telas).
+            if (showImage)
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Stack(
+                  fit: StackFit.expand,
                   children: [
-                    Text(
-                      '$when · $where',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: archived ? context.archivedText : runPassOrange,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      edition['name'] as String? ?? 'Corrida',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                        height: 1.2,
-                        color: archived ? context.archivedText : null,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    if (chips.isEmpty)
-                      Text(
-                        'Distância a confirmar',
-                        style: TextStyle(color: muted, fontSize: 12.5),
-                      )
-                    else
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          for (final chip in chips)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: context.panel,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                chip,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    if (rating != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        rating!,
-                        style: TextStyle(color: muted, fontSize: 12.5),
-                      ),
-                    ],
-                    if (archived)
-                      Text(
-                        'Arquivada',
-                        style: TextStyle(
-                          color: context.archivedText,
-                          fontSize: 12.5,
+                    EditionCover(gateway: gateway, edition: edition),
+                    // Só a data sobre a foto; o resto das informações fica embaixo.
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: Container(
+                        key: Key('date-chip-${edition['id']}'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xb3000000),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          when,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
-                    if (actions != null) ...[
-                      const SizedBox(height: 8),
-                      actions!,
-                    ],
+                    ),
                   ],
                 ),
               ),
+            Padding(
+              padding: EdgeInsets.all(showImage ? 10 : 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (!showImage) ...[
+                          Text(
+                            '$when · $where',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: archived
+                                  ? context.archivedText
+                                  : runPassOrange,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                        ],
+                        Text(
+                          edition['name'] as String? ?? 'Corrida',
+                          maxLines: showImage ? 2 : 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: showImage ? 16 : 14.5,
+                            height: 1.2,
+                            color: archived ? context.archivedText : null,
+                          ),
+                        ),
+                        if (!showImage) ...[
+                          const SizedBox(height: 6),
+                          if (chips.isEmpty)
+                            Text(
+                              'Distância a confirmar',
+                              style: TextStyle(color: muted, fontSize: 12.5),
+                            )
+                          else
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              children: [
+                                for (final chip in chips)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: context.panel,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      chip,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                        ] else ...[
+                          const SizedBox(height: 8),
+                          _InfoLine(
+                            icon: Icons.place_outlined,
+                            text: where.replaceAll('/', ', '),
+                            color: muted,
+                          ),
+                          const SizedBox(height: 4),
+                          _InfoLine(
+                            icon: Icons.directions_run,
+                            text: chips.isEmpty
+                                ? 'Distância a confirmar'
+                                : chips.join(' · '),
+                            color: muted,
+                          ),
+                        ],
+                        if (rating != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            rating!,
+                            style: TextStyle(color: muted, fontSize: 12.5),
+                          ),
+                        ],
+                        if (archived)
+                          Text(
+                            'Arquivada',
+                            style: TextStyle(
+                              color: context.archivedText,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        if (actions != null) ...[
+                          const SizedBox(height: 8),
+                          actions!,
+                        ],
+                      ],
+                    ),
+                  ),
+                  ?trailing,
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Corrida em linha, como em "Quero correr" no perfil: miniatura à esquerda, nome, data e local, e um
+/// controle à direita (o coração de "Quero correr"). Tocar na linha abre a corrida.
+class PlanRow extends StatelessWidget {
+  final IdentityGateway gateway;
+  final Map<String, dynamic> edition;
+  final VoidCallback? onTap;
+
+  /// Controle do canto direito (ex.: o coração que tira a corrida de "Quero correr").
+  final Widget? trailing;
+  const PlanRow({
+    super.key,
+    required this.gateway,
+    required this.edition,
+    this.onTap,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final date = edition['date'] as String?;
+    final place = [
+      edition['city'],
+      edition['state'],
+    ].whereType<String>().where((p) => p.isNotEmpty).join(', ');
+    final muted = context.muted;
+    Widget line(IconData icon, String text) => Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: muted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13.5, color: muted),
+            ),
+          ),
+        ],
+      ),
+    );
+    return Card(
+      key: Key('plan-row-${edition['id']}'),
+      clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: 92,
+          child: Row(
+            children: [
+              SizedBox(
+                width: 112,
+                height: double.infinity,
+                child: EditionCover(gateway: gateway, edition: edition),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        edition['name'] as String? ?? 'Corrida',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15.5,
+                          height: 1.15,
+                        ),
+                      ),
+                      if (date != null)
+                        line(Icons.event_outlined, longDate(date)),
+                      if (place.isNotEmpty) line(Icons.place_outlined, place),
+                    ],
+                  ),
+                ),
+              ),
               ?trailing,
+              const SizedBox(width: 4),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+/// Linha de informação com ícone (local e distâncias do cartão da lista).
+class _InfoLine extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final Color color;
+  const _InfoLine({
+    required this.icon,
+    required this.text,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Icon(icon, size: 17, color: color),
+      const SizedBox(width: 7),
+      Expanded(
+        child: Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 14, color: color),
+        ),
+      ),
+    ],
+  );
 }

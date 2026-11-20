@@ -155,8 +155,7 @@ class CatalogTests(unittest.TestCase):
             "synthetic-sp-2025",
             "synthetic-sp-2026",
             "synthetic-rj-2026",
-            "synthetic-archived",
-        }
+        }  # synthetic-archived existe, mas arquivada nunca aparece na lista
         samples = [
             (
                 "namePrefix",

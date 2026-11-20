@@ -196,9 +196,9 @@ void main() {
         };
         shareCardBuilder = ({
           required title,
-          caption,
-          required line,
-          required author,
+          required distance,
+          required time,
+          required pace,
           photoBytes,
         }) async => Uint8List.fromList([1, 2, 3]);
         addTearDown(() {
@@ -241,42 +241,6 @@ void main() {
       },
     );
 
-    testWidgets(
-      'a imagem do post é capturada da tela, com uma faixa a mais embaixo para o logo',
-      (tester) async {
-        final key = GlobalKey();
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Center(
-              child: RepaintBoundary(
-                key: key,
-                child: const SizedBox(
-                  width: 200,
-                  height: 100,
-                  child: ColoredBox(color: Colors.orange),
-                ),
-              ),
-            ),
-          ),
-        );
-        Uint8List? png;
-        await tester.runAsync(() async {
-          png = await capturePostWithLogo(
-            key,
-            background: Colors.black,
-            dark: true,
-          );
-        });
-        expect(png, isNotNull);
-        final image = await tester.runAsync(() async {
-          final codec = await ui.instantiateImageCodec(png!);
-          return (await codec.getNextFrame()).image;
-        });
-        expect(image!.width, 600); // 200 x 3
-        expect(image.height, greaterThan(300)); // 100 x 3 + faixa do logo
-      },
-    );
-
     testWidgets('se o anexo falhar, tenta so com o texto', (tester) async {
       tester.view.physicalSize = const Size(800, 2400);
       tester.view.devicePixelRatio = 1;
@@ -289,9 +253,9 @@ void main() {
       };
       shareCardBuilder = ({
         required title,
-        caption,
-        required line,
-        required author,
+        required distance,
+        required time,
+        required pace,
         photoBytes,
       }) async => Uint8List.fromList([1]);
       addTearDown(() {
@@ -330,15 +294,15 @@ void main() {
     });
 
     testWidgets(
-      'buildShareCard (real) gera PNG valido com e sem foto, com titulo, texto e distancia/tempo',
+      'buildShareCard (real): foto de ponta a ponta sem faixas pretas, nome no alto, informações e logo',
       (tester) async {
         await tester.runAsync(() async {
-          // Um PNG minimo de verdade (nao mockado) para servir de "foto da medalha".
+          // Foto de verdade (nao mockada) e QUADRADA: num quadro 4:5 ela precisa preencher tudo, sem faixas pretas.
           final recorder = ui.PictureRecorder();
           final tinyCanvas = Canvas(recorder, const Rect.fromLTWH(0, 0, 4, 4));
           tinyCanvas.drawRect(
             const Rect.fromLTWH(0, 0, 4, 4),
-            Paint()..color = Colors.red,
+            Paint()..color = const Color(0xffff0000),
           );
           final tinyImage = await recorder.endRecording().toImage(4, 4);
           final tinyData = await tinyImage.toByteData(
@@ -346,30 +310,163 @@ void main() {
           );
           final photo = tinyData!.buffer.asUint8List();
 
-          final withPhoto = await buildShareCard(
-            title: 'Corrida A',
-            caption: 'Foi lindo',
-            line: '10,0 km · 58min',
-            author: '',
-            photoBytes: photo,
-          );
-          expect(withPhoto, isNotEmpty);
-          final decodedWithPhoto = await ui.instantiateImageCodec(withPhoto);
-          final frameWithPhoto = await decodedWithPhoto.getNextFrame();
-          expect(frameWithPhoto.image.width, 1080);
+          Future<ui.Image> decode(Uint8List png) async =>
+              (await (await ui.instantiateImageCodec(
+                png,
+              )).getNextFrame()).image;
+          Future<Color> pixel(ui.Image image, int x, int y) async {
+            final raw = (await image.toByteData())!;
+            final i = (y * image.width + x) * 4;
+            return Color.fromARGB(
+              raw.getUint8(i + 3),
+              raw.getUint8(i),
+              raw.getUint8(i + 1),
+              raw.getUint8(i + 2),
+            );
+          }
 
-          final withoutPhoto = await buildShareCard(
-            title: 'Corrida A',
-            caption: null,
-            line: '',
-            author: 'Ana',
+          // Quantos pixels da região têm exatamente a cor pedida (para achar o texto preto e os ícones).
+          Future<int> count(
+            ui.Image image,
+            Rect region,
+            bool Function(Color) test,
+          ) async {
+            final raw = (await image.toByteData())!;
+            var n = 0;
+            for (var y = region.top.toInt(); y < region.bottom.toInt(); y++) {
+              for (var x = region.left.toInt(); x < region.right.toInt(); x++) {
+                final i = (y * image.width + x) * 4;
+                final c = Color.fromARGB(
+                  raw.getUint8(i + 3),
+                  raw.getUint8(i),
+                  raw.getUint8(i + 1),
+                  raw.getUint8(i + 2),
+                );
+                if (test(c)) n++;
+              }
+            }
+            return n;
+          }
+
+          bool black(Color c) => c.r == 0 && c.g == 0 && c.b == 0;
+          // O ícone é laranja da marca: vermelho forte, verde médio, azul baixo.
+          bool orange(Color c) =>
+              c.r > 0.8 && c.g > 0.3 && c.g < 0.7 && c.b < 0.3;
+
+          final withPhoto = await decode(
+            await buildShareCard(
+              title: 'Corrida A',
+              distance: '10 km',
+              time: '58:23',
+              pace: '5:50/km',
+              photoBytes: photo,
+            ),
           );
-          expect(withoutPhoto, isNotEmpty);
-          final decodedWithoutPhoto = await ui.instantiateImageCodec(
-            withoutPhoto,
+          expect(withPhoto.width, 1080);
+          // Nome (190) + foto quadrada na proporção dela (1080) + rodapé com os três números e o logo (380).
+          expect(withPhoto.height, 190 + 1080 + 380);
+          // Os cantos e o meio da foto são da própria foto (vermelha): nenhuma faixa preta.
+          for (final (x, y) in [
+            (2, 200),
+            (1077, 200),
+            (540, 700),
+            (2, 1260),
+            (1077, 1260),
+          ]) {
+            final c = await pixel(withPhoto, x, y);
+            expect(c.r, greaterThan(0.9), reason: 'pixel $x,$y');
+            expect(c.g, lessThan(0.1), reason: 'pixel $x,$y');
+          }
+          // Fundo dos textos branco (cabeçalho e rodapé) e texto preto.
+          expect((await pixel(withPhoto, 5, 5)), const Color(0xffffffff));
+          expect(
+            await pixel(withPhoto, 5, 190 + 1080 + 5),
+            const Color(0xffffffff),
           );
-          final frameWithoutPhoto = await decodedWithoutPhoto.getNextFrame();
-          expect(frameWithoutPhoto.image.width, 1080);
+          expect(
+            await count(withPhoto, const Rect.fromLTWH(0, 0, 1080, 190), black),
+            greaterThan(0),
+            reason: 'nome da corrida em preto',
+          );
+          const footer = Rect.fromLTWH(0, 190 + 1080, 1080, 380);
+          expect(
+            await count(withPhoto, footer, black),
+            greaterThan(0),
+            reason: 'números em preto',
+          );
+          // Logo grande no pé do rodapé (abaixo dos números): ocupa quase 112 px de altura.
+          final raw = (await withPhoto.toByteData())!;
+          var logoTop = 1 << 30, logoBottom = -1;
+          for (
+            var y = footer.top.toInt() + 200;
+            y < footer.bottom.toInt();
+            y++
+          ) {
+            for (var x = 140; x < 940; x++) {
+              final i = (y * withPhoto.width + x) * 4;
+              final white =
+                  raw.getUint8(i) > 245 &&
+                  raw.getUint8(i + 1) > 245 &&
+                  raw.getUint8(i + 2) > 245;
+              if (!white) {
+                if (y < logoTop) logoTop = y;
+                if (y > logoBottom) logoBottom = y;
+              }
+            }
+          }
+          expect(logoBottom, greaterThan(0), reason: 'logo desenhado');
+          expect(logoBottom - logoTop, greaterThan(80), reason: 'logo grande');
+          // Os três ícones, um em cada terço do rodapé.
+          for (final third in [0, 1, 2]) {
+            expect(
+              await count(
+                withPhoto,
+                Rect.fromLTWH(third * 360.0, footer.top, 360, 100),
+                orange,
+              ),
+              greaterThan(0),
+              reason: 'ícone do terço $third',
+            );
+          }
+
+          // Foto na horizontal (2:1): o quadro acompanha a proporção, limitada a 1,91:1, sem cortar o resto.
+          final wideRecorder = ui.PictureRecorder();
+          Canvas(wideRecorder, const Rect.fromLTWH(0, 0, 8, 4)).drawRect(
+            const Rect.fromLTWH(0, 0, 8, 4),
+            Paint()..color = const Color(0xff0000ff),
+          );
+          final wideImage = await wideRecorder.endRecording().toImage(8, 4);
+          final widePng = (await wideImage.toByteData(
+            format: ui.ImageByteFormat.png,
+          ))!.buffer.asUint8List();
+          final wide = await decode(
+            await buildShareCard(
+              title: 'Corrida A',
+              distance: '5 km',
+              time: '--',
+              pace: '--',
+              photoBytes: widePng,
+            ),
+          );
+          final wideHeight = (1080 / 1.91).roundToDouble().toInt();
+          expect(wide.height, 190 + wideHeight + 380);
+          final wideEdge = await pixel(wide, 2, 190 + wideHeight - 4);
+          expect(
+            wideEdge.b,
+            greaterThan(0.9),
+          ); // a foto vai até a borda de baixo do quadro
+
+          // Sem foto e sem números ainda gera a imagem, com os três ícones e "--" (marcador no lugar da foto).
+          final withoutPhoto = await decode(
+            await buildShareCard(
+              title: 'Corrida A',
+              distance: '--',
+              time: '--',
+              pace: '--',
+            ),
+          );
+          expect(withoutPhoto.width, 1080);
+          expect(withoutPhoto.height, 190 + 1350 + 380); // sem foto, quadro 4:5
         });
       },
     );

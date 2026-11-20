@@ -2,9 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -15,7 +13,8 @@ import 'friends.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
 import 'tagged_people.dart';
-import 'undo_delete.dart' show pendingDeletions;
+import 'undo_delete.dart' show deleteWithUndo, pendingDeletions;
+import 'post_stats.dart';
 import 'runpass_theme.dart';
 
 /// Um cartao do Inicio. Vem de uma publicacao (`/feed`, `/posts/{id}`) ou de uma corrida
@@ -105,6 +104,16 @@ FeedEntry entryFromPost(
   );
 }
 
+/// Proporção do quadro da foto no feed, como no Instagram: a da própria foto, entre 4:5 (retrato) e
+/// 1,91:1 (paisagem). Assim a foto aparece inteira, sem faixas pretas; só passa disso é que corta.
+const double postPhotoMinRatio = 4 / 5;
+const double postPhotoMaxRatio = 1.91;
+double postPhotoFrameRatio(double? aspect) =>
+    (aspect ?? postPhotoMinRatio).clamp(postPhotoMinRatio, postPhotoMaxRatio);
+
+/// Proporção já descoberta de cada foto (por endereço e versão), para o quadro não pular ao rolar o feed.
+final Map<String, double> _postPhotoAspects = {};
+
 /// Abre a folha de compartilhamento do sistema. Trocavel nos testes.
 typedef ShareFunction = Future<ShareResult> Function(ShareParams params);
 ShareFunction shareFunction = (params) => SharePlus.instance.share(params);
@@ -112,19 +121,20 @@ ShareFunction shareFunction = (params) => SharePlus.instance.share(params);
 /// Monta a imagem da publicacao para compartilhar. Trocavel nos testes.
 typedef ShareCardBuilder = Future<Uint8List> Function({
   required String title,
-  String? caption,
-  required String line,
-  required String author,
+  required String distance,
+  required String time,
+  required String pace,
   Uint8List? photoBytes,
 });
 ShareCardBuilder shareCardBuilder = buildShareCard;
 
 const double _cardSide = 1080;
-const double _cardHeaderHeight = 320;
-const double _cardFooterHeight = 320;
-const double _cardPhotoHeight = 1350 - _cardHeaderHeight - _cardFooterHeight;
-const double _cardTotalHeight =
-    _cardHeaderHeight + _cardPhotoHeight + _cardFooterHeight;
+// Nome da corrida em cima, a foto de ponta a ponta no meio (na proporção dela) e, embaixo, só as
+// informações e a marca.
+const double _cardHeaderHeight = 190;
+const double _cardFooterHeight = 380;
+// Logo do rodapé, em tamanho de marca (o dobro do que era).
+const double _cardLogoHeight = 112;
 
 /// Carrega um asset de imagem (ex. a logo da marca) como ui.Image, para desenhar no canvas.
 Future<ui.Image?> _loadAssetImage(String path) async {
@@ -137,60 +147,59 @@ Future<ui.Image?> _loadAssetImage(String path) async {
   }
 }
 
-/// Recorte "cover" (preenche sem distorcer, cortando o excesso) da imagem de origem para caber
-/// exatamente no retangulo de destino.
-/// Onde desenhar a foto INTEIRA dentro do quadro (sem cortar): centralizada, mantendo a proporção.
-Rect _containDstRect(ui.Image image, Rect dst) {
-  final scale = [
-    dst.width / image.width,
-    dst.height / image.height,
-  ].reduce((a, b) => a < b ? a : b);
-  final w = image.width * scale, h = image.height * scale;
-  return Rect.fromLTWH(
-    dst.left + (dst.width - w) / 2,
-    dst.top + (dst.height - h) / 2,
-    w,
-    h,
-  );
+/// Parte da imagem de origem que preenche o retângulo de destino sem distorcer, cortando o excesso
+/// (sem faixas pretas).
+Rect _coverSrcRect(ui.Image image, Rect dst) {
+  final srcAspect = image.width / image.height;
+  final dstAspect = dst.width / dst.height;
+  if (srcAspect > dstAspect) {
+    final w = image.height * dstAspect;
+    return Rect.fromLTWH((image.width - w) / 2, 0, w, image.height.toDouble());
+  }
+  final h = image.width / dstAspect;
+  return Rect.fromLTWH(0, (image.height - h) / 2, image.width.toDouble(), h);
 }
 
-/// Imagem da propria publicacao: titulo da corrida, texto que o autor escreveu ao publicar
-/// (quando houver), a foto da medalha (quando houver) e a distancia/tempo da corrida (quando
-/// houver), abaixo da foto. Garante que o compartilhamento sempre leve uma imagem, que e o que
-/// Instagram e Facebook aceitam.
+/// Imagem para compartilhar: o nome da corrida em cima, a foto de ponta a ponta (sem faixas pretas, no
+/// quadro da própria proporção dela, de 4:5 a 1,91:1) e, embaixo, só as informações (km, tempo, pace) e o
+/// logo. Sem curtir, comentar, marcar nem compartilhar, e sem o nome de quem publicou. Garante que o
+/// compartilhamento sempre leve uma imagem, que é o que Instagram e Facebook aceitam.
 Future<Uint8List> buildShareCard({
   required String title,
-  String? caption,
-  required String line,
-  required String author,
+  required String distance,
+  required String time,
+  required String pace,
   Uint8List? photoBytes,
 }) async {
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(
-    recorder,
-    const Rect.fromLTWH(0, 0, _cardSide, _cardTotalHeight),
+  ui.Image? photo;
+  if (photoBytes != null) {
+    try {
+      final codec = await ui.instantiateImageCodec(photoBytes);
+      photo = (await codec.getNextFrame()).image;
+    } on Object {
+      photo = null;
+    }
+  }
+  // Altura da foto: a da própria proporção (de 4:5 a 1,91:1); sem foto, 4:5.
+  final ratio = postPhotoFrameRatio(
+    photo == null ? null : photo.width / photo.height,
   );
+  final photoHeight = (_cardSide / ratio).roundToDouble();
+  final totalHeight = _cardHeaderHeight + photoHeight + _cardFooterHeight;
 
-  void bg(Rect rect) => canvas.drawRect(
-    rect,
-    Paint()
-      ..shader = ui.Gradient.linear(
-        rect.topLeft,
-        rect.bottomRight,
-        [runPassNavy, const Color(0xff5a2a1c), runPassOrange],
-        // ui.Gradient.linear (ao contrario do LinearGradient do widget) exige
-        // colorStops explicito quando ha mais de 2 cores, senao lanca
-        // ArgumentError sempre que chamado.
-        const [0.0, 0.5, 1.0],
-      ),
-  );
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _cardSide, totalHeight));
+
+  // Fundo branco com o texto preto: o nome da corrida e os números.
+  void bg(Rect rect, {Color color = Colors.white}) =>
+      canvas.drawRect(rect, Paint()..color = color);
 
   void text(
     String value,
     double y,
     double size, {
     FontWeight weight = FontWeight.w700,
-    Color color = Colors.white,
+    Color color = Colors.black,
     int maxLines = 2,
     String? family,
   }) {
@@ -212,40 +221,22 @@ Future<Uint8List> buildShareCard({
     painter.paint(canvas, Offset((_cardSide - painter.width) / 2, y));
   }
 
-  // Cabecalho: titulo da corrida e o texto que o autor escreveu ao publicar.
+  // Cabeçalho: só o nome da corrida.
   bg(const Rect.fromLTWH(0, 0, _cardSide, _cardHeaderHeight));
-  text(title, 56, 56, weight: FontWeight.w900);
-  if (caption != null && caption.isNotEmpty) {
-    text(caption, 190, 32, weight: FontWeight.w500, color: Colors.white70);
-  }
+  text(title, 34, 56, weight: FontWeight.w900);
 
-  // Foto da publicação (ou da medalha) inteira; sem foto, usa um marcador no lugar.
-  final photoRect = const Rect.fromLTWH(
-    0,
-    _cardHeaderHeight,
-    _cardSide,
-    _cardPhotoHeight,
-  );
-  ui.Image? photo;
-  if (photoBytes != null) {
-    try {
-      final codec = await ui.instantiateImageCodec(photoBytes);
-      photo = (await codec.getNextFrame()).image;
-    } on Object {
-      photo = null;
-    }
-  }
+  // Foto de ponta a ponta; sem foto, usa um marcador no lugar.
+  final photoRect = Rect.fromLTWH(0, _cardHeaderHeight, _cardSide, photoHeight);
   if (photo != null) {
-    // A foto inteira (sem cortar), centralizada sobre fundo escuro, como no feed.
-    canvas.drawRect(photoRect, Paint()..color = Colors.black);
     canvas.drawImageRect(
       photo,
-      Rect.fromLTWH(0, 0, photo.width.toDouble(), photo.height.toDouble()),
-      _containDstRect(photo, photoRect),
+      _coverSrcRect(photo, photoRect),
+      photoRect,
       Paint()..filterQuality = FilterQuality.high,
     );
   } else {
-    bg(photoRect);
+    // Sem foto: um quadro cinza-claro separa o troféu do cabeçalho e do rodapé brancos.
+    bg(photoRect, color: const Color(0xfff1f2f5));
     text(
       String.fromCharCode(Icons.emoji_events.codePoint),
       photoRect.top + photoRect.height / 2 - 130,
@@ -256,36 +247,64 @@ Future<Uint8List> buildShareCard({
     );
   }
 
-  // Rodape: distancia/tempo da corrida (quando houver) e marca.
-  final footerTop = _cardHeaderHeight + _cardPhotoHeight;
+  // Rodapé: distância, tempo e pace, cada um com o seu ícone (sempre os três, com "--" quando falta o
+  // dado) e, embaixo, o logo.
+  final footerTop = _cardHeaderHeight + photoHeight;
   bg(Rect.fromLTWH(0, footerTop, _cardSide, _cardFooterHeight));
-  var y = footerTop + 50;
-  if (line.isNotEmpty) {
-    text(line, y, 44, weight: FontWeight.w700, color: runPassGold, maxLines: 1);
-    y += 70;
-  }
-  if (author.isNotEmpty) {
-    text(
-      author,
-      y,
-      32,
-      weight: FontWeight.w500,
-      color: Colors.white70,
-      maxLines: 1,
+  void stat(double centerX, IconData icon, String value, String label) {
+    final iconPainter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontSize: 56,
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          color: runPassOrange,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    iconPainter.paint(
+      canvas,
+      Offset(centerX - iconPainter.width / 2, footerTop + 30),
     );
+    for (final (y, size, weight, content) in [
+      (100.0, 44.0, FontWeight.w800, value),
+      (156.0, 28.0, FontWeight.w500, label),
+    ]) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: content,
+          style: TextStyle(
+            fontSize: size,
+            fontWeight: weight,
+            color: Colors.black,
+          ),
+        ),
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+        ellipsis: '…',
+      )..layout(maxWidth: _cardSide / 3 - 40);
+      painter.paint(canvas, Offset(centerX - painter.width / 2, footerTop + y));
+    }
   }
-  // Logo da marca (versao clara, p/ contrastar com o fundo escuro); sem o
-  // asset carregar por algum motivo, cai para o texto "+1Pódio".
-  final logo = await _loadAssetImage('assets/brand/logo-dark.png');
+
+  stat(_cardSide / 6, statDistanceIcon, distance, 'Distância');
+  stat(_cardSide / 2, statTimeIcon, time, 'Tempo');
+  stat(_cardSide * 5 / 6, statPaceIcon, pace, 'Pace');
+  // Logo da marca na versão para fundo claro; sem o asset carregar por algum
+  // motivo, cai para o texto "+1Pódio".
+  final logo = await _loadAssetImage('assets/brand/logo-light.png');
   if (logo != null) {
-    const logoHeight = 110.0;
+    const logoHeight = _cardLogoHeight;
     final logoWidth = logo.width * (logoHeight / logo.height);
     canvas.drawImageRect(
       logo,
       Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
       Rect.fromLTWH(
         (_cardSide - logoWidth) / 2,
-        footerTop + _cardFooterHeight - 22 - logoHeight,
+        footerTop + _cardFooterHeight - logoHeight - 34,
         logoWidth,
         logoHeight,
       ),
@@ -294,90 +313,20 @@ Future<Uint8List> buildShareCard({
   } else {
     text(
       '+1Pódio',
-      footerTop + _cardFooterHeight - 70,
-      48,
+      footerTop + _cardFooterHeight - _cardLogoHeight - 34,
+      88,
       weight: FontWeight.w900,
-      color: runPassGold,
+      color: runPassOrange,
       maxLines: 1,
     );
   }
 
   final image = await recorder.endRecording().toImage(
     _cardSide.toInt(),
-    _cardTotalHeight.toInt(),
+    totalHeight.toInt(),
   );
   final data = await image.toByteData(format: ui.ImageByteFormat.png);
   return data!.buffer.asUint8List();
-}
-
-/// Imagem do post exatamente como aparece no Início (capturada da própria tela) com o logo do app embaixo.
-/// Nulo se não der para capturar (ex.: post fora da tela); quem chama usa o cartão desenhado.
-Future<Uint8List?> capturePostWithLogo(
-  GlobalKey boundaryKey, {
-  required Color background,
-  required bool dark,
-}) async {
-  final boundary =
-      boundaryKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-  if (boundary == null || !boundary.hasSize) return null;
-  // O toque no botão (efeito de toque) pede um novo quadro: em modo de depuração a captura exige o quadro
-  // pintado, então espera ele terminar (em produção a captura usa o último quadro).
-  if (kDebugMode && boundary.debugNeedsPaint) {
-    await WidgetsBinding.instance.endOfFrame.timeout(
-      const Duration(milliseconds: 100),
-      onTimeout: () {},
-    );
-  }
-  const pixelRatio = 3.0;
-  final post = await boundary.toImage(pixelRatio: pixelRatio);
-  final logo = await _loadAssetImage(
-    dark ? 'assets/brand/logo-dark.png' : 'assets/brand/logo-light.png',
-  );
-  const bandHeight = 64.0 * pixelRatio;
-  final width = post.width.toDouble();
-  final height = post.height + bandHeight;
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, width, height));
-  canvas.drawRect(
-    Rect.fromLTWH(0, 0, width, height),
-    Paint()..color = background,
-  );
-  canvas.drawImage(
-    post,
-    Offset.zero,
-    Paint()..filterQuality = FilterQuality.high,
-  );
-  if (logo != null) {
-    const logoHeight = 30.0 * pixelRatio;
-    final logoWidth = logo.width * (logoHeight / logo.height);
-    canvas.drawImageRect(
-      logo,
-      Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
-      Rect.fromLTWH(
-        (width - logoWidth) / 2,
-        post.height + (bandHeight - logoHeight) / 2,
-        logoWidth,
-        logoHeight,
-      ),
-      Paint()..filterQuality = FilterQuality.high,
-    );
-  }
-  final image = await recorder.endRecording().toImage(
-    width.toInt(),
-    height.toInt(),
-  );
-  final data = await image.toByteData(format: ui.ImageByteFormat.png);
-  return data?.buffer.asUint8List();
-}
-
-/// Linha de números da imagem de compartilhamento: km, tempo e pace (só o que houver).
-String shareLineOf(RaceRecord race) {
-  final km = race.kilometers;
-  return [
-    if (km != null) formatKilometers(km),
-    if (race.timeSeconds != null) formatDuration(race.timeSeconds!),
-    if (race.paceSecondsPerKm != null) formatPace(race.paceSecondsPerKm!),
-  ].join(' · ');
 }
 
 class PostCard extends StatefulWidget {
@@ -526,95 +475,51 @@ class _PostCardState extends State<PostCard> {
     widget.onChanged?.call();
   }
 
-  /// Remover a minha publicação: a publicação nasce da participação concluída, então remover exclui a
-  /// participação (e a medalha dela), depois de confirmar.
-  /// Publicação extra: remove só ela (a corrida, a medalha e a outra publicação continuam).
-  Future<void> removeExtra() async {
-    final id = entry.postId;
-    if (id == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remover esta publicação?'),
-        content: const Text(
-          'Só esta publicação sai do feed. A corrida, a medalha e as outras publicações continuam.',
-        ),
-        actions: [
-          TextButton(
-            key: const Key('post-remove-cancel'),
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            key: const Key('post-remove-confirm'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remover'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      await widget.gateway.request(
-        '/posts/${Uri.encodeComponent(id)}',
-        method: 'DELETE',
-      );
-      pendingDeletions.add(id);
-      if (!mounted) return;
-      setState(() => removed = true);
-      soon('Publicação removida.');
-      widget.onRemoved?.call();
-    } on IdentityIssue catch (issue) {
-      soon(catalogError(issue));
-    } on Exception {
-      soon('Não foi possível remover agora. Nada foi alterado.');
-    }
-  }
-
+  /// Remover a minha publicação, com "Desfazer". A publicação nasce da participação concluída, então remover
+  /// exclui a participação e a medalha dela. A publicação extra sai sozinha (a corrida, a medalha e a outra
+  /// publicação continuam). O cartão some na hora; a exclusão só vai ao servidor quando a janela do
+  /// "Desfazer" fecha.
   Future<void> removeMine() async {
-    if (entry.extra) return removeExtra();
     final participation = entry.race.participation;
-    final id = participation['id'] as String?;
+    final participationId = participation['id'] as String?;
+    final id = entry.extra ? entry.postId : participationId;
     if (id == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remover publicação?'),
-        content: const Text(
-          'A publicação e a participação nesta corrida serão excluídas, e a medalha dela sai das suas medalhas. Não dá para desfazer.',
-        ),
-        actions: [
-          TextButton(
-            key: const Key('post-remove-cancel'),
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            key: const Key('post-remove-confirm'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remover'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final onRemoved = widget.onRemoved;
     try {
-      await widget.gateway.request(
-        '/participations/${Uri.encodeComponent(id)}',
-        method: 'DELETE',
-        query: {'expectedVersion': '${participation['version']}'},
+      final done = await deleteWithUndo(
+        context,
+        id: id,
+        message: entry.extra
+            ? 'Publicação removida.'
+            : 'Publicação removida, com a participação e a medalha.',
+        hide: () {
+          setState(() => removed = true);
+          onRemoved?.call();
+        },
+        restore: () {
+          if (mounted) setState(() => removed = false);
+        },
+        perform: () => entry.extra
+            ? widget.gateway.request(
+                '/posts/${Uri.encodeComponent(id)}',
+                method: 'DELETE',
+              )
+            : deleteParticipation(widget.gateway, id),
       );
-      // A exclusão termina no servidor em segundo plano (202): até lá a publicação ainda volta numa recarga.
-      // Fica escondida em todas as listas (Início, perfil e medalhas) e a tela não recarrega.
-      pendingDeletions.add(id);
-      if (!mounted) return;
-      setState(() => removed = true);
-      soon('Publicação removida.');
-      widget.onRemoved?.call();
+      // A exclusão termina no servidor em segundo plano (202): até lá o item ainda pode voltar numa
+      // recarga. Fica escondido em todas as listas (Início, perfil e medalhas) até o app fechar.
+      if (done) pendingDeletions.add(id);
     } on IdentityIssue catch (issue) {
-      soon(catalogError(issue));
+      if (mounted) setState(() => removed = false);
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
     } on Exception {
-      soon('Não foi possível remover agora. Nada foi alterado.');
+      if (mounted) setState(() => removed = false);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível remover agora. Nada foi alterado.'),
+        ),
+      );
     }
   }
 
@@ -681,8 +586,6 @@ class _PostCardState extends State<PostCard> {
     widget.onChanged?.call();
   }
 
-  String shareLine() => shareLineOf(entry.race);
-
   /// Texto da publicacao para compartilhar (WhatsApp, e-mail, Instagram, Facebook...).
   String shareText() {
     final km = entry.race.kilometers;
@@ -737,31 +640,22 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
-  /// Monta a imagem da propria publicacao (titulo, texto que o autor escreveu ao publicar,
-  /// foto da medalha e distancia/tempo da corrida, quando houver) para compartilhar.
-  /// Chave do post na tela: o compartilhamento usa a imagem do próprio post (igual ao Início).
-  final GlobalKey shareBoundary = GlobalKey();
-
+  /// Monta a imagem para compartilhar: a foto, o nome da corrida e as informações, com o logo.
+  /// Nada de curtir, comentar, marcar ou compartilhar na imagem.
   Future<XFile> shareImage() async {
-    try {
-      final captured = await capturePostWithLogo(
-        shareBoundary,
-        background: Theme.of(context).cardColor,
-        dark: Theme.of(context).brightness == Brightness.dark,
-      );
-      if (captured != null) {
-        return await _writeShareFile(captured, 'image/png', 'runpass.png');
-      }
-    } on Object {
-      // Sem captura (ex.: post fora da tela): usa o cartão desenhado abaixo.
-    }
     soon('Preparando para compartilhar...');
     final photoBytes = await _fetchPhotoBytes();
     final card = await shareCardBuilder(
       title: entry.title,
-      caption: entry.comment,
-      line: shareLine(),
-      author: entry.mine ? '' : entry.author,
+      distance: entry.race.kilometers == null
+          ? statEmpty
+          : formatKilometers(entry.race.kilometers!),
+      time: entry.race.timeSeconds == null
+          ? statEmpty
+          : formatDuration(entry.race.timeSeconds!),
+      pace: entry.race.paceSecondsPerKm == null
+          ? statEmpty
+          : formatPace(entry.race.paceSecondsPerKm!),
       photoBytes: photoBytes,
     );
     return _writeShareFile(card, 'image/png', 'runpass.png');
@@ -772,7 +666,6 @@ class _PostCardState extends State<PostCard> {
     final origin = box == null
         ? null
         : box.localToGlobal(Offset.zero) & box.size;
-    // A captura do post vem antes de qualquer aviso na tela (um aviso pede um novo quadro e a captura falha).
     final text = shareText();
     try {
       final image = await shareImage();
@@ -801,30 +694,6 @@ class _PostCardState extends State<PostCard> {
       }
     }
   }
-
-  Widget statItem(IconData icon, String value, String label) => Expanded(
-    child: Row(
-      children: [
-        Icon(icon, size: 22),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Theme.of(context).hintColor,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
 
   /// Comentario mais recente em destaque; os demais ficam atras do botao de comentarios.
   Widget lastCommentBox() {
@@ -887,228 +756,224 @@ class _PostCardState extends State<PostCard> {
     if (removed) return const SizedBox.shrink();
     final race = entry.race;
     final km = race.kilometers;
+    final aspectKey = '${entry.photoEndpoint}#${entry.version}';
     final subtitle = [
       if (entry.publishedAt != null) timeAgo(entry.publishedAt!),
       if (entry.place != null) entry.place!,
     ].join('  •  ');
-    // O compartilhamento captura este quadro: a imagem sai igual ao post do Início.
-    return RepaintBoundary(
-      key: shareBoundary,
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Cabeçalho: quem publicou, quando e onde.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
-              child: Row(
-                children: [
-                  InkWell(
-                    key: Key('post-author-${entry.postId}'),
-                    onTap: openProfile,
-                    borderRadius: BorderRadius.circular(40),
-                    child: ProfileAvatar(
-                      gateway: widget.gateway,
-                      profile: entry.authorProfile,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: InkWell(
-                      onTap: openProfile,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            entry.author,
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                          if (subtitle.isNotEmpty)
-                            Text(
-                              subtitle,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).hintColor,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (entry.mine)
-                    PopupMenuButton<String>(
-                      key: Key('post-menu-${entry.postId}'),
-                      tooltip: 'Opções da publicação',
-                      icon: const Icon(Icons.more_horiz),
-                      onSelected: (value) =>
-                          value == 'edit' ? editMine() : removeMine(),
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
-                          key: Key('post-menu-edit'),
-                          value: 'edit',
-                          child: Text('Editar'),
-                        ),
-                        PopupMenuItem(
-                          key: Key('post-menu-remove'),
-                          value: 'remove',
-                          child: Text('Remover'),
-                        ),
-                      ],
-                    )
-                  else
-                    const Icon(Icons.more_horiz),
-                ],
-              ),
-            ),
-            // Foto como no Instagram: de ponta a ponta do cartão, mais alta (4:5) e sempre inteira (sem cortar).
-            AspectRatio(
-              aspectRatio: 4 / 5,
-              child: ColoredBox(
-                color: Colors.black,
-                child: SizedBox.expand(
-                  child: MedalPhoto(
-                    key: Key('post-photo-${entry.postId}'),
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Cabeçalho: quem publicou, quando e onde.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
+            child: Row(
+              children: [
+                InkWell(
+                  key: Key('post-author-${entry.postId}'),
+                  onTap: openProfile,
+                  borderRadius: BorderRadius.circular(40),
+                  child: ProfileAvatar(
                     gateway: widget.gateway,
-                    participationId: entry.race.participation['id'] as String?,
-                    endpoint: entry.extra ? entry.photoEndpoint : null,
-                    size: 72,
-                    usePostImage: entry.race.hasPostImage,
-                    // Sempre a foto inteira, sem cortar (a da publicação e a da medalha).
-                    fit: BoxFit.contain,
+                    profile: entry.authorProfile,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: InkWell(
+                    onTap: openProfile,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.author,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        if (subtitle.isNotEmpty)
+                          Text(
+                            subtitle,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).hintColor,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (entry.mine)
+                  PopupMenuButton<String>(
+                    key: Key('post-menu-${entry.postId}'),
+                    tooltip: 'Opções da publicação',
+                    icon: const Icon(Icons.more_horiz),
+                    onSelected: (value) =>
+                        value == 'edit' ? editMine() : removeMine(),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        key: Key('post-menu-edit'),
+                        value: 'edit',
+                        child: Text('Editar'),
+                      ),
+                      PopupMenuItem(
+                        key: Key('post-menu-remove'),
+                        value: 'remove',
+                        child: Text('Remover'),
+                      ),
+                    ],
+                  )
+                else
+                  const Icon(Icons.more_horiz),
+              ],
+            ),
+          ),
+          // Nome da corrida acima da foto (tocar abre as informações da corrida).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: InkWell(
+                key: Key('post-race-${entry.postId}'),
+                borderRadius: BorderRadius.circular(6),
+                onTap: entry.race.participation['editionId'] is String
+                    ? () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => EditionScreen(
+                            gateway: widget.gateway,
+                            editionId:
+                                entry.race.participation['editionId'] as String,
+                          ),
+                        ),
+                      )
+                    : null,
+                child: Text(
+                  entry.title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 17,
                   ),
                 ),
               ),
             ),
-            // Ações logo abaixo da foto e, depois, a legenda (prova, texto, números e último comentário).
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      InkWell(
-                        onTap: entry.postId == null ? null : toggleLike,
-                        child: Row(
-                          children: [
-                            Icon(
-                              entry.liked
-                                  ? Icons.favorite
-                                  : Icons.favorite_border,
-                              color: runPassOrange,
-                            ),
-                            const SizedBox(width: 6),
-                            Text('${entry.likes}'),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 22),
-                      InkWell(
-                        onTap: openComments,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.chat_bubble_outline),
-                            const SizedBox(width: 6),
-                            Text('${entry.comments}'),
-                          ],
-                        ),
-                      ),
-                      // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
-                      // Na minha publicação o ícone aparece sempre e é um atalho para marcar alguém.
-                      if ((entry.tagged.isNotEmpty || entry.mine) &&
-                          entry.postId != null) ...[
-                        const SizedBox(width: 22),
-                        TaggedLink(
-                          gateway: widget.gateway,
-                          postId: entry.postId!,
-                          tagged: entry.tagged,
-                          onTag: entry.mine ? tagPeople : null,
-                        ),
-                      ],
-                      const SizedBox(width: 12),
-                      const Spacer(),
-                      Semantics(
-                        label: 'Compartilhar',
-                        button: true,
-                        child: InkWell(
-                          key: Key('share-${entry.race.participation['id']}'),
-                          onTap: share,
-                          customBorder: const CircleBorder(),
-                          child: const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: Tooltip(
-                              message: 'Compartilhar',
-                              child: Icon(Icons.ios_share, size: 22),
-                            ),
+          ),
+          // Junto do título, antes da foto e nesta ordem: o texto da publicação e, depois, distância, tempo e
+          // pace, que aparecem sempre (com "--" quando faltam) para manter o mesmo padrão.
+          Padding(
+            key: Key('post-summary-${entry.postId}'),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (entry.comment != null)
+                  Text(entry.comment!, key: Key('post-text-${entry.postId}')),
+                if (entry.comment != null) const SizedBox(height: 10),
+                PostStats(
+                  distance: km == null ? null : formatKilometers(km),
+                  time: race.timeSeconds == null
+                      ? null
+                      : formatDuration(race.timeSeconds!),
+                  pace: race.paceSecondsPerKm == null
+                      ? null
+                      : formatPace(race.paceSecondsPerKm!),
+                  placement: race.placement == null
+                      ? null
+                      : '${race.placement}º',
+                ),
+              ],
+            ),
+          ),
+          // Foto de ponta a ponta do cartão, no quadro da própria proporção da foto (de 4:5 a 1,91:1), sem
+          // faixas pretas e sem cortar.
+          AspectRatio(
+            aspectRatio: postPhotoFrameRatio(_postPhotoAspects[aspectKey]),
+            child: MedalPhoto(
+              key: Key('post-photo-${entry.postId}'),
+              gateway: widget.gateway,
+              participationId: entry.race.participation['id'] as String?,
+              endpoint: entry.extra ? entry.photoEndpoint : null,
+              size: 72,
+              usePostImage: entry.race.hasPostImage,
+              fit: BoxFit.cover,
+              onAspect: (aspect) {
+                if (_postPhotoAspects[aspectKey] == aspect) return;
+                setState(() => _postPhotoAspects[aspectKey] = aspect);
+              },
+            ),
+          ),
+          // Ações logo abaixo da foto e, depois, a legenda (prova, texto, números e último comentário).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    InkWell(
+                      onTap: entry.postId == null ? null : toggleLike,
+                      child: Row(
+                        children: [
+                          Icon(
+                            entry.liked
+                                ? Icons.favorite
+                                : Icons.favorite_border,
+                            color: runPassOrange,
                           ),
-                        ),
+                          const SizedBox(width: 6),
+                          Text('${entry.likes}'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 22),
+                    InkWell(
+                      onTap: openComments,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.chat_bubble_outline),
+                          const SizedBox(width: 6),
+                          Text('${entry.comments}'),
+                        ],
+                      ),
+                    ),
+                    // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
+                    // Na minha publicação o ícone aparece sempre e é um atalho para marcar alguém.
+                    if ((entry.tagged.isNotEmpty || entry.mine) &&
+                        entry.postId != null) ...[
+                      const SizedBox(width: 22),
+                      TaggedLink(
+                        gateway: widget.gateway,
+                        postId: entry.postId!,
+                        tagged: entry.tagged,
+                        onTag: entry.mine ? tagPeople : null,
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                  // Em negrito, sem sublinhado: tocar no nome da corrida abre as informações dela.
-                  InkWell(
-                    key: Key('post-race-${entry.postId}'),
-                    borderRadius: BorderRadius.circular(6),
-                    onTap: entry.race.participation['editionId'] is String
-                        ? () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => EditionScreen(
-                                gateway: widget.gateway,
-                                editionId:
-                                    entry.race.participation['editionId']
-                                        as String,
-                              ),
-                            ),
-                          )
-                        : null,
-                    child: Text(
-                      entry.title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17,
+                    const SizedBox(width: 12),
+                    const Spacer(),
+                    Semantics(
+                      label: 'Compartilhar',
+                      button: true,
+                      child: InkWell(
+                        key: Key('share-${entry.race.participation['id']}'),
+                        onTap: share,
+                        customBorder: const CircleBorder(),
+                        child: const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Tooltip(
+                            message: 'Compartilhar',
+                            child: Icon(Icons.ios_share, size: 22),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                  if (entry.comment != null) ...[
-                    const SizedBox(height: 6),
-                    Text(entry.comment!),
                   ],
-                  if (km != null ||
-                      race.timeSeconds != null ||
-                      race.paceSecondsPerKm != null) ...[
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        if (km != null)
-                          statItem(
-                            Icons.directions_run,
-                            formatKilometers(km),
-                            'Distância',
-                          ),
-                        if (race.timeSeconds != null)
-                          statItem(
-                            Icons.timer_outlined,
-                            formatDuration(race.timeSeconds!),
-                            'Tempo',
-                          ),
-                        if (race.paceSecondsPerKm != null)
-                          statItem(
-                            Icons.speed,
-                            formatPace(race.paceSecondsPerKm!),
-                            'Pace',
-                          ),
-                      ],
-                    ),
-                  ],
-                  const SizedBox(height: 14),
-                  if (entry.lastComment != null) lastCommentBox(),
-                ],
-              ),
+                ),
+                const SizedBox(height: 8),
+                const SizedBox(height: 14),
+                if (entry.lastComment != null) lastCommentBox(),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1272,5 +1137,17 @@ class _PostScreenState extends State<PostScreen> {
           ),
       ],
     ),
+  );
+}
+
+/// Exclui a participação (com a publicação e a medalha) usando a versão atual do servidor, não a da tela:
+/// marcar pessoas ou editar o texto muda a versão, e a versão antiga seria recusada (VERSION_CONFLICT).
+Future<void> deleteParticipation(IdentityGateway gateway, String id) async {
+  final path = '/participations/${Uri.encodeComponent(id)}';
+  final current = await gateway.request(path);
+  await gateway.request(
+    path,
+    method: 'DELETE',
+    query: {'expectedVersion': '${current['version']}'},
   );
 }

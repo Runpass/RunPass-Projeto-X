@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'identity_gateway.dart';
 import 'catalog_screen.dart';
+import 'friends.dart' show MedalAvatar;
 import 'biometrics.dart';
 import 'home_screen.dart';
 import 'location_picker.dart';
@@ -891,11 +892,14 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               username,
                               'Nome de usuário',
                               maxLength: 30,
+                              // Mensagens curtas, que cabem em uma linha: a anterior era cortada no fim.
                               check: (value) =>
                                   RegExp(r'^[A-Za-z0-9_]{3,30}$')
                                       .hasMatch(value)
                                   ? null
-                                  : 'Use de 3 a 30 letras sem acento, números ou _.',
+                                  : value.trim().length < 3
+                                  ? 'Use pelo menos 3 caracteres.'
+                                  : 'Só letras sem acento, números e _.',
                             ),
                           ],
                           if (step == Step.location) ...[
@@ -1018,27 +1022,31 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             const Text(
                               'Para seus amigos reconhecerem você, adicione uma foto. Ela é obrigatória e você poderá trocar ou remover depois, no perfil.',
                             ),
-                            const SizedBox(height: 16),
+                            // A fita da medalha sobe acima da foto: o respiro evita que cubra o texto.
+                            const SizedBox(height: 64),
                             Center(
                               child: InkWell(
                                 key: const Key('choose-photo'),
                                 customBorder: const CircleBorder(),
                                 onTap: busy ? null : choosePhoto,
-                                child: CircleAvatar(
+                                child: MedalAvatar(
                                   radius: 64,
-                                  backgroundColor: context.softFill,
-                                  backgroundImage: chosenPhoto == null
-                                      ? null
-                                      : MemoryImage(
-                                          Uint8List.fromList(chosenPhoto!),
-                                        ),
-                                  child: chosenPhoto == null
-                                      ? const Icon(
-                                          Icons.add_a_photo_outlined,
-                                          size: 40,
-                                          color: runPassOrange,
-                                        )
-                                      : null,
+                                  child: CircleAvatar(
+                                    radius: MedalAvatar.innerRadius(64),
+                                    backgroundColor: context.softFill,
+                                    backgroundImage: chosenPhoto == null
+                                        ? null
+                                        : MemoryImage(
+                                            Uint8List.fromList(chosenPhoto!),
+                                          ),
+                                    child: chosenPhoto == null
+                                        ? const Icon(
+                                            Icons.add_a_photo_outlined,
+                                            size: 40,
+                                            color: runPassOrange,
+                                          )
+                                        : null,
+                                  ),
                                 ),
                               ),
                             ),

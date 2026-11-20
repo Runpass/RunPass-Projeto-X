@@ -10,11 +10,15 @@ import 'package:url_launcher/url_launcher.dart';
 import 'agenda.dart';
 import 'duration_field.dart';
 import 'edition_cards.dart';
+import 'br_locations.dart' show brCityCoordinates;
+import 'catalog_filters.dart';
+import 'city_photos.dart';
 import 'friends.dart';
 import 'grid_columns.dart';
 import 'home_screen.dart';
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
+import 'location_picker.dart' show pickBrLocation;
 import 'my_races.dart';
 import 'post_preview.dart';
 import 'undo_delete.dart';
@@ -100,6 +104,15 @@ int? parsePace(String value) {
   if (match == null) return -1;
   final seconds = int.parse(match[1]!) * 60 + int.parse(match[2]!);
   return seconds >= 60 && seconds <= 3600 ? seconds : -1;
+}
+
+/// Pace (segundos por km) calculado pelo tempo ("h:mm:ss") e pela distância em km. Nulo se faltar o tempo ou
+/// o km, ou se der fora do que o servidor aceita (de 1:00 a 60:00 por km).
+int? paceFromTime(String timeText, double? km) {
+  final seconds = parseDuration(timeText);
+  if (seconds == null || seconds < 1 || km == null || km <= 0) return null;
+  final perKm = (seconds / km).round();
+  return perKm >= 60 && perKm <= 3600 ? perKm : null;
 }
 
 /// Aceita "1:30:00", "45:10" ou segundos puros. Vazio vira null; inválido ou zero vira -1.
@@ -298,7 +311,15 @@ class RaceArt extends StatelessWidget {
 
   /// A distância fica no canto superior esquerdo, na lista e no banner da corrida; o corredor, à direita.
   final bool labelAtLeft;
-  const RaceArt({super.key, required this.edition, this.labelAtLeft = false});
+
+  /// Foto de cartão postal da cidade: entra no lugar do degradê quando a corrida não tem banner autorizado.
+  final CityPhoto? photo;
+  const RaceArt({
+    super.key,
+    required this.edition,
+    this.labelAtLeft = false,
+    this.photo,
+  });
 
   static const kindPalettes = {
     RaceKind.rua: [
@@ -360,6 +381,22 @@ class RaceArt extends StatelessWidget {
               .toUpperCase();
   }
 
+  /// Cidade e estado em caixa alta, para a capa generica ter cara de cartao postal.
+  String? get postcardCity {
+    final city = '${edition['city'] ?? ''}'.trim();
+    if (city.isEmpty) return null;
+    final state = '${edition['state'] ?? ''}'.trim();
+    return state.isEmpty
+        ? city.toUpperCase()
+        : '${city.toUpperCase()} · $state';
+  }
+
+  /// Local da prova (quando o catalogo tem), embaixo da cidade.
+  String? get postcardVenue {
+    final venue = '${edition['venue'] ?? ''}'.trim();
+    return venue.isEmpty ? null : venue;
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = label;
@@ -380,17 +417,40 @@ class RaceArt extends StatelessWidget {
           return ClipRect(
             child: Stack(
               children: [
-                Positioned(
-                  right: small ? -6 : -14,
-                  bottom: small ? -10 : -26,
-                  child: Icon(
-                    kindIcons[kind],
-                    key: Key('race-art-${kind.name}'),
-                    size: small ? 56 : 170,
-                    color: Colors.white.withValues(alpha: small ? .18 : .13),
+                if (photo != null) ...[
+                  Positioned.fill(
+                    child: Image.asset(
+                      photo!.asset,
+                      key: const Key('race-art-photo'),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                    ),
                   ),
-                ),
-                if (text != null && small)
+                  // Escurece o pé da foto para o nome da cidade e o local ficarem legíveis.
+                  const Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Colors.black54],
+                          stops: [0.45, 1],
+                        ),
+                      ),
+                    ),
+                  ),
+                ] else
+                  Positioned(
+                    right: small ? -6 : -14,
+                    bottom: small ? -10 : -26,
+                    child: Icon(
+                      kindIcons[kind],
+                      key: Key('race-art-${kind.name}'),
+                      size: small ? 56 : 170,
+                      color: Colors.white.withValues(alpha: small ? .18 : .13),
+                    ),
+                  ),
+                if (text != null && small && photo == null)
                   Center(
                     child: Padding(
                       padding: const EdgeInsets.all(6),
@@ -411,12 +471,73 @@ class RaceArt extends StatelessWidget {
                       ),
                     ),
                   )
-                else if (text != null)
+                else if (text != null && photo == null)
                   Positioned.fill(
                     child: CustomPaint(
                       painter: _ArtLabelPainter(text, left: labelAtLeft),
                     ),
                   ),
+                // Capa generica (nao ha imagem autorizada da prova): no formato de cartao postal, com a
+                // cidade e o local, e rotulada como arte do app.
+                // Foto da cidade: limpa, sem texto por cima (o local e as distâncias ficam embaixo, no cartão).
+                if (!small && photo == null) ...[
+                  Positioned(
+                    left: 14,
+                    right: 14,
+                    bottom: 12,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (postcardCity != null)
+                          Text(
+                            postcardCity!,
+                            key: const Key('race-art-city'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 20,
+                              letterSpacing: 1.5,
+                              shadows: [
+                                Shadow(blurRadius: 8, color: Colors.black54),
+                              ],
+                            ),
+                          ),
+                        if (postcardVenue != null)
+                          Text(
+                            postcardVenue!,
+                            key: const Key('race-art-venue'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .85),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12.5,
+                              shadows: const [
+                                Shadow(blurRadius: 6, color: Colors.black54),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  // No canto de baixo: no alto, na tela da corrida, ficava por cima do ícone de compartilhar.
+                  Positioned(
+                    right: 10,
+                    bottom: 8,
+                    child: Text(
+                      'arte do app',
+                      key: const Key('race-art-tag'),
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: .6),
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           );
@@ -509,7 +630,13 @@ class _EditionCoverState extends State<EditionCover> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        RaceArt(edition: widget.edition, labelAtLeft: true),
+        RaceArt(
+          edition: widget.edition,
+          labelAtLeft: true,
+          photo: widget.edition['imageReference'] == null
+              ? cityPhotoFor(widget.edition)
+              : null,
+        ),
         if (url != null)
           Image.network(
             url!,
@@ -575,13 +702,22 @@ class _CatalogScreenState extends State<CatalogScreen> {
   // Sugestões enquanto digita: corridas cujo nome contém o texto, para escolher uma.
   // Busca por frase livre (rota /editions/search). Com frase, os campos abaixo sao ignorados.
   final items = <Map<String, dynamic>>[];
+  // Filtros em pílulas: "Perto de mim" (padrão: até 50 km da cidade do perfil), ano e localização escolhida.
+  bool nearMe = false;
+  int? year;
+  double? myLat, myLon;
+  String? myState;
+  // "Perto de mim" filtra no app (as corridas ainda não têm coordenada no catálogo): o que já passou pelo filtro e
+  // ainda não apareceu fica numa fila, e o cursor do servidor guarda de onde continuar.
+  final nearQueue = <Map<String, dynamic>>[];
+  String? nearCursor;
+  static const nearTarget = 20;
   Map<String, Map<String, dynamic>> mine = {};
   // Situação da pessoa em cada corrida (desejada ou inscrita): edição -> `wanted` | `registered`.
   Map<String, String> plans = {};
   Map<String, String> activeFilters = {};
   String? nextCursor, error;
   bool loading = false;
-  bool showFilters = false;
 
   /// A lista mostra só as corridas dos próximos 20 dias; as outras aparecem pela busca por nome.
   bool get upcomingWindow => fields['q']!.text.trim().isEmpty;
@@ -593,15 +729,27 @@ class _CatalogScreenState extends State<CatalogScreen> {
     loadMine();
   }
 
-  /// Primeira carga: se o perfil tem cidade, a lista abre nela (dá para trocar ou limpar em "Estado e cidade").
+  /// Primeira carga: se o perfil tem cidade, a lista abre com "Perto de mim" ligado (50 km); dá para trocar nas pílulas.
   Future<void> start() async {
     try {
       final me = await widget.gateway.request('/me');
       final city = (me['city'] as String?)?.trim() ?? '';
       final state = (me['state'] as String?)?.trim() ?? '';
       if (city.isNotEmpty && state.isNotEmpty && mounted) {
-        fields['city']!.text = city;
-        fields['state']!.text = state;
+        final center = brCityCoordinates['$state|$city'];
+        final lat = (me['latitude'] as num?)?.toDouble() ?? center?.lat;
+        final lon = (me['longitude'] as num?)?.toDouble() ?? center?.lon;
+        if (lat != null && lon != null) {
+          // Padrão: as 20 corridas mais próximas, até 50 km da cidade do perfil.
+          myLat = lat;
+          myLon = lon;
+          myState = state;
+          nearMe = true;
+        } else {
+          // Cidade sem coordenada conhecida: segue só na cidade do perfil, como antes.
+          fields['city']!.text = city;
+          fields['state']!.text = state;
+        }
       }
     } on Exception {
       // Sem perfil ou sem conexão: abre com todas as cidades.
@@ -745,10 +893,31 @@ class _CatalogScreenState extends State<CatalogScreen> {
           : '★ ${decimalPt(score)} · ${reviewsOf(edition)} avaliações',
       onTap: loading ? null : () => openEdition(edition['id'] as String),
       actions: quickActions(edition),
+      trailing: raceLinkButton(edition),
     );
   }
 
   /// Ações da corrida com rótulo (não só ícone): Quero correr, Inscrito e Já corri. Marcada fica laranja.
+  /// Link da prova no cartão: o site oficial; sem ele, a página de inscrição. Sem link, nada aparece.
+  Widget? raceLinkButton(Map<String, dynamic> edition) {
+    final official = safeHttpsUri(edition['officialUrl']);
+    final link = official ?? safeHttpsUri(edition['registrationUrl']);
+    if (link == null) return null;
+    return IconButton(
+      key: Key('card-link-${edition['id']}'),
+      tooltip: official != null ? 'Site da corrida' : 'Página de inscrição',
+      visualDensity: VisualDensity.compact,
+      icon: const Icon(Icons.public_rounded, size: 20),
+      onPressed: () async {
+        if (!await linkOpener(link) && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Não foi possível abrir o link.')),
+          );
+        }
+      },
+    );
+  }
+
   Widget quickActions(Map<String, dynamic> edition) {
     final id = edition['id'] as String;
     final status = edition['status'];
@@ -851,32 +1020,50 @@ class _CatalogScreenState extends State<CatalogScreen> {
   static int reviewsOf(Map<String, dynamic> edition) =>
       ((edition['runScore'] as Map?)?['reviewCount'] as num?)?.toInt() ?? 0;
 
-  /// Abre/fecha a busca por nome; ao fechar com busca ativa, volta à lista padrão.
-  void toggleSearch() {
+  /// Limpa a busca por nome e volta à lista padrão (próximos 20 dias).
+  void clearSearch() {
     final hadName = fields['q']!.text.trim().isNotEmpty;
     fields['q']!.clear();
-    setState(() => showFilters = !showFilters);
-    if (showFilters == false && hadName) load();
+    setState(() {});
+    if (hadName) load();
+  }
+
+  /// Há algum filtro ligado além da busca por nome (decide se "nenhuma corrida" é uma resposta ou só a lista vazia).
+  bool get hasFilter =>
+      nearMe ||
+      year != null ||
+      (fields['city']?.text.trim().isNotEmpty ?? false);
+
+  /// Datas do filtro de ano: o ano inteiro (no ano corrente, de hoje em diante); sem ano, de hoje em diante.
+  Map<String, String> dateFilters() {
+    final today = DateTime.now();
+    final todayIso = _isoDay(DateTime(today.year, today.month, today.day));
+    final y = year;
+    if (y == null) return {'dateFrom': todayIso};
+    final start = y == today.year ? todayIso : '$y-01-01';
+    return {'dateFrom': start, 'dateTo': '$y-12-31'};
   }
 
   Future<void> load({bool more = false}) async {
     if (loading) return;
+    final name = fields['q']!.text.trim();
     if (!more) {
-      final name = fields['q']!.text.trim();
-      // Busca por nome vale para o catálogo todo; sem nome, a lista é da cidade do perfil e dos próximos 20 dias
-      // (ou do ano escolhido no calendário).
+      // Busca por nome vale para o catálogo todo; sem nome, valem as pílulas: "Perto de mim" (estado do perfil, o
+      // raio é conferido no app), a localização escolhida e o ano. Sem nenhuma, as próximas corridas.
       activeFilters = name.isNotEmpty
           ? {'q': name}
           : {
-              for (final key in ['city', 'state'])
-                if (fields[key]!.text.trim().isNotEmpty)
-                  key: fields[key]!.text.trim(),
-              if (upcomingWindow) ...{
-                'dateFrom': upcomingRange().from,
-                'dateTo': upcomingRange().to,
-              },
+              if (nearMe && myState != null)
+                'state': myState!
+              else
+                for (final key in ['city', 'state'])
+                  if (fields[key]!.text.trim().isNotEmpty)
+                    key: fields[key]!.text.trim(),
+              ...dateFilters(),
             };
       items.clear();
+      nearQueue.clear();
+      nearCursor = null;
       nextCursor = null;
     }
     setState(() {
@@ -885,21 +1072,25 @@ class _CatalogScreenState extends State<CatalogScreen> {
     });
     transient = false;
     try {
-      final page = await widget.gateway.request(
-        '/editions',
-        query: {
-          ...activeFilters,
-          'limit': pageLimit,
-          if (more && nextCursor != null) 'cursor': nextCursor!,
-        },
-      );
-      if (!mounted) return;
       final known = items.map((e) => e['id']).toSet();
-      for (final entry
-          in (page['items'] as List).cast<Map<String, dynamic>>()) {
-        if (known.add(entry['id'])) items.add(entry);
+      if (name.isEmpty && nearMe && myLat != null && myLon != null) {
+        await loadNearby(more: more, known: known);
+      } else {
+        final page = await widget.gateway.request(
+          '/editions',
+          query: {
+            ...activeFilters,
+            'limit': pageLimit,
+            if (more && nextCursor != null) 'cursor': nextCursor!,
+          },
+        );
+        if (!mounted) return;
+        for (final entry
+            in (page['items'] as List).cast<Map<String, dynamic>>()) {
+          if (known.add(entry['id'])) items.add(entry);
+        }
+        nextCursor = page['nextCursor'] as String?;
       }
-      nextCursor = page['nextCursor'] as String?;
       autoRetried = false;
     } on IdentityIssue catch (issue) {
       if (mounted) error = catalogError(issue);
@@ -917,15 +1108,180 @@ class _CatalogScreenState extends State<CatalogScreen> {
     // erro parado até a pessoa tocar em "Tentar novamente".
     if (error != null && transient && !autoRetried && mounted) {
       autoRetried = true;
+      setState(() => retryPending = true);
       final retryMore = more;
       Future<void>.delayed(autoRetryDelay, () {
-        if (mounted && error != null && !loading) load(more: retryMore);
+        if (!mounted) return;
+        retryPending = false;
+        if (error != null && !loading) load(more: retryMore);
       });
     }
   }
 
+  /// "Perto de mim": busca as próximas corridas do estado e fica só com as que estão a até 50 km da cidade do perfil,
+  /// da mais próxima no tempo para a mais distante, mostrando [nearTarget] por vez.
+  Future<void> loadNearby({
+    required bool more,
+    required Set<Object?> known,
+  }) async {
+    var cursor = more ? nearCursor : null;
+    var pages = 0;
+    while (nearQueue.length < nearTarget && pages < 8) {
+      final page = await widget.gateway.request(
+        '/editions',
+        query: {...activeFilters, 'limit': '100', 'cursor': ?cursor},
+      );
+      if (!mounted) return;
+      for (final entry
+          in (page['items'] as List).cast<Map<String, dynamic>>()) {
+        if (withinRadiusOf(entry, myLat!, myLon!) && known.add(entry['id'])) {
+          nearQueue.add(entry);
+        }
+      }
+      cursor = page['nextCursor'] as String?;
+      pages++;
+      if (cursor == null) break;
+    }
+    final take = nearQueue.length < nearTarget ? nearQueue.length : nearTarget;
+    items.addAll(nearQueue.sublist(0, take));
+    nearQueue.removeRange(0, take);
+    nearCursor = cursor;
+    // O botão "Carregar mais" aparece enquanto sobrar fila ou páginas do servidor.
+    nextCursor = nearQueue.isNotEmpty || cursor != null
+        ? (cursor ?? 'fila')
+        : null;
+  }
+
+  void toggleNearMe() {
+    if (nearMe) {
+      setState(() => nearMe = false);
+      load();
+      return;
+    }
+    if (myLat == null || myLon == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Escolha a sua cidade no perfil para ver as corridas perto de você.',
+          ),
+        ),
+      );
+      return;
+    }
+    // Perto de mim e uma localização escolhida não valem juntos.
+    fields['city']!.clear();
+    fields['state']!.clear();
+    setState(() => nearMe = true);
+    load();
+  }
+
+  Future<void> pickYear() async {
+    final years = filterYears();
+    final picked = await showModalBottomSheet<int?>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('year-option-all'),
+              title: const Text('Todos os anos'),
+              trailing: year == null ? const Icon(Icons.check) : null,
+              onTap: () => Navigator.pop(sheet, 0),
+            ),
+            for (final y in years)
+              ListTile(
+                key: Key('year-option-$y'),
+                title: Text('$y'),
+                trailing: year == y ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(sheet, y),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return; // fechou sem escolher
+    setState(() => year = picked == 0 ? null : picked);
+    load();
+  }
+
+  Future<void> pickLocation() async {
+    final picked = await pickBrLocation(
+      context,
+      initialUf: fields['state']!.text.isEmpty ? null : fields['state']!.text,
+      initialCity: fields['city']!.text.isEmpty ? null : fields['city']!.text,
+    );
+    if (picked == null || !mounted) return;
+    fields['state']!.text = picked.$1;
+    fields['city']!.text = picked.$2;
+    setState(
+      () => nearMe = false,
+    ); // a localização escolhida vale no lugar de "perto de mim"
+    load();
+  }
+
+  void clearLocation() {
+    fields['city']!.clear();
+    fields['state']!.clear();
+    setState(() {});
+    load();
+  }
+
+  /// Pílulas de filtro (como "Esporte, Datas, Distância, Localização"): Perto de mim, Ano e Localização.
+  Widget filterPills() {
+    final city = fields['city']!.text.trim();
+    // Com busca por nome ligada as pílulas não valem (a busca é no catálogo todo): ficam apagadas.
+    final dimmed = !upcomingWindow;
+    return Opacity(
+      opacity: dimmed ? 0.4 : 1,
+      child: IgnorePointer(
+        ignoring: dimmed,
+        child: SizedBox(
+          height: 40,
+          child: ListView(
+            key: const Key('catalog-filter-pills'),
+            scrollDirection: Axis.horizontal,
+            children: [
+              FilterPill(
+                key: const Key('filter-near-me'),
+                icon: Icons.near_me_outlined,
+                label: nearMe
+                    ? 'Perto de mim · ${nearbyCityRadiusKm.round()} km'
+                    : 'Perto de mim',
+                active: nearMe,
+                onTap: toggleNearMe,
+                onClear: toggleNearMe,
+              ),
+              FilterPill(
+                key: const Key('filter-year'),
+                icon: Icons.calendar_today_outlined,
+                label: year == null ? 'Ano' : '$year',
+                active: year != null,
+                onTap: pickYear,
+                onClear: () {
+                  setState(() => year = null);
+                  load();
+                },
+              ),
+              FilterPill(
+                key: const Key('filter-location'),
+                icon: Icons.place_outlined,
+                label: city.isEmpty ? 'Localização' : city,
+                active: city.isNotEmpty,
+                onTap: pickLocation,
+                onClear: clearLocation,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Uma nova tentativa automática por falha passageira (zera quando uma carga dá certo).
   bool autoRetried = false;
+  bool retryPending = false;
   bool transient = false;
   static const autoRetryDelay = Duration(seconds: 3);
 
@@ -1011,84 +1367,101 @@ class _CatalogScreenState extends State<CatalogScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Busca por nome (só aparece ao tocar na lupa) e, se não achar, pedir o cadastro da corrida.
-          if (showFilters) ...[
-            TextField(
-              key: const Key('catalog-name-search'),
-              controller: fields['q'],
-              autofocus: true,
-              maxLength: 160,
-              buildCounter: (
-                _, {
-                required currentLength,
-                required isFocused,
-                maxLength,
-              }) => null,
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => load(),
-              onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(
-                labelText: 'Nome da corrida',
-                prefixIcon: const Icon(Icons.search_rounded),
-                suffixIcon: IconButton(
-                  key: const Key('catalog-name-search-go'),
-                  tooltip: 'Buscar',
-                  icon: const Icon(Icons.arrow_forward_rounded),
-                  onPressed: loading ? null : load,
-                ),
+          // Busca por nome sempre à vista, sem lupa. Se não achar a corrida, aparece o cadastro manual.
+          TextField(
+            key: const Key('catalog-name-search'),
+            controller: fields['q'],
+            maxLength: 160,
+            buildCounter: (
+              _, {
+              required currentLength,
+              required isFocused,
+              maxLength,
+            }) => null,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) => load(),
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              hintText: 'Nome da corrida',
+              isDense: true,
+              border: const OutlineInputBorder(),
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (fields['q']!.text.isNotEmpty)
+                    IconButton(
+                      key: const Key('catalog-search-clear'),
+                      tooltip: 'Limpar a busca',
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: clearSearch,
+                    ),
+                  IconButton(
+                    key: const Key('catalog-name-search-go'),
+                    tooltip: 'Buscar',
+                    icon: const Icon(Icons.arrow_forward_rounded),
+                    onPressed: loading ? null : load,
+                  ),
+                ],
               ),
             ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                key: const Key('catalog-request-from-search'),
-                onPressed: loading ? null : requestRace,
-                icon: const Icon(Icons.add_circle_outline),
-                label: const Text('Não encontrou? Incluir uma corrida'),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
+          ),
+          const SizedBox(height: 10),
+          filterPills(),
+          const SizedBox(height: 10),
           // Mesmo espaço (12) entre "Minhas solicitações", o público e o ano.
-          if (error != null) ...[
+          // Falha passageira com nova tentativa automática em curso: espera em silêncio, sem mensagem.
+          if (error != null && retryPending)
+            const Center(child: CircularProgressIndicator())
+          else if (error != null) ...[
             Text(error!, key: const Key('catalog-error')),
             TextButton(
               onPressed: loading ? null : () => load(more: nextCursor != null),
               child: const Text('Tentar novamente'),
             ),
           ],
-          // Lupa: busca por nome (as corridas fora dos próximos 20 dias aparecem por ela).
-          Row(
-            children: [
-              IconButton(
-                key: const Key('catalog-search-toggle'),
-                tooltip: showFilters
-                    ? 'Fechar a busca'
-                    : 'Buscar corridas por nome',
-                icon: Icon(
-                  showFilters ? Icons.close_rounded : Icons.search_rounded,
-                ),
-                onPressed: toggleSearch,
-              ),
-            ],
-          ),
           const SizedBox(height: 8),
           if (loading) const Center(child: CircularProgressIndicator()),
-          if (!loading && error == null && items.isEmpty)
+          // Ao abrir (lista dos próximos 20 dias) sem nenhuma corrida: uma orientação discreta, para a tela
+          // não ficar em branco. Não é erro nem "nada encontrado": só aponta a busca pelo nome.
+          if (!loading &&
+              error == null &&
+              items.isEmpty &&
+              nextCursor == null &&
+              upcomingWindow)
+            Padding(
+              padding: const EdgeInsets.only(top: 24),
+              child: Text(
+                'Sem corridas nos próximos dias por aqui.\nBusque pelo nome no campo acima.',
+                key: const Key('catalog-opening-hint'),
+                textAlign: TextAlign.center,
+                style: TextStyle(color: context.muted),
+              ),
+            ),
+          if (!loading &&
+              error == null &&
+              items.isEmpty &&
+              (!upcomingWindow || hasFilter))
             Text(
+              key: const Key('catalog-empty'),
               nextCursor == null
-                  ? (upcomingWindow
-                        ? 'Nenhuma corrida nos próximos 20 dias. Busque pelo nome (lupa) para ver outras datas.'
+                  ? (nearMe && upcomingWindow
+                        ? 'Nenhuma corrida a até ${nearbyCityRadiusKm.round()} km de você. Mude os filtros acima.'
                         : 'Nenhuma corrida encontrada com esses filtros.')
                   : 'Nenhuma corrida nesta página. Continue a busca.',
             ),
-          if (!loading && error == null && items.isEmpty && nextCursor == null)
+          if (!loading &&
+              error == null &&
+              items.isEmpty &&
+              nextCursor == null &&
+              !upcomingWindow)
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton(
                 key: const Key('catalog-request-empty'),
                 onPressed: requestRace,
-                child: const Text('Não encontrou? Pedir cadastro da corrida'),
+                child: const Text(
+                  'Não encontrou? Cadastrar a corrida manualmente',
+                ),
               ),
             ),
           ...editionViews(),
@@ -1439,11 +1812,13 @@ class _EditionScreenState extends State<EditionScreen> {
               key: const Key('plan-note'),
             ),
           ),
-        if (!past && !archived && selectedDistance == null)
+        // Vale também para a corrida que já aconteceu: é nela que se chega por "Já corri" na lista.
+        if (mine == null && !archived && selectedDistance == null)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
               'Escolha uma distância para registrar que você já correu.',
+              key: const Key('pick-distance-hint'),
               style: TextStyle(color: context.muted),
             ),
           ),
@@ -1624,7 +1999,13 @@ class _EditionScreenState extends State<EditionScreen> {
       child: Stack(
         children: [
           // Base: arte padrão da corrida; a imagem aprovada, quando existe, cobre por cima.
-          Positioned.fill(child: RaceArt(edition: body, labelAtLeft: true)),
+          Positioned.fill(
+            child: RaceArt(
+              edition: body,
+              labelAtLeft: true,
+              photo: body['imageReference'] == null ? cityPhotoFor(body) : null,
+            ),
+          ),
           if (bannerUrl != null)
             Positioned.fill(
               child: Image.network(
@@ -1678,17 +2059,21 @@ class _EditionScreenState extends State<EditionScreen> {
                         onPressed: () => Navigator.of(context).maybePop(),
                       ),
                       const Spacer(),
-                      IconButton(
-                        key: const Key('hero-wanted'),
-                        tooltip: wanted
-                            ? 'Tirar de Quero correr'
-                            : 'Quero correr',
-                        color: Colors.white,
-                        icon: Icon(
-                          wanted ? Icons.favorite : Icons.favorite_border,
+                      // Corrida que já aconteceu não entra em "Quero correr" (só sai, se já estava).
+                      if (body['status'] != 'past' || wanted)
+                        IconButton(
+                          key: const Key('hero-wanted'),
+                          tooltip: wanted
+                              ? 'Tirar de Quero correr'
+                              : 'Quero correr',
+                          color: Colors.white,
+                          icon: Icon(
+                            wanted ? Icons.favorite : Icons.favorite_border,
+                          ),
+                          onPressed: savingPlan
+                              ? null
+                              : () => setPlan('wanted'),
                         ),
-                        onPressed: savingPlan ? null : () => setPlan('wanted'),
-                      ),
                       // Site da corrida em todas as corridas: o oficial, quando cadastrado; senão uma busca na internet.
                       IconButton(
                         key: const Key('hero-site'),
@@ -2439,11 +2824,7 @@ class _EditionScreenState extends State<EditionScreen> {
           children: [
             Row(
               children: [
-                CircleAvatar(
-                  radius: 20,
-                  backgroundColor: context.softFill,
-                  child: Icon(Icons.person, color: runPassOrange),
-                ),
+                const ProfileAvatar(radius: 20),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -2667,11 +3048,7 @@ class _EditionScreenState extends State<EditionScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: context.softFill,
-                child: const Icon(Icons.person, color: runPassOrange, size: 20),
-              ),
+              const ProfileAvatar(radius: 18),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
@@ -3145,13 +3522,15 @@ class _EditionScreenState extends State<EditionScreen> {
                       indicatorColor: runPassOrange,
                       labelStyle: const TextStyle(
                         fontWeight: FontWeight.w900,
-                        fontSize: 15,
+                        fontSize: 14,
                       ),
                       unselectedLabelStyle: const TextStyle(
                         fontWeight: FontWeight.w800,
-                        fontSize: 15,
+                        fontSize: 14,
                       ),
                       unselectedLabelColor: context.onSurfaceText,
+                      // Quatro abas em telas estreitas: sem a folga lateral padrão os nomes cabem inteiros.
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 2),
                       tabs: [
                         Tab(text: 'Sobre'),
                         Tab(text: 'Avaliações'),
@@ -3408,7 +3787,7 @@ Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
       ),
     );
 
-/// Foto da PUBLICAÇÃO: sempre inteira, sem recorte; a tela só deixa ampliar e reduzir para conferir.
+/// Foto da PUBLICAÇÃO: abre inteira; recortar (com os tamanhos) é opcional.
 Future<List<int>?> cropPostPhoto(BuildContext context, List<int> photo) =>
     Navigator.of(context).push<List<int>>(
       MaterialPageRoute(
@@ -3582,6 +3961,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       text: draft['placement']?.toString() ?? '',
     );
     bib = TextEditingController(text: draft['bibNumber'] as String? ?? '');
+    time.addListener(() {
+      recomputePace();
+      if (mounted) setState(() {});
+    });
     comment = TextEditingController();
     final saved = draftFormCache[draft['id']];
     if (saved != null && draft['state'] == 'draft') {
@@ -3606,6 +3989,47 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) => sendInitialPhoto());
     }
   }
+
+  /// Nome da corrida: tocar abre as informações da corrida (a mesma tela do catálogo).
+  Widget raceNameLink() => Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: InkWell(
+      key: const Key('race-name-open'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () {
+        final id = draft['editionId'] as String?;
+        if (id == null) return;
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                EditionScreen(gateway: widget.gateway, editionId: id),
+          ),
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(
+                editionName!,
+                key: const Key('race-name-under-photo'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(Icons.open_in_new, size: 16, color: context.muted),
+          ],
+        ),
+      ),
+    ),
+  );
 
   /// Devolve ao formulário o que foi guardado (na memória ou no aparelho).
   void applySavedForm(Map<String, dynamic> saved) {
@@ -3696,6 +4120,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           if (parsed != null && draft['state'] == 'draft') editionDate = parsed;
           distances = list;
           editionName = edition['name'] as String?;
+          recomputePace();
         });
       }
     } on Exception {
@@ -3729,6 +4154,36 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     super.dispose();
   }
 
+  /// Km da distância escolhida (ou da única da corrida); nulo enquanto não se sabe.
+  double? get paceKm {
+    if (distances.isEmpty) return null;
+    final picked = distances.firstWhere(
+      (d) => d['id'] == distanceId,
+      orElse: () => distances.length == 1 ? distances.first : const {},
+    );
+    final km = picked['kilometers'];
+    return km is num && km > 0 ? km.toDouble() : null;
+  }
+
+  /// O pace vem do tempo e da distância: assim que os dois existem, ele é calculado e não se digita.
+  bool get paceIsComputed => paceFromTime(time.text, paceKm) != null;
+  bool _paceAuto = false;
+
+  void recomputePace() {
+    final value = paceFromTime(time.text, paceKm);
+    if (value == null) {
+      // Tempo ou distância saiu: o pace que era calculado some junto (o digitado à mão fica).
+      if (_paceAuto) {
+        pace.clear();
+        _paceAuto = false;
+      }
+      return;
+    }
+    final text = formatPace(value).replaceAll('/km', '');
+    if (pace.text != text) pace.text = text;
+    _paceAuto = true;
+  }
+
   int? positive(String value) {
     if (value.trim().isEmpty) return null;
     final parsed = int.tryParse(value);
@@ -3751,20 +4206,30 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         ],
         onChanged: saving
             ? null
-            : (value) => setState(() => distanceId = value),
+            : (value) => setState(() {
+                distanceId = value;
+                recomputePace();
+              }),
       ),
     DurationField(controller: time, enabled: !saving),
     TextField(
       key: const Key('pace-field'),
       controller: pace,
       enabled: !saving,
+      // Calculado pelo tempo e pela distância: sem digitar. Só se digita se faltar um dos dois.
+      readOnly: paceIsComputed,
       keyboardType: TextInputType.datetime,
-      decoration: const InputDecoration(
-        labelText: 'Pace (opcional)',
+      decoration: InputDecoration(
+        labelText: paceIsComputed ? 'Pace (calculado)' : 'Pace (opcional)',
         hintText: 'Ex.: 5:30',
         suffixText: 'min/km',
+        helperText: paceIsComputed
+            ? 'Calculado pelo tempo e pela distância.'
+            : 'Com o tempo e a distância, o pace é calculado sozinho.',
       ),
     ),
+    // Respiro: a ajuda do pace não encosta no rótulo do campo seguinte.
+    const SizedBox(height: 10),
     TextField(
       controller: placement,
       keyboardType: TextInputType.number,
@@ -4102,7 +4567,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       if (bytes == null) {
         if (mounted) {
           setState(
-            () => message = 'Não consegui carregar a foto da medalha. Escolha outra foto para o post.',
+            () => message = 'Não consegui carregar a foto da medalha. Escolha outra foto para a publicação.',
           );
         }
         return;
@@ -4117,7 +4582,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       final reference = await uploadPostBytes(bytes);
       if (reference != null) {
         postImageReference = reference;
-        message = 'A foto da medalha será a foto do post. Você pode trocá-la quando quiser.';
+        message = 'A foto da medalha será a foto da publicação. Você pode trocá-la quando quiser.';
       }
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
@@ -4159,7 +4624,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         authorName: (profile?['displayName'] as String?) ?? 'Você',
         username: (profile?['username'] as String?) ?? '',
         raceName: editionName ?? 'Sua corrida',
-        details: '',
         text: postText.text,
         tagged: [
           for (final person in tagged)
@@ -4261,10 +4725,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       authorName: (profile?['displayName'] as String?) ?? 'Você',
       username: (profile?['username'] as String?) ?? '',
       raceName: editionName ?? 'Sua corrida',
-      details: [
-        if (km != null) distanceLabel(km.toDouble()),
-        if (seconds is int && seconds > 0) formatDuration(seconds),
-      ].join(' · '),
+      distance: km == null ? null : formatKilometers(km.toDouble()),
+      time: seconds is int && seconds > 0 ? formatDuration(seconds) : null,
+      pace: paceFromTime(time.text, km?.toDouble()) == null
+          ? null
+          : formatPace(paceFromTime(time.text, km?.toDouble())!),
       text: postText.text,
       tagged: [
         for (final person in tagged)
@@ -4600,7 +5065,10 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         // (ao voltar, ela mostrava a lista de antes) e sem seta de voltar.
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute<void>(
-            builder: (_) => MedalCollectionScreen(gateway: widget.gateway),
+            builder: (_) => MedalCollectionScreen(
+              gateway: widget.gateway,
+              justEarned: editionName ?? 'Sua corrida',
+            ),
           ),
           (route) => false,
         );
@@ -4775,16 +5243,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             ),
           ),
         ),
-        if (editionName != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(
-              editionName!,
-              key: const Key('race-name-under-photo'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
-            ),
-          ),
+        if (editionName != null) raceNameLink(),
         const SizedBox(height: 12),
         OutlinedButton.icon(
           key: const Key('change-medal-photo'),
@@ -4849,7 +5308,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 ? (uploadingPost
                       ? 'Preparando a foto da publicação...'
                       : 'Escolha a foto da publicação ou use a da medalha.')
-                : 'A foto da medalha será a foto do post. Você pode trocar por outra.',
+                : 'A foto da medalha será a foto da publicação. Você pode trocar por outra.',
             key: const Key('publish-panel-hint'),
           ),
           const SizedBox(height: 8),
@@ -4942,19 +5401,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               ),
             ),
             // Nome da corrida logo abaixo da foto.
-            if (editionName != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  editionName!,
-                  key: const Key('race-name-under-photo'),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
-                  ),
-                ),
-              ),
+            if (editionName != null) raceNameLink(),
             const SizedBox(height: 8),
             if (widget.fromPost) ...[
               // Editar a publicação: o tamanho da foto publicada (a medalha se edita em Medalhas).
@@ -4975,11 +5422,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 key: const Key('replace-post-photo'),
                 onPressed: saving || uploadingPost ? null : replacePostPhoto,
                 icon: const Icon(Icons.photo_library_outlined),
-                label: Text(
-                  !hasPostPhoto
-                      ? 'Escolher a foto da publicação'
-                      : 'Trocar a foto da publicação',
-                ),
+                label: const Text('Incluir foto da publicação'),
               ),
               const SizedBox(height: 8),
               tagButton(saveNow: true),
@@ -5151,8 +5594,11 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           const SizedBox(height: 8),
           const Text('Privado · não gera medalha, avaliação ou publicação.'),
           const SizedBox(height: 4),
-          const Text(
-            'Rascunho criado. Preencha o que quiser e toque em Salvar rascunho.',
+          Text(
+            upcoming
+                ? 'Rascunho criado. Preencha o que quiser e toque em Salvar rascunho.'
+                : 'Preencha o que quiser. Os dados são gravados ao concluir ou ao sair.',
+            key: const Key('draft-hint'),
           ),
           if (message != null)
             Padding(
@@ -5165,6 +5611,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             ),
           // Corrida já realizada: sem "Salvar rascunho"; o tempo, a colocação e o peito seguem junto ao concluir.
           // Corrida futura não se conclui ainda, então ali o rascunho precisa do botão para guardar.
+          // Respiro: o rótulo flutuante do primeiro campo não fica por cima do texto acima.
+          const SizedBox(height: 14),
           ...raceDataFields(saveLabel: upcoming ? 'Salvar rascunho' : null),
           const SizedBox(height: 12),
           if (upcoming && draft['state'] == 'draft')
@@ -5198,7 +5646,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 child: const Text('Consultar processamento da foto'),
               ),
           ],
-          // Avaliação e comentário aparecem antes da foto (dá para preencher já); concluir só com a foto validada.
+          // Ordem da jornada: meus dados -> avaliação -> opção de postar uma foto da corrida -> concluir ou sair.
           if (draft['state'] == 'draft' && !upcoming) ...[
             const Divider(height: 32),
             const Text(
@@ -5263,14 +5711,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 label: Text(
                   uploadingPost
                       ? 'Enviando foto da publicação...'
-                      : (postImageReference == null
-                            ? 'Escolher a foto da publicação'
-                            : 'Trocar a foto da publicação'),
+                      : 'Incluir foto da publicação',
                 ),
               ),
               if (postImageReference != null)
                 const Text(
-                  'Foto da publicação validada. Ela é uma cópia: trocar a foto do post não muda a da medalha.',
+                  'Foto da publicação validada. Ela é uma cópia: trocar a foto da publicação não muda a da medalha.',
                   key: Key('post-photo-ok'),
                 )
               else
@@ -5285,7 +5731,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                       ? null
                       : useMedalPhotoForPost,
                   icon: const Icon(Icons.workspace_premium_outlined),
-                  label: const Text('Usar a foto da medalha no post'),
+                  label: const Text('Usar a foto da medalha na publicação'),
                 ),
               tagButton(saveNow: false),
               const SizedBox(height: 8),
@@ -5330,7 +5776,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             OutlinedButton(
               key: const Key('save-draft'),
               onPressed: saving || uploading ? null : saveAsDraft,
-              child: const Text('Salvar como rascunho'),
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(fontSize: 13),
+              ),
+              // Sai da jornada guardando o que já foi preenchido; concluir fica para depois.
+              child: const Text('Sair e continuar depois'),
             ),
           ],
           if (draft['state'] == 'draft')

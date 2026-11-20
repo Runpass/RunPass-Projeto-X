@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'biometrics.dart';
 import 'catalog_screen.dart';
+import 'city_photos.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'main.dart' show IdentityScreen;
@@ -74,13 +75,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'O acesso será bloqueado imediatamente e a limpeza dos seus dados (perfil, participações, avaliações e fotos) será agendada. Isso não pode ser desfeito.',
         ),
         actions: [
+          // Ação sem volta: o botão de destaque é o que mantém a conta; excluir fica em vermelho, discreto.
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
+            key: const Key('delete-account-confirm'),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Excluir minha conta'),
+          ),
+          FilledButton(
+            key: const Key('delete-account-cancel'),
+            style: FilledButton.styleFrom(minimumSize: const Size(120, 44)),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Manter minha conta'),
           ),
         ],
       ),
@@ -152,6 +160,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               value: dark,
               onChanged: ThemeController.set,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            key: const Key('photo-credits'),
+            leading: const Icon(Icons.photo_library_outlined),
+            title: const Text('Créditos das fotos'),
+            subtitle: const Text('Autor e licença das fotos das cidades.'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const PhotoCreditsScreen(),
+              ),
             ),
           ),
         ),
@@ -248,4 +271,50 @@ class _BiometricSwitchState extends State<BiometricSwitch> {
           onChanged: change,
         )
       : const SizedBox.shrink(key: Key('biometric-unavailable'));
+}
+
+/// Créditos das fotos de cartão postal das cidades (capa das corridas sem banner autorizado).
+class PhotoCreditsScreen extends StatelessWidget {
+  const PhotoCreditsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Créditos das fotos')),
+    body: ListView(
+      key: const Key('photo-credits-list'),
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text(
+          'Quando uma corrida não tem banner autorizado, o cartão mostra uma foto da cidade. '
+          'Estas fotos têm licença livre (CC0 ou domínio público), da Wikimedia Commons.',
+          style: TextStyle(color: context.muted, fontSize: 13),
+        ),
+        const SizedBox(height: 12),
+        for (final photo in cityPhotoList)
+          Card(
+            child: ListTile(
+              key: Key('photo-credit-${photo.city}'),
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset(
+                  photo.asset,
+                  width: 56,
+                  height: 56,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) =>
+                      const SizedBox(width: 56, height: 56),
+                ),
+              ),
+              title: Text(photo.city),
+              subtitle: Text(
+                '${photo.title}\nFoto: ${photo.author} · ${photo.license}',
+              ),
+              isThreeLine: true,
+              trailing: const Icon(Icons.open_in_new, size: 18),
+              onTap: () => linkOpener(Uri.parse(photo.sourceUrl)),
+            ),
+          ),
+      ],
+    ),
+  );
 }

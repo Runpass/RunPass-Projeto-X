@@ -2,6 +2,8 @@ import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/material.dart';
 
+import 'friends.dart' show ProfileAvatar;
+import 'post_stats.dart';
 import 'runpass_theme.dart';
 
 /// O que aparece na prévia da publicação: o mesmo que vai para o Feed.
@@ -10,8 +12,8 @@ class PostPreviewData {
   final String username;
   final String raceName;
 
-  /// "10 km · 58:23", só o que a pessoa informou.
-  final String details;
+  /// Distância, tempo e pace como aparecem no feed ("10 km", "58:23", "5:50/km"); nulos aparecem como "--".
+  final String? distance, time, pace;
   final String? text;
 
   /// Usuários marcados (sem o @).
@@ -23,7 +25,9 @@ class PostPreviewData {
     required this.authorName,
     required this.username,
     required this.raceName,
-    this.details = '',
+    this.distance,
+    this.time,
+    this.pace,
     this.text,
     this.tagged = const [],
     this.photo,
@@ -73,9 +77,7 @@ Future<bool> confirmPostPreview(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           ListTile(
-                            leading: const CircleAvatar(
-                              child: Icon(Icons.person_outline),
-                            ),
+                            leading: const ProfileAvatar(radius: 20),
                             title: Text(
                               data.authorName,
                               key: const Key('post-preview-author'),
@@ -83,10 +85,51 @@ Future<bool> confirmPostPreview(
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
-                            subtitle: Text(
-                              data.username.isEmpty
-                                  ? 'concluiu ${data.raceName}'
-                                  : '@${data.username} · concluiu ${data.raceName}',
+                            subtitle: data.username.isEmpty
+                                ? null
+                                : Text('@${data.username}'),
+                          ),
+                          // Como no cartão do Início: o nome da corrida fica acima da foto.
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                            child: Text(
+                              data.raceName,
+                              key: const Key('post-preview-race'),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                          // Mesma ordem do cartão do Início: texto, números da corrida e, depois, a foto.
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if ((data.text ?? '').trim().isNotEmpty)
+                                  Text(
+                                    data.text!.trim(),
+                                    key: const Key('post-preview-text'),
+                                  ),
+                                if ((data.text ?? '').trim().isNotEmpty)
+                                  const SizedBox(height: 10),
+                                // Os três ícones aparecem sempre, como no feed.
+                                PostStats(
+                                  key: const Key('post-preview-stats'),
+                                  distance: data.distance,
+                                  time: data.time,
+                                  pace: data.pace,
+                                ),
+                                if (data.tagged.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Com ${data.tagged.map((u) => '@$u').join(', ')}',
+                                    key: const Key('post-preview-tagged'),
+                                    style: TextStyle(color: sheet.muted),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                           AspectRatio(
@@ -119,42 +162,6 @@ Future<bool> confirmPostPreview(
                                           ),
                                         ),
                                   ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  data.raceName,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                                if (data.details.isNotEmpty)
-                                  Text(
-                                    data.details,
-                                    key: const Key('post-preview-details'),
-                                    style: TextStyle(color: sheet.muted),
-                                  ),
-                                if ((data.text ?? '').trim().isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    data.text!.trim(),
-                                    key: const Key('post-preview-text'),
-                                  ),
-                                ],
-                                if (data.tagged.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Com ${data.tagged.map((u) => '@$u').join(', ')}',
-                                    key: const Key('post-preview-tagged'),
-                                    style: TextStyle(color: sheet.muted),
-                                  ),
-                                ],
-                              ],
-                            ),
                           ),
                         ],
                       ),

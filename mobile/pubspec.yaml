@@ -1,7 +1,7 @@
 name: runpass
 description: "Aplicativo RunPass para Android e iPhone."
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.1.1+2
 
 environment:
   sdk: '>=3.13.5 <4.0.0'
@@ -37,3 +37,4 @@ flutter:
     - assets/medal_frames/
     - assets/icons/
     - assets/medal_shelf/
+    - assets/cidades/

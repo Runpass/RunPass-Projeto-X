@@ -5,9 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'catalog_screen.dart';
+import 'edition_cards.dart' show EditionCompactCard;
 import 'edition_requests.dart';
 import 'identity_gateway.dart';
-import 'location_picker.dart';
 import 'profile_photo.dart' show PhotoChoice, askPhotoChoice;
 import 'runpass_theme.dart';
 
@@ -277,8 +277,9 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   final matches = <Map<String, dynamic>>[];
   String? chosenId; // corrida do catálogo que preencheu o cadastro
 
-  // O que a medalha mostra, para a pessoa conferir e corrigir antes de buscar de novo ou concluir.
+  // O único campo da tela: o nome da corrida, já preenchido com o que foi lido da medalha.
   final name = TextEditingController();
+  // O resto do que a medalha mostrou (sem campo na tela): vai junto se for preciso cadastrar a corrida.
   final date = TextEditingController(); // dd/mm/aaaa
   final distance = TextEditingController();
   final city = TextEditingController();
@@ -336,7 +337,8 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   Future<void> scan() async {
     try {
       final lines = await widget.reader.read(widget.photoPath);
-      queries = medalQueries(lines);
+      // Todo o texto da medalha vira busca, do trecho mais específico ao menos específico.
+      queries = medalQueries(lines, max: 6);
       details = medalDetails(lines, queries);
       name.text = details['name'] ?? '';
       date.text = requestDateToDisplay(details['date'] ?? '');
@@ -582,150 +584,6 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     }
   }
 
-  Future<void> pickDate() async {
-    final current = DateTime.tryParse(requestDateToIso(date.text.trim()) ?? '');
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: current ?? DateTime.now(),
-      firstDate: DateTime(1990),
-      lastDate: DateTime.now().add(const Duration(days: 730)),
-    );
-    if (picked != null) {
-      date.text = requestDateToDisplay(
-        picked.toIso8601String().substring(0, 10),
-      );
-    }
-  }
-
-  Future<void> pickLocation() async {
-    final picked = await pickBrLocation(
-      context,
-      initialUf: state.text.isEmpty ? null : state.text,
-      initialCity: city.text.isEmpty ? null : city.text,
-    );
-    if (picked != null && mounted) {
-      setState(() {
-        state.text = picked.$1;
-        city.text = picked.$2;
-      });
-    }
-  }
-
-  Widget editField(
-    String key,
-    String label, {
-    TextInputType? keyboard,
-    int? maxLength,
-    Widget? suffix,
-    String? hint,
-    List<TextInputFormatter>? formatters,
-  }) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: TextField(
-      key: Key('medal-edit-$key'),
-      controller: {
-        'name': name,
-        'date': date,
-        'distance': distance,
-        'city': city,
-        'state': state,
-      }[key],
-      keyboardType: keyboard,
-      inputFormatters: formatters,
-      maxLength: maxLength,
-      textCapitalization: key == 'state'
-          ? TextCapitalization.characters
-          : TextCapitalization.words,
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        counterText: '',
-        suffixIcon: suffix,
-      ),
-    ),
-  );
-
-  /// Campos editáveis com o que foi lido da medalha.
-  Widget readCard() => Card(
-    key: const Key('medal-scan-edit'),
-    child: Padding(
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'O que li na medalha. Confira e corrija:',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 10),
-          editField('name', 'Nome da corrida', maxLength: 160),
-          editField(
-            'date',
-            'Data (dd/mm/aaaa)',
-            keyboard: TextInputType.number,
-            maxLength: 10,
-            // Só os números: as barras entram sozinhas (dd/mm/aaaa).
-            formatters: const [DateMaskFormatter()],
-            suffix: IconButton(
-              key: const Key('medal-edit-date-pick'),
-              tooltip: 'Escolher no calendário',
-              icon: const Icon(Icons.calendar_month_outlined),
-              onPressed: pickDate,
-            ),
-          ),
-          editField(
-            'distance',
-            'Distância em km',
-            keyboard: const TextInputType.numberWithOptions(decimal: true),
-            maxLength: 8,
-          ),
-          // Estado e cidade por rolagem (a mesma lista fechada do perfil), sem digitar.
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: InkWell(
-              key: const Key('medal-edit-location'),
-              onTap: pickLocation,
-              child: InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Estado e cidade',
-                  suffixIcon: Icon(Icons.expand_more),
-                ),
-                child: Text(
-                  city.text.isEmpty
-                      ? 'Escolher na lista'
-                      : '${state.text} - ${city.text}',
-                ),
-              ),
-            ),
-          ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              key: const Key('medal-scan-search-again'),
-              onPressed: searchAgain,
-              icon: const Icon(Icons.search_rounded),
-              label: const Text('Buscar de novo com este nome'),
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Sempre à mão, já na primeira tela: pesquisa o nome digitado na internet.
-          Align(
-            alignment: Alignment.centerLeft,
-            child: ListenableBuilder(
-              listenable: name,
-              builder: (context, _) => OutlinedButton.icon(
-                key: const Key('medal-scan-web-search'),
-                onPressed: name.text.trim().isEmpty ? null : searchWeb,
-                icon: const Icon(Icons.public_rounded),
-                label: const Text('Pesquisar este nome na internet'),
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-
   /// Não achou: pede o cadastro da corrida, já com o nome lido da medalha no formulário.
   Future<void> requestRace() async {
     // A foto segue junto: a medalha fica provisória em Medalhas até a equipe confirmar a corrida.
@@ -754,14 +612,14 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Adicionar medalha')),
+    appBar: AppBar(title: const Text('Cadastrar medalha')),
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(16),
           child: SizedBox(
-            height: 220,
+            height: 160,
             child: Image.file(
               File(widget.photoPath),
               key: const Key('medal-scan-photo'),
@@ -771,6 +629,28 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
           ),
         ),
         const SizedBox(height: 16),
+        // Um campo só: o nome da corrida. Vem do que foi lido da medalha; dá para corrigir e buscar de novo.
+        TextField(
+          key: const Key('medal-edit-name'),
+          controller: name,
+          maxLength: 160,
+          textInputAction: TextInputAction.search,
+          textCapitalization: TextCapitalization.words,
+          onSubmitted: (_) => searchAgain(),
+          decoration: InputDecoration(
+            labelText: 'Nome da corrida',
+            hintText: 'Procure a corrida da sua medalha',
+            counterText: '',
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: IconButton(
+              key: const Key('medal-scan-search-again'),
+              tooltip: 'Buscar',
+              icon: const Icon(Icons.arrow_forward_rounded),
+              onPressed: working ? null : searchAgain,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         if (working)
           const Row(
             key: Key('medal-scan-working'),
@@ -785,133 +665,81 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             ],
           )
         else ...[
-          if (matches.isNotEmpty) ...[
-            const Text(
-              'Encontrei estas corridas. Toque na sua:',
-              key: Key('medal-scan-found'),
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            for (final edition in matches)
-              Card(
-                color: chosenId == edition['id']
-                    ? Theme.of(context).colorScheme.primaryContainer
-                    : null,
-                child: ListTile(
-                  key: Key('medal-match-${edition['id']}'),
-                  leading: Icon(
-                    chosenId == edition['id']
-                        ? Icons.check_circle
-                        : Icons.directions_run,
-                    color: runPassOrange,
-                  ),
-                  title: Text(edition['name'] as String? ?? ''),
-                  subtitle: Text(
-                    [
-                      if (edition['date'] is String)
-                        displayDate(edition['date'] as String),
-                      if (edition['city'] != null)
-                        '${edition['city']}/${edition['state']}',
-                      if (registered.contains(edition['id']))
-                        'Já cadastrada por você',
-                    ].join(' · '),
-                  ),
-                  // Corrida que já existe: segue direto para a minha participação (tempo, km, avaliação e, se
-                  // quiser, a foto do post), sem passo intermediário.
-                  onTap: () {
-                    fillFrom(edition);
-                    concludeChosen();
-                  },
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Edição diferente da que quero cadastrar: copia os dados para os campos, eu ajusto o que
-                      // for diferente (data, distância, local) e sigo com o cadastro manual.
-                      IconButton(
-                        key: Key('medal-base-${edition['id']}'),
-                        tooltip: 'Não é esta edição: usar como base',
-                        icon: const Icon(Icons.edit_note_rounded),
-                        onPressed: () {
-                          fillFrom(edition);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Dados copiados para os campos. Ajuste o que for diferente e toque em Fazer o cadastro manual.',
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                      IconButton(
-                        key: Key('medal-open-${edition['id']}'),
-                        tooltip: 'Abrir a corrida',
-                        icon: const Icon(Icons.open_in_new),
-                        onPressed: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => EditionScreen(
-                              gateway: widget.gateway,
-                              editionId: edition['id'] as String,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            if (chosenId != null) ...[
-              // Escolhi a corrida: o próximo passo é a minha participação nela (tempo, percurso, avaliação, medalha).
-              const SizedBox(height: 4),
-              FilledButton.icon(
-                key: const Key('medal-scan-conclude'),
-                onPressed: concludeChosen,
-                icon: const Icon(Icons.arrow_forward_rounded),
-                label: const Text('Continuar: tempo e avaliação'),
-              ),
-              const Padding(
-                padding: EdgeInsets.only(top: 6, bottom: 4),
-                child: Text(
-                  'Vou usar esta corrida e a sua foto da medalha. No próximo passo você coloca o tempo, o percurso e a avaliação.',
-                  style: TextStyle(fontSize: 12),
-                ),
-              ),
-            ],
-          ],
           if (note != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(note!, key: const Key('medal-scan-note')),
             ),
-          readCard(),
-          const SizedBox(height: 8),
-          if (matches.isEmpty)
-            // Não achou: sugere cadastrar a corrida, já com o que foi lido na medalha.
-            Card(
-              key: const Key('medal-scan-suggest'),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Esta corrida ainda não está no catálogo.',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Confira os dados acima e faça o cadastro manual: ele leva o que estiver nos campos, junto com a foto da medalha.',
-                    ),
-                  ],
-                ),
+          if (matches.isNotEmpty) ...[
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Toque na sua corrida:',
+                key: Key('medal-scan-found'),
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
               ),
             ),
-          const SizedBox(height: 8),
-          // Sempre disponível, depois da busca pela foto: cadastro manual com os campos (editáveis) acima.
-          FilledButton.icon(
-            key: const Key('medal-scan-request'),
-            onPressed: requestRace,
-            icon: const Icon(Icons.edit_note_rounded),
-            label: const Text('Fazer o cadastro manual'),
+            // O mesmo cartão das outras listas de corridas. Tocar segue para tempo, lugar, km, pace, peito e avaliação.
+            for (final edition in matches)
+              KeyedSubtree(
+                key: Key('medal-match-${edition['id']}'),
+                child: EditionCompactCard(
+                  gateway: widget.gateway,
+                  edition: edition,
+                  actions: registered.contains(edition['id'])
+                      ? Text(
+                          'Já cadastrada por você',
+                          style: TextStyle(
+                            color: context.muted,
+                            fontSize: 12.5,
+                          ),
+                        )
+                      : null,
+                  onTap: () {
+                    fillFrom(edition);
+                    concludeChosen();
+                  },
+                ),
+              ),
+          ] else
+            // Não achou: sugere cadastrar a corrida, já com o que foi lido na medalha.
+            Padding(
+              key: const Key('medal-scan-suggest'),
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Esta corrida ainda não está no catálogo. Corrija o nome e busque de novo, ou cadastre a corrida.',
+                style: TextStyle(color: context.muted),
+              ),
+            ),
+          const SizedBox(height: 4),
+          // Sempre à mão e discretos: cadastrar a corrida (leva a foto da medalha) e procurar o nome na internet.
+          Wrap(
+            spacing: 4,
+            children: [
+              TextButton.icon(
+                key: const Key('medal-scan-request'),
+                onPressed: requestRace,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  textStyle: const TextStyle(fontSize: 12.5),
+                ),
+                icon: const Icon(Icons.add_location_alt_outlined, size: 16),
+                label: const Text('Cadastrar esta corrida'),
+              ),
+              ListenableBuilder(
+                listenable: name,
+                builder: (context, _) => TextButton.icon(
+                  key: const Key('medal-scan-web-search'),
+                  onPressed: name.text.trim().isEmpty ? null : searchWeb,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(fontSize: 12.5),
+                  ),
+                  icon: const Icon(Icons.public_rounded, size: 16),
+                  label: const Text('Procurar na internet'),
+                ),
+              ),
+            ],
           ),
         ],
       ],

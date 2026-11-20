@@ -126,8 +126,8 @@ Future<void> rateAll(WidgetTester tester, {int stars = 5, String? skip}) async {
   }
 }
 
+/// A busca por nome está sempre à vista (sem lupa): só garante que a tela terminou de carregar.
 Future<void> openSearch(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('catalog-search-toggle')));
   await tester.pumpAndSettle();
 }
 
@@ -1020,6 +1020,13 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    // A lista é montada sob demanda: rola até o botão existir, em vez de supor que já está na árvore.
+    await tester.scrollUntilVisible(
+      find.text('Selecionar foto'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Selecionar foto'));
     await tester.pumpAndSettle();
   }
@@ -1164,7 +1171,7 @@ void main() {
   }
 
   testWidgets(
-    'foto da medalha já enviada no começo: sem "Selecionar foto"; há Concluir, Salvar como rascunho e Excluir',
+    'foto da medalha já enviada no começo: sem "Selecionar foto"; há Concluir, Sair e continuar depois e Excluir',
     (tester) async {
       final gateway = await draftPhotoGateway([]);
       await openDraftWithInitialPhoto(tester, gateway);
@@ -1181,13 +1188,13 @@ void main() {
       );
       expect(find.text('Concluir participação'), findsOneWidget);
       expect(find.byKey(const Key('save-draft')), findsOneWidget);
-      expect(find.text('Salvar como rascunho'), findsOneWidget);
+      expect(find.text('Sair e continuar depois'), findsOneWidget);
       expect(find.text('Excluir rascunho'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'Salvar como rascunho grava os dados e a foto da medalha, não conclui e volta para Medalhas',
+    'Sair e continuar depois grava os dados e a foto da medalha, não conclui e volta para Medalhas',
     (tester) async {
       final patches = <Map<String, dynamic>>[];
       final gateway = await draftPhotoGateway(patches);
@@ -1401,16 +1408,25 @@ void main() {
         find.widgetWithText(TextField, 'Número de peito (opcional)'),
         '4821',
       );
+      // 1:30:00 em 5 km: o pace é calculado sozinho (18:00 por km) e não se digita.
+      expect(
+        tester.widget<TextField>(find.byKey(const Key('pace-field'))).readOnly,
+        isTrue,
+      );
+      expect(find.text('Pace (calculado)'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('Salvar dados da corrida'),
         200,
         scrollable: list,
       );
+      await tester.ensureVisible(find.text('Salvar dados da corrida'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Salvar dados da corrida'));
       await tester.pumpAndSettle();
       expect(patched?['expectedVersion'], 3);
       expect(patched?['distanceId'], '5k');
       expect(patched?['timeSeconds'], 5400);
+      expect(patched?['paceSecondsPerKm'], 1080);
       expect(patched?['bibNumber'], '4821');
       // Depois de salvar, vai para a tela de Medalhas (com o aviso lá).
       expect(find.byType(MedalCollectionScreen), findsOneWidget);
@@ -1418,6 +1434,20 @@ void main() {
       expect(find.text('Dados da corrida salvos.'), findsOneWidget);
     },
   );
+
+  test('pace calculado pelo tempo e pela distância', () {
+    expect(paceFromTime('1:00:00', 10), 360); // 6:00 por km
+    expect(paceFromTime('0:25:00', 5), 300); // 5:00 por km
+    expect(paceFromTime('1:52:30', 21.0975), 320); // arredonda: 319,9
+    expect(paceFromTime('', 10), isNull); // sem tempo
+    expect(paceFromTime('1:00:00', null), isNull); // sem distância
+    expect(paceFromTime('1:00:00', 0), isNull);
+    expect(
+      paceFromTime('0:00:30', 10),
+      isNull,
+    ); // 3 s por km: fora do que se aceita
+    expect(formatPace(paceFromTime('0:25:00', 5)!), '5:00/km');
+  });
 
   test('duration parser accepts h:mm:ss, mm:ss and seconds', () {
     expect(parseDuration('1:30:00'), 5400);
@@ -1727,17 +1757,16 @@ void main() {
           MaterialApp(home: CatalogScreen(gateway: gateway)),
         );
         await tester.pumpAndSettle();
-        expect(find.byKey(const Key('catalog-name-search')), findsNothing);
-        await openSearch(tester);
+        // O campo está sempre à vista, sem lupa; o cadastro manual só aparece quando a busca não acha.
         expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
-        expect(
-          find.byKey(const Key('catalog-request-from-search')),
-          findsOneWidget,
-        );
-        // Nada além do nome: sem frase livre, estado, cidade, distância nem inscrições.
+        expect(find.byIcon(Icons.search_rounded), findsNothing);
+        expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
+        // Sem frase livre; os filtros são as três pílulas: perto de mim, ano e localização.
         expect(find.byKey(const Key('catalog-phrase')), findsNothing);
         expect(find.text('Encontre sua próxima conquista'), findsNothing);
-        expect(find.byKey(const Key('filter-location')), findsNothing);
+        expect(find.byKey(const Key('filter-near-me')), findsOneWidget);
+        expect(find.byKey(const Key('filter-year')), findsOneWidget);
+        expect(find.byKey(const Key('filter-location')), findsOneWidget);
         await tester.enterText(
           find.byKey(const Key('catalog-name-search')),
           'meia',
@@ -1746,8 +1775,8 @@ void main() {
         await tester.pumpAndSettle();
         // A busca por nome vale para o catálogo todo: sem cidade do perfil nem janela de 20 dias.
         expect(calls.last, {'q': 'meia', 'limit': '20'});
-        // Fechar a lupa volta à lista padrão.
-        await tester.tap(find.byKey(const Key('catalog-search-toggle')));
+        // Limpar a busca volta à lista padrão.
+        await tester.tap(find.byKey(const Key('catalog-search-clear')));
         await tester.pumpAndSettle();
         expect(calls.last['dateFrom'], upcomingRange().from);
         expect(calls.last.containsKey('q'), isFalse);
@@ -1772,7 +1801,10 @@ void main() {
           find.byKey(const Key('catalog-name-search')),
           'Corrida Nova',
         );
-        await tester.tap(find.byKey(const Key('catalog-request-from-search')));
+        await tester.testTextInput.receiveAction(TextInputAction.search);
+        await tester.pumpAndSettle();
+        // Sem resultado: habilita o cadastro manual, já com o nome digitado.
+        await tester.tap(find.byKey(const Key('catalog-request-empty')));
         await tester.pumpAndSettle();
         expect(
           find.widgetWithText(TextFormField, 'Corrida Nova'),
@@ -1975,28 +2007,46 @@ void main() {
     );
   });
 
-  testWidgets('sem resultado, a tela oferece pedir o cadastro direto', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final gateway = await signed((uri, method, headers, body) async {
-      return const JsonReply(200, {'items': []});
-    });
-    await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
-    await tester.pumpAndSettle();
-    expect(
-      find.text(
-        'Nenhuma corrida nos próximos 20 dias. Busque pelo nome (lupa) para ver outras datas.',
-      ),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const Key('catalog-request-empty')));
-    await tester.pumpAndSettle();
-    expect(find.text('Pedir cadastro da corrida'), findsWidgets);
-    expect(find.byKey(const Key('request-submit')), findsOneWidget);
-  });
+  testWidgets(
+    'ao abrir sem corridas há só a orientação de buscar; a busca sem resultado oferece pedir o cadastro',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Nenhuma corrida'), findsNothing);
+      expect(find.byKey(const Key('catalog-request-empty')), findsNothing);
+      // Tela não fica em branco: orienta a buscar pelo nome.
+      expect(find.byKey(const Key('catalog-opening-hint')), findsOneWidget);
+      // O campo está sempre à vista e sem lupa.
+      expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
+      expect(find.byIcon(Icons.search_rounded), findsNothing);
+      await tester.enterText(
+        find.byKey(const Key('catalog-name-search')),
+        'Inexistente',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Nenhuma corrida encontrada com esses filtros.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Não encontrou? Cadastrar a corrida manualmente'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('catalog-request-empty')));
+      await tester.pumpAndSettle();
+      expect(find.text('Pedir cadastro da corrida'), findsWidgets);
+      expect(find.byKey(const Key('request-submit')), findsOneWidget);
+    },
+  );
 
   testWidgets('com resultados nao ha atalho de pedido no fim da lista', (
     tester,
@@ -2072,7 +2122,8 @@ void main() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pump(const Duration(seconds: 2));
-      expect(find.byKey(const Key('catalog-error')), findsOneWidget);
+      // Enquanto tenta de novo sozinha, não mostra a mensagem de erro.
+      expect(find.byKey(const Key('catalog-error')), findsNothing);
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
       expect(calls, 4);
@@ -2307,4 +2358,49 @@ void defaultOrderTests() {
     double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
     expect(top('Corrida A') < top('Corrida B'), isTrue);
   });
+
+  testWidgets(
+    'cartão da lista: ícone do link da prova só quando há link https',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final opened = <Uri>[];
+      final original = linkOpener;
+      linkOpener = (uri) async {
+        opened.add(uri);
+        return true;
+      };
+      addTearDown(() => linkOpener = original);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              {...entry('A'), 'officialUrl': 'https://corrida.exemplo.test/'},
+              {
+                ...entry('B'),
+                'registrationUrl': 'https://ingressos.exemplo.test/b',
+              },
+              {...entry('C'), 'officialUrl': 'javascript:alert(1)'},
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('card-link-A')), findsOneWidget);
+      expect(find.byKey(const Key('card-link-B')), findsOneWidget);
+      expect(find.byKey(const Key('card-link-C')), findsNothing);
+      await tester.tap(find.byKey(const Key('card-link-A')));
+      await tester.tap(find.byKey(const Key('card-link-B')));
+      await tester.pump();
+      expect(opened.map((u) => u.toString()), [
+        'https://corrida.exemplo.test/',
+        'https://ingressos.exemplo.test/b',
+      ]);
+    },
+  );
 }

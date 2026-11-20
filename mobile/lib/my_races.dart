@@ -7,7 +7,10 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
+import 'agenda.dart' show AgendaScreen;
+import 'city_photos.dart';
 import 'edition_cards.dart';
+import 'new_post.dart' show foldName;
 import 'edit_profile.dart';
 import 'edition_requests.dart' show MyEditionRequestsScreen;
 import 'friends.dart';
@@ -16,7 +19,8 @@ import 'location_picker.dart';
 import 'medal_scan.dart';
 import 'pending_medals.dart';
 import 'notifications.dart';
-import 'post_card.dart' show FeedEntry, PostThumb, entryFromPost;
+import 'post_card.dart'
+    show FeedEntry, PostThumb, deleteParticipation, entryFromPost;
 import 'profile_photo.dart';
 import 'runpass_theme.dart';
 import 'settings.dart';
@@ -84,7 +88,20 @@ class RaceRecord {
   }
 
   num? get timeSeconds => participation['timeSeconds'] as num?;
-  num? get paceSecondsPerKm => participation['paceSecondsPerKm'] as num?;
+
+  /// O guardado; se a inscrição ainda não tem pace mas tem tempo e distância, o calculado (tempo / km),
+  /// no intervalo que o servidor aceita (de 1:00 a 60:00 por km).
+  num? get paceSecondsPerKm {
+    final stored = participation['paceSecondsPerKm'] as num?;
+    if (stored != null) return stored;
+    final seconds = timeSeconds, km = kilometers;
+    if (seconds == null || seconds <= 0 || km == null || km <= 0) return null;
+    final perKm = (seconds / km).round();
+    return perKm >= 60 && perKm <= 3600 ? perKm : null;
+  }
+
+  /// Colocação na prova; só vem quando a pessoa informou e o servidor a libera para quem está vendo.
+  num? get placement => participation['placement'] as num?;
 
   // Customizacao da medalha na prateleira: cada campo tem o dado do catalogo
   // como padrao e so usa o valor salvo quando a pessoa o personalizou.
@@ -677,12 +694,16 @@ class SignedPhoto extends StatefulWidget {
   final String? endpoint;
   final Widget fallback;
   final BoxFit fit;
+
+  /// Chamado uma vez por foto carregada com largura / altura dela (o feed ajusta o quadro à foto).
+  final ValueChanged<double>? onAspect;
   const SignedPhoto({
     super.key,
     required this.gateway,
     required this.endpoint,
     required this.fallback,
     this.fit = BoxFit.cover,
+    this.onAspect,
   });
 
   @override
@@ -715,6 +736,21 @@ void forgetProfilePhoto(String profileId) =>
 
 class _SignedPhotoState extends State<SignedPhoto> {
   String? url;
+  String? _aspectFor;
+
+  /// Descobre a proporção da foto (a imagem é a mesma do Image.network, então vem do cache) e avisa.
+  void _reportAspect(String link) {
+    if (widget.onAspect == null || _aspectFor == link) return;
+    _aspectFor = link;
+    final stream = NetworkImage(link).resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener((info, _) {
+      stream.removeListener(listener);
+      final h = info.image.height;
+      if (mounted && h > 0) widget.onAspect?.call(info.image.width / h);
+    }, onError: (_, _) => stream.removeListener(listener));
+    stream.addListener(listener);
+  }
 
   @override
   void initState() {
@@ -782,6 +818,9 @@ class _SignedPhotoState extends State<SignedPhoto> {
   Widget build(BuildContext context) {
     final link = url;
     if (link == null) return widget.fallback;
+    if (widget.onAspect != null && _aspectFor != link) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _reportAspect(link));
+    }
     return Image.network(
       link,
       fit: widget.fit,
@@ -814,6 +853,9 @@ class MedalPhoto extends StatelessWidget {
 
   /// Endereço da foto quando não é da participação (ex.: publicação extra, `/posts/{id}/image`).
   final String? endpoint;
+
+  /// Recebe a proporção (largura / altura) da foto quando ela carrega.
+  final ValueChanged<double>? onAspect;
   const MedalPhoto({
     super.key,
     required this.gateway,
@@ -824,6 +866,7 @@ class MedalPhoto extends StatelessWidget {
     this.useDisplayImage = false,
     this.usePostImage = false,
     this.revision = 0,
+    this.onAspect,
   });
 
   @override
@@ -840,6 +883,7 @@ class MedalPhoto extends StatelessWidget {
                   '${usePostImage ? 'post-image' : (useDisplayImage ? 'display-image' : 'image')}'),
     fallback: MedalArt(size: size),
     fit: fit,
+    onAspect: onAspect,
   );
 }
 
@@ -885,6 +929,55 @@ class Stars extends StatelessWidget {
 }
 
 String decimalPt(num value) => value.toStringAsFixed(1).replaceAll('.', ',');
+
+/// Rascunhos de corridas que já aconteceram (a participação foi começada e não concluída), para a
+/// prateleira oferecer "Continuar". Os de corrida futura ficam na agenda e não entram aqui.
+/// Qualquer falha devolve lista vazia: é um atalho, não pode derrubar a prateleira.
+Future<List<RaceRecord>> loadMyDrafts(IdentityGateway gateway) async {
+  try {
+    final page = await gateway.request(
+      '/me/participations',
+      query: {'state': 'draft', 'limit': '20', 'expand': 'edition'},
+    );
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final drafts = <RaceRecord>[];
+    for (final item in (page['items'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      if (map['state'] != 'draft' || pendingDeletions.contains(map['id'])) {
+        continue;
+      }
+      final edition = map.remove('edition');
+      final record = RaceRecord(
+        map,
+        edition is Map ? Map<String, dynamic>.from(edition) : null,
+      );
+      final date = record.date;
+      if (date != null && date.compareTo(today) > 0) continue;
+      drafts.add(record);
+    }
+    // Servidor que não devolve a corrida junto: busca o que faltou, para o cartão mostrar o nome.
+    final missing = [
+      for (final d in drafts)
+        if (d.edition == null) '${d.participation['editionId']}',
+    ];
+    if (missing.isNotEmpty) {
+      final found = await loadEditions(gateway, missing);
+      return [
+        for (final d in drafts)
+          d.edition != null
+              ? d
+              : RaceRecord(
+                  d.participation,
+                  found[d.participation['editionId']],
+                ),
+      ];
+    }
+    return drafts;
+  } on Exception {
+    return const [];
+  }
+}
 
 /// Every completed participation of the signed-in runner, newest edition first.
 /// Edition lookups that fail leave the record without edition details.
@@ -946,6 +1039,33 @@ Future<List<RaceRecord>> loadMyRaces(IdentityGateway gateway) async {
   });
   return records;
 }
+
+/// Cidades conquistadas no passaporte: onde a pessoa concluiu uma corrida, da mais recente para a mais antiga,
+/// sem repetir. Cada item é (cidade, estado).
+List<(String, String?)> conqueredCities(List<RaceRecord> races) {
+  final seen = <String>{};
+  final out = <(String, String?)>[];
+  for (final race in races) {
+    final city = (race.edition?['city'] as String?)?.trim() ?? '';
+    if (city.isEmpty) continue;
+    final state = (race.edition?['state'] as String?)?.trim();
+    if (seen.add('${foldName(city)}|${state ?? ''}')) out.add((city, state));
+  }
+  return out;
+}
+
+/// Quantas cidades o passaporte tem: as que têm foto de cartão postal no app mais as que a pessoa já conquistou
+/// e ainda não têm foto (assim, "conquistadas" nunca passa do total).
+int passportTotal(List<(String, String?)> conquered) {
+  final keys = {for (final p in cityPhotoList) '${foldName(p.city)}|SP'};
+  for (final (city, state) in conquered) {
+    keys.add('${foldName(city)}|${state ?? ''}');
+  }
+  return keys.length;
+}
+
+String passportSummary(int conquered, int total) =>
+    '$conquered de $total cidades conquistadas';
 
 /// Achievements derived only from the runner's completed races. They are not
 /// stored or awarded by the backend: a badge shows when the condition holds.
@@ -1699,6 +1819,9 @@ class MedalCollectionScreen extends StatefulWidget {
 
   /// Carrega a foto da medalha provisória. Trocável nos testes (o link assinado não roda lá).
   final Future<List<int>?> Function(IdentityGateway, String) pendingPhotoLoader;
+
+  /// Nome da corrida que acabou de ser concluída: a prateleira abre com o aviso da conquista.
+  final String? justEarned;
   const MedalCollectionScreen({
     super.key,
     required this.gateway,
@@ -1708,6 +1831,7 @@ class MedalCollectionScreen extends StatefulWidget {
     this.medalTextReader = const PlatformMedalTextReader(),
     this.draftPhotoSelector,
     this.pendingPhotoLoader = loadRequestMedalPhoto,
+    this.justEarned,
   });
 
   @override
@@ -1719,9 +1843,114 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late Future<List<Map<String, dynamic>>> pendingMedals = loadPendingMedals(
     widget.gateway,
   );
+  late Future<List<RaceRecord>> drafts = loadMyDrafts(widget.gateway);
+  late bool showEarned = widget.justEarned != null;
   MedalGrouping grouping = _lastMedalGrouping;
   bool newestFirst = _lastMedalNewestFirst;
   bool _applying = false;
+
+  /// Aviso da conquista, no alto da prateleira, logo depois de concluir uma corrida.
+  Widget earnedBanner() => Container(
+    key: const Key('medal-earned-banner'),
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+    decoration: BoxDecoration(
+      color: runPassOrange.withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: runPassOrange.withValues(alpha: .5)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.emoji_events, color: runPassGold, size: 34),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Medalha conquistada!',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
+              Text('${widget.justEarned} entrou na sua coleção.'),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Fechar',
+          icon: const Icon(Icons.close, size: 20),
+          onPressed: () => setState(() => showEarned = false),
+        ),
+      ],
+    ),
+  );
+
+  /// Rascunhos de corridas já realizadas: um atalho para concluir o que ficou pela metade.
+  /// [done]: as medalhas já concluídas; corrida que já tem medalha não volta como rascunho.
+  Widget draftsStrip(List<RaceRecord> done) => FutureBuilder<List<RaceRecord>>(
+    future: drafts,
+    builder: (context, snapshot) {
+      final earned = {
+        for (final race in done) '${race.participation['editionId']}',
+      };
+      final list = [
+        for (final draft in snapshot.data ?? const <RaceRecord>[])
+          if (!earned.contains('${draft.participation['editionId']}')) draft,
+      ];
+      if (list.isEmpty) return const SizedBox.shrink();
+      return Column(
+        key: const Key('medal-drafts'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Para concluir',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+          ),
+          const SizedBox(height: 6),
+          for (final draft in list)
+            Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                key: Key('medal-draft-${draft.participation['id']}'),
+                leading: const Icon(Icons.edit_note, color: runPassOrange),
+                title: Text(
+                  draft.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: const Text('Rascunho · falta concluir'),
+                trailing: const Text(
+                  'Continuar',
+                  style: TextStyle(
+                    color: runPassOrange,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                onTap: () => continueDraft(draft),
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
+      );
+    },
+  );
+
+  Future<void> continueDraft(RaceRecord draft) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: draft.participation,
+          photoSelector: widget.draftPhotoSelector,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      drafts = loadMyDrafts(widget.gateway);
+      races = loadMyRaces(widget.gateway);
+    });
+  }
 
   @override
   void initState() {
@@ -1848,11 +2077,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
           }
         },
         perform: () async {
-          await widget.gateway.request(
-            '/participations/${Uri.encodeComponent(id)}',
-            method: 'DELETE',
-            query: {'expectedVersion': '${race.participation['version']}'},
-          );
+          await deleteParticipation(widget.gateway, id);
           forgetMedalDisplayImage(id);
         },
       );
@@ -2448,6 +2673,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (showEarned) earnedBanner(),
+              draftsStrip(data),
               if (data.isEmpty) ...[
                 if (pending.isNotEmpty) grid(const [], pending),
                 emptyShelf(),
@@ -2759,15 +2986,18 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                         ],
                       ),
                     ),
-                    TextButton.icon(
+                    // Só o ícone; a dica diz a ordem atual, sempre pela data da corrida (não pela do cadastro).
+                    IconButton(
+                      key: const Key('medal-sort'),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: newestFirst
+                          ? 'Corridas mais recentes'
+                          : 'Corridas mais antigas',
                       onPressed: () => setState(
                         () =>
                             newestFirst = _lastMedalNewestFirst = !newestFirst,
                       ),
-                      icon: const Icon(Icons.swap_vert, size: 18),
-                      label: Text(
-                        newestFirst ? 'Mais recentes' : 'Mais antigas',
-                      ),
+                      icon: const Icon(Icons.swap_vert, size: 22),
                     ),
                   ],
                 ),
@@ -3139,9 +3369,30 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
 
   late Future<ProfileData> data = load();
 
-  Future<void> changePhoto(Map<String, dynamic> profile) async {
+  /// Toque na foto: amplia em formato de medalha, com alterar e remover.
+  Future<void> viewPhoto(Map<String, dynamic> profile) async {
+    final action = await openProfilePhoto(
+      context,
+      gateway: widget.gateway,
+      profile: profile,
+      editable: true,
+    );
+    if (action == null || !mounted) return;
+    if (action == ProfilePhotoAction.remove) {
+      await changePhoto(profile, preset: PhotoChoice.remove);
+    } else {
+      final choice = await askPhotoChoice(context);
+      if (choice == null || !mounted) return;
+      await changePhoto(profile, preset: choice);
+    }
+  }
+
+  Future<void> changePhoto(
+    Map<String, dynamic> profile, {
+    PhotoChoice? preset,
+  }) async {
     final hasPhoto = profile['photoReference'] != null;
-    final choice = await askPhotoChoice(context, canRemove: hasPhoto);
+    final choice = preset ?? await askPhotoChoice(context, canRemove: hasPhoto);
     if (choice == null || !mounted) return;
     try {
       String? reference;
@@ -3434,12 +3685,12 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              CircleAvatar(
-                radius: 46,
-                backgroundColor: Theme.of(context).colorScheme.surface,
+              GestureDetector(
+                key: const Key('open-profile-photo'),
+                onTap: () => viewPhoto(profile),
                 child: ProfileAvatar(
                   key: ValueKey('avatar-${profile['photoReference']}'),
-                  radius: 42,
+                  radius: 46,
                   gateway: widget.gateway,
                   profile: profile,
                 ),
@@ -3517,20 +3768,19 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     ),
   );
 
-  /// Corrida da agenda no mesmo cartão compacto da tela Corridas. Tocar abre a prova.
+  /// Corrida da agenda em linha (miniatura, nome, data e local). Em "Quero correr" o coração tira a corrida da
+  /// lista; em "Inscrita" aparece um ✓. Tocar na linha abre a prova.
   Widget planTile(Map<String, dynamic> plan) {
     final edition = {
       ...(plan['edition'] as Map<String, dynamic>? ?? const {}),
       'id': plan['editionId'],
     };
+    final id = plan['editionId'] as String?;
     Future<void> open() async {
-      if (plan['editionId'] == null) return;
+      if (id == null) return;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => EditionScreen(
-            gateway: widget.gateway,
-            editionId: plan['editionId'] as String,
-          ),
+          builder: (_) => EditionScreen(gateway: widget.gateway, editionId: id),
         ),
       );
       if (mounted) {
@@ -3540,16 +3790,58 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
       }
     }
 
-    // Mesmo cartão compacto da tela Corridas (só lista): miniatura, quando e onde, nome e distâncias.
-    return EditionCompactCard(
+    Future<void> unwant() async {
+      if (id == null) return;
+      try {
+        await widget.gateway.request(
+          '/me/race-plans/${Uri.encodeComponent(id)}',
+          method: 'DELETE',
+        );
+        if (mounted) {
+          setState(() {
+            data = load();
+          });
+        }
+      } on Exception {
+        soon('Não foi possível tirar de "Quero correr" agora. Tente de novo.');
+      }
+    }
+
+    final wanted = plan['status'] == 'wanted';
+    return PlanRow(
       key: Key('plan-${plan['editionId']}'),
       gateway: widget.gateway,
       edition: edition,
       onTap: open,
+      trailing: wanted
+          ? IconButton(
+              key: Key('plan-heart-${plan['editionId']}'),
+              tooltip: 'Tirar de Quero correr',
+              icon: const Icon(Icons.favorite, color: runPassOrange),
+              onPressed: unwant,
+            )
+          : const Padding(
+              padding: EdgeInsets.all(12),
+              child: Icon(Icons.check_circle, color: runPassOrange),
+            ),
     );
   }
 
-  /// Desejadas ou inscritas, da mais proxima para a mais distante.
+  void openAgenda() => Navigator.of(context)
+      .push(
+        MaterialPageRoute<void>(
+          builder: (_) => AgendaScreen(gateway: widget.gateway),
+        ),
+      )
+      .then((_) {
+        if (mounted) {
+          setState(() {
+            data = load();
+          });
+        }
+      });
+
+  /// Desejadas ou inscritas, da mais próxima para a mais distante (só as 3 primeiras; o resto em "Ver todas").
   Widget planGrid(String status, List<Map<String, dynamic>> plans) {
     final items =
         [
@@ -3560,20 +3852,22 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
               .compareTo((b['edition'] as Map?)?['date'] as String? ?? ''),
         );
     if (items.isEmpty) return const SizedBox.shrink();
-    final shown = items.take(9).toList();
     return Column(
       key: Key('plans-$status'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Text(
-            status == 'wanted' ? 'Desejadas' : 'Inscritas',
-            style: TextStyle(fontWeight: FontWeight.w700, color: context.muted),
+        if (status != 'wanted')
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 6),
+            child: Text(
+              'Inscritas',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: context.muted,
+              ),
+            ),
           ),
-        ),
-        for (final plan in shown) planTile(plan),
-        const SizedBox(height: 8),
+        for (final plan in items.take(3)) planTile(plan),
       ],
     );
   }
@@ -3595,10 +3889,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
         final city = profile['city'] as String?;
         final bio = profile['bio'] as String?;
         final birthLabel = birthDateLabel(profile['birthDate'] as String?);
-        final cities = {
-          for (final race in result.races)
-            if (race.edition?['city'] != null) race.edition!['city'] as String,
-        }.toList();
+        final conquered = conqueredCities(result.races);
         final myPosts = result.myPosts;
         return ListView(
           padding: EdgeInsets.zero,
@@ -3675,7 +3966,11 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       ),
                     ),
                   ),
-                  sectionTitle('Quero correr'),
+                  sectionTitle(
+                    'Quero correr',
+                    action: result.plans.isEmpty ? null : 'Ver todas',
+                    onAction: openAgenda,
+                  ),
                   if (result.plans.isEmpty)
                     const Text(
                       'Suas corridas desejadas e inscritas aparecerão aqui.',
@@ -3718,37 +4013,77 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                       ],
                     ),
                   const SizedBox(height: 8),
+                  // Meu passaporte: as cidades conquistadas (corridas concluídas), com a foto de cada uma.
                   Card(
-                    child: ListTile(
-                      leading: const Icon(
-                        Icons.map_outlined,
-                        color: runPassOrange,
-                      ),
-                      title: const Text(
-                        'Meu passaporte',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      subtitle: Text(
-                        '${cities.length} ${cities.length == 1 ? 'cidade conquistada' : 'cidades conquistadas'}',
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
+                    key: const Key('passport-card'),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
                       onTap: () => soon('Passaporte completo em breve.'),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.map_outlined,
+                                  color: runPassOrange,
+                                  size: 34,
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Meu passaporte',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 17,
+                                        ),
+                                      ),
+                                      Text(
+                                        passportSummary(
+                                          conquered.length,
+                                          passportTotal(conquered),
+                                        ),
+                                        key: const Key('passport-summary'),
+                                        style: TextStyle(color: context.muted),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right),
+                              ],
+                            ),
+                            if (conquered.isNotEmpty) ...[
+                              const SizedBox(height: 14),
+                              SingleChildScrollView(
+                                key: const Key('passport-cities'),
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    for (final c in conquered)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 10,
+                                        ),
+                                        child: PassportCity(
+                                          city: c.$1,
+                                          state: c.$2,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                  if (cities.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final name in cities.take(6))
-                          Chip(
-                            avatar: const Icon(Icons.place_outlined, size: 16),
-                            label: Text(name),
-                          ),
-                      ],
-                    ),
-                  ],
                 ],
               ),
             ),

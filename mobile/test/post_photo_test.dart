@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/identity_gateway.dart';
+import 'package:runpass/medal_scan.dart';
 import 'package:runpass/new_post.dart';
 
 const jpeg = [0xff, 0xd8, 0xff, 0xd9];
@@ -284,13 +285,49 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('new-post')), findsOneWidget);
-      expect(find.byTooltip('Nova postagem'), findsOneWidget);
+      expect(
+        find.byTooltip('Cadastrar medalha ou postar foto'),
+        findsOneWidget,
+      );
       await tester.tap(find.byKey(const Key('new-post')));
       await tester.pumpAndSettle();
+      // O + da Início tem duas opções: cadastrar medalha ou postar foto.
+      expect(find.text('Cadastrar medalha'), findsOneWidget);
+      expect(find.text('Postar foto'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('home-add-photo')));
+      await tester.pumpAndSettle();
       expect(find.byType(NewPostScreen), findsOneWidget);
-      expect(find.byKey(const Key('new-post-race-c1')), findsOneWidget);
-      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
-      expect(find.textContaining('vira mais uma publicação'), findsOneWidget);
+      // A jornada comeca pela foto: a lista das corridas so aparece depois dela.
+      expect(find.text('1. A foto da corrida'), findsOneWidget);
+      expect(find.byKey(const Key('new-post-photo')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c1')), findsNothing);
+      expect(find.byKey(const Key('new-post-race-c2')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    '"+" da Home: cadastrar medalha começa pela foto e abre o cadastro',
+    (tester) async {
+      tall(tester);
+      final (gateway, _) = await setup();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RunPassHomeScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: const _NoText(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-add-medal')));
+      await tester.pumpAndSettle();
+      expect(find.byType(MedalScanScreen), findsOneWidget);
+      // Só um campo: o nome da corrida.
+      expect(find.byKey(const Key('medal-edit-name')), findsOneWidget);
+      expect(find.byKey(const Key('medal-edit-date')), findsNothing);
     },
   );
 
@@ -321,9 +358,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('new-post-race-c2')));
-      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('new-post-photo')));
+      await tester.pumpAndSettle();
+      // Com a foto escolhida, a lista traz as corridas concluidas; a ja publicada ganha mais uma.
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      expect(find.textContaining('vira mais uma publicação'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('new-post-race-c2')));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const Key('new-post-text')),
@@ -369,20 +409,18 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const Key('new-post-photo')),
+        find.byKey(const Key('new-post-race-c1')),
         findsNothing,
-      ); // antes de escolher a corrida
-      await tester.tap(find.byKey(const Key('new-post-race-c1')));
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<FilledButton>(find.byKey(const Key('new-post-publish')))
-            .onPressed,
-        isNull,
-      ); // sem foto, não publica
+      ); // antes de escolher a foto
       await tester.tap(find.byKey(const Key('new-post-photo')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('new-post-preview')), findsOneWidget);
+      expect(
+        find.byKey(const Key('new-post-publish')),
+        findsNothing,
+      ); // sem corrida escolhida, nao ha o que publicar
+      await tester.tap(find.byKey(const Key('new-post-race-c1')));
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const Key('new-post-text')),
         'Minha prova',
@@ -601,4 +639,115 @@ void main() {
       expect(shelfPhotoRequests(), greaterThan(first));
     },
   );
+
+  testWidgets(
+    'nova postagem: a lista usa cartão menor sem imagem e, escolhida a corrida, ficam só ela e os botões',
+    (tester) async {
+      tall(tester);
+      final (gateway, b) = await setup();
+      b.participations = [
+        for (final (id, edition) in [('c1', 'E1'), ('c2', 'E2')])
+          {
+            'id': id,
+            'editionId': edition,
+            'distanceId': '5k',
+            'state': 'completed',
+            'version': 1,
+            'publishToFeed': false,
+            'completedAt': '2026-10-01T10:00:00Z',
+          },
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NewPostScreen(
+            gateway: gateway,
+            photoSelector: (_) async => jpeg,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post-photo')));
+      await tester.pumpAndSettle();
+      // Lista: cartão menor, sem a imagem (nem a arte da corrida), só nesta tela.
+      expect(find.byKey(const Key('new-post-race-c1')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      expect(find.byKey(const Key('race-art')), findsNothing);
+      await tester.tap(find.byKey(const Key('new-post-race-c2')));
+      await tester.pumpAndSettle();
+      // Escolhida: só a corrida e os botões (sem busca, sem as outras corridas).
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c1')), findsNothing);
+      expect(find.byKey(const Key('new-post-search')), findsNothing);
+      expect(find.byKey(const Key('new-post-add-race')), findsNothing);
+      expect(find.byKey(const Key('new-post-race-chosen')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-tag')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-publish')), findsOneWidget);
+      // Trocar a corrida reabre a lista.
+      await tester.tap(find.byKey(const Key('new-post-change-race')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-post-race-c1')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-search')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-publish')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'nova postagem: busca a corrida pelo nome, sem acento e em qualquer ordem',
+    (tester) async {
+      tall(tester);
+      final (gateway, b) = await setup();
+      b.participations = [
+        for (final (id, edition) in [('c1', 'E1'), ('c2', 'E2')])
+          {
+            'id': id,
+            'editionId': edition,
+            'distanceId': '5k',
+            'state': 'completed',
+            'version': 1,
+            'publishToFeed': true,
+            'completedAt': '2026-10-01T10:00:00Z',
+          },
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NewPostScreen(
+            gateway: gateway,
+            photoSelector: (_) async => jpeg,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-post-photo')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('new-post-search')),
+        'e2 CÓRRIDA',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-post-race-c1')), findsNothing);
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('new-post-search')),
+        'maratona',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-post-search-empty')), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('new-post-search')), '');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-post-race-c1')), findsOneWidget);
+      expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
+    },
+  );
+
+  test('foldName tira acento e caixa', () {
+    expect(foldName('  São   Silvestre '), 'sao silvestre');
+    expect(foldName('Corrida Ç'), 'corrida c');
+  });
+}
+
+class _NoText implements MedalTextReader {
+  const _NoText();
+  @override
+  Future<List<String>> read(String path) async => const [];
 }

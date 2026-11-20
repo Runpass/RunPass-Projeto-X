@@ -1,7 +1,7 @@
 {
   "contract": "API-RunPass-v1.openapi.json",
   "version": "0.8.0-draft",
-  "sha256": "acf4925206346f5a6e5aa388f4e3cf979f13a86091ca70e88f39b0ab87bbd2cd",
+  "sha256": "e0d7549936a49d05be0ae727d59c2a78d1a74e2399975afe006bb54fff2928a3",
   "validator": "openapi-spec-validator",
   "validatorVersion": "0.7.2",
   "openapiErrors": 0,

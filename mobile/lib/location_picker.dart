@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'br_locations.dart';
+import 'new_post.dart' show foldName;
 import 'runpass_theme.dart';
 
 /// "SP - Taboão da Serra", ou nulo se o perfil ainda não tem estado/cidade salvos.
@@ -23,9 +24,38 @@ Map<String, dynamic> brLocationPatch(
   double? lon,
 ) => {'state': uf, 'city': city, 'latitude': ?lat, 'longitude': ?lon};
 
-/// Seletor de Estado (UF) e cidade por rolagem — mesmo padrão visual da data de nascimento,
-/// sem campo de digitação (lista fechada do IBGE, evita erro de digitação). Trocar o estado
-/// reinicia a coluna de cidade para a primeira da lista nova.
+/// Primeira cidade da lista do IBGE que casa com o texto digitado (sem acento nem caixa): primeiro
+/// o nome exato, depois as que começam com o texto, depois as que o contêm; o estado atual tem preferência. Nulo se
+/// nada casar. Devolve os índices do estado e da cidade.
+(int uf, int city)? findBrCity(String text, {int preferUf = 0}) {
+  final query = foldName(text);
+  if (query.length < 2) return null;
+  final order = [
+    preferUf,
+    for (var i = 0; i < brStates.length; i++)
+      if (i != preferUf) i,
+  ];
+  // Nome exato primeiro ("Campinas" antes de "Campinas do Piauí"), depois começo, depois trecho.
+  for (final pass in [0, 1, 2]) {
+    for (final uf in order) {
+      final cities = brCitiesByState[brStates[uf].uf] ?? const <String>[];
+      for (var c = 0; c < cities.length; c++) {
+        final name = foldName(cities[c]);
+        final hit = switch (pass) {
+          0 => name == query,
+          1 => name.startsWith(query),
+          _ => name.contains(query),
+        };
+        if (hit) return (uf, c);
+      }
+    }
+  }
+  return null;
+}
+
+/// Seletor de Estado (UF) e cidade por rolagem — mesmo padrão visual da data de nascimento. A lista
+/// continua fechada (IBGE, sem erro de digitação); o campo de busca só leva as rodas até a cidade,
+/// para não rolar centenas de nomes. Trocar o estado reinicia a coluna de cidade.
 Future<(String uf, String city, double? lat, double? lon)?> pickBrLocation(
   BuildContext context, {
   String? initialUf,
@@ -42,6 +72,9 @@ Future<(String uf, String city, double? lat, double? lon)?> pickBrLocation(
 
   final ufController = FixedExtentScrollController(initialItem: ufIndex);
   var cityController = FixedExtentScrollController(initialItem: cityIndex);
+  // Muda a cada salto da busca, para a roda de cidades ser refeita na posição achada.
+  var jump = 0;
+  var notFound = false;
 
   Widget wheelColumn({
     required String label,
@@ -107,81 +140,123 @@ Future<(String uf, String city, double? lat, double? lon)?> pickBrLocation(
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) => StatefulBuilder(
-      builder: (sheetContext, setSheetState) => SafeArea(
-        top: false,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Theme.of(sheetContext).scaffoldBackgroundColor,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: sheetContext.track,
-                  borderRadius: BorderRadius.circular(2),
+      builder: (sheetContext, setSheetState) => Padding(
+        // Com o teclado aberto pela busca, a folha sobe junto.
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
+        ),
+        child: SafeArea(
+          top: false,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Theme.of(sheetContext).scaffoldBackgroundColor,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
+            ),
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: sheetContext.track,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Estado e cidade',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
-                      color: sheetContext.isDark ? Colors.white : runPassNavy,
-                    ),
-                  ),
-                  TextButton(
-                    key: const Key('location-done'),
-                    onPressed: () => Navigator.pop(sheetContext, true),
-                    child: const Text('Concluído'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              SizedBox(
-                height: 210,
-                child: Row(
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    wheelColumn(
-                      label: 'Estado',
-                      key: null,
-                      controller: ufController,
-                      itemCount: brStates.length,
-                      itemBuilder: (_, i) => cell(brStates[i].name),
-                      onChanged: (i) => setSheetState(() {
-                        ufIndex = i;
-                        cities =
-                            brCitiesByState[brStates[ufIndex].uf] ??
-                            const <String>[];
-                        cityIndex = 0;
-                        cityController.dispose();
-                        cityController = FixedExtentScrollController(
-                          initialItem: 0,
-                        );
-                      }),
+                    Text(
+                      'Estado e cidade',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        color: sheetContext.isDark ? Colors.white : runPassNavy,
+                      ),
                     ),
-                    wheelColumn(
-                      label: 'Cidade',
-                      // Troca de UF muda o total de itens: refaz o picker em vez de reaproveitar
-                      // o controlador antigo, que poderia apontar para um indice fora da faixa.
-                      key: ValueKey(ufIndex),
-                      controller: cityController,
-                      itemCount: cities.length,
-                      itemBuilder: (_, i) => cell(cities[i]),
-                      onChanged: (i) => cityIndex = i,
+                    TextButton(
+                      key: const Key('location-done'),
+                      onPressed: () => Navigator.pop(sheetContext, true),
+                      child: const Text('Concluído'),
                     ),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+                TextField(
+                  key: const Key('location-search'),
+                  textInputAction: TextInputAction.search,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Buscar cidade',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    errorText: notFound ? 'Cidade não encontrada.' : null,
+                  ),
+                  onChanged: (text) {
+                    final found = findBrCity(text, preferUf: ufIndex);
+                    setSheetState(() {
+                      notFound = found == null && foldName(text).length >= 2;
+                      if (found == null) return;
+                      ufIndex = found.$1;
+                      cities =
+                          brCitiesByState[brStates[ufIndex].uf] ??
+                          const <String>[];
+                      cityIndex = found.$2;
+                      if (ufController.hasClients) {
+                        ufController.jumpToItem(ufIndex);
+                      }
+                      cityController.dispose();
+                      cityController = FixedExtentScrollController(
+                        initialItem: cityIndex,
+                      );
+                      jump++;
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 210,
+                  child: Row(
+                    children: [
+                      wheelColumn(
+                        label: 'Estado',
+                        key: null,
+                        controller: ufController,
+                        itemCount: brStates.length,
+                        itemBuilder: (_, i) => cell(brStates[i].name),
+                        onChanged: (i) => setSheetState(() {
+                          // Salto vindo da busca: o estado já foi trocado junto com a cidade achada.
+                          if (i == ufIndex) return;
+                          ufIndex = i;
+                          cities =
+                              brCitiesByState[brStates[ufIndex].uf] ??
+                              const <String>[];
+                          cityIndex = 0;
+                          cityController.dispose();
+                          cityController = FixedExtentScrollController(
+                            initialItem: 0,
+                          );
+                        }),
+                      ),
+                      wheelColumn(
+                        label: 'Cidade',
+                        // Troca de UF muda o total de itens: refaz o picker em vez de reaproveitar
+                        // o controlador antigo, que poderia apontar para um indice fora da faixa.
+                        key: ValueKey('$ufIndex-$jump'),
+                        controller: cityController,
+                        itemCount: cities.length,
+                        itemBuilder: (_, i) => cell(cities[i]),
+                        onChanged: (i) => cityIndex = i,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

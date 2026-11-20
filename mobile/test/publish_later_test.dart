@@ -184,7 +184,7 @@ void main() {
       expect(log.uploads, 1); // a foto da medalha enviada como cópia do post
       expect(
         find.text(
-          'A foto da medalha será a foto do post. Você pode trocar por outra.',
+          'A foto da medalha será a foto da publicação. Você pode trocar por outra.',
         ),
         findsOneWidget,
       );

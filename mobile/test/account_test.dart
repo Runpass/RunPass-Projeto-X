@@ -68,7 +68,7 @@ void main() {
     await tester.tap(find.byKey(const Key('delete-account')));
     await tester.pumpAndSettle();
     expect(find.text('Excluir sua conta?'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Excluir minha conta'));
+    await tester.tap(find.byKey(const Key('delete-account-confirm')));
     await tester.pumpAndSettle();
     expect(calls, contains('DELETE /me'));
     expect(gateway.signedIn, isFalse);
@@ -84,7 +84,7 @@ void main() {
     await openProfile(tester, gateway);
     await tester.tap(find.byKey(const Key('delete-account')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancelar'));
+    await tester.tap(find.byKey(const Key('delete-account-cancel')));
     await tester.pumpAndSettle();
     expect(calls, isNot(contains('DELETE /me')));
     expect(gateway.signedIn, isTrue);

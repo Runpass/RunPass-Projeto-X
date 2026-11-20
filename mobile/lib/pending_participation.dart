@@ -70,6 +70,41 @@ class _PendingParticipationScreenState
     super.dispose();
   }
 
+  /// Km do pedido ("5 km", "21,1 km"), para calcular o pace; nulo se não vier.
+  double? get km {
+    final match = RegExp(r'(\d+(?:[.,]\d+)?)')
+        .firstMatch(widget.distanceLabel ?? '');
+    return match == null
+        ? null
+        : double.tryParse(match[1]!.replaceAll(',', '.'));
+  }
+
+  bool get paceIsComputed => paceFromTime(time.text, km) != null;
+  bool _paceAuto = false;
+
+  void recomputePace() {
+    final value = paceFromTime(time.text, km);
+    if (value == null) {
+      if (_paceAuto) {
+        pace.clear();
+        _paceAuto = false;
+      }
+      return;
+    }
+    final text = formatPace(value).replaceAll('/km', '');
+    if (pace.text != text) pace.text = text;
+    _paceAuto = true;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    time.addListener(() {
+      recomputePace();
+      if (mounted) setState(() {});
+    });
+  }
+
   bool get ratingsComplete => ratings.values.every((v) => v >= 1);
   bool get ratingsEmpty => ratings.values.every((v) => v == 0);
 
@@ -175,10 +210,11 @@ class _PendingParticipationScreenState
           authorName: (profile?['displayName'] as String?) ?? 'Você',
           username: (profile?['username'] as String?) ?? '',
           raceName: widget.raceName,
-          details: [
-            if (widget.distanceLabel != null) widget.distanceLabel!,
-            if (seconds is int && seconds > 0) formatDuration(seconds),
-          ].join(' · '),
+          distance: widget.distanceLabel,
+          time: seconds is int && seconds > 0 ? formatDuration(seconds) : null,
+          pace: paceFromTime(time.text, km) == null
+              ? null
+              : formatPace(paceFromTime(time.text, km)!),
           text: postText.text,
           photo: postBytes,
         ),
@@ -210,11 +246,16 @@ class _PendingParticipationScreenState
         TextField(
           key: const Key('pending-pace'),
           controller: pace,
+          // Calculado pelo tempo e pela distância do pedido: sem digitar.
+          readOnly: paceIsComputed,
           keyboardType: TextInputType.datetime,
-          decoration: const InputDecoration(
-            labelText: 'Pace (opcional)',
+          decoration: InputDecoration(
+            labelText: paceIsComputed ? 'Pace (calculado)' : 'Pace (opcional)',
             hintText: 'Ex.: 5:30',
             suffixText: 'min/km',
+            helperText: paceIsComputed
+                ? 'Calculado pelo tempo e pela distância.'
+                : null,
           ),
         ),
         TextField(
@@ -272,11 +313,7 @@ class _PendingParticipationScreenState
             onPressed: uploadingPost ? null : pickPostPhoto,
             icon: const Icon(Icons.add_photo_alternate_outlined),
             label: Text(
-              uploadingPost
-                  ? 'Enviando foto...'
-                  : (postImageReference == null
-                        ? 'Escolher a foto da publicação'
-                        : 'Trocar a foto da publicação'),
+              uploadingPost ? 'Enviando foto...' : 'Incluir foto da publicação',
             ),
           ),
           if (postImageReference != null)

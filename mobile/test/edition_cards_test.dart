@@ -70,10 +70,20 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('Amanhã · Santos/SP'), findsOneWidget);
+    // A data vai num selo sobre a foto; o local e as distâncias, embaixo, com ícone.
+    expect(find.byKey(const Key('date-chip-EA')), findsOneWidget);
+    expect(find.text('Amanhã'), findsOneWidget);
+    expect(find.text('Santos, SP'), findsOneWidget);
+    expect(find.byIcon(Icons.place_outlined), findsOneWidget);
+    // O ícone de corrida aparece na linha das distâncias (e também na arte de tipo "rua").
+    expect(find.byIcon(Icons.directions_run), findsWidgets);
     expect(find.text('Corrida A'), findsOneWidget);
-    // Na pílula e em destaque na miniatura (corrida sem foto).
-    expect(find.text('5K'), findsNWidgets(2));
+    // A pílula da distância (a imagem ocupa a largura inteira do cartão e desenha a distância).
+    expect(find.text('5K'), findsOneWidget);
+    // Capa sem foto da prova: cartão postal com a cidade, rotulado como arte do app.
+    expect(find.byKey(const Key('race-art-city')), findsOneWidget);
+    expect(find.text('SANTOS · SP'), findsOneWidget);
+    expect(find.byKey(const Key('race-art-tag')), findsOneWidget);
   });
 
   test('tipo da prova pelo nome, para a arte padrão', () {

@@ -63,13 +63,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(chip(1).selected, isTrue);
       expect(chip(2).selected, isFalse);
-      expect(find.textContaining('dois dedos'), findsOneWidget);
       await tester.tap(find.byKey(const Key('crop-aspect-0')));
       await tester.pumpAndSettle();
-      expect(
-        find.textContaining('bordas do quadro'),
-        findsOneWidget,
-      ); // modo livre: redimensiona o quadro
+      expect(chip(0).selected, isTrue); // modo livre: redimensiona o quadro
     },
   );
 

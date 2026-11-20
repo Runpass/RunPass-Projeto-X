@@ -340,4 +340,18 @@ void main() {
       expect(find.textContaining('Conquista publicada'), findsNothing);
     },
   );
+
+  testWidgets('tocar no nome da corrida abre as informações da corrida', (
+    tester,
+  ) async {
+    final (gateway, _) = await setup();
+    await open(tester, gateway, fromPost: false);
+    expect(find.byKey(const Key('race-name-open')), findsOneWidget);
+    expect(find.byType(EditionScreen), findsNothing);
+    await tester.tap(find.byKey(const Key('race-name-open')));
+    await tester.pumpAndSettle();
+    expect(find.byType(EditionScreen), findsOneWidget);
+    final screen = tester.widget<EditionScreen>(find.byType(EditionScreen));
+    expect(screen.editionId, published['editionId']);
+  });
 }

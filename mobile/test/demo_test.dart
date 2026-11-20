@@ -96,9 +96,6 @@ void main() {
       expect(find.text('Encontre sua próxima conquista'), findsNothing);
       await tester.tap(find.text('Corridas'));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('catalog-name-search')), findsNothing);
-      await tester.tap(find.byKey(const Key('catalog-search-toggle')));
-      await tester.pumpAndSettle();
       expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
       // Só a lista, sem filtro de data nem ícones de ordem.
       expect(find.byKey(const Key('catalog-date-filter')), findsNothing);

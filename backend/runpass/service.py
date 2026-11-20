@@ -306,10 +306,16 @@ class IdentityService:
         return self.transact(principal, "getMyBetaStatus", None, {}, work)
 
     @staticmethod
-    def eligible(payload, now):
+    def age_on(birth_date, now):
+        birth = datetime.strptime(birth_date, "%Y-%m-%d").date()
+        today = now.astimezone(ZoneInfo("America/Sao_Paulo")).date()
+        return today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+
+    @classmethod
+    def eligible(cls, payload, now):
         birth = datetime.strptime(payload["birthDate"], "%Y-%m-%d").date()
         today = now.astimezone(ZoneInfo("America/Sao_Paulo")).date()
-        age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+        age = cls.age_on(payload["birthDate"], now)
         if birth > today or age < 13 or payload["declaresAdult"] is not True:
             raise Problem(422, "NOT_ELIGIBLE")
 
@@ -363,6 +369,18 @@ class IdentityService:
             account["admitted"] = True
             write(("identity", pk, "ACCOUNT"), account)
             write(("identity", pk, "PRIVATE"), {"birthDate": payload["birthDate"]})
+            # Menor de 18 anos entra com o perfil privado (decisao de 19/11/2026). So define o
+            # padrao: quem ja escolheu um valor o mantem, e a pessoa pode mudar depois em PATCH /me.
+            profile_key = ("identity", pk, "PROFILE")
+            profile = read(profile_key)
+            if (
+                profile
+                and "isPrivate" not in profile
+                and self.age_on(payload["birthDate"], now) < 18
+            ):
+                profile["isPrivate"] = True
+                profile["version"] += 1
+                write(profile_key, profile)
             if waiting:
                 write(wkey, None)
             result = {"admitted": True, "admittedAt": stamp(now)}

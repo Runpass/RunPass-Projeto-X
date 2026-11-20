@@ -461,16 +461,6 @@ class _RacePhotoCropScreenState extends State<RacePhotoCropScreen> {
     body: SafeArea(
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              aspect == null
-                  ? 'Arraste as bordas do quadro para escolher o tamanho e mova a foto com o dedo.'
-                  : 'Arraste a foto e use dois dedos para ampliar. A parte dentro do quadro será a foto.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white70),
-            ),
-          ),
           Expanded(
             child: Crop(
               // Trocar a proporção recria o quadro do zero (a foto volta inteira).
@@ -485,23 +475,11 @@ class _RacePhotoCropScreenState extends State<RacePhotoCropScreen> {
               onCropped: done,
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Wrap(
-              spacing: 8,
-              children: [
-                for (final (index, option)
-                    in RacePhotoCropScreen.aspects.indexed)
-                  ChoiceChip(
-                    key: Key('crop-aspect-$index'),
-                    label: Text(option.$1),
-                    selected: selected == index,
-                    onSelected: busy
-                        ? null
-                        : (_) => setState(() => selected = index),
-                  ),
-              ],
-            ),
+          CropAspectBar(
+            selected: selected,
+            onSelected: busy
+                ? null
+                : (index) => setState(() => selected = index),
           ),
           Padding(
             padding: const EdgeInsets.all(16),
@@ -542,8 +520,55 @@ class _RacePhotoCropScreenState extends State<RacePhotoCropScreen> {
   );
 }
 
-/// Foto da PUBLICAÇÃO: vai sempre inteira (sem recorte). A tela só mostra a foto toda e deixa ampliar (+) e
-/// reduzir (−) para conferir detalhes; o zoom é só para ver, a foto enviada é a original.
+/// Tamanhos do recorte em linha discreta (chips pequenos, rolagem lateral).
+class CropAspectBar extends StatelessWidget {
+  final int selected;
+  final ValueChanged<int>? onSelected;
+  const CropAspectBar({super.key, required this.selected, this.onSelected});
+
+  @override
+  Widget build(BuildContext context) => Theme(
+    // O chip se apoia num fundo com a cor de tela do tema (branca no tema claro), o que deixava as
+    // opções não escolhidas brancas com o rótulo claro, ilegíveis. Nesta barra escura o fundo é transparente.
+    data: Theme.of(context).copyWith(canvasColor: Colors.transparent),
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      child: Row(
+        children: [
+          for (final (index, option) in RacePhotoCropScreen.aspects.indexed)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: ChoiceChip(
+                key: Key('crop-aspect-$index'),
+                label: Text(option.$1),
+                labelStyle: TextStyle(
+                  fontSize: 12,
+                  color: selected == index ? Colors.black : Colors.white70,
+                ),
+                color: WidgetStateProperty.resolveWith(
+                  (states) => states.contains(WidgetState.selected)
+                      ? Colors.white
+                      : Colors.white12,
+                ),
+                side: BorderSide.none,
+                showCheckmark: false,
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                selected: selected == index,
+                onSelected: onSelected == null
+                    ? null
+                    : (_) => onSelected!(index),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Foto da publicação: abre sempre a foto inteira. "Recortar" (discreto, no topo) mostra o quadro de
+/// recorte com os tamanhos; "Foto inteira" volta sem recortar. Sem recorte, vai a foto original.
 class PhotoZoomScreen extends StatefulWidget {
   final Uint8List image;
   const PhotoZoomScreen({super.key, required this.image});
@@ -555,12 +580,30 @@ class PhotoZoomScreen extends StatefulWidget {
 class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
   static const minScale = 1.0, maxScale = 4.0, step = 0.5;
   final controller = TransformationController();
+  final crop = CropController();
+  bool cropping = false, busy = false;
+  int aspect = 0;
 
   double get scale => controller.value.getMaxScaleOnAxis();
 
   void zoom(double delta) {
     final next = (scale + delta).clamp(minScale, maxScale);
     setState(() => controller.value = Matrix4.diagonal3Values(next, next, 1));
+  }
+
+  void cropped(CropResult result) {
+    if (!mounted) return;
+    switch (result) {
+      case CropSuccess(:final croppedImage):
+        Navigator.of(context).pop<List<int>>(croppedImage);
+      case CropFailure():
+        setState(() => busy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível recortar a foto. Tente de novo.'),
+          ),
+        );
+    }
   }
 
   @override
@@ -576,53 +619,80 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
       backgroundColor: Colors.black,
       foregroundColor: Colors.white,
       title: const Text('Foto da publicação'),
+      actions: [
+        TextButton.icon(
+          key: Key(cropping ? 'photo-crop-off' : 'photo-crop'),
+          style: TextButton.styleFrom(foregroundColor: Colors.white70),
+          onPressed: busy
+              ? null
+              : () => setState(() {
+                  cropping = !cropping;
+                  controller.value = Matrix4.identity();
+                }),
+          icon: Icon(cropping ? Icons.fullscreen : Icons.crop, size: 18),
+          label: Text(cropping ? 'Foto inteira' : 'Recortar'),
+        ),
+      ],
     ),
     body: SafeArea(
       child: Column(
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
-            child: Text(
-              'A foto vai inteira, como aparece aqui. Use + e − para conferir os detalhes.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70),
-            ),
-          ),
           Expanded(
-            child: InteractiveViewer(
-              key: const Key('photo-zoom-viewer'),
-              transformationController: controller,
-              minScale: minScale,
-              maxScale: maxScale,
-              onInteractionEnd: (_) => setState(() {}),
-              child: Center(
-                child: Image.memory(widget.image, fit: BoxFit.contain),
-              ),
-            ),
+            child: cropping
+                ? Crop(
+                    // Trocar o tamanho recria o quadro do zero (a foto volta inteira).
+                    key: ValueKey(aspect),
+                    image: widget.image,
+                    controller: crop,
+                    aspectRatio: RacePhotoCropScreen.aspects[aspect].$2,
+                    interactive: true,
+                    fixCropRect: RacePhotoCropScreen.aspects[aspect].$2 != null,
+                    baseColor: Colors.black,
+                    maskColor: Colors.black.withValues(alpha: 0.6),
+                    onCropped: cropped,
+                  )
+                : InteractiveViewer(
+                    key: const Key('photo-zoom-viewer'),
+                    transformationController: controller,
+                    minScale: minScale,
+                    maxScale: maxScale,
+                    onInteractionEnd: (_) => setState(() {}),
+                    child: Center(
+                      child: Image.memory(widget.image, fit: BoxFit.contain),
+                    ),
+                  ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Row(
+          if (cropping)
+            CropAspectBar(
+              selected: aspect,
+              onSelected: busy
+                  ? null
+                  : (index) => setState(() => aspect = index),
+            )
+          else
+            Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                IconButton.filledTonal(
+                IconButton(
                   key: const Key('photo-zoom-out'),
                   tooltip: 'Reduzir',
+                  color: Colors.white70,
+                  visualDensity: VisualDensity.compact,
                   onPressed: scale > minScale ? () => zoom(-step) : null,
-                  icon: const Icon(Icons.remove),
+                  icon: const Icon(Icons.zoom_out, size: 20),
                 ),
-                const SizedBox(width: 24),
-                IconButton.filledTonal(
+                IconButton(
                   key: const Key('photo-zoom-in'),
                   tooltip: 'Ampliar',
+                  color: Colors.white70,
+                  visualDensity: VisualDensity.compact,
                   onPressed: scale < maxScale ? () => zoom(step) : null,
-                  icon: const Icon(Icons.add),
+                  icon: const Icon(Icons.zoom_in, size: 20),
                 ),
               ],
             ),
-          ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
             child: Row(
               children: [
                 Expanded(
@@ -630,7 +700,7 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
                     ),
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: busy ? null : () => Navigator.pop(context),
                     child: const Text('Cancelar'),
                   ),
                 ),
@@ -641,9 +711,16 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
                     style: FilledButton.styleFrom(
                       backgroundColor: runPassOrange,
                     ),
-                    // Sempre a foto original, inteira.
-                    onPressed: () => Navigator.pop(context, widget.image),
-                    child: const Text('Usar esta foto'),
+                    onPressed: busy
+                        ? null
+                        : cropping
+                        ? () {
+                            setState(() => busy = true);
+                            crop.crop();
+                          }
+                        // Sem recorte: a foto original, inteira.
+                        : () => Navigator.pop(context, widget.image),
+                    child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
                   ),
                 ),
               ],

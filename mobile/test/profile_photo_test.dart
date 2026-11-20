@@ -132,6 +132,64 @@ void main() {
     ]);
   });
 
+  testWidgets(
+    'tocar na foto amplia em medalha; alterar e remover saem da foto ampliada',
+    (tester) async {
+      final (gateway, _, patches) = await setup(hasPhoto: true);
+      PhotoChoice? asked;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RunnerProfileScreen(
+            gateway: gateway,
+            photoPicker: (context, choice) async {
+              asked = choice;
+              return onePixelPng;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('open-profile-photo')));
+      await tester.pumpAndSettle();
+      final viewer = find.byKey(const Key('profile-photo-viewer'));
+      expect(viewer, findsOneWidget);
+      expect(
+        find.descendant(of: viewer, matching: find.byType(MedalAvatar)),
+        findsOneWidget,
+      );
+      // Alterar: escolhe a origem e grava a nova referencia.
+      await tester.tap(find.byKey(const Key('profile-photo-change')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('photo-remove')), findsNothing);
+      await tester.tap(find.byKey(const Key('photo-gallery')));
+      await tester.pumpAndSettle();
+      expect(asked, PhotoChoice.gallery);
+      expect(patches.last, {'expectedVersion': 3, 'photoReference': 'img_new'});
+      // Remover: pede confirmacao e grava nulo.
+      await tester.tap(find.byKey(const Key('open-profile-photo')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('profile-photo-remove')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('confirm-remove-photo')));
+      await tester.pumpAndSettle();
+      expect(patches.last, {'expectedVersion': 3, 'photoReference': null});
+    },
+  );
+
+  testWidgets('fechar a foto ampliada nao muda nada', (tester) async {
+    final (gateway, _, patches) = await setup(hasPhoto: true);
+    await tester.pumpWidget(
+      MaterialApp(home: RunnerProfileScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('open-profile-photo')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('profile-photo-close')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('profile-photo-viewer')), findsNothing);
+    expect(patches, isEmpty);
+  });
+
   testWidgets('desistir da escolha nao envia nada', (tester) async {
     final (gateway, calls, patches) = await setup(hasPhoto: true);
     await tester.pumpWidget(

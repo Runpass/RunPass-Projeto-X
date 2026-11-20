@@ -30,6 +30,9 @@ ThemeData runPassTheme() {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
     ),
     inputDecorationTheme: InputDecorationTheme(
+      // Mensagens de erro e de ajuda em até duas linhas: em uma só, o fim da frase era cortado.
+      errorMaxLines: 2,
+      helperMaxLines: 2,
       filled: true,
       fillColor: Colors.white,
       border: OutlineInputBorder(
@@ -114,6 +117,9 @@ ThemeData runPassDarkTheme() {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
     inputDecorationTheme: InputDecorationTheme(
+      // Mensagens de erro e de ajuda em até duas linhas: em uma só, o fim da frase era cortado.
+      errorMaxLines: 2,
+      helperMaxLines: 2,
       filled: true,
       fillColor: surface,
       border: OutlineInputBorder(

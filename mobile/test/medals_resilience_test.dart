@@ -229,11 +229,15 @@ void main() {
     await open();
     expect(selected('Todas'), isTrue);
     await tester.tap(find.text('Por ano'));
-    await tester.tap(find.text('Mais recentes'));
+    // Só o ícone de ordem, sem texto; a dica diz a ordem atual.
+    expect(find.text('Corridas mais recentes'), findsNothing);
+    expect(find.byTooltip('Corridas mais recentes'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('medal-sort')));
     await tester.pumpAndSettle();
     await open(); // a tela e recriada ao trocar de aba
     expect(selected('Por ano'), isTrue);
-    expect(find.text('Mais antigas'), findsOneWidget);
+    expect(find.byTooltip('Corridas mais antigas'), findsOneWidget);
+    expect(find.text('Corridas mais antigas'), findsNothing);
   });
 
   testWidgets('sem medalhas, so existe o botao grande de adicionar', (

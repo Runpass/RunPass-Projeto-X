@@ -33,6 +33,7 @@ String friendLabel(String? state) => switch (state) {
   _ => 'Adicionar amigo',
 };
 
+/// Foto de perfil, sempre no formato de medalha (aro dourado e fita); [radius] e o tamanho total.
 class ProfileAvatar extends StatelessWidget {
   final double radius;
   final IdentityGateway? gateway;
@@ -46,28 +47,246 @@ class ProfileAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final inner = MedalAvatar.innerRadius(radius);
     final id = profile?['id'] as String?;
-    final person = Icon(Icons.person, color: runPassOrange, size: radius * 1.1);
+    final person = Icon(Icons.person, color: runPassOrange, size: inner * 1.1);
     final photo =
         gateway != null && id != null && profile?['photoReference'] != null;
-    return CircleAvatar(
+    return MedalAvatar(
       radius: radius,
-      backgroundColor: context.softFill,
-      child: photo
-          ? ClipOval(
-              child: SizedBox(
-                width: radius * 2,
-                height: radius * 2,
-                child: SignedPhoto(
-                  gateway: gateway!,
-                  endpoint: '/profiles/${Uri.encodeComponent(id)}/photo',
-                  fallback: Center(child: person),
+      child: CircleAvatar(
+        radius: inner,
+        backgroundColor: context.softFill,
+        child: photo
+            ? ClipOval(
+                child: SizedBox(
+                  width: inner * 2,
+                  height: inner * 2,
+                  child: SignedPhoto(
+                    gateway: gateway!,
+                    endpoint: '/profiles/${Uri.encodeComponent(id)}/photo',
+                    fallback: Center(child: person),
+                  ),
                 ),
-              ),
-            )
-          : person,
+              )
+            : person,
+      ),
     );
   }
+}
+
+/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child].
+class MedalAvatar extends StatelessWidget {
+  final double radius;
+  final Widget child;
+  const MedalAvatar({super.key, required this.radius, required this.child});
+
+  /// Raio do circulo de dentro (a foto), descontando o aro dourado.
+  static double innerRadius(double radius) => radius * 0.87;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = radius * 2;
+    final ribbonHeight = radius * (radius < 24 ? 0.7 : 0.9);
+    return SizedBox(
+      key: const Key('medal-avatar'),
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          Positioned(
+            top: -ribbonHeight * 0.75,
+            child: CustomPaint(
+              size: Size(radius * 1.15, ribbonHeight),
+              painter: _RibbonPainter(),
+            ),
+          ),
+          Container(
+            width: size,
+            height: size,
+            padding: EdgeInsets.all(radius * 0.09),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xFFFFE08A),
+                  Color(0xFFD4A017),
+                  Color(0xFF9C7412),
+                ],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFFFFF3C4), width: 1.5),
+              ),
+              child: Center(child: child),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// O que a pessoa escolheu na foto ampliada do proprio perfil.
+enum ProfilePhotoAction { change, remove }
+
+/// Abre a foto do perfil ampliada, no formato de medalha. No proprio perfil ([editable]) oferece
+/// alterar e, se houver foto, remover; devolve a escolha (ou null se so olhou).
+Future<ProfilePhotoAction?> openProfilePhoto(
+  BuildContext context, {
+  required IdentityGateway gateway,
+  required Map profile,
+  bool editable = false,
+}) => Navigator.of(context).push<ProfilePhotoAction>(
+  PageRouteBuilder(
+    opaque: false,
+    barrierDismissible: true,
+    barrierColor: Colors.black87,
+    pageBuilder: (context, _, _) => ProfilePhotoViewer(
+      gateway: gateway,
+      profile: profile,
+      editable: editable,
+    ),
+    transitionsBuilder: (context, animation, _, child) => FadeTransition(
+      opacity: animation,
+      child: ScaleTransition(
+        scale: Tween(begin: 0.85, end: 1.0).animate(
+          CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
+        ),
+        child: child,
+      ),
+    ),
+  ),
+);
+
+class ProfilePhotoViewer extends StatelessWidget {
+  final IdentityGateway gateway;
+  final Map profile;
+  final bool editable;
+  const ProfilePhotoViewer({
+    super.key,
+    required this.gateway,
+    required this.profile,
+    this.editable = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPhoto = profile['photoReference'] != null;
+    final size = MediaQuery.sizeOf(context);
+    final radius = (size.shortestSide * 0.36).clamp(90.0, 170.0);
+    return Scaffold(
+      key: const Key('profile-photo-viewer'),
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(onTap: () => Navigator.pop(context)),
+            ),
+            Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                key: const Key('profile-photo-close'),
+                tooltip: 'Fechar',
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(height: radius * 0.6),
+                  ProfileAvatar(
+                    radius: radius,
+                    gateway: gateway,
+                    profile: profile,
+                  ),
+                  if (editable) ...[
+                    const SizedBox(height: 32),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        FilledButton.icon(
+                          key: const Key('profile-photo-change'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: runPassOrange,
+                            // Sem isto o tema estica o botão na largura toda e empurra "Remover foto".
+                            minimumSize: const Size(0, 44),
+                          ),
+                          onPressed: () =>
+                              Navigator.pop(context, ProfilePhotoAction.change),
+                          icon: const Icon(Icons.photo_camera_outlined),
+                          label: Text(
+                            hasPhoto ? 'Alterar foto' : 'Adicionar foto',
+                          ),
+                        ),
+                        if (hasPhoto)
+                          OutlinedButton.icon(
+                            key: const Key('profile-photo-remove'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: const BorderSide(color: Colors.white54),
+                            ),
+                            onPressed: () => Navigator.pop(
+                              context,
+                              ProfilePhotoAction.remove,
+                            ),
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Remover foto'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Fita da medalha em V, nas cores do app (laranja e azul-marinho).
+class _RibbonPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final left = Path()
+      ..moveTo(0, 0)
+      ..lineTo(w * 0.42, 0)
+      ..lineTo(w * 0.62, h)
+      ..lineTo(w * 0.2, h)
+      ..close();
+    final right = Path()
+      ..moveTo(w, 0)
+      ..lineTo(w * 0.58, 0)
+      ..lineTo(w * 0.38, h)
+      ..lineTo(w * 0.8, h)
+      ..close();
+    canvas.drawPath(left, Paint()..color = runPassNavy);
+    canvas.drawPath(right, Paint()..color = runPassOrange);
+  }
+
+  @override
+  bool shouldRepaint(_RibbonPainter oldDelegate) => false;
 }
 
 /// Procurar pessoas por nome ou usuário, para seguir.
@@ -230,8 +449,8 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Não foi possível carregar as sugestões agora'
-                  '${suggestionsIssue == null ? '' : ' ($suggestionsIssue)'}.',
+                  // Sem o código interno do erro: ele não diz nada a quem usa o app.
+                  'Não foi possível carregar as sugestões agora.',
                 ),
                 TextButton(
                   key: const Key('friend-suggestions-retry'),
@@ -435,10 +654,18 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 ],
                 Row(
                   children: [
-                    ProfileAvatar(
-                      radius: 34,
-                      gateway: widget.gateway,
-                      profile: p,
+                    GestureDetector(
+                      key: const Key('public-profile-photo'),
+                      onTap: () => openProfilePhoto(
+                        context,
+                        gateway: widget.gateway,
+                        profile: p,
+                      ),
+                      child: ProfileAvatar(
+                        radius: 34,
+                        gateway: widget.gateway,
+                        profile: p,
+                      ),
                     ),
                     const SizedBox(width: 14),
                     Expanded(

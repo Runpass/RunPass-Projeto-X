@@ -1,10 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/home_screen.dart';
+import 'package:runpass/post_card.dart' show postPhotoFrameRatio;
+import 'package:runpass/my_races.dart' show MedalPhoto;
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/runpass_theme.dart';
 
 void main() {
+  test('quadro da foto: a proporção da foto, entre 4:5 e 1,91:1', () {
+    expect(postPhotoFrameRatio(null), 4 / 5); // ainda sem saber: retrato
+    expect(postPhotoFrameRatio(1), 1); // quadrada, inteira
+    expect(
+      postPhotoFrameRatio(4 / 3),
+      closeTo(4 / 3, 1e-9),
+    ); // horizontal, inteira
+    expect(postPhotoFrameRatio(3), 1.91); // muito larga: limita
+    expect(postPhotoFrameRatio(0.5), 4 / 5); // muito alta: limita
+  });
+
   testWidgets(
     'publicacao de amigo mostra a foto da medalha e o ultimo comentario em destaque',
     (tester) async {
@@ -181,6 +194,20 @@ void main() {
         photo.width,
         closeTo(card.width - 8, 1),
       ); // o Card tem 4 de margem de cada lado
+      // Título, texto e números (km, tempo, pace) ficam juntos, antes da foto.
+      final summary = tester.getRect(find.byKey(const Key('post-summary-p1')));
+      expect(
+        tester.getRect(find.byKey(const Key('post-race-p1'))).bottom,
+        lessThanOrEqualTo(summary.top),
+      );
+      expect(summary.bottom, lessThanOrEqualTo(photo.top));
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('post-summary-p1')),
+          matching: find.text('Distância'),
+        ),
+        findsOneWidget,
+      );
       // Em negrito e sem sublinhado: o link é só o nome da corrida.
       final title = tester.widget<Text>(
         find.descendant(
@@ -190,7 +217,29 @@ void main() {
       );
       expect(title.style?.fontWeight, FontWeight.w800);
       expect(title.style?.decoration, isNull);
-      // O nome da corrida fica abaixo da foto (agora maior, como no Instagram).
+      // A foto preenche o quadro de ponta a ponta, sem faixas pretas (cobre e corta o excesso).
+      expect(
+        tester.widget<MedalPhoto>(find.byKey(const Key('post-photo-p1'))).fit,
+        BoxFit.cover,
+      );
+      expect(
+        find.descendant(
+          of: find
+              .ancestor(
+                of: find.byKey(const Key('post-photo-p1')),
+                matching: find.byType(AspectRatio),
+              )
+              .first,
+          matching: find.byWidgetPredicate(
+            (w) => w is ColoredBox && w.color == Colors.black,
+          ),
+        ),
+        findsNothing,
+      );
+      // O nome da corrida fica ACIMA da foto, fora dela (não por cima da imagem).
+      final name = tester.getRect(find.byKey(const Key('post-race-p1')));
+      expect(name.bottom, lessThanOrEqualTo(photo.top));
+      // Sem a foto carregada, o quadro fica em 4:5 (retrato); com foto, acompanha a proporção dela.
       await tester.ensureVisible(find.byKey(const Key('post-race-p1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-race-p1')));
