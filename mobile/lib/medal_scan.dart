@@ -259,13 +259,20 @@ class MedalScanScreen extends StatefulWidget {
 
   /// Seleção de foto do rascunho da participação (só os testes trocam; o app usa a galeria).
   final PhotoSelector? draftPhotoSelector;
+
+  /// Postar foto: a mesma escolha de corrida, começando pela foto da PUBLICAÇÃO (sem ler texto). A lista abre
+  /// com as minhas corridas e tocar numa corrida segue para o mesmo cadastro da corrida.
+  final List<int>? postPhoto;
   const MedalScanScreen({
     super.key,
     required this.gateway,
-    required this.photoPath,
+    this.photoPath = '',
     this.reader = const PlatformMedalTextReader(),
     this.draftPhotoSelector,
+    this.postPhoto,
   });
+
+  bool get forPost => postPhoto != null;
 
   @override
   State<MedalScanScreen> createState() => _MedalScanScreenState();
@@ -338,6 +345,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   }
 
   Future<void> scan() async {
+    if (widget.forPost) return loadMine();
     try {
       final lines = await widget.reader.read(widget.photoPath);
       // Todo o texto da medalha vira busca, do trecho mais específico ao menos específico.
@@ -359,6 +367,24 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
       note = 'Este aparelho ainda não lê o texto da medalha. Preencha abaixo.';
     } on Exception {
       note = 'Não consegui ler esta foto. Tente outra, mais nítida e de frente, ou preencha abaixo.';
+    } finally {
+      if (mounted) setState(() => working = false);
+    }
+  }
+
+  /// Postar foto: a lista abre com as corridas que já cadastrei (a mais recente primeiro); a busca acha outras.
+  Future<void> loadMine() async {
+    try {
+      final mine = await loadMyRaces(widget.gateway);
+      for (final race in mine) {
+        final edition = race.edition;
+        if (edition != null && !matches.any((m) => m['id'] == edition['id'])) {
+          matches.add(Map<String, dynamic>.from(edition));
+        }
+      }
+      if (matches.isNotEmpty) await markRegistered();
+    } on Exception {
+      // Sem a lista: a busca pelo nome continua valendo.
     } finally {
       if (mounted) setState(() => working = false);
     }
@@ -613,9 +639,23 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     }
   }
 
+  /// Postar foto: tocar na corrida segue para o mesmo cadastro da corrida, com a foto da publicação.
+  Future<void> openForPost(Map<String, dynamic> edition) async {
+    final navigator = Navigator.of(context);
+    await openRaceRegistration(
+      context,
+      widget.gateway,
+      edition,
+      postPhoto: widget.postPhoto,
+    );
+    if (mounted && navigator.canPop()) navigator.pop(true);
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Cadastrar medalha')),
+    appBar: AppBar(
+      title: Text(widget.forPost ? 'Postar foto' : 'Cadastrar medalha'),
+    ),
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -623,12 +663,19 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
           borderRadius: BorderRadius.circular(16),
           child: SizedBox(
             height: 160,
-            child: Image.file(
-              File(widget.photoPath),
-              key: const Key('medal-scan-photo'),
-              fit: BoxFit.contain,
-              errorBuilder: (_, _, _) => const SizedBox.shrink(),
-            ),
+            child: widget.forPost
+                ? Image.memory(
+                    Uint8List.fromList(widget.postPhoto!),
+                    key: const Key('post-scan-photo'),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  )
+                : Image.file(
+                    File(widget.photoPath),
+                    key: const Key('medal-scan-photo'),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  ),
           ),
         ),
         const SizedBox(height: 16),
@@ -642,7 +689,9 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
           onSubmitted: (_) => searchAgain(),
           decoration: InputDecoration(
             labelText: 'Nome da corrida',
-            hintText: 'Procure a corrida da sua medalha',
+            hintText: widget.forPost
+                ? 'Procure a corrida desta foto'
+                : 'Procure a corrida da sua medalha',
             counterText: '',
             prefixIcon: const Icon(Icons.search_rounded),
             suffixIcon: IconButton(
@@ -655,16 +704,22 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         ),
         const SizedBox(height: 12),
         if (working)
-          const Row(
-            key: Key('medal-scan-working'),
+          Row(
+            key: const Key('medal-scan-working'),
             children: [
-              SizedBox(
+              const SizedBox(
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              SizedBox(width: 12),
-              Expanded(child: Text('Lendo a medalha e procurando a corrida…')),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  widget.forPost
+                      ? 'Carregando as suas corridas…'
+                      : 'Lendo a medalha e procurando a corrida…',
+                ),
+              ),
             ],
           )
         else ...[
@@ -698,10 +753,12 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                           ),
                         )
                       : null,
-                  onTap: () {
-                    fillFrom(edition);
-                    concludeChosen();
-                  },
+                  onTap: widget.forPost
+                      ? () => openForPost(edition)
+                      : () {
+                          fillFrom(edition);
+                          concludeChosen();
+                        },
                 ),
               ),
           ] else

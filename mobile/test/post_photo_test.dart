@@ -254,7 +254,7 @@ void main() {
   });
 
   testWidgets(
-    '"+" da Home abre a nova postagem com todas as corridas concluídas (a já publicada ganha mais uma publicação)',
+    '"+" da Home › Postar foto: começa pela foto e segue para a mesma escolha de corrida do cadastro',
     (tester) async {
       tall(tester);
       final (gateway, b) = await setup();
@@ -280,8 +280,17 @@ void main() {
           'completedAt': '2026-10-01T10:00:00Z',
         },
       ];
+      var asked = 0;
       await tester.pumpWidget(
-        MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+        MaterialApp(
+          home: RunPassHomeScreen(
+            gateway: gateway,
+            postPhotoPicker: (context) async {
+              asked++;
+              return jpeg;
+            },
+          ),
+        ),
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('new-post')), findsOneWidget);
@@ -296,12 +305,14 @@ void main() {
       expect(find.text('Postar foto'), findsOneWidget);
       await tester.tap(find.byKey(const Key('home-add-photo')));
       await tester.pumpAndSettle();
-      expect(find.byType(NewPostScreen), findsOneWidget);
-      // A jornada comeca pela foto: a lista das corridas so aparece depois dela.
-      expect(find.text('1. A foto da corrida'), findsOneWidget);
-      expect(find.byKey(const Key('new-post-photo')), findsOneWidget);
-      expect(find.byKey(const Key('new-post-race-c1')), findsNothing);
-      expect(find.byKey(const Key('new-post-race-c2')), findsNothing);
+      // A jornada começa pela foto; depois, a mesma escolha de corrida do cadastro de medalha (sem ler texto),
+      // aberta com as minhas corridas. Tocar numa corrida segue para o mesmo cadastro da corrida.
+      expect(asked, 1);
+      final scan = tester.widget<MedalScanScreen>(find.byType(MedalScanScreen));
+      expect(scan.postPhoto, jpeg);
+      expect(find.text('Postar foto'), findsOneWidget);
+      expect(find.byKey(const Key('post-scan-photo')), findsOneWidget);
+      expect(find.byKey(const Key('medal-edit-name')), findsOneWidget);
     },
   );
 
