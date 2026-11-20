@@ -1825,7 +1825,9 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       };
       final list = [
         for (final draft in snapshot.data ?? const <RaceRecord>[])
-          if (!earned.contains('${draft.participation['editionId']}')) draft,
+          if (!earned.contains('${draft.participation['editionId']}') &&
+              !hiddenDrafts.contains(draft.participation['id']))
+            draft,
       ];
       if (list.isEmpty) return const SizedBox.shrink();
       return Column(
@@ -1850,12 +1852,26 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 subtitle: const Text('Rascunho · falta concluir'),
-                trailing: const Text(
-                  'Continuar',
-                  style: TextStyle(
-                    color: runPassOrange,
-                    fontWeight: FontWeight.w700,
-                  ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Continuar',
+                      style: TextStyle(
+                        color: runPassOrange,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    IconButton(
+                      key: Key(
+                        'medal-draft-delete-${draft.participation['id']}',
+                      ),
+                      tooltip: 'Excluir rascunho',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                      onPressed: () => deleteDraft(draft),
+                    ),
+                  ],
                 ),
                 onTap: () => continueDraft(draft),
               ),
@@ -1865,6 +1881,37 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       );
     },
   );
+
+  /// Rascunhos tirados da lista agora (com "Desfazer"): somem na hora, antes de o servidor confirmar.
+  final hiddenDrafts = <Object?>{};
+
+  /// × no rascunho: exclui com "Desfazer" (some na hora; a exclusão só vai ao servidor depois da janela).
+  Future<void> deleteDraft(RaceRecord draft) async {
+    final id = draft.participation['id'] as String;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final done = await deleteWithUndo(
+        context,
+        id: id,
+        message: 'Rascunho excluído.',
+        hide: () => setState(() => hiddenDrafts.add(id)),
+        restore: () {
+          if (mounted) setState(() => hiddenDrafts.remove(id));
+        },
+        perform: () => deleteParticipation(widget.gateway, id),
+      );
+      if (done && mounted) {
+        setState(() => drafts = loadMyDrafts(widget.gateway));
+      }
+    } on Exception {
+      if (mounted) setState(() => hiddenDrafts.remove(id));
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível excluir o rascunho. Tente de novo.'),
+        ),
+      );
+    }
+  }
 
   Future<void> continueDraft(RaceRecord draft) async {
     await Navigator.of(context).push(

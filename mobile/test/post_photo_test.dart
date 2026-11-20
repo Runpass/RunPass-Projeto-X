@@ -118,9 +118,6 @@ Future<void> rateAndDeclare(WidgetTester tester) async {
     await tester.tap(star);
     await tester.pump();
   }
-  final declaration = find.text('Declaro que concluí esta corrida');
-  await tester.scrollUntilVisible(declaration, 200, scrollable: list);
-  await tester.tap(declaration);
   await tester.pumpAndSettle();
 }
 

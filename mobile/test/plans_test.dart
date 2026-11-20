@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:runpass/edition_cards.dart' show PlanRow;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:runpass/agenda.dart';
 import 'package:runpass/catalog_screen.dart';
@@ -900,7 +901,7 @@ void raceArtTests() {
   });
 
   testWidgets(
-    'a agenda mostra as corridas no mesmo cartão compacto da tela Corridas, só em lista',
+    'a agenda mostra as corridas na mesma linha de Quero correr do perfil',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -928,7 +929,9 @@ void raceArtTests() {
         await tester.tap(find.byKey(const Key('agenda-layout-toggle')));
         await tester.pumpAndSettle();
       }
-      expect(find.byKey(const Key('compact-card-EA')), findsOneWidget);
+      // A mesma linha de "Quero correr" do perfil.
+      expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
+      expect(find.byType(PlanRow), findsOneWidget);
       expect(find.byKey(const Key('catalog-view-mode')), findsNothing);
     },
   );

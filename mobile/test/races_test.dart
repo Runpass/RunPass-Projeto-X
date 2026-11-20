@@ -680,9 +680,6 @@ void main() {
         await tester.tap(star);
         await tester.pump();
       }
-      final declaration = find.text('Declaro que concluí esta corrida');
-      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
-      await tester.tap(declaration);
       await tester.pumpAndSettle();
       final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
@@ -1447,18 +1444,14 @@ void main() {
         );
         expect(screen.medalMode, isTrue);
         expect(screen.fromPost, isFalse);
-        // Opcoes da medalha (nao do post): foto, foto+modelo+legenda, dados e legenda.
+        // Opcoes da medalha (nao do post): foto, dados e legenda ("Ajustar foto, modelo e legenda" saiu).
         expect(find.byKey(const Key('medal-options')), findsOneWidget);
         expect(find.byKey(const Key('change-medal-photo')), findsOneWidget);
-        expect(find.byKey(const Key('edit-medal-info')), findsOneWidget);
+        expect(find.byKey(const Key('edit-medal-info')), findsNothing);
         expect(find.byKey(const Key('open-race-data')), findsOneWidget);
         expect(find.byKey(const Key('medal-legend-edit')), findsOneWidget);
         // Os tres botoes seguem o mesmo padrao: contornados, com icone.
-        for (final key in [
-          'change-medal-photo',
-          'edit-medal-info',
-          'open-race-data',
-        ]) {
+        for (final key in ['change-medal-photo', 'open-race-data']) {
           expect(
             find.descendant(
               of: find.byKey(Key(key)),

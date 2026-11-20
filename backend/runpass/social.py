@@ -902,6 +902,8 @@ class SocialService:
                 "moderationState": review["moderationState"],
                 **({"comment": review["comment"]} if review.get("comment") else {}),
                 "authorName": profile.get("displayName") or "Corredor RunPass",
+                # Cartao publico de quem avaliou (o app mostra a foto do perfil), como nos comentarios.
+                **({"author": self._card(profile, actor.subject)} if profile.get("id") else {}),
                 "createdAt": part.get("completedAt", ""),
             }
             for part, review, profile in page
