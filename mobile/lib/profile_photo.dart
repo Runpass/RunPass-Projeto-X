@@ -438,9 +438,56 @@ Future<List<int>?> pickAndEditPhoto(
   );
 }
 
-/// Foto da publicação (Postar foto): a mesma folha e o mesmo editor.
-Future<List<int>?> pickPostPhoto(BuildContext context) =>
-    pickAndEditPhoto(context, title: 'Foto da publicação');
+/// Fotos da publicação (Postar foto): a mesma folha. A câmera tira uma foto e abre o editor; a galeria escolhe
+/// até 5 de uma vez (só uma: abre o editor, como antes; várias: vão inteiras, e cada uma se ajusta depois na
+/// edição da publicação). Devolve a lista na ordem escolhida (a primeira é a capa), ou nulo se desistir.
+Future<List<List<int>>?> pickPostPhotos(BuildContext context) async {
+  final choice = await askPhotoChoice(context);
+  if (choice == null || choice == PhotoChoice.remove || !context.mounted) {
+    return null;
+  }
+  if (choice == PhotoChoice.camera) {
+    final file = await ImagePicker().pickImage(
+      source: ImageSource.camera,
+      maxWidth: 2800,
+      maxHeight: 2800,
+      imageQuality: 88,
+      requestFullMetadata: false,
+    );
+    final original = await file?.readAsBytes();
+    if (original == null || !context.mounted) return null;
+    final edited = await editPhoto(context, original, 'Foto da publicação');
+    return edited == null ? null : [edited];
+  }
+  final files = await ImagePicker().pickMultiImage(
+    limit: 5,
+    maxWidth: 2800,
+    maxHeight: 2800,
+    imageQuality: 88,
+    requestFullMetadata: false,
+  );
+  if (files.isEmpty || !context.mounted) return null;
+  final photos = [for (final file in files.take(5)) await file.readAsBytes()];
+  if (!context.mounted) return null;
+  if (photos.length == 1) {
+    final edited = await editPhoto(context, photos.first, 'Foto da publicação');
+    return edited == null ? null : [edited];
+  }
+  return photos;
+}
+
+/// Abre o editor único numa foto já escolhida; nulo se cancelar.
+Future<List<int>?> editPhoto(
+  BuildContext context,
+  List<int> photo,
+  String title,
+) => Navigator.of(context).push<List<int>>(
+  MaterialPageRoute(
+    fullscreenDialog: true,
+    builder: (_) =>
+        PhotoZoomScreen(image: Uint8List.fromList(photo), title: title),
+  ),
+);
 
 /// Editor único de foto (medalha e publicação). Abre sempre na foto inteira, com arrastar e zoom; o ícone
 /// "Formato" (discreto, no topo) mostra ou esconde a barra de formatos: Foto inteira, Prateleira (só na

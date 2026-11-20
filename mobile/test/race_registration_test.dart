@@ -145,7 +145,9 @@ void main() {
                 context,
                 gateway,
                 {...entry('A'), 'id': 'EA'},
-                postPhoto: const [0xff, 0xd8, 0xff, 0xd9],
+                postPhotos: const [
+                  [0xff, 0xd8, 0xff, 0xd9],
+                ],
               ),
               child: const Text('abrir'),
             ),
@@ -159,7 +161,7 @@ void main() {
       );
       expect(screen.initial['id'], 'P9');
       expect(screen.medalMode, isTrue);
-      expect(screen.initialPostPhoto, isNotNull);
+      expect(screen.initialPostPhotos, hasLength(1));
       expect(calls, isNot(contains('POST /participations'))); // não cria outra
     },
   );

@@ -1,0 +1,352 @@
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+
+import 'catalog_screen.dart' show catalogError;
+import 'identity_gateway.dart';
+import 'my_races.dart' show MedalPhoto, fetchImageBytes, imageContentType;
+import 'profile_photo.dart' show editPhoto, pickAndEditPhoto;
+
+/// Editar uma publicação a mais (outra postagem da mesma corrida): as fotos (a capa e até 4 a mais: ajustar,
+/// trocar, remover e incluir) e o texto. Cada mudança de foto grava na hora; o texto, em "Salvar texto".
+class ExtraPostEditScreen extends StatefulWidget {
+  final IdentityGateway gateway;
+  final String postId;
+  final int version;
+  final String? text;
+
+  /// Escolhe uma foto nova (trocar ou incluir); nulo se desistir. Trocável nos testes.
+  final Future<List<int>?> Function(BuildContext context)? photoSelector;
+
+  /// Baixa a foto [index] (0 é a capa) para ajustar. Trocável nos testes.
+  final Future<List<int>?> Function(IdentityGateway, String postId, int index)
+  photoLoader;
+
+  /// Abre o editor numa foto já escolhida. Trocável nos testes.
+  final Future<List<int>?> Function(BuildContext context, List<int> photo)
+  photoEditor;
+  const ExtraPostEditScreen({
+    super.key,
+    required this.gateway,
+    required this.postId,
+    required this.version,
+    this.text,
+    this.photoSelector,
+    this.photoLoader = loadExtraPostPhoto,
+    this.photoEditor = _editPostPhoto,
+  });
+
+  @override
+  State<ExtraPostEditScreen> createState() => _ExtraPostEditScreenState();
+}
+
+Future<List<int>?> _editPostPhoto(BuildContext context, List<int> photo) =>
+    editPhoto(context, photo, 'Foto da publicação');
+
+/// Foto [index] (0 é a capa) de uma publicação a mais.
+Future<List<int>?> loadExtraPostPhoto(
+  IdentityGateway gateway,
+  String postId,
+  int index,
+) async {
+  try {
+    final link = await gateway.request(
+      '/posts/${Uri.encodeComponent(postId)}/image',
+      query: index == 0 ? null : {'index': '$index'},
+    );
+    return await fetchImageBytes(link['url'] as String);
+  } on Exception {
+    return null;
+  }
+}
+
+class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
+  static const maxPhotos = 5;
+  late int version = widget.version;
+  late final text = TextEditingController(text: widget.text ?? '');
+
+  /// Fotos a mais (referências na ordem do carrossel) e os bytes das trocadas aqui, para a miniatura.
+  List<String> more = [];
+  List<List<int>?> moreBytes = [];
+  List<int>? coverBytes;
+  int coverRevision = 0;
+  bool loading = true, busy = false, refsKnown = true;
+  int count = 1;
+  String? message;
+
+  String get base => '/posts/${Uri.encodeComponent(widget.postId)}';
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  @override
+  void dispose() {
+    text.dispose();
+    super.dispose();
+  }
+
+  Future<void> load() async {
+    try {
+      final post = await widget.gateway.request(base);
+      final refs = [
+        for (final r in (post['morePostImageReferences'] as List? ?? const []))
+          if (r is String) r,
+      ];
+      count = (post['postImageCount'] as num?)?.toInt() ?? 1 + refs.length;
+      // Sem as referências (resposta antiga), só mostra quantas são: gravar a lista sem elas apagaria as fotos.
+      refsKnown = post['morePostImageReferences'] is List || count <= 1;
+      more = refs;
+      moreBytes = List.filled(refs.length, null, growable: true);
+      if ((post['version'] as num?) != null) {
+        version = (post['version'] as num).toInt();
+      }
+    } on Exception {
+      message = 'Não foi possível abrir a publicação agora.';
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<String?> upload(List<int> bytes) async {
+    final type = imageContentType(bytes);
+    if (type == null) throw const IdentityIssue('IMAGE_FORMAT_INVALID');
+    final result = await widget.gateway.uploadImage(bytes, type);
+    if (result['state'] != 'valid') {
+      throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
+    }
+    return result['imageReference'] as String;
+  }
+
+  Future<bool> patch(Map<String, dynamic> changes, String done) async {
+    final reply = await widget.gateway.request(
+      '$base/extra',
+      method: 'PATCH',
+      body: {'expectedVersion': version, ...changes},
+    );
+    if ((reply['version'] as num?) != null) {
+      version = (reply['version'] as num).toInt();
+    }
+    message = done;
+    return true;
+  }
+
+  Future<void> run(Future<void> Function() action) async {
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      await action();
+    } on IdentityIssue catch (issue) {
+      message = catalogError(issue);
+    } on Exception {
+      message =
+          'Não foi possível salvar agora. A publicação anterior foi mantida.';
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<List<int>?> pickNew() async {
+    final selector = widget.photoSelector;
+    return selector != null
+        ? selector(context)
+        : pickAndEditPhoto(context, title: 'Foto da publicação');
+  }
+
+  /// [index] 0 é a capa; 1 a 4, as fotos a mais.
+  Future<void> openPhoto(int index) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('extra-photo-adjust'),
+              leading: const Icon(Icons.crop_rounded),
+              title: const Text('Ajustar foto'),
+              onTap: () => Navigator.pop(sheet, 'adjust'),
+            ),
+            ListTile(
+              key: const Key('extra-photo-replace'),
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Trocar foto'),
+              onTap: () => Navigator.pop(sheet, 'replace'),
+            ),
+            if (index > 0 && refsKnown)
+              ListTile(
+                key: const Key('extra-photo-remove'),
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text(
+                  'Remover foto',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () => Navigator.pop(sheet, 'remove'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    await run(() async {
+      if (action == 'remove') {
+        final next = [...more]..removeAt(index - 1);
+        await patch({'morePostImageReferences': next}, 'Foto removida.');
+        more = next;
+        moreBytes = [...moreBytes]..removeAt(index - 1);
+        count = 1 + more.length;
+        return;
+      }
+      List<int>? bytes;
+      if (action == 'adjust') {
+        final current =
+            (index == 0 ? coverBytes : moreBytes[index - 1]) ??
+            await widget.photoLoader(widget.gateway, widget.postId, index);
+        if (current == null) {
+          message = 'Não foi possível abrir a foto agora. Tente de novo.';
+          return;
+        }
+        if (!mounted) return;
+        bytes = await widget.photoEditor(context, current);
+      } else {
+        bytes = await pickNew();
+      }
+      if (bytes == null || !mounted) return;
+      final reference = await upload(bytes);
+      if (reference == null) return;
+      final done = action == 'adjust' ? 'Foto ajustada.' : 'Foto trocada.';
+      if (index == 0) {
+        await patch({'postImageReference': reference}, done);
+        coverBytes = bytes;
+        coverRevision++;
+      } else {
+        final next = [...more]..[index - 1] = reference;
+        await patch({'morePostImageReferences': next}, done);
+        more = next;
+        moreBytes = [...moreBytes]..[index - 1] = bytes;
+      }
+    });
+  }
+
+  Future<void> addPhoto() => run(() async {
+    final bytes = await pickNew();
+    if (bytes == null || !mounted) return;
+    final reference = await upload(bytes);
+    if (reference == null) return;
+    final next = [...more, reference];
+    await patch({'morePostImageReferences': next}, 'Foto incluída.');
+    more = next;
+    moreBytes = [...moreBytes, bytes];
+    count = 1 + more.length;
+  });
+
+  Future<void> saveText() => run(() async {
+    await patch({
+      'postText': text.text.trim().isEmpty ? null : text.text.trim(),
+    }, 'Texto da publicação salvo.');
+  });
+
+  Widget thumb(int index) {
+    final bytes = index == 0 ? coverBytes : moreBytes[index - 1];
+    return InkWell(
+      key: Key('extra-photo-$index'),
+      onTap: busy ? null : () => openPhoto(index),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: SizedBox(
+          width: 88,
+          height: 88,
+          child: bytes != null
+              ? Image.memory(
+                  Uint8List.fromList(bytes),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) =>
+                      const ColoredBox(color: Colors.black12),
+                )
+              : MedalPhoto(
+                  key: ValueKey('extra-photo-$index-$coverRevision'),
+                  gateway: widget.gateway,
+                  participationId: null,
+                  endpoint: index == 0
+                      ? '$base/image'
+                      : '$base/image?index=$index',
+                  size: 28,
+                ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Editar publicação')),
+    body: loading
+        ? const Center(child: CircularProgressIndicator())
+        : ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              const Text(
+                'Fotos da publicação',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Toque numa foto para ajustar, trocar ou remover. A primeira é a capa.',
+                style: TextStyle(fontSize: 12.5),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  thumb(0),
+                  if (refsKnown)
+                    for (var i = 1; i <= more.length; i++) thumb(i)
+                  else if (count > 1)
+                    Text('+${count - 1} fotos'),
+                  if (refsKnown && 1 + more.length < maxPhotos)
+                    TextButton.icon(
+                      key: const Key('extra-photo-add'),
+                      onPressed: busy ? null : addPhoto,
+                      icon: const Icon(Icons.add_photo_alternate_outlined),
+                      label: Text(
+                        'Mais fotos (${1 + more.length} de $maxPhotos)',
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                key: const Key('extra-post-text'),
+                controller: text,
+                maxLength: 500,
+                minLines: 1,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Texto da publicação',
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  key: const Key('extra-post-save'),
+                  onPressed: busy ? null : saveText,
+                  child: const Text('Salvar texto'),
+                ),
+              ),
+              if (busy) const LinearProgressIndicator(),
+              if (message != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(message!, key: const Key('extra-post-message')),
+                ),
+            ],
+          ),
+  );
+}

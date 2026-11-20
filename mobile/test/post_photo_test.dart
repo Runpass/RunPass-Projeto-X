@@ -275,6 +275,34 @@ void main() {
     },
   );
 
+  testWidgets(
+    'Postar foto com várias fotos: a primeira vira a capa e as outras entram em "Mais fotos"',
+    (tester) async {
+      tall(tester);
+      final (gateway, b) = await setup();
+      b.referenceFor = (n) => 'img_post$n';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: const {
+              'id': 'd1',
+              'editionId': 'E1',
+              'distanceId': '5k',
+              'state': 'draft',
+              'version': 2,
+            },
+            initialPostPhotos: const [jpeg, jpeg, jpeg],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(b.uploads, 3);
+      expect(find.byKey(const Key('more-post-photo-1')), findsOneWidget);
+      expect(find.text('Mais fotos (3 de 5)'), findsOneWidget);
+    },
+  );
+
   testWidgets('a foto da medalha não serve de foto da publicação', (
     tester,
   ) async {
@@ -350,7 +378,7 @@ void main() {
             gateway: gateway,
             postPhotoPicker: (context) async {
               asked++;
-              return jpeg;
+              return [jpeg, jpeg];
             },
           ),
         ),
@@ -372,7 +400,7 @@ void main() {
       // aberta com as minhas corridas. Tocar numa corrida segue para o mesmo cadastro da corrida.
       expect(asked, 1);
       final scan = tester.widget<MedalScanScreen>(find.byType(MedalScanScreen));
-      expect(scan.postPhoto, jpeg);
+      expect(scan.postPhotos, [jpeg, jpeg]);
       expect(find.text('Postar foto'), findsOneWidget);
       expect(find.byKey(const Key('post-scan-photo')), findsOneWidget);
       expect(find.byKey(const Key('medal-edit-name')), findsOneWidget);

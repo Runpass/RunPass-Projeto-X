@@ -260,19 +260,19 @@ class MedalScanScreen extends StatefulWidget {
   /// Seleção de foto do rascunho da participação (só os testes trocam; o app usa a galeria).
   final PhotoSelector? draftPhotoSelector;
 
-  /// Postar foto: a mesma escolha de corrida, começando pela foto da PUBLICAÇÃO (sem ler texto). A lista abre
-  /// com as minhas corridas e tocar numa corrida segue para o mesmo cadastro da corrida.
-  final List<int>? postPhoto;
+  /// Postar foto: a mesma escolha de corrida, começando pelas fotos da PUBLICAÇÃO (até 5; a primeira é a capa;
+  /// sem ler texto). A lista abre com as minhas corridas e tocar numa corrida segue para o mesmo cadastro.
+  final List<List<int>>? postPhotos;
   const MedalScanScreen({
     super.key,
     required this.gateway,
     this.photoPath = '',
     this.reader = const PlatformMedalTextReader(),
     this.draftPhotoSelector,
-    this.postPhoto,
+    this.postPhotos,
   });
 
-  bool get forPost => postPhoto != null;
+  bool get forPost => postPhotos != null && postPhotos!.isNotEmpty;
 
   @override
   State<MedalScanScreen> createState() => _MedalScanScreenState();
@@ -646,7 +646,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
       context,
       widget.gateway,
       edition,
-      postPhoto: widget.postPhoto,
+      postPhotos: widget.postPhotos,
     );
     if (mounted && navigator.canPop()) navigator.pop(true);
   }
@@ -665,7 +665,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             height: 160,
             child: widget.forPost
                 ? Image.memory(
-                    Uint8List.fromList(widget.postPhoto!),
+                    Uint8List.fromList(widget.postPhotos!.first),
                     key: const Key('post-scan-photo'),
                     fit: BoxFit.contain,
                     errorBuilder: (_, _, _) => const SizedBox.shrink(),
