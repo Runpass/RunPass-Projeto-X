@@ -150,14 +150,6 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Selecionar foto'));
       await tester.pumpAndSettle();
-      final declaration = find.text('Declaro que concluí esta corrida');
-      await tester.scrollUntilVisible(
-        declaration,
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.ensureVisible(declaration);
-      await tester.tap(declaration);
       await tester.pumpAndSettle();
       final finish = find.text('Concluir participação');
       await tester.ensureVisible(finish);

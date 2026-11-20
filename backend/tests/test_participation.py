@@ -634,6 +634,9 @@ class ParticipationTests(unittest.TestCase):
         page = social.edition_reviews(reader, "synthetic-sp-2024")
         self.assertEqual(len(page["items"]), 2)
         self.assertEqual({i["authorName"] for i in page["items"]}, {"owner", "other"})
+        # O cartao publico de quem avaliou vai junto (o app mostra a foto do perfil).
+        self.assertTrue(all(i["author"]["id"] for i in page["items"]))
+        self.assertTrue(all("displayName" in i["author"] for i in page["items"]))
         self.assertEqual(
             next(i for i in page["items"] if i["authorName"] == "owner")["comment"],
             "Prova sensacional",

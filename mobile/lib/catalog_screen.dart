@@ -2276,18 +2276,43 @@ class _EditionScreenState extends State<EditionScreen> {
         ],
       ),
       const SizedBox(height: 14),
+      // Já registrada: só o "Já corri" marcado (laranja), sem frase; tocar abre o meu registro.
       if (mine != null)
         Padding(
           padding: const EdgeInsets.only(bottom: 10),
-          child: Row(
-            children: const [
-              Icon(Icons.check_circle_rounded, color: runPassOrange, size: 18),
-              SizedBox(width: 6),
-              Text(
-                'Esta corrida está na sua lista',
-                style: TextStyle(fontWeight: FontWeight.w700),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Material(
+              color: runPassOrange,
+              borderRadius: BorderRadius.circular(999),
+              child: InkWell(
+                key: const Key('already-ran-chip'),
+                borderRadius: BorderRadius.circular(999),
+                onTap: openMine,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.check_circle_rounded,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                      SizedBox(width: 5),
+                      Text(
+                        'Já corri',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ],
+            ),
           ),
         ),
       distanceSelector(body),
@@ -2404,28 +2429,10 @@ class _EditionScreenState extends State<EditionScreen> {
           padding: EdgeInsets.only(top: 12),
           child: Text('Imagem oficial da medalha disponível'),
         ),
-      if (selectedDistance != null)
-        const Padding(
-          padding: EdgeInsets.only(top: 12),
-          child: Text('Distância selecionada.'),
-        ),
       if (mine != null) ...[
         const SizedBox(height: 16),
-        Row(
-          key: const Key('already-mine'),
-          children: const [
-            Icon(Icons.check_circle_rounded, color: runPassOrange),
-            SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Esta corrida já está na sua lista.',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
         FilledButton(
+          key: const Key('already-mine'),
           onPressed: openMine,
           child: Text(
             mine!['state'] == 'completed'
@@ -2458,6 +2465,8 @@ class _EditionScreenState extends State<EditionScreen> {
             style: TextStyle(fontSize: 12, color: context.muted),
           ),
         ),
+      // Comentários da corrida na tela principal (Sobre).
+      ...commentsSection(),
     ],
   );
 
@@ -2750,7 +2759,11 @@ class _EditionScreenState extends State<EditionScreen> {
           children: [
             Row(
               children: [
-                const ProfileAvatar(radius: 20),
+                ProfileAvatar(
+                  radius: 20,
+                  gateway: widget.gateway,
+                  profile: review['author'] as Map?,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -2974,7 +2987,11 @@ class _EditionScreenState extends State<EditionScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const ProfileAvatar(radius: 18),
+              ProfileAvatar(
+                radius: 18,
+                gateway: widget.gateway,
+                profile: comment['author'] as Map?,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
@@ -3085,7 +3102,6 @@ class _EditionScreenState extends State<EditionScreen> {
             const SizedBox(height: 10),
           ],
         ],
-        ...commentsSection(),
       ],
     );
   }
@@ -4365,12 +4381,31 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     return parsed != null && parsed > 0 ? parsed : -1;
   }
 
-  /// Meus dados desta corrida: distância, tempo, colocação e número de peito.
+  /// Meus dados desta corrida: distância, tempo, pace, colocação e número de peito, com o mesmo espaço entre
+  /// os campos.
   List<Widget> raceDataFields({String? saveLabel}) => [
-    if (distances.length > 1)
+    for (final (i, field) in _raceFields().indexed) ...[
+      if (i > 0) const SizedBox(height: 12),
+      field,
+    ],
+    if (saveLabel != null) ...[
+      const SizedBox(height: 12),
+      FilledButton(
+        onPressed: saving ? null : save,
+        child: Text(saving ? 'Salvando...' : saveLabel),
+      ),
+    ],
+  ];
+
+  List<Widget> _raceFields() => [
+    // A distância sempre à vista (com uma só, fica fixa; com várias, dá para trocar).
+    if (distances.isNotEmpty)
       DropdownButtonFormField<String>(
         key: const Key('distance-field'),
-        initialValue: distanceId,
+        // Distância do rascunho que não está mais na corrida: o campo abre vazio em vez de quebrar a tela.
+        initialValue: distances.any((d) => d['id'] == distanceId)
+            ? distanceId
+            : null,
         decoration: const InputDecoration(labelText: 'Distância'),
         items: [
           for (final d in distances)
@@ -4379,7 +4414,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               child: Text(distanceLabel((d['kilometers'] as num).toDouble())),
             ),
         ],
-        onChanged: saving
+        onChanged: saving || distances.length < 2
             ? null
             : (value) => setState(() {
                 distanceId = value;
@@ -4398,13 +4433,8 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         labelText: paceIsComputed ? 'Pace (calculado)' : 'Pace (opcional)',
         hintText: 'Ex.: 5:30',
         suffixText: 'min/km',
-        helperText: paceIsComputed
-            ? 'Calculado pelo tempo e pela distância.'
-            : 'Com o tempo e a distância, o pace é calculado sozinho.',
       ),
     ),
-    // Respiro: a ajuda do pace não encosta no rótulo do campo seguinte.
-    const SizedBox(height: 10),
     TextField(
       controller: placement,
       keyboardType: TextInputType.number,
@@ -4413,16 +4443,18 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     TextField(
       controller: bib,
       maxLength: 40,
+      // Sem o contador "0/40" embaixo: o espaço entre os campos fica igual.
+      buildCounter: (
+        _, {
+        required currentLength,
+        required isFocused,
+        maxLength,
+      }) => null,
       textInputAction: TextInputAction.done,
       decoration: const InputDecoration(
         labelText: 'Número de peito (opcional)',
       ),
     ),
-    if (saveLabel != null)
-      FilledButton(
-        onPressed: saving ? null : save,
-        child: Text(saving ? 'Salvando...' : saveLabel),
-      ),
   ];
 
   /// Grava tempo, colocação, número de peito e distância (PATCH). Ao concluir, vai junto e só se mudou algo.
@@ -5408,10 +5440,9 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       );
       return;
     }
-    if (imageReference == null || !declaredCompleted) {
-      setState(
-        () => message = 'Para concluir, anexe uma foto validada e marque "Declaro que concluí esta corrida".',
-      );
+    // Tocar em "Concluir" já é a declaração de que a pessoa correu (vai como declaredCompleted ao servidor).
+    if (imageReference == null) {
+      setState(() => message = 'Para concluir, anexe a foto da medalha.');
       return;
     }
     if (!ratingsValid) {
@@ -5660,14 +5691,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        // Posição da foto, modelo (forma e cor) e legenda: o mesmo editor do lápis em Medalhas.
-        OutlinedButton.icon(
-          key: const Key('edit-medal-info'),
-          onPressed: saving || uploading ? null : editMedalInfoNow,
-          icon: const Icon(Icons.tune_rounded),
-          label: const Text('Ajustar foto, modelo e legenda'),
-        ),
-        const SizedBox(height: 8),
+        // Posição da foto e modelo da medalha: pelo lápis de cada medalha em Medalhas (aqui saiu, a pedido).
         // Os três botões das opções da medalha seguem o mesmo padrão (contornado, com ícone, largura total).
         OutlinedButton.icon(
           key: const Key('open-race-data'),
@@ -6074,12 +6098,6 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               decoration: const InputDecoration(
                 labelText: 'Comentário (opcional)',
               ),
-            ),
-            CheckboxListTile(
-              value: declaredCompleted,
-              onChanged: (value) =>
-                  setState(() => declaredCompleted = value ?? false),
-              title: const Text('Declaro que concluí esta corrida'),
             ),
             CheckboxListTile(
               key: const Key('publish-to-feed'),

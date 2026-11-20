@@ -219,7 +219,10 @@ void main() {
       expect(find.text('Corrida A'), findsOneWidget);
       await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
-      expect(find.text('Distância selecionada.'), findsOneWidget);
+      expect(
+        find.text('Distância selecionada.'),
+        findsNothing,
+      ); // sem a frase: a distância fica marcada
       expect(
         paths.where(
           (c) =>
@@ -450,7 +453,6 @@ void main() {
         findsOneWidget,
       );
 
-      final declaration = find.text('Declaro que concluí esta corrida');
       final list = find.byType(Scrollable).first;
       final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
@@ -478,8 +480,6 @@ void main() {
       );
       await tapStar(tester, 'rating-Segurança-4');
       await tester.pump();
-      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
-      await tester.tap(declaration);
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tester.ensureVisible(finish);
@@ -594,15 +594,12 @@ void main() {
       await tester.tap(find.text('Selecionar foto'));
       await tester.pumpAndSettle();
       final list = find.byType(Scrollable).first;
-      final declaration = find.text('Declaro que concluí esta corrida');
       final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await rateAll(tester, skip: 'Segurança');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tapStar(tester, 'rating-Segurança-4');
       await tester.pump();
-      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
-      await tester.tap(declaration);
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tester.ensureVisible(finish);
@@ -1054,9 +1051,6 @@ void main() {
       );
       await tapStar(tester, 'rating-Kit-2');
       await tester.pump();
-      final declaration = find.text('Declaro que concluí esta corrida');
-      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
-      await tester.tap(declaration);
       await tester.pump();
       final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);

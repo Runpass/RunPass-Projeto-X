@@ -395,14 +395,13 @@ class _AgendaScreenState extends State<AgendaScreen> {
 
   /// Menu da corrida (inscrito/desejada/tirar), sobre a capa do cartão.
   Widget planMenu(Map<String, dynamic> plan, String status) => Material(
-    color: Colors.black54,
-    shape: const CircleBorder(),
+    type: MaterialType.transparency,
     child: PopupMenuButton<String>(
       key: Key('agenda-menu-${plan['editionId']}'),
       tooltip: 'Opções',
       iconSize: 20,
       padding: EdgeInsets.zero,
-      icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+      icon: const Icon(Icons.more_vert_rounded),
       onSelected: (value) => change(plan, value == 'remove' ? null : value),
       itemBuilder: (_) => [
         if (status == 'wanted')
@@ -420,19 +419,16 @@ class _AgendaScreenState extends State<AgendaScreen> {
     ),
   );
 
-  /// Mesmo cartão compacto da tela Corridas (só lista): miniatura, quando e onde, nome e distâncias.
+  /// A mesma linha de "Quero correr" do perfil: miniatura, nome, data por extenso e local; o menu à direita.
   Widget tile(Map<String, dynamic> plan, String status) {
     final edition = {
       ...Map<String, dynamic>.from(plan['edition'] as Map),
       'id': plan['editionId'],
     };
-    final today = DateTime.now().toIso8601String().substring(0, 10);
-    final passed = (edition['date'] as String).compareTo(today) < 0;
-    return EditionCompactCard(
+    return PlanRow(
       key: Key('agenda-${plan['editionId']}'),
       gateway: widget.gateway,
       edition: edition,
-      rating: passed ? 'Já aconteceu' : null,
       onTap: () => openPlan(plan),
       trailing: planMenu(plan, status),
     );

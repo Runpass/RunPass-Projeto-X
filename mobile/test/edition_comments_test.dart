@@ -85,13 +85,12 @@ Future<void> openReviews(WidgetTester tester, IdentityGateway gateway) async {
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Avaliações'));
-  await tester.pumpAndSettle();
+  // Os comentários ficam na aba principal (Sobre), embaixo das informações.
 }
 
 void main() {
   testWidgets(
-    'a aba Avaliações lista os comentários da corrida e mostra a caixa para comentar',
+    'a aba Sobre lista os comentários da corrida e mostra a caixa para comentar',
     (tester) async {
       final (gateway, server) = await setup([
         comment('a', 'Percurso plano e bem sinalizado'),
