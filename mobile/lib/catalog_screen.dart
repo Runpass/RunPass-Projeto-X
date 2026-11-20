@@ -1544,9 +1544,6 @@ class EditionScreen extends StatefulWidget {
   final IdentityGateway gateway;
   final String editionId;
 
-  /// Escolhe e recorta a imagem do banner sugerido; nulo se a pessoa desistir. Troque nos testes.
-  final Future<List<int>?> Function(BuildContext context)? bannerSelector;
-
   /// Busca e desenha o embed do post do organizador. Trocáveis nos testes (a WebView não roda lá).
   final OEmbedFetcher? oembedFetcher;
   final OEmbedViewBuilder? embedBuilder;
@@ -1558,7 +1555,6 @@ class EditionScreen extends StatefulWidget {
     super.key,
     required this.gateway,
     required this.editionId,
-    this.bannerSelector,
     this.oembedFetcher,
     this.embedBuilder,
     this.provisionalBannerLoader = loadProvisionalBanner,
@@ -1588,7 +1584,6 @@ class _EditionScreenState extends State<EditionScreen> {
   bool loadingPhotos = false;
   bool showAllReviews = false;
   final peopleReviewsKey = GlobalKey();
-  bool sendingBanner = false;
   // Detalhes (itens avaliados) da avaliação geral e da minha: recolher e expandir.
   bool showSummaryDetails = true, showMyDetails = true;
   Map<String, dynamic>? mine;
@@ -2536,68 +2531,8 @@ class _EditionScreenState extends State<EditionScreen> {
             style: TextStyle(fontSize: 12, color: context.muted),
           ),
         ),
-      const SizedBox(height: 20),
-      OutlinedButton.icon(
-        key: const Key('suggest-banner'),
-        onPressed: sendingBanner ? null : suggestBanner,
-        icon: const Icon(Icons.add_photo_alternate_outlined),
-        label: Text(
-          sendingBanner ? 'Enviando…' : 'Sugerir banner desta corrida',
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.only(top: 4),
-        child: Text(
-          'A equipe confere a autorização da imagem antes de publicar.',
-          style: TextStyle(fontSize: 12, color: context.muted),
-        ),
-      ),
     ],
   );
-
-  /// Sugere o banner desta corrida: a imagem vai para a fila da equipe, que confere a autorização e decide.
-  Future<void> suggestBanner() async {
-    final messenger = ScaffoldMessenger.of(context);
-    List<int>? bytes;
-    try {
-      if (widget.bannerSelector != null) {
-        bytes = await widget.bannerSelector!(context);
-      } else {
-        final choice = await askPhotoChoice(context);
-        if (choice == null || choice == PhotoChoice.remove || !mounted) return;
-        bytes = await pickBannerPhoto(context, choice);
-      }
-    } on Exception catch (problem) {
-      messenger.showSnackBar(SnackBar(content: Text(photoError(problem))));
-      return;
-    }
-    if (bytes == null || !mounted) return;
-    setState(() => sendingBanner = true);
-    var message =
-        'Banner enviado. A equipe confere a autorização e decide se publica.';
-    try {
-      final reference = await uploadProfilePhoto(widget.gateway, bytes);
-      await widget.gateway.request(
-        '/editions/${Uri.encodeComponent(widget.editionId)}/banner-suggestions',
-        method: 'POST',
-        body: {'imageReference': reference},
-      );
-    } on IdentityIssue catch (issue) {
-      message = switch (issue.code) {
-        'BANNER_SUGGESTION_EXISTS' => 'Você já enviou um banner para esta corrida e ele aguarda a decisão da equipe.',
-        'TOO_MANY_PENDING_REQUESTS' => 'Você já tem 5 banners aguardando decisão. Espere a equipe decidir para enviar outro.',
-        'EDITION_ARCHIVED' =>
-          'Esta corrida saiu de circulação e não aceita banner.',
-        _ => photoError(issue),
-      };
-    } on Exception {
-      message =
-          'Sem conexão com o servidor. Verifique a internet e tente novamente.';
-    } finally {
-      if (mounted) setState(() => sendingBanner = false);
-    }
-    messenger.showSnackBar(SnackBar(content: Text(message)));
-  }
 
   Future<void> createDraft() async {
     setState(() {

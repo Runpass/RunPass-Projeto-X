@@ -140,7 +140,7 @@ void main() {
     expect(bannerStatusLabel(null, 'rejected'), isNull);
   });
 
-  testWidgets('sem banner o pedido segue como antes: nada é enviado', (
+  testWidgets('o pedido não tem campo de banner: nenhuma imagem é enviada', (
     tester,
   ) async {
     final s = await setup();
@@ -148,44 +148,15 @@ void main() {
       MaterialApp(home: EditionRequestFormScreen(gateway: s.gateway)),
     );
     await fill(tester);
-    expect(find.byKey(const Key('request-banner')), findsOneWidget);
-    expect(find.byKey(const Key('request-banner-preview')), findsNothing);
+    // Banner de corrida não aparece no app: o pedido não oferece mais o campo.
+    expect(find.byKey(const Key('request-banner')), findsNothing);
     await submit(tester);
     expect(s.calls, ['POST /edition-requests']);
     expect(s.requests.single!.containsKey('imageReference'), isFalse);
   });
 
-  testWidgets('com banner: mostra a prévia, envia a imagem e o pedido leva só '
-      'a referência', (tester) async {
-    final s = await setup();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: EditionRequestFormScreen(
-          gateway: s.gateway,
-          bannerSelector: (context) async => onePixelPng,
-        ),
-      ),
-    );
-    await fill(tester);
-    final pick = find.byKey(const Key('request-banner-pick'));
-    await tester.ensureVisible(pick);
-    await tester.tap(pick);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('request-banner-preview')), findsOneWidget);
-    expect(find.byKey(const Key('request-banner-pick')), findsNothing);
-    await submit(tester);
-    expect(s.calls, [
-      'POST /uploads',
-      'POST /uploads/up1/finalize',
-      'POST /edition-requests',
-    ]);
-    expect(s.requests.single!['imageReference'], 'img_banner');
-    expect(s.requests.single!['name'], 'Corrida do Banner');
-  });
-
   testWidgets(
-    'com a foto da medalha: vai como imagem separada (medalImageReference) '
-    'e o banner continua opcional',
+    'com a foto da medalha: vai como imagem separada (medalImageReference), sem banner',
     (tester) async {
       final s = await setup();
       await tester.pumpWidget(
@@ -194,16 +165,12 @@ void main() {
             gateway: s.gateway,
             medalPhoto: onePixelPng,
             participationCollector: (context, name) async => {},
-            bannerSelector: (context) async => onePixelPng,
           ),
         ),
       );
       await fill(tester);
       expect(find.byKey(const Key('request-medal-photo')), findsOneWidget);
-      expect(
-        find.byKey(const Key('request-banner')),
-        findsOneWidget,
-      ); // banner segue opcional
+      expect(find.byKey(const Key('request-banner')), findsNothing);
       expect(find.text('Continuar: dados da participação'), findsOneWidget);
       await submit(tester);
       expect(s.calls, [
@@ -214,83 +181,6 @@ void main() {
       expect(s.requests.single!['medalImageReference'], 'img_banner');
       expect(s.requests.single!.containsKey('imageReference'), isFalse);
       expect(s.requests.single!.containsKey('medalPhoto'), isFalse);
-    },
-  );
-
-  testWidgets(
-    'foto da medalha e banner juntos: duas imagens, cada uma no seu campo',
-    (tester) async {
-      final s = await setup();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: EditionRequestFormScreen(
-            gateway: s.gateway,
-            medalPhoto: onePixelPng,
-            participationCollector: (context, name) async => {},
-            bannerSelector: (context) async => onePixelPng,
-          ),
-        ),
-      );
-      await fill(tester);
-      final pick = find.byKey(const Key('request-banner-pick'));
-      await tester.ensureVisible(pick);
-      await tester.tap(pick);
-      await tester.pumpAndSettle();
-      await submit(tester);
-      expect(s.calls.where((c) => c == 'POST /uploads').length, 2);
-      final body = s.requests.single!;
-      expect(body['imageReference'], isNotNull);
-      expect(body['medalImageReference'], isNotNull);
-    },
-  );
-
-  testWidgets(
-    'banner da internet: link inválido ou imagem recusada mostram o motivo',
-    (tester) async {
-      final s = await setup();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) => Scaffold(
-              body: TextButton(
-                key: const Key('open-web'),
-                onPressed: () => pickBannerFromWeb(
-                  context,
-                  query: 'Corrida X',
-                  fetcher: (url) async {
-                    if (!url.startsWith('https://')) {
-                      throw const IdentityIssue('IMAGE_LINK_INVALID');
-                    }
-                    throw const IdentityIssue('IMAGE_TYPE_INVALID');
-                  },
-                ),
-                child: const Text('abrir'),
-              ),
-            ),
-          ),
-        ),
-      );
-      expect(s.calls, isEmpty);
-      await tester.tap(find.byKey(const Key('open-web')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('web-image-search')), findsOneWidget);
-      await tester.enterText(
-        find.byKey(const Key('web-image-link')),
-        'http://x.test/a.png',
-      );
-      await tester.tap(find.byKey(const Key('web-image-use')));
-      await tester.pumpAndSettle();
-      expect(
-        find.text('Cole o link da imagem, começando com https://'),
-        findsOneWidget,
-      );
-      await tester.enterText(
-        find.byKey(const Key('web-image-link')),
-        'https://x.test/a.gif',
-      );
-      await tester.tap(find.byKey(const Key('web-image-use')));
-      await tester.pumpAndSettle();
-      expect(find.text('Escolha uma foto JPEG ou PNG.'), findsOneWidget);
     },
   );
 
@@ -366,57 +256,6 @@ void main() {
       expect(s.calls.any((c) => c.startsWith('DELETE')), isFalse);
     },
   );
-
-  testWidgets('remover o banner volta a não enviar imagem', (tester) async {
-    final s = await setup();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: EditionRequestFormScreen(
-          gateway: s.gateway,
-          bannerSelector: (context) async => onePixelPng,
-        ),
-      ),
-    );
-    await fill(tester);
-    final pick = find.byKey(const Key('request-banner-pick'));
-    await tester.ensureVisible(pick);
-    await tester.tap(pick);
-    await tester.pumpAndSettle();
-    final remove = find.byKey(const Key('request-banner-remove'));
-    await tester.ensureVisible(remove);
-    await tester.tap(remove);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('request-banner-preview')), findsNothing);
-    await submit(tester);
-    expect(s.calls, ['POST /edition-requests']);
-    expect(s.requests.single!.containsKey('imageReference'), isFalse);
-  });
-
-  testWidgets('imagem recusada pela validação: avisa, não cria o pedido', (
-    tester,
-  ) async {
-    final s = await setup(uploadState: 'failed');
-    await tester.pumpWidget(
-      MaterialApp(
-        home: EditionRequestFormScreen(
-          gateway: s.gateway,
-          bannerSelector: (context) async => onePixelPng,
-        ),
-      ),
-    );
-    await fill(tester);
-    final pick = find.byKey(const Key('request-banner-pick'));
-    await tester.ensureVisible(pick);
-    await tester.tap(pick);
-    await tester.pumpAndSettle();
-    await submit(tester);
-    expect(
-      find.text('A foto não foi aceita. Escolha outra imagem.'),
-      findsOneWidget,
-    );
-    expect(s.requests, isEmpty); // o pedido não foi criado
-    expect(s.calls, ['POST /uploads', 'POST /uploads/up1/finalize']);
-  });
 
   testWidgets(
     'sugestão de banner de corrida cadastrada aparece como tal e mostra a situação',
