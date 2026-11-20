@@ -254,7 +254,7 @@ void main() {
   );
 
   testWidgets(
-    '"Minha Cidade" sem estado/cidade cadastrados pede uma vez e depois filtra',
+    '"Pra você" sem estado/cidade cadastrados pede uma vez e depois mostra as corridas indicadas',
     (tester) async {
       final patches = <Map<String, dynamic>?>[];
       Map<String, dynamic> me = {
@@ -319,9 +319,9 @@ void main() {
         MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Minha Cidade'));
+      await tester.tap(find.text('Pra você'));
       await tester.pumpAndSettle();
-      // Pede estado/cidade antes de aplicar o filtro.
+      // Pede estado/cidade antes de indicar.
       expect(find.text('Estado e cidade'), findsOneWidget);
       await tester.tap(find.byKey(const Key('location-done')));
       await tester.pumpAndSettle();
@@ -334,12 +334,17 @@ void main() {
           'longitude': -66.8972,
         },
       ]);
-      // Com a cidade salva, a publicacao da mesma cidade aparece.
-      expect(find.text('Corredora do Acre'), findsOneWidget);
+      // Com a cidade salva, aparecem as corridas indicadas (no lugar das publicações).
+      expect(find.text('Corredora do Acre'), findsNothing);
+      expect(
+        find.byKey(const Key('recommended-empty')).evaluate().isNotEmpty ||
+            find.byKey(const Key('recommended-races')).evaluate().isNotEmpty,
+        isTrue,
+      );
       // Tocar de novo nao pergunta outra vez.
       await tester.tap(find.text('Todos'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Minha Cidade'));
+      await tester.tap(find.text('Pra você'));
       await tester.pumpAndSettle();
       expect(find.text('Estado e cidade'), findsNothing);
       expect(patches, hasLength(1));

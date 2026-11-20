@@ -270,3 +270,90 @@ class _RecommendedRacesState extends State<RecommendedRaces> {
     },
   );
 }
+
+/// "Pra você" no Início: as corridas indicadas em lista (o mesmo cartão da lista de corridas), cada uma com o
+/// motivo. Sem indicação, um convite para completar o perfil e registrar corridas.
+class RecommendedRacesList extends StatefulWidget {
+  final IdentityGateway gateway;
+  final Future<List<Recommendation>> Function(IdentityGateway gateway) loader;
+  const RecommendedRacesList({
+    super.key,
+    required this.gateway,
+    this.loader = loadRecommendations,
+  });
+
+  @override
+  State<RecommendedRacesList> createState() => _RecommendedRacesListState();
+}
+
+class _RecommendedRacesListState extends State<RecommendedRacesList> {
+  late Future<List<Recommendation>> items = widget.loader(widget.gateway);
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<List<Recommendation>>(
+    future: items,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 40),
+          child: Center(child: CircularProgressIndicator()),
+        );
+      }
+      final list = snapshot.data ?? const <Recommendation>[];
+      if (list.isEmpty) {
+        return Padding(
+          key: const Key('recommended-empty'),
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: Text(
+            'Ainda não temos corridas para indicar. Confira a cidade no seu perfil e registre as '
+            'corridas que você já fez: as indicações usam a sua cidade e as distâncias que você corre.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: context.muted),
+          ),
+        );
+      }
+      chooseDistinctCovers([for (final r in list) r.edition]);
+      return Column(
+        key: const Key('recommended-races'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Corridas pra você',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+          ),
+          Text(
+            'Pela sua cidade, pelas distâncias que você corre e pelas datas.',
+            style: TextStyle(color: context.muted, fontSize: 12.5),
+          ),
+          const SizedBox(height: 10),
+          for (final r in list)
+            EditionCompactCard(
+              key: Key('recommended-${r.edition['id']}'),
+              gateway: widget.gateway,
+              edition: r.edition,
+              rating: r.reasons.isEmpty ? null : r.reasons.take(2).join(' · '),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => EditionScreen(
+                    gateway: widget.gateway,
+                    editionId: r.edition['id'] as String,
+                  ),
+                ),
+              ),
+            ),
+          Align(
+            child: TextButton(
+              key: const Key('recommended-all'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => CatalogScreen(gateway: widget.gateway),
+                ),
+              ),
+              child: const Text('Ver todas as corridas'),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}

@@ -33,37 +33,7 @@ const guarulhosLat = -23.4538, guarulhosLon = -46.5333;
 const rioLat = -22.9068, rioLon = -43.1729;
 
 void main() {
-  group('feedFilterMatches "Minha Cidade"', () {
-    test('bate cidade e estado iguais, sem diferenciar maiusculas', () {
-      final e = entry(city: 'São Paulo', state: 'SP');
-      final me = {'city': 'são paulo', 'state': 'sp'};
-      expect(feedFilterMatches(FeedFilter.city, e, me), isTrue);
-    });
-
-    test('nao bate com cidade diferente', () {
-      final e = entry(city: 'Campinas', state: 'SP');
-      final me = {'city': 'São Paulo', 'state': 'SP'};
-      expect(feedFilterMatches(FeedFilter.city, e, me), isFalse);
-    });
-
-    test('mesma cidade em estados diferentes nao bate', () {
-      final e = entry(city: 'Brasília', state: 'DF');
-      final me = {'city': 'Brasília', 'state': 'GO'};
-      expect(feedFilterMatches(FeedFilter.city, e, me), isFalse);
-    });
-
-    test('sem cidade no meu perfil nunca bate', () {
-      final e = entry(city: 'São Paulo', state: 'SP');
-      expect(feedFilterMatches(FeedFilter.city, e, null), isFalse);
-      expect(feedFilterMatches(FeedFilter.city, e, const {}), isFalse);
-    });
-
-    test('sem cidade na corrida nunca bate', () {
-      final e = entry(city: null, state: null);
-      final me = {'city': 'São Paulo', 'state': 'SP'};
-      expect(feedFilterMatches(FeedFilter.city, e, me), isFalse);
-    });
-
+  group('feedFilterMatches', () {
     test('Todos, Amigos e Seguindo ja chegam filtrados pelo servidor', () {
       final e = entry(city: 'Qualquer', state: 'XX');
       for (final f in [
@@ -149,14 +119,14 @@ void main() {
     expect(feedScopeFor(FeedFilter.all), 'all');
     expect(feedScopeFor(FeedFilter.friends), 'friends');
     expect(feedScopeFor(FeedFilter.network), 'network');
-    expect(feedScopeFor(FeedFilter.city), 'all');
+    expect(feedScopeFor(FeedFilter.forYou), 'all');
   });
 
   test('rotulos dos filtros', () {
     expect(FeedFilter.all.label, 'Todos');
     expect(FeedFilter.friends.label, 'Amigos');
     expect(FeedFilter.network.label, 'Seguindo');
-    expect(FeedFilter.city.label, 'Minha Cidade');
+    expect(FeedFilter.forYou.label, 'Pra você');
     expect(FeedFilter.values.length, 4);
   });
 }

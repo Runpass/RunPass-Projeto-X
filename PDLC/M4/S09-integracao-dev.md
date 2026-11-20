@@ -394,3 +394,11 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 - Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE`.
 - O que entrou: `POST /editions/{id}/distances` aceita o km como numero ou texto (antes recusava todo pedido com 422); publicacao com ate 5 fotos (`morePostImageReferences`, `postImageCount`, `?index=N` em `/participations/{id}/post-image` e `/posts/{id}/image`).
 - Verificacao feita: `GET /me`, `POST /editions/x/distances` e `GET /participations/x/post-image?index=1` respondem 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: informar o km de corrida sem distancia, publicar e editar com varias fotos, carrossel no feed.
+
+
+## Deploys do conserto do km e da foto de quem avaliou no DEV - 20/11/2026
+
+- **`km-versao-200029`** (UPDATE, `runpass-dev-app`): autorizado pelo usuario ("publique o backend do DEV"). Pacote `lambda/runpass-6ca226f887615fbd.zip` (commit `341a9a2`, PRs #126 a #128). Anterior: `lambda/runpass-5606d792cb647e2c.zip`. Entrou: informar o km de corrida sem distancia deixa de dar 422 `INVALID_VERSION` (a versao vinda do DynamoDB como Decimal e convertida para inteiro; o mesmo na atualizacao de descobertas do portal).
+- **`avaliacao-autor-200654`** (UPDATE, `runpass-dev-app`): publicado apos o merge do PR #129, com o pedido do usuario de fazer o merge e instalar. Pacote `lambda/runpass-f35ec59d14a479cf.zip` (commit `6123376`). Anterior: `lambda/runpass-6ca226f887615fbd.zip`. Entrou: a lista de avaliacoes da corrida traz o cartao publico de quem avaliou (o app mostra a foto do perfil).
+- Mudancas nos dois: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE` nos dois.
+- Verificacao feita: `POST /editions/x/distances` e `GET /editions/x/reviews` respondem 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: informar o km e a foto de quem avaliou.

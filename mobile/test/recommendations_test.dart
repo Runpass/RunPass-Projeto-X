@@ -114,4 +114,57 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('recommended-races')), findsNothing);
   });
+
+  testWidgets(
+    '"Pra você" no Início: as corridas indicadas em lista, com o motivo',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed(
+        (uri, method, headers, body) async => const JsonReply(200, {}),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ListView(
+              children: [
+                RecommendedRacesList(
+                  gateway: gateway,
+                  loader: (_) async => [
+                    Recommendation(race('A', '2026-12-10'), 5, const [
+                      'Perto de você',
+                    ]),
+                    Recommendation(race('B', '2026-12-20'), 3, const []),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Corridas pra você'), findsOneWidget);
+      expect(find.byKey(const Key('recommended-A')), findsOneWidget);
+      expect(find.byKey(const Key('recommended-B')), findsOneWidget);
+      expect(find.text('Perto de você'), findsOneWidget);
+    },
+  );
+
+  testWidgets('"Pra você" sem indicação convida a completar o perfil', (
+    tester,
+  ) async {
+    final gateway = await signed(
+      (uri, method, headers, body) async => const JsonReply(200, {}),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RecommendedRacesList(gateway: gateway, loader: (_) async => []),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('recommended-empty')), findsOneWidget);
+  });
 }

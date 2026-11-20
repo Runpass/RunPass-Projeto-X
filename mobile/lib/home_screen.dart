@@ -15,7 +15,7 @@ import 'medal_scan.dart'
         PlatformMedalTextReader,
         pickMedalPhotoPath;
 import 'profile_photo.dart' show pickPostPhotos;
-import 'recommendations.dart' show RecommendedRaces;
+import 'recommendations.dart' show RecommendedRacesList;
 import 'notifications.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
@@ -32,7 +32,7 @@ enum FeedFilter {
   all('Todos', Icons.public_rounded),
   friends('Amigos', Icons.people_outline),
   network('Seguindo', Icons.hub_outlined),
-  city('Minha Cidade', Icons.location_city);
+  forYou('Pra você', Icons.auto_awesome_rounded);
 
   final String label;
   final IconData icon;
@@ -41,7 +41,7 @@ enum FeedFilter {
 
 /// Escopo enviado ao servidor para cada filtro: "Todos" traz qualquer publicação visível;
 /// "Amigos" só de amigos aceitos (sem as minhas); "Seguindo" só de quem eu sigo (sem as
-/// minhas). "Minha Cidade" recorta dentro de "Todos" (feedFilterMatches).
+/// minhas). "Pra você" mostra as corridas indicadas (não publicações).
 String feedScopeFor(FeedFilter filter) => switch (filter) {
   FeedFilter.friends => 'friends',
   FeedFilter.network => 'network',
@@ -76,7 +76,7 @@ bool feedFilterMatches(
   FeedEntry entry,
   Map<String, dynamic>? myProfile,
 ) => switch (filter) {
-  FeedFilter.city => _sameCity(myProfile, entry),
+  FeedFilter.forYou => true, // mostra as corridas indicadas, não publicações
   // Todos, Amigos e Seguindo já chegam filtrados pelo servidor (feedScopeFor).
   FeedFilter.all || FeedFilter.friends || FeedFilter.network => true,
 };
@@ -199,7 +199,7 @@ Future<FeedLoad> loadFeed(
     );
   }
   // Só em "Todos": garante que uma corrida recém-registrada apareça no Início. Nos outros
-  // filtros (Amigos, Seguindo, Minha Cidade) as minhas publicações não entram por aqui.
+  // filtros (Amigos, Seguindo, Pra você) as minhas publicações não entram por aqui.
   final own = filter == FeedFilter.all
       ? [
           for (final race in mine)
@@ -246,7 +246,8 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
   FeedFilter filter = FeedFilter.all;
 
   Future<void> selectFilter(FeedFilter item) async {
-    if (item == FeedFilter.city && !await ensureLocation()) return;
+    // "Pra você" indica pela cidade do perfil: se faltar, pede uma vez.
+    if (item == FeedFilter.forYou && !await ensureLocation()) return;
     if (!mounted) return;
     setState(() {
       filter = item;
@@ -254,7 +255,7 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     });
   }
 
-  /// "Minha Cidade" exige estado/cidade no perfil; se faltar, pede uma vez (fica salvo depois,
+  /// "Pra você" usa a cidade do perfil; se faltar, pede uma vez (fica salvo depois,
   /// não pergunta de novo).
   Future<bool> ensureLocation() async {
     Map<String, dynamic>? profile;
@@ -595,25 +596,23 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
           final loading = snapshot.connectionState != ConnectionState.done;
           final all = snapshot.data?.items ?? const <FeedEntry>[];
           final myProfile = snapshot.data?.profile;
-          final shown = filter == FeedFilter.city
-              ? cityScopedEntries(all, myProfile)
-              : [
-                  for (final entry in all)
-                    if (feedFilterMatches(filter, entry, myProfile)) entry,
-                ];
+          final shown = [
+            for (final entry in all)
+              if (feedFilterMatches(filter, entry, myProfile)) entry,
+          ];
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(16),
             children: [
               filters(),
               const SizedBox(height: 8),
-              // Corridas indicadas para a pessoa, no topo do Início (só em "Todos").
-              if (filter == FeedFilter.all)
-                RecommendedRaces(
+              // "Pra você": as corridas indicadas para a pessoa, no lugar das publicações.
+              if (filter == FeedFilter.forYou)
+                RecommendedRacesList(
                   key: const ValueKey('recommended'),
                   gateway: widget.gateway,
-                ),
-              if (loading)
+                )
+              else if (loading)
                 const Center(child: CircularProgressIndicator())
               // O convite "sem corridas ainda" só faz sentido em "Todos"; nos outros
               // filtros, uma lista vazia já é coberta por emptyFilterState.
