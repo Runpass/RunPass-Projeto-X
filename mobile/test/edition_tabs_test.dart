@@ -132,6 +132,30 @@ Future<void> open(
 }
 
 void main() {
+  testWidgets('as quatro abas mostram o nome inteiro num celular estreito', (
+    tester,
+  ) async {
+    final gateway = await gatewayWith();
+    tester.view.physicalSize = const Size(375 * 3, 812 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'E1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    final tabs = ['Sobre', 'Avaliações', 'Fotos', 'Participantes'];
+    for (var i = 0; i < tabs.length; i++) {
+      final text = tester.getRect(find.text(tabs[i]));
+      final tab = tester.getRect(find.byType(Tab).at(i));
+      expect(text.left, greaterThanOrEqualTo(tab.left - 0.5), reason: tabs[i]);
+      expect(text.right, lessThanOrEqualTo(tab.right + 0.5), reason: tabs[i]);
+      expect(text.right, lessThanOrEqualTo(375), reason: tabs[i]);
+    }
+  });
+
   testWidgets('Avaliações: média, quantidade e as '
       'barras dos itens', (tester) async {
     final gateway = await gatewayWith(

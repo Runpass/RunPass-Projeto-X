@@ -978,6 +978,7 @@ const _genericNight = CityPhoto(
 /// Todas as imagens do app, na ordem dos créditos.
 final allCoverPhotos = <CityPhoto>[
   ...cityPhotoList,
+  for (final (_, photo) in themeCovers) photo,
   ...moreCityPhotos,
   _spMasp,
   _spSe,
@@ -996,6 +997,122 @@ final allCoverPhotos = <CityPhoto>[
   _genericNight,
 ];
 
+/// Capas de tema (fotos reais de corridas temáticas, com licença livre): a corrida temática ganha a capa do
+/// tema, na frente da foto da cidade. Sem foto real do tema (princesas, ninja), fica a foto do lugar. A primeira regra que bate no nome (sem acento) vale.
+final themeCovers = <(RegExp, CityPhoto)>[
+  (
+    RegExp(
+      r'heroi|batman|superman|homem.aranha|spider|mulher maravilha|vingador|marvel|liga da justica|\bflash run',
+    ),
+    CityPhoto(
+      city: 'Tema',
+      asset: 'assets/cidades/tema-heroi.jpg',
+      author: 'Marek Ślusarczyk (Tupungato)',
+      license: 'CC BY 3.0',
+      title: 'Corredores fantasiados de super-heróis',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:005_London_Marathon_vaseline_stand_and_superhero_costume_charity_fundraising_runners_in_2008.jpg',
+    ),
+  ),
+  (
+    RegExp(r'hot wheels|carrinho'),
+    CityPhoto(
+      city: 'Tema',
+      asset: 'assets/cidades/tema-brinquedo.jpg',
+      author: 'Jonathunder',
+      license: 'CC BY-SA 3.0',
+      title: 'Corrida de carrinhos',
+      sourceUrl:
+          'https://commons.wikimedia.org/wiki/File:SoapBoxRaceFinishLine.jpg',
+    ),
+  ),
+  (
+    RegExp(r'\bnatal\b|papai noel'),
+    CityPhoto(
+      city: 'Tema',
+      asset: 'assets/cidades/tema-natal.jpg',
+      author: 'AleWi',
+      license: 'CC BY-SA 4.0',
+      title: 'Corrida de Papai Noel',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:Kungstr%C3%A4dg%C3%A5rden,_Santa_Run_-_20251207_-_01.jpg',
+    ),
+  ),
+  (
+    RegExp(r'reveillon|ano novo|\bvirada\b|sao silvestr'),
+    CityPhoto(
+      city: 'Tema',
+      asset: 'assets/cidades/tema-reveillon.jpg',
+      author: 'Joseolgon',
+      license: 'CC BY-SA 4.0',
+      title: 'Corrida de São Silvestre',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:2015_Corrida_de_S._Silvestre_(2).JPG',
+    ),
+  ),
+  (
+    RegExp(r'outubro rosa'),
+    CityPhoto(
+      city: 'Tema',
+      asset: 'assets/cidades/tema-outubro-rosa.jpg',
+      author: 'U.S. Navy',
+      license: 'Domínio público',
+      title: 'Corrida de Outubro Rosa',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:US_Navy_111005-N-UN197-006_Marines_attending_the_Marine_Corps_Intelligence_School.jpg',
+    ),
+  ),
+  (
+    RegExp(r'novembro azul'),
+    CityPhoto(
+      city: 'Tema',
+      asset: 'assets/cidades/tema-novembro-azul.jpg',
+      author: 'Diego Mello',
+      license: 'CC BY 3.0',
+      title: 'Novembro Azul',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:Novembro_Azul_(91058435).jpeg',
+    ),
+  ),
+  (
+    RegExp(r'\bcolor run|\bcores\b|\bglow\b|\bholi\b|\bneon\b'),
+    CityPhoto(
+      city: 'Tema',
+      asset: 'assets/cidades/tema-colorida.jpg',
+      author: 'Gina Giardina (U.S. Air Force)',
+      license: 'Domínio público',
+      title: 'Corrida colorida',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:LGBT_Diversity_Color_Run_150721-F-VG809-002.jpg',
+    ),
+  ),
+  (
+    RegExp(r'\bkids?\b|infantil|crianca|lady ?bug|bob esponja|patrulha canina'),
+    CityPhoto(
+      city: 'Tema',
+      asset: 'assets/cidades/tema-kids.jpg',
+      author: 'Cpl. Reece Lodder (U.S. Marine Corps)',
+      license: 'Domínio público',
+      title: 'Corrida infantil',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:Kids_tear_up_Marine_Corps_Base_Hawaii_during_keiki_triathlon_120811-M-MM918-005.jpg',
+    ),
+  ),
+  (
+    RegExp(r'feminin|\bmanas\b|women|\bladies\b|venus|mulheres'),
+    CityPhoto(
+      city: 'Tema',
+      asset: 'assets/cidades/tema-mulheres.jpg',
+      author: 'Whoisjohngalt',
+      license: 'CC0 1.0',
+      title: 'Corrida feminina',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:US_Olympic_Trials_Female_2024.jpg',
+    ),
+  ),
+];
+
+/// A capa de tema da corrida, pelo nome; nula se não for temática.
+CityPhoto? themeCoverFor(Map<String, dynamic> edition) {
+  final name = foldName('${edition['name'] ?? ''}');
+  for (final (pattern, photo) in themeCovers) {
+    if (pattern.hasMatch(name)) return photo;
+  }
+  return null;
+}
+
 /// Fotos da capital usadas quando a corrida não tem local conhecido (ou o ponto dela já apareceu na lista).
 const _spOthers = <CityPhoto>[
   _spVillaLobos,
@@ -1010,6 +1127,15 @@ const _spOthers = <CityPhoto>[
 /// prova, depois as fotos da capital (numa ordem própria de cada corrida). Fora dela: a foto da cidade e as
 /// genéricas de corrida (do tipo da prova primeiro).
 List<CityPhoto> coverCandidatesFor(Map<String, dynamic> edition) {
+  final theme = themeCoverFor(edition);
+  if (theme != null) {
+    // Corrida temática: a capa do tema primeiro; repetida, segue para as fotos do lugar.
+    return [theme, ..._placeCandidatesFor(edition)];
+  }
+  return _placeCandidatesFor(edition);
+}
+
+List<CityPhoto> _placeCandidatesFor(Map<String, dynamic> edition) {
   final kind = raceKind(edition['name'] as String?);
   final state = '${edition['state'] ?? ''}'.trim().toUpperCase();
   final city = foldName('${edition['city'] ?? ''}'.trim());

@@ -309,8 +309,10 @@ class PhotoCreditsScreen extends StatelessWidget {
                 ),
               ),
               title: Text(
-                photo.city == 'São Paulo' &&
-                        photo.asset != cityPhotoList.first.asset
+                photo.city == 'Tema'
+                    ? 'Tema · ${photo.title}'
+                    : photo.city == 'São Paulo' &&
+                          photo.asset != cityPhotoList.first.asset
                     ? 'São Paulo · ${photo.title}'
                     : photo.city,
               ),
