@@ -487,8 +487,11 @@ Future<List<int>?> editPhoto(
 ) => Navigator.of(context).push<List<int>>(
   MaterialPageRoute(
     fullscreenDialog: true,
-    builder: (_) =>
-        PhotoZoomScreen(image: Uint8List.fromList(photo), title: title),
+    builder: (_) => PhotoZoomScreen(
+      image: Uint8List.fromList(photo),
+      title: title,
+      original: photoOriginals[photo],
+    ),
   ),
 );
 
@@ -503,16 +506,23 @@ class PhotoZoomScreen extends StatefulWidget {
 
   /// Recorte no formato da medalha (o "Prateleira"); com ele, o editor abre nesse formato.
   final Widget Function(GlobalKey<MedalShelfCropState> key)? shelf;
+
+  /// A foto antes de um recorte anterior (nesta sessão): "Foto original" volta para ela.
+  final Uint8List? original;
   const PhotoZoomScreen({
     super.key,
     required this.image,
     this.title = 'Foto da publicação',
     this.shelf,
+    this.original,
   });
 
   @override
   State<PhotoZoomScreen> createState() => _PhotoZoomScreenState();
 }
+
+/// Foto original de cada foto recortada no editor (na sessão): ao ajustar de novo, dá para voltar a ela.
+final photoOriginals = Expando<Uint8List>('foto original');
 
 /// Recorta a parte [frac] (em frações de 0 a 1 da foto já na orientação certa) e devolve um JPEG (qualidade
 /// 88). Roda fora da tela, para não travar o app.
@@ -579,20 +589,52 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
   Size viewport = Size.zero;
   double? photoAspect;
 
-  @override
-  void initState() {
-    super.initState();
+  /// A foto em edição: começa na recebida; "Foto original" troca pela de antes do recorte.
+  late Uint8List image = widget.image;
+
+  /// A original de tudo o que sair daqui (para um próximo ajuste poder voltar a ela).
+  Uint8List get source =>
+      widget.original ?? photoOriginals[widget.image] ?? widget.image;
+
+  bool get canRestore =>
+      !identical(image, source) ||
+      !controller.value.isIdentity() ||
+      (format != whole && format != shelfFormat);
+
+  void restoreOriginal() => setState(() {
+    image = source;
+    photoAspect = null;
+    controller.value = Matrix4.identity();
+    if (format != shelfFormat) format = whole;
+    _readAspect();
+  });
+
+  void _readAspect() {
+    final current = image;
     ui
-        .instantiateImageCodec(widget.image)
+        .instantiateImageCodec(current)
         .then((codec) async {
           final frame = await codec.getNextFrame();
-          if (mounted) {
+          if (mounted && identical(current, image)) {
             setState(
               () => photoAspect = frame.image.width / frame.image.height,
             );
           }
         })
         .catchError((Object _) {});
+  }
+
+  /// Devolve a foto pronta, lembrando a original dela.
+  void finish(List<int> result) {
+    final bytes = result is Uint8List ? result : Uint8List.fromList(result);
+    if (!identical(bytes, source)) photoOriginals[bytes] = source;
+    Navigator.of(context).pop<List<int>>(bytes);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _readAspect();
   }
 
   Rect? visibleFraction() {
@@ -625,7 +667,7 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
     if (!mounted) return;
     switch (result) {
       case CropSuccess(:final croppedImage):
-        Navigator.of(context).pop<List<int>>(croppedImage);
+        finish(croppedImage);
       case CropFailure():
         failed();
     }
@@ -635,12 +677,12 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
     if (format == whole) {
       // Com a pinça (aproximou ou arrastou), vai o que aparece na tela; sem ela, a foto original, inteira.
       if (controller.value.isIdentity()) {
-        Navigator.pop(context, widget.image);
+        finish(image);
         return;
       }
       if (photoAspect == null) {
         try {
-          final frame = await (await ui.instantiateImageCodec(widget.image))
+          final frame = await (await ui.instantiateImageCodec(image))
               .getNextFrame();
           photoAspect = frame.image.width / frame.image.height;
         } on Object {
@@ -650,13 +692,13 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
       }
       final frac = visibleFraction();
       if (frac == null) {
-        Navigator.pop(context, widget.image);
+        finish(image);
         return;
       }
       setState(() => busy = true);
       try {
-        final bytes = await cropPhotoFraction(widget.image, frac);
-        if (mounted) Navigator.of(context).pop<List<int>>(bytes);
+        final bytes = await cropPhotoFraction(image, frac);
+        if (mounted) finish(bytes);
       } on Object {
         if (mounted) failed();
       }
@@ -671,7 +713,7 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
       final bytes = await shelfKey.currentState?.export();
       if (!mounted) return;
       if (bytes == null) return failed();
-      Navigator.of(context).pop<List<int>>(bytes);
+      finish(bytes);
     } on Exception {
       if (mounted) failed();
     }
@@ -742,9 +784,7 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
             minScale: minScale,
             maxScale: maxScale,
             onInteractionEnd: (_) => setState(() {}),
-            child: Center(
-              child: Image.memory(widget.image, fit: BoxFit.contain),
-            ),
+            child: Center(child: Image.memory(image, fit: BoxFit.contain)),
           );
         },
       );
@@ -753,7 +793,7 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
     return Crop(
       // Trocar o formato recria o quadro do zero (a foto volta inteira).
       key: ValueKey(format),
-      image: widget.image,
+      image: image,
       controller: crop,
       aspectRatio: ratio,
       interactive: true,
@@ -772,6 +812,14 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
       foregroundColor: Colors.white,
       title: Text(widget.title),
       actions: [
+        if (canRestore)
+          IconButton(
+            key: const Key('photo-original'),
+            tooltip: 'Foto original',
+            color: Colors.white70,
+            onPressed: busy ? null : restoreOriginal,
+            icon: const Icon(Icons.restore_rounded, size: 20),
+          ),
         IconButton(
           key: Key(showFormats ? 'photo-crop-off' : 'photo-crop'),
           tooltip: showFormats ? 'Esconder formatos' : 'Formato',

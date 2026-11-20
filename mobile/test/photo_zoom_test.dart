@@ -196,4 +196,56 @@ void main() {
       expect(find.byKey(const Key('photo-zoom-viewer')), findsOneWidget);
     },
   );
+
+  testWidgets(
+    '"Foto original" desfaz o zoom e volta à foto de antes do recorte',
+    (tester) async {
+      final before = Uint8List.fromList([...png, 0]); // a "original"
+      List<int>? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                result = await Navigator.of(context).push<List<int>>(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        PhotoZoomScreen(image: png, original: before),
+                  ),
+                );
+              },
+              child: const Text('abrir'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+      // Aberta numa foto já recortada: "Foto original" aparece mesmo sem zoom.
+      expect(find.byKey(const Key('photo-original')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('photo-zoom-in')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('photo-original')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('photo-original')), findsNothing);
+      await tester.tap(find.byKey(const Key('photo-zoom-use')));
+      await tester.pumpAndSettle();
+      expect(result, before);
+    },
+  );
+
+  testWidgets(
+    'sem recorte anterior, "Foto original" só aparece depois do zoom',
+    (tester) async {
+      await tester.pumpWidget(MaterialApp(home: PhotoZoomScreen(image: png)));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('photo-original')), findsNothing);
+      await tester.tap(find.byKey(const Key('photo-zoom-in')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('photo-original')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('photo-original')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('photo-original')), findsNothing);
+    },
+  );
 }

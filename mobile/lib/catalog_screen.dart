@@ -3748,6 +3748,7 @@ Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
         builder: (_) => PhotoZoomScreen(
           image: Uint8List.fromList(photo),
           title: 'Foto da medalha',
+          original: photoOriginals[photo],
         ),
       ),
     );
@@ -3757,7 +3758,10 @@ Future<List<int>?> cropPostPhoto(BuildContext context, List<int> photo) =>
     Navigator.of(context).push<List<int>>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => PhotoZoomScreen(image: Uint8List.fromList(photo)),
+        builder: (_) => PhotoZoomScreen(
+          image: Uint8List.fromList(photo),
+          original: photoOriginals[photo],
+        ),
       ),
     );
 

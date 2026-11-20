@@ -15,6 +15,7 @@ import 'medal_scan.dart'
         PlatformMedalTextReader,
         pickMedalPhotoPath;
 import 'profile_photo.dart' show pickPostPhotos;
+import 'recommendations.dart' show RecommendedRaces;
 import 'notifications.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
@@ -606,6 +607,12 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
             children: [
               filters(),
               const SizedBox(height: 8),
+              // Corridas indicadas para a pessoa, no topo do Início (só em "Todos").
+              if (filter == FeedFilter.all)
+                RecommendedRaces(
+                  key: const ValueKey('recommended'),
+                  gateway: widget.gateway,
+                ),
               if (loading)
                 const Center(child: CircularProgressIndicator())
               // O convite "sem corridas ainda" só faz sentido em "Todos"; nos outros
