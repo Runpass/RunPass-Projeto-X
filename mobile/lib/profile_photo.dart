@@ -1,8 +1,11 @@
 import 'dart:io';
+import 'dart:isolate';
+import 'dart:ui' as ui;
 import 'dart:typed_data';
 
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -511,6 +514,58 @@ class PhotoZoomScreen extends StatefulWidget {
   State<PhotoZoomScreen> createState() => _PhotoZoomScreenState();
 }
 
+/// Recorta a parte [frac] (em frações de 0 a 1 da foto já na orientação certa) e devolve um JPEG (qualidade
+/// 88). Roda fora da tela, para não travar o app.
+Future<List<int>> cropPhotoFraction(Uint8List bytes, Rect frac) =>
+    Isolate.run(() {
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) throw const FormatException('foto');
+      final photo = img.bakeOrientation(decoded);
+      final x = (frac.left * photo.width).round().clamp(0, photo.width - 1);
+      final y = (frac.top * photo.height).round().clamp(0, photo.height - 1);
+      final w = (frac.width * photo.width).round().clamp(1, photo.width - x);
+      final h = (frac.height * photo.height).round().clamp(1, photo.height - y);
+      return img.encodeJpg(
+        img.copyCrop(photo, x: x, y: y, width: w, height: h),
+        quality: 88,
+      );
+    });
+
+/// Parte da foto que aparece na área [viewport] (em frações de 0 a 1), com a foto encaixada inteira
+/// (`BoxFit.contain`) e depois aproximada/arrastada por [transform]; nula se aparece a foto inteira.
+Rect? visiblePhotoFraction({
+  required Size viewport,
+  required double aspect,
+  required Matrix4 transform,
+}) {
+  if (viewport.isEmpty || aspect <= 0) return null;
+  final v = viewport;
+  final fitted = aspect > v.width / v.height
+      ? Rect.fromCenter(
+          center: v.center(Offset.zero),
+          width: v.width,
+          height: v.width / aspect,
+        )
+      : Rect.fromCenter(
+          center: v.center(Offset.zero),
+          width: v.height * aspect,
+          height: v.height,
+        );
+  final inverse = Matrix4.inverted(transform);
+  final shown = Rect.fromPoints(
+    MatrixUtils.transformPoint(inverse, Offset.zero),
+    MatrixUtils.transformPoint(inverse, Offset(v.width, v.height)),
+  ).intersect(fitted);
+  if (shown.width <= 0 || shown.height <= 0) return null;
+  final frac = Rect.fromLTWH(
+    (shown.left - fitted.left) / fitted.width,
+    (shown.top - fitted.top) / fitted.height,
+    shown.width / fitted.width,
+    shown.height / fitted.height,
+  );
+  return frac.width * frac.height > 0.98 ? null : frac;
+}
+
 class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
   static const minScale = 1.0, maxScale = 4.0, step = 0.5;
   static const whole = -1, shelfFormat = -2;
@@ -519,6 +574,36 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
   final shelfKey = GlobalKey<MedalShelfCropState>();
   bool showFormats = false, busy = false;
   late int format = widget.shelf != null ? shelfFormat : whole;
+
+  /// Tamanho da área da foto e proporção da foto (para saber o que está visível depois da pinça).
+  Size viewport = Size.zero;
+  double? photoAspect;
+
+  @override
+  void initState() {
+    super.initState();
+    ui
+        .instantiateImageCodec(widget.image)
+        .then((codec) async {
+          final frame = await codec.getNextFrame();
+          if (mounted) {
+            setState(
+              () => photoAspect = frame.image.width / frame.image.height,
+            );
+          }
+        })
+        .catchError((Object _) {});
+  }
+
+  Rect? visibleFraction() {
+    final aspect = photoAspect;
+    if (aspect == null) return null;
+    return visiblePhotoFraction(
+      viewport: viewport,
+      aspect: aspect,
+      transform: controller.value,
+    );
+  }
 
   double get scale => controller.value.getMaxScaleOnAxis();
 
@@ -548,10 +633,33 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
 
   Future<void> use() async {
     if (format == whole) {
-      Navigator.pop(
-        context,
-        widget.image,
-      ); // sem recorte: a foto original, inteira
+      // Com a pinça (aproximou ou arrastou), vai o que aparece na tela; sem ela, a foto original, inteira.
+      if (controller.value.isIdentity()) {
+        Navigator.pop(context, widget.image);
+        return;
+      }
+      if (photoAspect == null) {
+        try {
+          final frame = await (await ui.instantiateImageCodec(widget.image))
+              .getNextFrame();
+          photoAspect = frame.image.width / frame.image.height;
+        } on Object {
+          photoAspect = null; // sem ler a foto, vai inteira
+        }
+        if (!mounted) return;
+      }
+      final frac = visibleFraction();
+      if (frac == null) {
+        Navigator.pop(context, widget.image);
+        return;
+      }
+      setState(() => busy = true);
+      try {
+        final bytes = await cropPhotoFraction(widget.image, frac);
+        if (mounted) Navigator.of(context).pop<List<int>>(bytes);
+      } on Object {
+        if (mounted) failed();
+      }
       return;
     }
     setState(() => busy = true);
@@ -625,13 +733,20 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
   Widget area() {
     if (format == shelfFormat) return widget.shelf!(shelfKey);
     if (format == whole) {
-      return InteractiveViewer(
-        key: const Key('photo-zoom-viewer'),
-        transformationController: controller,
-        minScale: minScale,
-        maxScale: maxScale,
-        onInteractionEnd: (_) => setState(() {}),
-        child: Center(child: Image.memory(widget.image, fit: BoxFit.contain)),
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          viewport = constraints.biggest;
+          return InteractiveViewer(
+            key: const Key('photo-zoom-viewer'),
+            transformationController: controller,
+            minScale: minScale,
+            maxScale: maxScale,
+            onInteractionEnd: (_) => setState(() {}),
+            child: Center(
+              child: Image.memory(widget.image, fit: BoxFit.contain),
+            ),
+          );
+        },
       );
     }
     final ratio = photoAspects[format].$2;

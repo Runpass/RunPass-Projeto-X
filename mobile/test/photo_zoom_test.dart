@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -108,14 +109,72 @@ void main() {
         tester.widget<IconButton>(zoomOut).onPressed,
         isNull,
       ); // já está na foto inteira
-      await tester.tap(find.byKey(const Key('photo-zoom-in')));
-      await tester.pumpAndSettle();
-      expect(tester.widget<IconButton>(zoomOut).onPressed, isNotNull);
+      // Sem aproximar, vai a foto original, inteira.
       await tester.tap(find.byKey(const Key('photo-zoom-use')));
       await tester.pumpAndSettle();
-      expect(result, png); // sempre a foto original, inteira
+      expect(result, png);
     },
   );
+
+  test('pinça: a parte visível da foto, em frações', () {
+    // Foto 4:3 numa área 400x300 (encaixa inteira): sem aproximar, nada a recortar.
+    const area = Size(400, 300);
+    expect(
+      visiblePhotoFraction(
+        viewport: area,
+        aspect: 4 / 3,
+        transform: Matrix4.identity(),
+      ),
+      isNull,
+    );
+    // Aproximou 2x a partir do canto: aparece o quarto de cima à esquerda.
+    final zoom = visiblePhotoFraction(
+      viewport: area,
+      aspect: 4 / 3,
+      transform: Matrix4.diagonal3Values(2, 2, 1),
+    )!;
+    expect(zoom.left, closeTo(0, 1e-9));
+    expect(zoom.top, closeTo(0, 1e-9));
+    expect(zoom.width, closeTo(0.5, 1e-9));
+    expect(zoom.height, closeTo(0.5, 1e-9));
+    // Foto em pé (3:4) na mesma área: as faixas laterais não entram no recorte.
+    final tall = visiblePhotoFraction(
+      viewport: area,
+      aspect: 3 / 4,
+      transform: Matrix4.diagonal3Values(2, 2, 1),
+    )!;
+    expect(tall.left, closeTo(0, 1e-9));
+    expect(
+      tall.width,
+      closeTo(0.5, 1e-9),
+    ); // a foto vai de 87,5 a 312,5 na tela e aparece de 87,5 a 200: metade
+  });
+
+  testWidgets('recorte da parte visível gera um JPEG do tamanho certo', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final recorder = ui.PictureRecorder();
+      Canvas(recorder).drawRect(
+        const Rect.fromLTWH(0, 0, 40, 30),
+        Paint()..color = const Color(0xff2a5d9f),
+      );
+      final image = await recorder.endRecording().toImage(40, 30);
+      final photo = (await image.toByteData(format: ui.ImageByteFormat.png))!
+          .buffer
+          .asUint8List();
+      final bytes = await cropPhotoFraction(
+        photo,
+        const Rect.fromLTWH(0, 0, 0.5, 0.5),
+      );
+      expect(bytes.sublist(0, 2), [0xff, 0xd8]); // JPEG
+      final frame = await (await ui.instantiateImageCodec(
+        Uint8List.fromList(bytes),
+      )).getNextFrame();
+      expect(frame.image.width, 20);
+      expect(frame.image.height, 15);
+    });
+  });
 
   testWidgets(
     'recortar é opcional e discreto: mostra os tamanhos e volta para a foto inteira',
