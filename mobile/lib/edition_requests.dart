@@ -101,11 +101,7 @@ class EditionRequestFormScreen extends StatefulWidget {
   /// Sugestões de preenchimento (nome, data, cidade, estado, distância, endereço).
   final Map<String, String> prefill;
 
-  /// Escolhe e recorta a imagem do banner; nulo se a pessoa desistir. Troque nos testes.
-  final Future<List<int>?> Function(BuildContext context)? bannerSelector;
-
   /// Foto da medalha (medalha provisória): vai junto com o pedido, privada e fora da fila de banners.
-  /// Quando presente, não se escolhe banner.
   final List<int>? medalPhoto;
 
   /// Coleta a minha participação (tempo, avaliação...) antes de enviar o pedido com a foto da medalha. Devolve o
@@ -127,7 +123,6 @@ class EditionRequestFormScreen extends StatefulWidget {
     this.webLookup = webLookupEnabled,
     this.existing,
     this.prefill = const {},
-    this.bannerSelector,
     this.medalPhoto,
     this.participationCollector,
     this.imageFetcher = fetchImageFromLink,
@@ -143,9 +138,6 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
   bool saving = false;
   String? error;
 
-  /// Banner sugerido (opcional): bytes já recortados e, depois do envio, a referência aceita pelo servidor.
-  List<int>? banner;
-  String? bannerRef;
   String? medalRef;
   Map<String, dynamic>?
   participation; // coletada uma vez; reenvio não pergunta de novo
@@ -359,39 +351,6 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
 
   String text(String key) => fields[key]!.text.trim();
 
-  Future<void> chooseBanner() async {
-    List<int>? bytes;
-    try {
-      if (widget.bannerSelector != null) {
-        bytes = await widget.bannerSelector!(context);
-      } else {
-        final choice = await askPhotoChoice(context, allowWeb: true);
-        if (choice == null || choice == PhotoChoice.remove || !mounted) return;
-        bytes = choice == PhotoChoice.web
-            ? await pickBannerFromWeb(
-                context,
-                query: text('name'),
-                fetcher: widget.imageFetcher,
-              )
-            : await pickBannerPhoto(context, choice);
-      }
-    } on Exception catch (problem) {
-      if (mounted) setState(() => error = photoError(problem));
-      return;
-    }
-    if (bytes == null || !mounted) return;
-    setState(() {
-      banner = bytes;
-      bannerRef = null; // outra imagem: precisa enviar de novo
-      error = null;
-    });
-  }
-
-  void removeBanner() => setState(() {
-    banner = null;
-    bannerRef = null;
-  });
-
   Future<void> submit() async {
     if (saving || !(form.currentState?.validate() ?? false)) return;
     final body = <String, dynamic>{
@@ -428,11 +387,6 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
       error = null;
     });
     try {
-      if (!correcting && banner != null) {
-        // Envia a imagem primeiro (a referência é só desta pessoa); o pedido leva só a referência.
-        bannerRef ??= await uploadProfilePhoto(widget.gateway, banner!);
-        body['imageReference'] = bannerRef;
-      }
       if (!correcting && widget.medalPhoto != null) {
         // A foto da medalha é outra imagem: privada, não vai para a fila de banners.
         medalRef ??= await uploadProfilePhoto(
@@ -514,61 +468,6 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
               'A foto da sua medalha vai junto e fica só com você. A medalha aparece em Medalhas como "Em análise" até a equipe confirmar a corrida.',
             ),
           ),
-        ],
-      ),
-    ),
-  );
-
-  Widget bannerPicker() => Card(
-    key: const Key('request-banner'),
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Banner da corrida (opcional)',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Se você tem a imagem de divulgação da corrida, envie. Ela só é publicada se a equipe aprovar, com o crédito e a autorização do organizador.',
-          ),
-          const SizedBox(height: 8),
-          if (banner != null) ...[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.memory(
-                Uint8List.fromList(banner!),
-                key: const Key('request-banner-preview'),
-                height: 120,
-                width: double.infinity,
-                fit: BoxFit.cover,
-              ),
-            ),
-            Row(
-              children: [
-                TextButton(
-                  key: const Key('request-banner-change'),
-                  onPressed: saving ? null : chooseBanner,
-                  child: const Text('Trocar imagem'),
-                ),
-                TextButton(
-                  key: const Key('request-banner-remove'),
-                  onPressed: saving ? null : removeBanner,
-                  child: const Text('Remover'),
-                ),
-              ],
-            ),
-          ] else
-            OutlinedButton.icon(
-              key: const Key('request-banner-pick'),
-              onPressed: saving ? null : chooseBanner,
-              icon: const Icon(Icons.add_photo_alternate_outlined),
-              label: const Text(
-                'Escolher imagem do banner (aparelho ou internet)',
-              ),
-            ),
         ],
       ),
     ),
@@ -741,7 +640,6 @@ class _EditionRequestFormScreenState extends State<EditionRequestFormScreen> {
             ),
           ),
           if (!correcting && widget.medalPhoto != null) medalNote(),
-          if (!correcting) bannerPicker(),
           if (error != null) ...[
             const SizedBox(height: 8),
             Text(error!, key: const Key('request-error')),
