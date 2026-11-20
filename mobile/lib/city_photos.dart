@@ -4,8 +4,8 @@ import 'catalog_screen.dart' show RaceKind, raceKind;
 import 'new_post.dart' show foldName;
 
 /// Foto de cartão postal de uma cidade, usada como capa quando a corrida não tem banner autorizado.
-/// Entram fotos com licença livre que dispensa crédito (CC0 ou domínio público) e, onde não há foto
-/// livre, ilustrações criadas por IA (identificadas como tal), aprovadas pelo dono da mídia. O crédito de cada uma aparece em Configurações > Créditos das fotos.
+/// Só fotos reais com licença livre (CC0, domínio público, CC BY ou CC BY-SA; as CC BY pedem o nome do
+/// autor, que aparece nos créditos), aprovadas pelo dono da mídia (decisão de 20/11/2026: nada de ilustração). O crédito de cada uma aparece em Configurações > Créditos das fotos.
 const illustrationLicense = 'Ilustração criada por IA';
 
 class CityPhoto {
@@ -319,82 +319,83 @@ const cityPhotoList = <CityPhoto>[
   CityPhoto(
     city: 'Bertioga',
     asset: 'assets/cidades/bertioga.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Forte de Bertioga e a praia',
-    sourceUrl: '',
+    author: 'CORRETOR-CARVALHO',
+    license: 'CC BY-SA 3.0',
+    title: 'Forte São Felipe e a Praia da Enseada',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:FORTE_S%C3%83O_FELIPE_e_FAROL_DA_PEDRA_DO_CORVO_-_VISTOS_DA_PRAIA_DA_ENSEADA_-_BERTIOGA-SP_-_panoramio.jpg',
   ),
   CityPhoto(
     city: 'Guaratinguetá',
     asset: 'assets/cidades/guaratingueta.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Igreja e a serra',
-    sourceUrl: '',
+    author: 'Túllio F',
+    license: 'CC BY-SA 4.0',
+    title: 'Estação Ferroviária',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Esta%C3%A7%C3%A3o_Ferrovi%C3%A1ria_de_Guaratinguet%C3%A1.jpg',
   ),
   CityPhoto(
     city: 'Barra Bonita',
     asset: 'assets/cidades/barra-bonita.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Barco na eclusa do rio Tietê',
-    sourceUrl: '',
+    author: 'José Reynaldo da Fonseca (REFON)',
+    license: 'CC BY 2.5',
+    title: 'Ponte sobre o rio Tietê',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Barra_Bonita_turismo_-a-_150606_REFON.jpg',
   ),
   CityPhoto(
     city: 'Itanhaém',
     asset: 'assets/cidades/itanhaem.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Convento no alto e a praia',
-    sourceUrl: '',
+    author: 'Johnata Zorzi',
+    license: 'CC BY-SA 4.0',
+    title: 'Igreja Matriz de Santana',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Igreja_Matriz_de_Santana_-_Itanha%C3%A9m_-_por_Johnata_Zorzi.jpg',
   ),
   CityPhoto(
     city: 'Boituva',
     asset: 'assets/cidades/boituva.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Paraquedas sobre os campos',
-    sourceUrl: '',
+    author: 'Webysther Nunes',
+    license: 'CC BY-SA 4.0',
+    title: 'Balões em Boituva',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Webysther_20140125062307_-_Bal%C3%A3o_boituva.jpg',
   ),
   CityPhoto(
     city: 'Mongaguá',
     asset: 'assets/cidades/mongagua.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Píer e a praia',
-    sourceUrl: '',
+    author: 'enioprado',
+    license: 'CC BY-SA 3.0',
+    title: 'Ponte e o rio',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Mongagu%C3%A1_-_panoramio_-_enioprado.jpg',
   ),
   CityPhoto(
     city: 'Taciba',
     asset: 'assets/cidades/taciba.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Capela e a praça',
-    sourceUrl: '',
+    author: 'Edmarjr',
+    license: 'CC BY-SA 3.0',
+    title: 'Rio Laranja Doce',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Rio_Laranja_Doce_-_Taciba_SP_-_panoramio.jpg',
   ),
   CityPhoto(
     city: 'Mairinque',
     asset: 'assets/cidades/mairinque.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Estação e o trem',
-    sourceUrl: '',
+    author: 'zardeto',
+    license: 'CC BY 3.0',
+    title: 'Estação Dona Catarina',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Esta%C3%A7%C3%A3o_Dona_Catarina_do_antigo_tra%C3%A7ado_da_Estrada_de_Ferro_Sorocabana_-_EFS_(Itu-Mairinque)_em_Mairinque_-_panoramio.jpg',
   ),
   CityPhoto(
     city: 'Bananal',
     asset: 'assets/cidades/bananal.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Casarão e o cafezal',
-    sourceUrl: '',
+    author: 'Eduardo P',
+    license: 'CC BY-SA 3.0',
+    title: 'Casa em Bananal',
+    sourceUrl:
+        'https://commons.wikimedia.org/wiki/File:Casa_em_Bananal_(3).jpg',
   ),
   CityPhoto(
     city: 'Vinhedo',
     asset: 'assets/cidades/vinhedo.jpg',
-    author: 'RunPass',
-    license: illustrationLicense,
-    title: 'Vinhedos',
-    sourceUrl: '',
+    author: 'Daniel Alves from Brazil',
+    license: 'Domínio público',
+    title: 'Vista da cidade',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Vinhedo,_S%C3%A3o_Paulo,_Brazil_(51382370522).jpg',
   ),
 ];
 
@@ -427,8 +428,6 @@ final spLandmarks = <(List<String>, CityPhoto)>[
   ),
   (['villa lobos', 'villa-lobos', 'vila lobos'], _spVillaLobos),
   (['parque do povo'], _spParqueDoPovo),
-  (['ecologico do tiete', 'tiete'], _spTiete),
-  (['ceret', 'analia franco'], _spCeret),
   (['campo de marte', 'santana', 'center norte'], _spCampoDeMarte),
   (['paulista', 'masp', 'sao silvestre'], _spMasp),
   (['anhangabau', 'patriarca', 'farol santander'], _spAnhangabau),
@@ -488,58 +487,46 @@ const _spIpiranga = CityPhoto(
 const _spPacaembu = CityPhoto(
   city: 'São Paulo',
   asset: 'assets/cidades/sp-pacaembu.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
-  title: 'Estádio do Pacaembu e a Praça Charles Miller',
-  sourceUrl: '',
+  author: 'Rodrigo Soldon',
+  license: 'CC BY 2.0',
+  title: 'Estádio do Pacaembu',
+  sourceUrl:
+      'https://commons.wikimedia.org/wiki/File:Est%C3%A1dio_do_Pacaembu_6.jpg',
 );
 const _spMorumbi = CityPhoto(
   city: 'São Paulo',
   asset: 'assets/cidades/sp-morumbi.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
+  author: 'Renato Patinhas',
+  license: 'CC BY 3.0',
   title: 'Estádio do Morumbi',
-  sourceUrl: '',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:Patinhas_esteve_aqui_-_Estadio_do_Morumbi_2_-_panoramio.jpg',
 );
 const _spVillaLobos = CityPhoto(
   city: 'São Paulo',
   asset: 'assets/cidades/sp-villa-lobos.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
+  author: 'Dornicke',
+  license: 'CC BY-SA 4.0',
   title: 'Parque Villa-Lobos',
-  sourceUrl: '',
+  sourceUrl:
+      'https://commons.wikimedia.org/wiki/File:Parque_Villa-Lobos_02.jpg',
 );
 const _spParqueDoPovo = CityPhoto(
   city: 'São Paulo',
   asset: 'assets/cidades/sp-parque-do-povo.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
+  author: 'Vitória Salatine',
+  license: 'CC BY-SA 4.0',
   title: 'Parque do Povo',
-  sourceUrl: '',
-);
-const _spTiete = CityPhoto(
-  city: 'São Paulo',
-  asset: 'assets/cidades/sp-parque-ecologico-tiete.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
-  title: 'Parque Ecológico do Tietê',
-  sourceUrl: '',
-);
-const _spCeret = CityPhoto(
-  city: 'São Paulo',
-  asset: 'assets/cidades/sp-ceret.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
-  title: 'CERET',
-  sourceUrl: '',
+  sourceUrl:
+      'https://commons.wikimedia.org/wiki/File:Parque_do_Povo_19_(cropped).jpg',
 );
 const _spCampoDeMarte = CityPhoto(
   city: 'São Paulo',
   asset: 'assets/cidades/sp-campo-de-marte.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
+  author: 'Peter Louiz',
+  license: 'CC BY-SA 3.0',
   title: 'Campo de Marte',
-  sourceUrl: '',
+  sourceUrl:
+      'https://commons.wikimedia.org/wiki/File:Avi%C3%A3o_Campo_de_Marte.JPG',
 );
 
 /// Corrida da capital sem local conhecido: uma destas, sempre a mesma para a mesma corrida.
@@ -564,30 +551,30 @@ const _spNoite = CityPhoto(
   sourceUrl: 'https://commons.wikimedia.org/wiki/File:Vista_Panor%C3%A2mica_de_S%C3%A3o_Paulo_Noite.jpg',
 );
 
-/// Capa genérica (ilustração) para quando a cidade ainda não tem foto: nenhuma corrida fica sem imagem.
+/// Foto genérica de corrida para quando a cidade ainda não tem foto: nenhuma corrida fica sem imagem.
 const _genericStreet = CityPhoto(
-  city: 'Capa genérica',
+  city: 'Foto genérica',
   asset: 'assets/cidades/generica-rua.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
-  title: 'Corrida de rua',
-  sourceUrl: '',
+  author: 'Mark Hillary',
+  license: 'CC BY 2.0',
+  title: 'Largada de corrida de rua',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:Corrida_S%C3%A3o_Silvestre_2012.jpg',
 );
 const _genericTrail = CityPhoto(
-  city: 'Capa genérica',
+  city: 'Foto genérica',
   asset: 'assets/cidades/generica-trilha.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
+  author: 'Robeter (English Wikipedia)',
+  license: 'Domínio público',
   title: 'Corrida de trilha',
-  sourceUrl: '',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:Runner-1-.jpg',
 );
 const _genericNight = CityPhoto(
-  city: 'Capa genérica',
+  city: 'Foto genérica',
   asset: 'assets/cidades/generica-noite.jpg',
-  author: 'RunPass',
-  license: illustrationLicense,
-  title: 'Corrida noturna',
-  sourceUrl: '',
+  author: 'Marcos Elias de Oliveira Júnior',
+  license: 'CC0 1.0',
+  title: 'Avenida à noite',
+  sourceUrl: 'https://commons.wikimedia.org/wiki/File:BR-405_na_Avenida_da_Independ%C3%AAncia_%C3%A0_noite,_Pau_dos_Ferros_(RN).jpg',
 );
 
 /// Todas as imagens do app, na ordem dos créditos.
@@ -604,8 +591,6 @@ final allCoverPhotos = <CityPhoto>[
   _spMorumbi,
   _spVillaLobos,
   _spParqueDoPovo,
-  _spTiete,
-  _spCeret,
   _spCampoDeMarte,
   _genericStreet,
   _genericTrail,

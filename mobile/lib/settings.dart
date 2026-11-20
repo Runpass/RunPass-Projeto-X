@@ -287,9 +287,9 @@ class PhotoCreditsScreen extends StatelessWidget {
         Text(
           'Quando uma corrida não tem banner autorizado, o cartão mostra uma foto da cidade '
           '(na capital, do lugar da prova; corrida noturna, uma imagem à noite). '
-          'Cidade sem foto ganha uma capa genérica. '
-          'As fotos têm licença livre (CC0 ou domínio público), da Wikimedia Commons. '
-          'Onde não há foto livre, usamos uma ilustração criada por IA, marcada como tal.',
+          'Cidade sem foto ganha uma foto genérica de corrida. '
+          'As fotos são da Wikimedia Commons, com licença livre (CC0, domínio público, '
+          'CC BY ou CC BY-SA). Toque numa foto para ver a página de origem.',
           style: TextStyle(color: context.muted, fontSize: 13),
         ),
         const SizedBox(height: 12),
