@@ -519,8 +519,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(icon, findsOneWidget);
-      // A agenda também fica na barra do topo, ao lado do +.
-      expect(find.byKey(const Key('home-agenda')), findsOneWidget);
+      expect(
+        find.byKey(const Key('home-agenda')),
+        findsNothing,
+      ); // a agenda não fica na barra do topo do Início
       final cidade = tester.getRect(find.text('Minha Cidade'));
       expect(
         tester.getRect(icon).left > cidade.right - 1,
@@ -642,8 +644,10 @@ void bannerTests() {
     return paths;
   }
 
-  testWidgets('banner aprovado aparece com o crédito', (tester) async {
-    await openEdition(
+  testWidgets('banner da prova não aparece: sempre a foto da cidade', (
+    tester,
+  ) async {
+    final paths = await openEdition(
       tester,
       {
         ...upcoming('A'),
@@ -657,8 +661,10 @@ void bannerTests() {
         'credit': 'Divulgação: Org',
       }),
     );
-    expect(find.byKey(const Key('hero-image')), findsOneWidget);
-    expect(find.text('Foto: Divulgação: Org'), findsOneWidget);
+    expect(paths.contains('/editions/EA/banner'), isFalse);
+    expect(find.byKey(const Key('hero-image')), findsNothing);
+    expect(find.text('Foto: Divulgação: Org'), findsNothing);
+    expect(find.byKey(const Key('race-art-photo')), findsOneWidget);
     expect(find.textContaining('Corrida A com um nome'), findsOneWidget);
   });
 
@@ -803,7 +809,7 @@ void searchTests() {
   );
 
   testWidgets(
-    'a lista mostra a imagem aprovada e só pede link de quem tem imagem',
+    'a lista não pede nem mostra o banner da prova: toda corrida tem a foto da cidade',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -833,10 +839,10 @@ void searchTests() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      expect(banners, ['/editions/EA/banner']);
-      expect(find.byKey(const Key('edition-cover-image')), findsOneWidget);
-      // A outra corrida segue com o ícone, sem imagem.
+      expect(banners, isEmpty);
+      expect(find.byKey(const Key('edition-cover-image')), findsNothing);
       expect(find.byType(EditionCover), findsNWidgets(2));
+      expect(find.byKey(const Key('race-art-photo')), findsNWidgets(2));
       // Sem imagem, a distância da arte fica no canto superior esquerdo do cartão.
       expect(
         tester.widget<RaceArt>(find.byType(RaceArt).first).labelAtLeft,

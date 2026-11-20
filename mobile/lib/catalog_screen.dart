@@ -580,6 +580,10 @@ class _ArtLabelPainter extends CustomPainter {
 /// Fundo do cartão da corrida na lista: ocupa o espaço todo. A imagem aprovada (banner ou logo) quando
 /// existe; senão a arte padrão da corrida. Só corridas com `imageReference` pedem o link, e ele fica
 /// em cache por alguns minutos.
+/// Banner próprio da prova (do organizador, aprovado) desligado por decisão do dono do catálogo (20/11/2026):
+/// a corrida mostra sempre a foto da cidade ou do ponto, na lista e na tela da corrida.
+const showRaceBanners = false;
+
 class EditionCover extends StatefulWidget {
   final IdentityGateway gateway;
   final Map<String, dynamic> edition;
@@ -603,7 +607,7 @@ class _EditionCoverState extends State<EditionCover> {
 
   Future<void> resolve() async {
     final id = widget.edition['id'] as String;
-    if (widget.edition['imageReference'] == null) return;
+    if (!showRaceBanners || widget.edition['imageReference'] == null) return;
     final hit = EditionCover.cache[id];
     if (hit != null && DateTime.now().difference(hit.$2).inMinutes < 4) {
       url = hit.$1;
@@ -633,7 +637,7 @@ class _EditionCoverState extends State<EditionCover> {
         RaceArt(
           edition: widget.edition,
           labelAtLeft: true,
-          // Sempre uma imagem (regra): o banner autorizado, quando houver, cobre esta por cima.
+          // Sempre uma imagem (regra): a foto da cidade ou do ponto da capital.
           photo: coverPhotoFor(widget.edition),
         ),
         if (url != null)
@@ -1272,6 +1276,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
     load();
   }
 
+  /// A pessoa ampliou a lista para qualquer distância (só faz sentido quando há "perto de mim").
+  bool get anyDistance =>
+      !nearMe &&
+      myLat != null &&
+      myLon != null &&
+      fields['city']!.text.trim().isEmpty;
+
   /// Pílulas de filtro (como "Esporte, Datas, Distância, Localização"): Perto de mim, Ano e Localização.
   Widget filterPills() {
     final city = fields['city']!.text.trim();
@@ -1290,10 +1301,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
               FilterPill(
                 key: const Key('filter-near-me'),
                 icon: Icons.near_me_outlined,
-                label: nearMe
-                    ? 'Perto de mim · ${nearbyCityRadiusKm.round()} km'
-                    : 'Perto de mim',
-                active: nearMe,
+                // "Perto de mim" é o padrão da lista (sem destaque). Tocar amplia para qualquer distância;
+                // o × volta ao padrão.
+                label: anyDistance ? 'Qualquer distância' : 'Perto de mim',
+                active: anyDistance,
                 onTap: toggleNearMe,
                 onClear: toggleNearMe,
               ),
@@ -1393,9 +1404,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
         IconButton(
           key: const Key('catalog-agenda'),
           visualDensity: VisualDensity.compact,
-          // Marcador (não calendário): o calendário da lista é o filtro de data.
           tooltip: 'Minha agenda (Quero correr e Inscrito)',
-          icon: const Icon(Icons.bookmarks_outlined),
+          icon: const Icon(Icons.calendar_month_rounded),
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => AgendaScreen(gateway: widget.gateway),
@@ -1426,7 +1436,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
             onSubmitted: (_) => load(),
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              hintText: 'Busca corrida',
+              hintText: 'Buscar corridas',
               isDense: true,
               border: const OutlineInputBorder(),
               suffixIcon: Row(
@@ -1658,6 +1668,7 @@ class _EditionScreenState extends State<EditionScreen> {
   /// falha, o degradê de sempre continua: a imagem nunca bloqueia a tela.
   /// Meu banner sugerido, ainda sem decisão: provisório e só meu.
   Future<void> loadProvisional() async {
+    if (!showRaceBanners) return;
     final bytes = await widget.provisionalBannerLoader(
       widget.gateway,
       widget.editionId,
@@ -1666,7 +1677,7 @@ class _EditionScreenState extends State<EditionScreen> {
   }
 
   Future<void> loadBanner() async {
-    if (edition?['imageReference'] == null) return;
+    if (!showRaceBanners || edition?['imageReference'] == null) return;
     try {
       final link = await widget.gateway.request(
         '/editions/${Uri.encodeComponent(widget.editionId)}/banner',
