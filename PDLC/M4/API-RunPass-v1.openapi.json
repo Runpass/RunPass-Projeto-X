@@ -640,6 +640,18 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4,
+              "default": 0
+            },
+            "description": "Foto do carrossel: 0 = capa (postImageReference), N >= 1 = morePostImageReferences[N-1]. Indice sem foto: 404 IMAGE_NOT_AVAILABLE; fora de 0..4: 422 INVALID_INPUT."
           }
         ],
         "responses": {
@@ -666,6 +678,9 @@
             "$ref": "#/components/responses/Error"
           },
           "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
             "$ref": "#/components/responses/Error"
           }
         },
@@ -6649,6 +6664,16 @@
               "maxLength": 100
             },
             "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
+          },
+          "morePostImageReferences": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^img_[a-f0-9]{64}$"
+            },
+            "description": "Fotos extras da publicacao (carrossel, ate 5 fotos com a capa postImageReference). Mesmas regras da capa: imagem enviada e validada pela propria pessoa; sem repetidas (422 POST_IMAGE_DUPLICATE, tambem quando igual a capa), nenhuma igual a foto da medalha (422 POST_IMAGE_MUST_DIFFER), de outra pessoa ou invalida (422 IMAGE_NOT_VALID). So vale com postImageReference (422 POST_IMAGE_REQUIRED; na conclusao sem publishToFeed, 422 POST_IMAGE_NOT_ALLOWED)."
           }
         },
         "description": "Conclui somente rascunho de edição não arquivada cuja data não é futura em America/Sao_Paulo. Oito notas e imagem válida obrigatórias. Versão, conta, distância e imagem revalidadas no commit; publishToFeed é intenção explícita separada da conclusão."
@@ -6762,6 +6787,22 @@
           },
           "edition": {
             "$ref": "#/components/schemas/Edition"
+          },
+          "morePostImageReferences": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^img_[a-f0-9]{64}$"
+            },
+            "description": "So para o dono (e no Post, so quando o leitor e o autor). Terceiros veem so postImageCount."
+          },
+          "postImageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5,
+            "description": "Quantas fotos a publicacao tem: 1 (capa) + extras; 0 sem foto da publicacao. Cada uma em GET .../post-image?index=N (0 = capa)."
           }
         }
       },
@@ -7084,6 +7125,17 @@
               "maxLength": 100
             },
             "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
+          },
+          "morePostImageReferences": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^img_[a-f0-9]{64}$"
+            },
+            "description": "Fotos extras da publicacao (carrossel, ate 5 fotos com a capa postImageReference). Mesmas regras da capa: imagem enviada e validada pela propria pessoa; sem repetidas (422 POST_IMAGE_DUPLICATE, tambem quando igual a capa), nenhuma igual a foto da medalha (422 POST_IMAGE_MUST_DIFFER), de outra pessoa ou invalida (422 IMAGE_NOT_VALID). So vale com postImageReference (422 POST_IMAGE_REQUIRED; na conclusao sem publishToFeed, 422 POST_IMAGE_NOT_ALLOWED). No PATCH, quando vem substitui a lista inteira ([] ou null removem as extras); quando nao vem, as extras ficam, mesmo trocando a capa.",
+            "nullable": true
           }
         }
       },
@@ -8193,6 +8245,22 @@
               "$ref": "#/components/schemas/PublicProfile"
             },
             "description": "Pessoas marcadas na publicacao (so contas ativas)."
+          },
+          "postImageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5,
+            "description": "Quantas fotos a publicacao tem: 1 (capa) + extras; 0 sem foto da publicacao. Cada uma em GET .../post-image?index=N (0 = capa)."
+          },
+          "morePostImageReferences": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^img_[a-f0-9]{64}$"
+            },
+            "description": "Extras do carrossel; so quando o leitor e o autor da publicacao."
           }
         },
         "required": [
@@ -10446,6 +10514,16 @@
               "maxLength": 100
             },
             "description": "Pessoas marcadas na corrida publicada (ate 10). So pode marcar quem tem perfil publico ou quem voce segue/e amigo. Na edicao, lista vazia remove as marcacoes."
+          },
+          "morePostImageReferences": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^img_[a-f0-9]{64}$"
+            },
+            "description": "Fotos extras da publicacao (carrossel, ate 5 fotos com a capa postImageReference). Mesmas regras da capa: imagem enviada e validada pela propria pessoa; sem repetidas (422 POST_IMAGE_DUPLICATE, tambem quando igual a capa), nenhuma igual a foto da medalha (422 POST_IMAGE_MUST_DIFFER), de outra pessoa ou invalida (422 IMAGE_NOT_VALID). So vale com postImageReference (422 POST_IMAGE_REQUIRED; na conclusao sem publishToFeed, 422 POST_IMAGE_NOT_ALLOWED)."
           }
         },
         "description": "Publica no feed uma participacao concluida e ainda nao publicada, com foto propria. A conclusao com publishToFeed exige postImageReference."

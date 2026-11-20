@@ -212,6 +212,69 @@ void main() {
     },
   );
 
+  testWidgets(
+    'publicação com várias fotos: "Mais fotos" até 5 no total e a lista vai junto ao concluir',
+    (tester) async {
+      tall(tester);
+      final (gateway, b) = await setup();
+      b.referenceFor = (n) => n == 1 ? 'img_medal' : 'img_post$n';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: const {
+              'id': 'd1',
+              'editionId': 'E1',
+              'distanceId': '5k',
+              'state': 'draft',
+              'version': 2,
+            },
+            photoSelector: () async => jpeg,
+            postPhotoSelector: () async => jpeg,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Selecionar foto'));
+      await tester.pumpAndSettle();
+      await rateAndDeclare(tester);
+      final list = find.byType(Scrollable).first;
+      final publish = find.byKey(const Key('publish-to-feed'));
+      await tester.scrollUntilVisible(publish, -200, scrollable: list);
+      await tester.tap(publish);
+      await tester.pumpAndSettle();
+      // Capa já escolhida (a cópia da medalha): agora dá para incluir mais 4.
+      final more = find.byKey(const Key('add-more-post-photo'));
+      for (var i = 0; i < 4; i++) {
+        await tester.scrollUntilVisible(more, 100, scrollable: list);
+        await tester.tap(more);
+        await tester.pumpAndSettle();
+      }
+      expect(find.byKey(const Key('more-post-photo-3')), findsOneWidget);
+      expect(more, findsNothing); // 5 de 5: some o botão
+      // Tirar uma volta o botão.
+      await tester.tap(find.byKey(const Key('more-post-photo-remove-0')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('more-post-photo-3')), findsNothing);
+      expect(find.text('Mais fotos (4 de 5)'), findsOneWidget);
+      final finishButton = find.widgetWithText(
+        FilledButton,
+        'Concluir participação',
+      );
+      await tester.scrollUntilVisible(finishButton, 200, scrollable: list);
+      await tester.tap(finishButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('post-preview-confirm')));
+      await tester.pumpAndSettle();
+      expect(b.completion?['postImageReference'], 'img_post2');
+      expect(b.completion?['morePostImageReferences'], [
+        'img_post4',
+        'img_post5',
+        'img_post6',
+      ]);
+    },
+  );
+
   testWidgets('a foto da medalha não serve de foto da publicação', (
     tester,
   ) async {

@@ -57,6 +57,19 @@ class FeedEntry {
     this.version,
   });
 
+  /// Quantas fotos a publicação tem (até 5; a primeira é a capa). Sem a informação, uma.
+  int get photoCount {
+    final count = (race.participation['postImageCount'] as num?)?.toInt() ?? 1;
+    return count < 1 ? 1 : (count > 5 ? 5 : count);
+  }
+
+  /// Endereço da foto [index] da publicação (0 é a capa, o mesmo de [photoEndpoint]).
+  String? photoEndpointAt(int index) {
+    final base = photoEndpoint;
+    if (base == null || index == 0) return base;
+    return '$base?index=$index';
+  }
+
   /// Endereço da foto: a da publicação extra, a da publicação ou a da medalha.
   String? get photoEndpoint {
     if (extra && postId != null) {
@@ -79,6 +92,9 @@ FeedEntry entryFromPost(
   );
   final author = Map<String, dynamic>.from(post['author'] as Map? ?? const {});
   participation['hasPostImage'] = post['hasPostImage'] == true;
+  if (post['postImageCount'] is num) {
+    participation['postImageCount'] = post['postImageCount'];
+  }
   final race = RaceRecord(participation, edition);
   return FeedEntry(
     postId: post['id'] as String?,
@@ -887,19 +903,29 @@ class _PostCardState extends State<PostCard> {
           // faixas pretas e sem cortar.
           AspectRatio(
             aspectRatio: postPhotoFrameRatio(_postPhotoAspects[aspectKey]),
-            child: MedalPhoto(
-              key: Key('post-photo-${entry.postId}'),
-              gateway: widget.gateway,
-              participationId: entry.race.participation['id'] as String?,
-              endpoint: entry.extra ? entry.photoEndpoint : null,
-              size: 72,
-              usePostImage: entry.race.hasPostImage,
-              fit: BoxFit.cover,
-              onAspect: (aspect) {
-                if (_postPhotoAspects[aspectKey] == aspect) return;
-                setState(() => _postPhotoAspects[aspectKey] = aspect);
-              },
-            ),
+            child: entry.photoCount > 1 && entry.race.hasPostImage
+                ? PostPhotoCarousel(
+                    key: Key('post-photo-${entry.postId}'),
+                    gateway: widget.gateway,
+                    entry: entry,
+                    onAspect: (aspect) {
+                      if (_postPhotoAspects[aspectKey] == aspect) return;
+                      setState(() => _postPhotoAspects[aspectKey] = aspect);
+                    },
+                  )
+                : MedalPhoto(
+                    key: Key('post-photo-${entry.postId}'),
+                    gateway: widget.gateway,
+                    participationId: entry.race.participation['id'] as String?,
+                    endpoint: entry.extra ? entry.photoEndpoint : null,
+                    size: 72,
+                    usePostImage: entry.race.hasPostImage,
+                    fit: BoxFit.cover,
+                    onAspect: (aspect) {
+                      if (_postPhotoAspects[aspectKey] == aspect) return;
+                      setState(() => _postPhotoAspects[aspectKey] = aspect);
+                    },
+                  ),
           ),
           // Ações logo abaixo da foto e, depois, a legenda (prova, texto, números e último comentário).
           Padding(
@@ -1150,4 +1176,92 @@ Future<void> deleteParticipation(IdentityGateway gateway, String id) async {
     method: 'DELETE',
     query: {'expectedVersion': '${current['version']}'},
   );
+}
+
+/// Publicação com várias fotos (até 5): uma por vez, deslizando para o lado, com bolinhas e "2/5" no canto.
+/// O quadro segue a proporção da primeira foto (a capa), para o cartão não mudar de tamanho ao deslizar.
+class PostPhotoCarousel extends StatefulWidget {
+  final IdentityGateway gateway;
+  final FeedEntry entry;
+  final ValueChanged<double>? onAspect;
+  const PostPhotoCarousel({
+    super.key,
+    required this.gateway,
+    required this.entry,
+    this.onAspect,
+  });
+
+  @override
+  State<PostPhotoCarousel> createState() => _PostPhotoCarouselState();
+}
+
+class _PostPhotoCarouselState extends State<PostPhotoCarousel> {
+  int page = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = widget.entry.photoCount;
+    final participationId = widget.entry.race.participation['id'] as String?;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        PageView.builder(
+          key: const Key('post-photo-pages'),
+          itemCount: count,
+          onPageChanged: (index) => setState(() => page = index),
+          itemBuilder: (context, index) => MedalPhoto(
+            key: Key('post-photo-page-$index'),
+            gateway: widget.gateway,
+            participationId: participationId,
+            endpoint: widget.entry.photoEndpointAt(index),
+            size: 72,
+            usePostImage: true,
+            fit: BoxFit.cover,
+            onAspect: index == 0 ? widget.onAspect : null,
+          ),
+        ),
+        Positioned(
+          top: 10,
+          right: 10,
+          child: Container(
+            key: const Key('post-photo-counter'),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              '${page + 1}/$count',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 8,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < count; i++)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  width: i == page ? 8 : 6,
+                  height: i == page ? 8 : 6,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: i == page ? Colors.white : Colors.white54,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }

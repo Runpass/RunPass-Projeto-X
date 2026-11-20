@@ -786,8 +786,13 @@ class _SignedPhotoState extends State<SignedPhoto> {
       return;
     }
     try {
+      // O endereço pode trazer a consulta (ex.: `?index=2`, a 3ª foto de uma publicação com várias).
+      final parts = Uri.parse(endpoint);
       final reply = await _photoGate.run(
-        () => widget.gateway.request(endpoint),
+        () => widget.gateway.request(
+          parts.path,
+          query: parts.queryParameters.isEmpty ? null : parts.queryParameters,
+        ),
       );
       _applyLink(endpoint, reply);
     } on Exception catch (error) {
