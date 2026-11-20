@@ -22,32 +22,36 @@ void main() {
     expect(cityPhotoFor({'city': 'Itu', 'state': 'SP'}), isNull);
     expect(
       cityPhotoFor({'city': 'Bertioga', 'state': 'SP'})?.isIllustration,
-      isTrue,
+      isFalse,
     );
     expect(cityPhotoFor({'state': 'SP'}), isNull);
   });
 
-  test(
-    'toda foto tem licença livre sem crédito obrigatório e arquivo próprio',
-    () {
-      expect(cityPhotoList.where((p) => !p.isIllustration), hasLength(36));
-      expect(cityPhotoList.where((p) => p.isIllustration), hasLength(10));
-      for (final photo in cityPhotoList) {
-        expect(
-          photo.isIllustration ||
-              photo.license == 'CC0 1.0' ||
-              photo.license == 'Domínio público',
-          isTrue,
-          reason: photo.city,
-        );
-        expect(photo.author, isNotEmpty);
-        if (!photo.isIllustration) {
-          expect(photo.sourceUrl, startsWith('https://commons.wikimedia.org/'));
-        }
-        expect(photo.asset, startsWith('assets/cidades/'));
-      }
-    },
-  );
+  test('só fotos reais com licença livre, autor e página de origem', () {
+    expect(cityPhotoList, hasLength(46));
+    const licenses = {
+      'CC0 1.0',
+      'Domínio público',
+      'CC BY 2.0',
+      'CC BY 2.5',
+      'CC BY 3.0',
+      'CC BY 3.0 BR',
+      'CC BY-SA 3.0',
+      'CC BY-SA 4.0',
+    };
+    for (final photo in allCoverPhotos) {
+      // Nada de ilustração (decisão de 20/11/2026): toda imagem é foto real.
+      expect(photo.isIllustration, isFalse, reason: photo.asset);
+      expect(licenses, contains(photo.license), reason: photo.asset);
+      expect(photo.author, isNotEmpty, reason: photo.asset);
+      expect(
+        photo.sourceUrl,
+        startsWith('https://commons.wikimedia.org/'),
+        reason: photo.asset,
+      );
+      expect(photo.asset, startsWith('assets/cidades/'));
+    }
+  });
 
   testWidgets('cartão sem banner usa a foto da cidade, sem texto por cima', (
     tester,
