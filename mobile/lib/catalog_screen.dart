@@ -3878,6 +3878,14 @@ Future<List<Map>?> askRunnerDistance(
   ];
 }
 
+/// A data da corrida é depois de hoje (no aparelho). Sem data legível, não bloqueia.
+bool raceIsInFuture(Map<String, dynamic> edition, [DateTime? now]) {
+  final date = DateTime.tryParse('${edition['date'] ?? ''}');
+  if (date == null) return false;
+  final today = now ?? DateTime.now();
+  return date.isAfter(DateTime(today.year, today.month, today.day));
+}
+
 /// Cadastro da corrida, igual em todas as telas (Corridas › Já corri, Postar foto e Cadastrar medalha terminam
 /// aqui): já tenho participação nesta corrida, abre a minha; senão escolhe a distância (pergunta se houver mais de
 /// uma; sem distância, pede o km) e abre o rascunho. [postPhotos]: fotos da publicação já escolhidas (Postar
@@ -3911,6 +3919,12 @@ Future<void> openRaceRegistration(
       return;
     }
     if (!context.mounted) return;
+    // Corrida que ainda não aconteceu (a corrida de hoje vale): o servidor não deixa concluir; avisa antes de
+    // pedir distância ou criar rascunho.
+    if (raceIsInFuture(edition)) {
+      say(catalogError(const IdentityIssue('EDITION_NOT_COMPLETABLE')));
+      return;
+    }
     var options = await editionDistances(gateway, id, edition);
     if (!context.mounted) return;
     if (options.isEmpty) {

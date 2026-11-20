@@ -23,8 +23,8 @@ void main() {
       ...entry('A'),
       'id': 'EA',
       'name': 'Corrida A [FICTICIA]',
-      'status': 'upcoming',
-      'date': '2026-12-01',
+      'status': 'past',
+      'date': '2026-01-10',
     };
     final gateway = await signed((uri, method, headers, body) async {
       calls.add('$method ${uri.path}');
@@ -165,4 +165,43 @@ void main() {
       expect(calls, isNot(contains('POST /participations'))); // não cria outra
     },
   );
+
+  testWidgets(
+    'corrida que ainda não aconteceu: avisa e não pede km nem cria rascunho',
+    (tester) async {
+      final (gateway, calls, _) = await setup(distances: const []);
+      final future = DateTime.now().add(const Duration(days: 3));
+      final date =
+          '${future.year}-${future.month.toString().padLeft(2, '0')}-${future.day.toString().padLeft(2, '0')}';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => openRaceRegistration(context, gateway, {
+                  ...entry('A'),
+                  'id': 'EA',
+                  'status': 'upcoming',
+                  'date': date,
+                }),
+                child: const Text('abrir'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('ainda não aconteceu'), findsOneWidget);
+      expect(find.byKey(const Key('add-distance-field')), findsNothing);
+      expect(calls, isNot(contains('POST /participations')));
+    },
+  );
+
+  test('a corrida de hoje pode ser concluída; a de amanhã ainda não', () {
+    final now = DateTime(2026, 11, 20, 18);
+    expect(raceIsInFuture({'date': '2026-11-20'}, now), isFalse);
+    expect(raceIsInFuture({'date': '2026-11-21'}, now), isTrue);
+    expect(raceIsInFuture({'date': ''}, now), isFalse);
+  });
 }

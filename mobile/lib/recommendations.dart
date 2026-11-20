@@ -23,6 +23,10 @@ class Recommendation {
 const recommendationRadiusKm = 150.0;
 const recommendationDays = 120;
 
+/// Antecedência mínima para indicar: corrida de hoje, de amanhã ou de poucos dias não dá mais para se
+/// inscrever (a inscrição costuma fechar antes, para a entrega do kit).
+const recommendationMinDays = 5;
+
 String _iso(DateTime d) =>
     '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
@@ -46,9 +50,16 @@ List<Recommendation> rankRecommendations(
     if (id is! String || exclude.contains(id)) continue;
     if (edition['status'] == 'archived') continue;
     final date = DateTime.tryParse('${edition['date'] ?? ''}');
-    if (date == null || date.isBefore(day)) continue;
+    if (date == null) continue;
+    final days = date.difference(day).inDays;
+    // Só o que ainda dá para se inscrever: com antecedência e sem inscrição encerrada ou esgotada.
+    if (days < recommendationMinDays) continue;
+    final signup = edition['registrationStatus'];
+    if (signup == 'closed' || signup == 'sold_out') continue;
     var score = 0.0;
     final reasons = <String>[];
+    // Motivo pessoal (distância, perto, nota): sem nenhum, a corrida não é indicada.
+    var personal = false;
     // Distância: a que a pessoa mais corre.
     final kms = [
       for (final d in (edition['distances'] as List? ?? const []))
@@ -57,6 +68,7 @@ List<Recommendation> rankRecommendations(
     ];
     if (preferredKm != null && kms.any((km) => (km - preferredKm).abs() <= 1)) {
       score += 3;
+      personal = true;
       reasons.add('${distanceLabel(preferredKm)}, como você costuma correr');
     }
     // Perto de casa.
@@ -67,22 +79,21 @@ List<Recommendation> rankRecommendations(
         if (km > recommendationRadiusKm) continue;
         if (km <= 30) {
           score += 2;
+          personal = true;
           reasons.add('Perto de você');
         } else if (km <= 100) {
           score += 1;
+          personal = true;
           reasons.add('A ${km.round()} km');
         }
       }
     }
     // Logo: dá tempo de se inscrever e treinar (entre 1 semana e 2 meses vale mais).
-    final days = date.difference(day).inDays;
     if (days >= 7 && days <= 60) {
       score += 1;
       reasons.add(
         days < 14 ? 'Daqui a $days dias' : 'Em ${(days / 7).round()} semanas',
       );
-    } else if (days < 7) {
-      score += 0.5;
     }
     // Bem avaliada pelos corredores.
     final raw = (edition['runScore'] as Map?)?['value'];
@@ -91,7 +102,13 @@ List<Recommendation> rankRecommendations(
         : double.tryParse('${raw ?? ''}');
     if (rating != null && rating >= 4) {
       score += rating - 3;
+      personal = true;
       reasons.add('Nota ${rating.toStringAsFixed(1).replaceAll('.', ',')}');
+    }
+    if (!personal) continue;
+    if (signup == 'open') {
+      score += 0.5;
+      reasons.add('Inscrições abertas');
     }
     out.add(Recommendation(edition, score, reasons));
   }
@@ -133,7 +150,9 @@ Future<List<Recommendation>> loadRecommendations(
       '/editions',
       query: {
         if (state.isNotEmpty) 'state': state,
-        'dateFrom': _iso(today),
+        'dateFrom': _iso(
+          today.add(const Duration(days: recommendationMinDays)),
+        ),
         'dateTo': _iso(today.add(const Duration(days: recommendationDays))),
         'limit': '100',
       },
