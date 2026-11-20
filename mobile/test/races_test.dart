@@ -1470,7 +1470,7 @@ void main() {
         }
         // Nada da publicacao aqui, e o post nem e buscado.
         expect(find.byKey(const Key('post-text-edit')), findsNothing);
-        expect(find.byKey(const Key('replace-post-photo')), findsNothing);
+        expect(find.byKey(const Key('post-photo-thumb-0')), findsNothing);
         expect(calls.any((c) => c.startsWith('GET /posts/')), isFalse);
       }
     },

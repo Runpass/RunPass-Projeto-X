@@ -67,10 +67,10 @@ void main() {
   ) async {
     final (gateway, patches) = await setup();
     await open(tester, gateway);
-    expect(find.byKey(const Key('extra-photo-2')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('extra-photo-1')));
+    expect(find.byKey(const Key('post-photo-thumb-2')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('post-photo-thumb-1')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('extra-photo-replace')));
+    await tester.tap(find.byKey(const Key('post-photo-replace')));
     await tester.pumpAndSettle();
     expect(patches.single['morePostImageReferences'], ['img_new1', 'img_b']);
     expect(patches.single['expectedVersion'], 2);
@@ -79,13 +79,13 @@ void main() {
   testWidgets('remover uma foto a mais e incluir outra', (tester) async {
     final (gateway, patches) = await setup();
     await open(tester, gateway);
-    await tester.tap(find.byKey(const Key('extra-photo-2')));
+    await tester.tap(find.byKey(const Key('post-photo-thumb-2')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('extra-photo-remove')));
+    await tester.tap(find.byKey(const Key('post-photo-remove')));
     await tester.pumpAndSettle();
     expect(patches.last['morePostImageReferences'], ['img_a']);
-    expect(find.byKey(const Key('extra-photo-2')), findsNothing);
-    await tester.tap(find.byKey(const Key('extra-photo-add')));
+    expect(find.byKey(const Key('post-photo-thumb-2')), findsNothing);
+    await tester.tap(find.byKey(const Key('post-photo-add')));
     await tester.pumpAndSettle();
     expect(patches.last['morePostImageReferences'], ['img_a', 'img_new1']);
     expect(patches.last['expectedVersion'], 3);
@@ -94,10 +94,10 @@ void main() {
   testWidgets('trocar a capa grava a foto da publicação', (tester) async {
     final (gateway, patches) = await setup();
     await open(tester, gateway);
-    await tester.tap(find.byKey(const Key('extra-photo-0')));
+    await tester.tap(find.byKey(const Key('post-photo-thumb-0')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('extra-photo-remove')), findsNothing);
-    await tester.tap(find.byKey(const Key('extra-photo-replace')));
+    expect(find.byKey(const Key('post-photo-remove')), findsNothing);
+    await tester.tap(find.byKey(const Key('post-photo-replace')));
     await tester.pumpAndSettle();
     expect(patches.single['postImageReference'], 'img_new1');
   });

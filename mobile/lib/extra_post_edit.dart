@@ -60,8 +60,107 @@ Future<List<int>?> loadExtraPostPhoto(
   }
 }
 
-class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
+/// Menu de uma foto da publicação, igual em toda edição de post: ajustar, trocar e (nas fotos a mais) remover.
+Future<String?> askPostPhotoAction(
+  BuildContext context, {
+  required bool canRemove,
+}) => showModalBottomSheet<String>(
+  context: context,
+  showDragHandle: true,
+  builder: (sheet) => SafeArea(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          key: const Key('post-photo-adjust'),
+          leading: const Icon(Icons.crop_rounded),
+          title: const Text('Ajustar foto'),
+          onTap: () => Navigator.pop(sheet, 'adjust'),
+        ),
+        ListTile(
+          key: const Key('post-photo-replace'),
+          leading: const Icon(Icons.photo_library_outlined),
+          title: const Text('Trocar foto'),
+          onTap: () => Navigator.pop(sheet, 'replace'),
+        ),
+        if (canRemove)
+          ListTile(
+            key: const Key('post-photo-remove'),
+            leading: const Icon(Icons.delete_outline, color: Colors.red),
+            title: const Text(
+              'Remover foto',
+              style: TextStyle(color: Colors.red),
+            ),
+            onTap: () => Navigator.pop(sheet, 'remove'),
+          ),
+      ],
+    ),
+  ),
+);
+
+/// Fotos da publicação na edição, igual em toda tela: a capa e as fotos a mais em miniaturas (tocar abre
+/// [askPostPhotoAction]) e "Mais fotos (n de 5)". [hiddenMore]: fotos a mais que existem mas não vieram do
+/// servidor (só mostra quantas são).
+class PostPhotosEditor extends StatelessWidget {
+  final List<Widget> photos;
+  final ValueChanged<int> onOpen;
+  final VoidCallback? onAdd;
+  final bool busy;
+  final int hiddenMore;
   static const maxPhotos = 5;
+  const PostPhotosEditor({
+    super.key,
+    required this.photos,
+    required this.onOpen,
+    this.onAdd,
+    this.busy = false,
+    this.hiddenMore = 0,
+  });
+
+  @override
+  Widget build(BuildContext context) => Column(
+    key: const Key('post-photos-editor'),
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'Fotos da publicação',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Toque numa foto para ajustar, trocar ou remover. A primeira é a capa.',
+        style: TextStyle(fontSize: 12.5),
+      ),
+      const SizedBox(height: 10),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (var i = 0; i < photos.length; i++)
+            InkWell(
+              key: Key('post-photo-thumb-$i'),
+              onTap: busy ? null : () => onOpen(i),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(width: 88, height: 88, child: photos[i]),
+              ),
+            ),
+          if (hiddenMore > 0) Text('+$hiddenMore fotos'),
+          if (onAdd != null && hiddenMore == 0 && photos.length < maxPhotos)
+            TextButton.icon(
+              key: const Key('post-photo-add'),
+              onPressed: busy ? null : onAdd,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: Text('Mais fotos (${photos.length} de $maxPhotos)'),
+            ),
+        ],
+      ),
+    ],
+  );
+}
+
+class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
   late int version = widget.version;
   late final text = TextEditingController(text: widget.text ?? '');
 
@@ -159,38 +258,9 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
 
   /// [index] 0 é a capa; 1 a 4, as fotos a mais.
   Future<void> openPhoto(int index) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheet) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              key: const Key('extra-photo-adjust'),
-              leading: const Icon(Icons.crop_rounded),
-              title: const Text('Ajustar foto'),
-              onTap: () => Navigator.pop(sheet, 'adjust'),
-            ),
-            ListTile(
-              key: const Key('extra-photo-replace'),
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Trocar foto'),
-              onTap: () => Navigator.pop(sheet, 'replace'),
-            ),
-            if (index > 0 && refsKnown)
-              ListTile(
-                key: const Key('extra-photo-remove'),
-                leading: const Icon(Icons.delete_outline, color: Colors.red),
-                title: const Text(
-                  'Remover foto',
-                  style: TextStyle(color: Colors.red),
-                ),
-                onTap: () => Navigator.pop(sheet, 'remove'),
-              ),
-          ],
-        ),
-      ),
+    final action = await askPostPhotoAction(
+      context,
+      canRemove: index > 0 && refsKnown,
     );
     if (action == null || !mounted) return;
     await run(() async {
@@ -253,33 +323,19 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
 
   Widget thumb(int index) {
     final bytes = index == 0 ? coverBytes : moreBytes[index - 1];
-    return InkWell(
-      key: Key('extra-photo-$index'),
-      onTap: busy ? null : () => openPhoto(index),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: SizedBox(
-          width: 88,
-          height: 88,
-          child: bytes != null
-              ? Image.memory(
-                  Uint8List.fromList(bytes),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) =>
-                      const ColoredBox(color: Colors.black12),
-                )
-              : MedalPhoto(
-                  key: ValueKey('extra-photo-$index-$coverRevision'),
-                  gateway: widget.gateway,
-                  participationId: null,
-                  endpoint: index == 0
-                      ? '$base/image'
-                      : '$base/image?index=$index',
-                  size: 28,
-                ),
-        ),
-      ),
-    );
+    return bytes != null
+        ? Image.memory(
+            Uint8List.fromList(bytes),
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => const ColoredBox(color: Colors.black12),
+          )
+        : MedalPhoto(
+            key: ValueKey('extra-photo-$index-$coverRevision'),
+            gateway: widget.gateway,
+            participationId: null,
+            endpoint: index == 0 ? '$base/image' : '$base/image?index=$index',
+            size: 28,
+          );
   }
 
   @override
@@ -290,36 +346,16 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
         : ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              const Text(
-                'Fotos da publicação',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'Toque numa foto para ajustar, trocar ou remover. A primeira é a capa.',
-                style: TextStyle(fontSize: 12.5),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
+              PostPhotosEditor(
+                photos: [
                   thumb(0),
                   if (refsKnown)
-                    for (var i = 1; i <= more.length; i++) thumb(i)
-                  else if (count > 1)
-                    Text('+${count - 1} fotos'),
-                  if (refsKnown && 1 + more.length < maxPhotos)
-                    TextButton.icon(
-                      key: const Key('extra-photo-add'),
-                      onPressed: busy ? null : addPhoto,
-                      icon: const Icon(Icons.add_photo_alternate_outlined),
-                      label: Text(
-                        'Mais fotos (${1 + more.length} de $maxPhotos)',
-                      ),
-                    ),
+                    for (var i = 1; i <= more.length; i++) thumb(i),
                 ],
+                hiddenMore: refsKnown ? 0 : count - 1,
+                busy: busy,
+                onOpen: openPhoto,
+                onAdd: addPhoto,
               ),
               const SizedBox(height: 20),
               TextField(
