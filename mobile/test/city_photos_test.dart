@@ -192,6 +192,48 @@ void main() {
         'assets/cidades/generica-rua.jpg',
       );
     });
+    test('lista sem foto repetida enquanto houver opção', () {
+      coverChoices.clear();
+      final list = [
+        for (var i = 0; i < 6; i++)
+          {
+            'id': 'SP$i',
+            'name': 'Corrida Teste $i',
+            'city': 'São Paulo',
+            'state': 'SP',
+          },
+        {
+          'id': 'P1',
+          'name': 'Corrida Teste',
+          'venue': 'Praça Charles Miller',
+          'city': 'São Paulo',
+          'state': 'SP',
+        },
+        {
+          'id': 'P2',
+          'name': 'Outra Corrida',
+          'venue': 'Estádio do Pacaembu',
+          'city': 'São Paulo',
+          'state': 'SP',
+        },
+        {'id': 'J1', 'name': 'Corrida Teste', 'city': 'Jundiaí', 'state': 'SP'},
+        {'id': 'J2', 'name': 'Corrida Teste', 'city': 'Jundiaí', 'state': 'SP'},
+      ];
+      chooseDistinctCovers(list);
+      final assets = [for (final e in list) coverPhotoFor(e).asset];
+      expect(assets.toSet(), hasLength(assets.length));
+      // A primeira do Pacaembu fica com a foto do lugar; a segunda ganha outra foto da capital.
+      expect(coverPhotoFor(list[6]).asset, 'assets/cidades/sp-pacaembu.jpg');
+      expect(
+        coverPhotoFor(list[7]).asset,
+        isNot('assets/cidades/sp-pacaembu.jpg'),
+      );
+      // Segunda corrida da mesma cidade: a foto genérica de corrida, não a da cidade de novo.
+      expect(coverPhotoFor(list[8]).asset, 'assets/cidades/jundiai.jpg');
+      expect(coverPhotoFor(list[9]).asset, 'assets/cidades/generica-rua.jpg');
+      coverChoices.clear();
+    });
+
     test('toda imagem tem arquivo no projeto', () {
       for (final photo in allCoverPhotos) {
         expect(File(photo.asset).existsSync(), isTrue, reason: photo.asset);
