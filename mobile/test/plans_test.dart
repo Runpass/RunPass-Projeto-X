@@ -475,73 +475,66 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a home mostra a agenda ao lado de Minha Cidade e abre a agenda',
-    (tester) async {
-      tester.view.physicalSize = const Size(390, 844); // largura de iPhone
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final gateway = await signed((uri, method, headers, body) async {
-        if (uri.path == '/me') {
-          return const JsonReply(200, {
-            'id': 'me',
-            'displayName': 'Eu',
-            'username': 'eu',
-            'version': 1,
-          });
-        }
-        return const JsonReply(200, {'items': []});
-      });
-      await tester.pumpWidget(
-        MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
-      );
-      await tester.pumpAndSettle();
-      final icon = find.byKey(const Key('home-agenda-chip'));
-      // Todos os cinco atalhos ficam inteiros dentro da tela, sem rolar.
-      for (final label in [
-        'Todos',
-        'Amigos',
-        'Seguindo',
-        'Minha Cidade',
-        'Agenda',
-      ]) {
-        final r = tester.getRect(find.text(label));
-        expect(
-          r.left >= 0 && r.right <= 390,
-          isTrue,
-          reason: '$label dentro da tela',
-        );
+  testWidgets('a home mostra a agenda ao lado de Pra você e abre a agenda', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844); // largura de iPhone
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/me') {
+        return const JsonReply(200, {
+          'id': 'me',
+          'displayName': 'Eu',
+          'username': 'eu',
+          'version': 1,
+        });
       }
-      // Na fonte larga dos testes o último círculo fica além da borda; rola o carrossel até ele.
-      await tester.dragUntilVisible(
-        icon,
-        find.text('Todos'),
-        const Offset(-120, 0),
-      );
-      await tester.pumpAndSettle();
-      expect(icon, findsOneWidget);
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    final icon = find.byKey(const Key('home-agenda-chip'));
+    // Todos os cinco atalhos ficam inteiros dentro da tela, sem rolar.
+    for (final label in ['Todos', 'Amigos', 'Seguindo', 'Pra você', 'Agenda']) {
+      final r = tester.getRect(find.text(label));
       expect(
-        find.byKey(const Key('home-agenda')),
-        findsNothing,
-      ); // a agenda não fica na barra do topo do Início
-      final cidade = tester.getRect(find.text('Minha Cidade'));
-      expect(
-        tester.getRect(icon).left > cidade.right - 1,
+        r.left >= 0 && r.right <= 390,
         isTrue,
-        reason: 'depois de Minha Cidade',
+        reason: '$label dentro da tela',
       );
-      final rect = tester.getRect(icon);
-      expect(
-        rect.left >= 0 && rect.right <= 390,
-        isTrue,
-        reason: 'ícone visível na largura do iPhone',
-      );
-      await tester.tap(icon);
-      await tester.pumpAndSettle();
-      expect(find.byType(AgendaScreen), findsOneWidget);
-      expect(find.text('Minha agenda'), findsOneWidget);
-    },
-  );
+    }
+    // Na fonte larga dos testes o último círculo fica além da borda; rola o carrossel até ele.
+    await tester.dragUntilVisible(
+      icon,
+      find.text('Todos'),
+      const Offset(-120, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(icon, findsOneWidget);
+    expect(
+      find.byKey(const Key('home-agenda')),
+      findsNothing,
+    ); // a agenda não fica na barra do topo do Início
+    final cidade = tester.getRect(find.text('Pra você'));
+    expect(
+      tester.getRect(icon).left > cidade.right - 1,
+      isTrue,
+      reason: 'depois de Pra você',
+    );
+    final rect = tester.getRect(icon);
+    expect(
+      rect.left >= 0 && rect.right <= 390,
+      isTrue,
+      reason: 'ícone visível na largura do iPhone',
+    );
+    await tester.tap(icon);
+    await tester.pumpAndSettle();
+    expect(find.byType(AgendaScreen), findsOneWidget);
+    expect(find.text('Minha agenda'), findsOneWidget);
+  });
 }
 
 void participantsTests() {
@@ -723,7 +716,7 @@ void homeWidthsTests() {
         'Todos',
         'Amigos',
         'Seguindo',
-        'Minha Cidade',
+        'Pra você',
         'Agenda',
       ]) {
         final r = tester.getRect(find.text(label));
