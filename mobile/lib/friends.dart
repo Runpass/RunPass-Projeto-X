@@ -100,7 +100,11 @@ class MedalAvatar extends StatelessWidget {
             top: -ribbonHeight * 0.75,
             child: CustomPaint(
               size: Size(radius * 1.15, ribbonHeight),
-              painter: _RibbonPainter(),
+              // Fundo claro: cordao escuro (navy) + laranja. Fundo escuro: cordao
+              // branco + laranja, para o cordao nao sumir contra o fundo.
+              painter: _RibbonPainter(
+                context.isDark ? Colors.white : runPassNavy,
+              ),
             ),
           ),
           Container(
@@ -266,6 +270,9 @@ class ProfilePhotoViewer extends StatelessWidget {
 
 /// Fita da medalha em V, nas cores do app (laranja e azul-marinho).
 class _RibbonPainter extends CustomPainter {
+  final Color leftColor;
+  const _RibbonPainter(this.leftColor);
+
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width, h = size.height;
@@ -281,12 +288,13 @@ class _RibbonPainter extends CustomPainter {
       ..lineTo(w * 0.38, h)
       ..lineTo(w * 0.8, h)
       ..close();
-    canvas.drawPath(left, Paint()..color = runPassNavy);
+    canvas.drawPath(left, Paint()..color = leftColor);
     canvas.drawPath(right, Paint()..color = runPassOrange);
   }
 
   @override
-  bool shouldRepaint(_RibbonPainter oldDelegate) => false;
+  bool shouldRepaint(_RibbonPainter oldDelegate) =>
+      oldDelegate.leftColor != leftColor;
 }
 
 /// Procurar pessoas por nome ou usuário, para seguir.

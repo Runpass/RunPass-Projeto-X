@@ -11,23 +11,6 @@ String? genderLetter(String? gender) => switch (gender) {
   _ => null,
 };
 
-/// Faixa etaria em intervalos de 5 anos (mesma regra do protótipo), cobrindo todas as idades.
-String? ageBucket(DateTime? birthDate) {
-  if (birthDate == null) return null;
-  final now = DateTime.now();
-  var age = now.year - birthDate.year;
-  if (now.month < birthDate.month ||
-      (now.month == birthDate.month && now.day < birthDate.day)) {
-    age -= 1;
-  }
-  if (age < 18) return 'Menor de 18';
-  if (age < 80) {
-    final start = (age ~/ 5) * 5;
-    return '$start-${start + 4}';
-  }
-  return '80+';
-}
-
 String _pad2(int n) => n.toString().padLeft(2, '0');
 
 String formatBirthLabel(DateTime? birthDate) {
@@ -71,6 +54,11 @@ class RegistrationCard extends StatelessWidget {
   final String? registrationCode;
   final Uint8List? photo;
   final DateTime inscriptionDate;
+  // So preenchidos na celebracao: tocar no bloco volta para o passo que o edita.
+  final VoidCallback? onTapPhoto;
+  final VoidCallback? onTapProfile;
+  final VoidCallback? onTapBirth;
+  final VoidCallback? onTapCity;
   const RegistrationCard({
     super.key,
     this.displayName,
@@ -81,6 +69,10 @@ class RegistrationCard extends StatelessWidget {
     this.registrationCode,
     this.photo,
     required this.inscriptionDate,
+    this.onTapPhoto,
+    this.onTapProfile,
+    this.onTapBirth,
+    this.onTapCity,
   });
 
   static const _monthAbbr = [
@@ -103,8 +95,6 @@ class RegistrationCard extends StatelessWidget {
     final name = displayName?.trim();
     final hasName = name != null && name.isNotEmpty;
     final letter = genderLetter(gender);
-    final bucket = ageBucket(birthDate);
-    final category = [?letter, ?bucket].join(' - ');
     final initials = hasName
         ? name
               .split(RegExp(r'\s+'))
@@ -116,10 +106,18 @@ class RegistrationCard extends StatelessWidget {
         '${inscriptionDate.day.toString().padLeft(2, '0')} '
         '${_monthAbbr[inscriptionDate.month - 1]} ${inscriptionDate.year}';
 
+    Widget tappable(Widget child, VoidCallback? onTap) => onTap == null
+        ? child
+        : InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(14),
+            child: child,
+          );
+
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(30),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: .1),
@@ -134,8 +132,8 @@ class RegistrationCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
-              width: 110,
-              padding: const EdgeInsets.symmetric(vertical: 20),
+              width: 128,
+              padding: const EdgeInsets.symmetric(vertical: 24),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
@@ -146,25 +144,30 @@ class RegistrationCard extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  CircleAvatar(
-                    radius: 30,
-                    backgroundColor: Colors.white.withValues(alpha: .2),
-                    backgroundImage: photo == null ? null : MemoryImage(photo!),
-                    child: photo != null
-                        ? null
-                        : (initials.isNotEmpty
-                              ? Text(
-                                  initials,
-                                  style: const TextStyle(
+                  tappable(
+                    CircleAvatar(
+                      radius: 30,
+                      backgroundColor: Colors.white.withValues(alpha: .2),
+                      backgroundImage: photo == null
+                          ? null
+                          : MemoryImage(photo!),
+                      child: photo != null
+                          ? null
+                          : (initials.isNotEmpty
+                                ? Text(
+                                    initials,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 20,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.person_outline,
                                     color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 20,
-                                  ),
-                                )
-                              : const Icon(
-                                  Icons.person_outline,
-                                  color: Colors.white,
-                                )),
+                                  )),
+                    ),
+                    onTapPhoto,
                   ),
                   Column(
                     children: [
@@ -172,17 +175,17 @@ class RegistrationCard extends StatelessWidget {
                         'Nº INSCRIÇÃO',
                         style: TextStyle(
                           color: Colors.white70,
-                          fontSize: 10,
+                          fontSize: 10.5,
                           fontWeight: FontWeight.w800,
                           letterSpacing: .5,
                         ),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 3),
                       Text(
-                        registrationCode ?? '•••••',
+                        registrationCode ?? '00000',
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 20,
+                          fontSize: 23,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -193,7 +196,7 @@ class RegistrationCard extends StatelessWidget {
             ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 14, 16),
+                padding: const EdgeInsets.fromLTRB(18, 20, 16, 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -202,63 +205,101 @@ class RegistrationCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Opacity(
-                          opacity: .5,
+                          opacity: .7,
                           child: Image.asset(
                             context.isDark
                                 ? 'assets/brand/logo-dark.png'
                                 : 'assets/brand/logo-light.png',
-                            height: 16,
+                            height: 20,
                             fit: BoxFit.contain,
                           ),
                         ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              dateText,
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                color: context.muted,
+                        tappable(
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                dateText,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  color: context.muted,
+                                ),
                               ),
-                            ),
-                            Text(
-                              (cityLabel ?? '— cidade').toUpperCase(),
-                              style: const TextStyle(
-                                fontSize: 7,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: .3,
+                              Text(
+                                (cityLabel ?? '— cidade').toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 7,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: .3,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
+                          onTapCity,
                         ),
                       ],
                     ),
                     const SizedBox(height: 10),
-                    Text(
-                      hasName ? name : 'Seu nome aqui',
-                      maxLines: 2,
-                      overflow: TextOverflow.visible,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: hasName ? null : context.muted,
+                    tappable(
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            hasName ? name : 'Seu nome aqui',
+                            maxLines: 2,
+                            overflow: TextOverflow.visible,
+                            style: TextStyle(
+                              fontSize: 21,
+                              fontWeight: FontWeight.w800,
+                              color: hasName ? null : context.muted,
+                            ),
+                          ),
+                          Text(
+                            username != null && username!.isNotEmpty
+                                ? '@$username'
+                                : '@usuario',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: context.muted,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    Text(
-                      username != null && username!.isNotEmpty
-                          ? '@$username'
-                          : '@usuario',
-                      style: TextStyle(fontSize: 12.5, color: context.muted),
+                      onTapProfile,
                     ),
                     const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                    tappable(
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'NASCIMENTO',
+                                  style: TextStyle(
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: context.archivedText,
+                                  ),
+                                ),
+                                Text(
+                                  birthDate == null
+                                      ? '—'
+                                      : formatBirthLabel(birthDate),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               Text(
-                                'NASCIMENTO',
+                                'GÊNERO',
                                 style: TextStyle(
                                   fontSize: 8.5,
                                   fontWeight: FontWeight.w800,
@@ -266,9 +307,7 @@ class RegistrationCard extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                birthDate == null
-                                    ? '—'
-                                    : formatBirthLabel(birthDate),
+                                letter ?? '—',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w700,
@@ -276,15 +315,9 @@ class RegistrationCard extends StatelessWidget {
                               ),
                             ],
                           ),
-                        ),
-                        Text(
-                          category.isEmpty ? '—' : category,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
+                      onTapBirth,
                     ),
                   ],
                 ),

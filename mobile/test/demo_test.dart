@@ -47,7 +47,7 @@ void main() {
       await tester.tap(find.text('Entrar'));
       await tester.pumpAndSettle();
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Nome de exibição'),
+        find.widgetWithText(TextFormField, 'Nome e Sobrenome'),
         'Corredor Demo',
       );
       await tester.enterText(

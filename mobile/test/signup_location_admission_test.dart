@@ -123,7 +123,7 @@ void main() {
       // Perfil (nome/usuario).
       expect(find.text('Como você quer ser chamado?'), findsOneWidget);
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Nome de exibição'),
+        find.widgetWithText(TextFormField, 'Nome e Sobrenome'),
         'Corredora Teste',
       );
       await tester.enterText(
@@ -135,7 +135,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Admissao: genero (obrigatorio) + data de nascimento + declaracao de maioridade.
-      expect(find.text('Gênero e data de nascimento'), findsOneWidget);
+      expect(find.text('Em qual categoria você corre?'), findsOneWidget);
       await tester.ensureVisible(find.text('Feminino'));
       await tester.tap(find.text('Feminino'));
       await tester.pumpAndSettle();

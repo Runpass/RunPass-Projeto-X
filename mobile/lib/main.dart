@@ -1,10 +1,13 @@
+import 'dart:async' show unawaited;
 import 'dart:typed_data';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:geolocator/geolocator.dart';
 
 import 'identity_gateway.dart';
+import 'br_locations.dart' show brCityCoordinates;
 import 'catalog_screen.dart';
 import 'friends.dart' show MedalAvatar;
 import 'biometrics.dart';
@@ -170,8 +173,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
   // Entrando com a sessao guardada: mostra um indicador em vez do formulario.
   bool restoring = false;
   List<int>? chosenPhoto;
-  // "Crie sua senha": o olho mostra/oculta em vez de um campo de confirmacao.
-  bool showPassword = false;
+  // "Ver senha": independente por tela, nao deve seguir marcado entre uma tela e outra.
+  bool showPasswordSignIn = false;
+  bool showPasswordSetPassword = false;
 
   @override
   void initState() {
@@ -310,6 +314,53 @@ class _IdentityScreenState extends State<IdentityScreen> {
     };
     if (step == Step.ready && needsPhoto) step = Step.photo;
     if (step == Step.ready && freshSignup) step = Step.celebration;
+  }
+
+  /// Tenta pre-selecionar estado/cidade pela localizacao do aparelho (cidade mais
+  /// proxima da lista fechada do IBGE). Silencioso: sem permissao, sem GPS ou
+  /// qualquer falha, a pessoa so segue escolhendo manualmente, como sempre.
+  Future<void> tryAutoDetectLocation() async {
+    if (selectedUf != null && selectedCity != null) return;
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+      if (!await Geolocator.isLocationServiceEnabled()) return;
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.low,
+          timeLimit: Duration(seconds: 6),
+        ),
+      );
+      String? bestKey;
+      var bestDist = double.infinity;
+      for (final entry in brCityCoordinates.entries) {
+        final dLat = entry.value.lat - position.latitude;
+        final dLon = entry.value.lon - position.longitude;
+        final dist = dLat * dLat + dLon * dLon;
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestKey = entry.key;
+        }
+      }
+      if (bestKey == null || !mounted || selectedUf != null) return;
+      final parts = bestKey.split('|');
+      final coordinate = brCityCoordinates[bestKey]!;
+      setState(() {
+        selectedUf = parts[0];
+        selectedCity = parts[1];
+        selectedLat = coordinate.lat;
+        selectedLon = coordinate.lon;
+      });
+    } on Object {
+      // Sem permissao, localizacao desligada ou qualquer outra falha: segue so
+      // com a escolha manual, sem mostrar erro (e so uma conveniencia).
+    }
   }
 
   /// Uma vez, depois de entrar com "Manter conectado": oferece ligar a biometria.
@@ -477,16 +528,19 @@ class _IdentityScreenState extends State<IdentityScreen> {
                   ),
                   const SizedBox(height: 14),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Data de nascimento',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
-                          color: sheetContext.isDark
-                              ? Colors.white
-                              : runPassNavy,
+                      Expanded(
+                        child: Text(
+                          'Data de nascimento',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            color: sheetContext.isDark
+                                ? Colors.white
+                                : runPassNavy,
+                          ),
                         ),
                       ),
                       TextButton(
@@ -667,7 +721,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
         }
         await gateway.setPassword(email.text.trim(), password.text);
         password.clear();
-        showPassword = false;
+        showPasswordSetPassword = false;
         await resume();
       case Step.forgot:
         await gateway.forgot(email.text.trim());
@@ -693,6 +747,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
           body: {'displayName': name.text.trim(), 'username': username.text},
         );
         displayName = profile['displayName'] as String?;
+        registrationCode = profile['registrationCode'] as String?;
         needsPhoto = true;
         freshSignup = true;
         step = Step.admission;
@@ -719,11 +774,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
             'gender': gender,
           },
         );
-        if (!full) {
-          final updated = await gateway.request('/me');
-          registrationCode = updated['registrationCode'] as String?;
-        }
         step = Step.location;
+        unawaited(tryAutoDetectLocation());
       case Step.location:
         if (selectedUf == null || selectedCity == null) {
           message = 'Selecione seu estado e cidade.';
@@ -746,7 +798,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
           );
         }
         needsPhoto = false;
-        chosenPhoto = null;
+        // Nao limpa chosenPhoto aqui: a ficha da celebracao reaproveita o mesmo
+        // bytes para mostrar a foto escolhida (sumia antes, por causa disso).
         step = freshSignup ? Step.celebration : Step.ready;
       case Step.ready || Step.waiting || Step.closed || Step.celebration:
         break;
@@ -788,6 +841,13 @@ class _IdentityScreenState extends State<IdentityScreen> {
     Step.photo,
   ];
 
+  static Step _previousSignupStep(Step step) => switch (step) {
+    Step.admission => Step.profile,
+    Step.location => Step.admission,
+    Step.photo => Step.location,
+    _ => Step.profile,
+  };
+
   Widget genderButton(
     BuildContext context,
     String value,
@@ -801,15 +861,22 @@ class _IdentityScreenState extends State<IdentityScreen> {
         backgroundColor: selected ? context.softFill : context.panel,
         side: BorderSide(
           color: selected ? runPassOrange : Colors.transparent,
-          width: 2,
+          width: 1.5,
         ),
         foregroundColor: selected
             ? runPassOrange
             : (context.isDark ? Colors.white : runPassNavy),
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        // Pilula, mesma altura nas tres opcoes: igual ao prototipo, menor e uniforme.
+        minimumSize: const Size(0, 34),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+        shape: const StadiumBorder(),
       ),
-      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+      ),
     );
     return fullWidth ? SizedBox(width: double.infinity, child: button) : button;
   }
@@ -821,7 +888,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
         : trimmedDisplay.split(RegExp(r'\s+')).first;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
+      height: double.infinity,
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -829,70 +896,98 @@ class _IdentityScreenState extends State<IdentityScreen> {
           colors: [runPassOrange, runPassGold],
         ),
       ),
-      child: Column(
-        children: [
-          RegistrationCard(
-            displayName: displayName,
-            username: username.text.trim().isEmpty
-                ? null
-                : username.text.trim(),
-            cityLabel: selectedUf == null || selectedCity == null
-                ? null
-                : '$selectedCity, $selectedUf',
-            birthDate: birthDate,
-            gender: gender,
-            registrationCode: registrationCode,
-            photo: chosenPhoto == null
-                ? null
-                : Uint8List.fromList(chosenPhoto!),
-            inscriptionDate: DateTime.now(),
-          ),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: .18),
-              borderRadius: BorderRadius.circular(20),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
+        child: Column(
+          children: [
+            RegistrationCard(
+              displayName: displayName,
+              username: username.text.trim().isEmpty
+                  ? null
+                  : username.text.trim(),
+              cityLabel: selectedUf == null || selectedCity == null
+                  ? null
+                  : '$selectedCity, $selectedUf',
+              birthDate: birthDate,
+              gender: gender,
+              registrationCode: registrationCode,
+              photo: chosenPhoto == null
+                  ? null
+                  : Uint8List.fromList(chosenPhoto!),
+              inscriptionDate: DateTime.now(),
+              onTapPhoto: () => setState(() => step = Step.photo),
+              onTapProfile: () => setState(() => step = Step.profile),
+              onTapBirth: () => setState(() => step = Step.admission),
+              onTapCity: () => setState(() => step = Step.location),
             ),
-            child: const Text(
-              'INSCRIÇÃO CONFIRMADA',
+            const SizedBox(height: 12),
+            Text(
+              'Toque em qualquer valor da ficha para alterar.',
+              textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: 11,
-                letterSpacing: .6,
+                fontSize: 12,
+                color: runPassNavy.withValues(alpha: .6),
               ),
             ),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            firstName == null ? 'Bem-vindo!' : 'Bem-vindo\n$firstName',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 27,
-              fontWeight: FontWeight.w900,
-              height: 1.2,
-              color: runPassNavy,
+            const SizedBox(height: 22),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: .18),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Image(
+                    image: AssetImage('assets/icons/verificado.png'),
+                    width: 14,
+                    height: 14,
+                  ),
+                  SizedBox(width: 6),
+                  Text(
+                    'INSCRIÇÃO CONFIRMADA',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 10.5,
+                      letterSpacing: .6,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 32),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: runPassNavy,
-              minimumSize: const Size.fromHeight(54),
+            const SizedBox(height: 18),
+            Text(
+              firstName == null ? 'Bem-vindo!' : 'Bem-vindo\n$firstName',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                height: 1.25,
+                color: runPassNavy,
+              ),
             ),
-            onPressed: () async {
-              await offerBiometrics();
-              if (mounted) openHome();
-            },
-            child: const Text('Começar minha jornada'),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Text(
+              'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13.5,
+                color: runPassNavy.withValues(alpha: .75),
+              ),
+            ),
+            const SizedBox(height: 32),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: runPassNavy,
+                minimumSize: const Size.fromHeight(54),
+              ),
+              onPressed: openHome,
+              child: const Text('Começar minha jornada'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -900,6 +995,20 @@ class _IdentityScreenState extends State<IdentityScreen> {
   @override
   Widget build(BuildContext context) {
     final gateway = widget.gateway;
+    if (gateway != null && !restoring) {
+      if (step == Step.celebration) {
+        return Scaffold(body: SafeArea(child: celebrationView(context)));
+      }
+      if (_signupSteps.contains(step)) {
+        return _signupScaffold(context, gateway);
+      }
+    }
+    return _authScaffold(context, gateway);
+  }
+
+  /// Entrar/criar conta, confirmar e-mail/senha, lista de espera/fechado: tela com
+  /// rolagem unica, igual a antes da reformulacao do cadastro.
+  Widget _authScaffold(BuildContext context, IdentityGateway? gateway) {
     final initial = [
       Step.signIn,
       Step.signUp,
@@ -915,15 +1024,10 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.setPassword => 'Crie sua senha',
       Step.forgot => 'Recupere sua senha',
       Step.reset => 'Defina uma nova senha',
-      Step.profile => 'Como você quer ser chamado?',
-      Step.admission =>
-        full ? 'Lista de espera' : 'Gênero e data de nascimento',
-      Step.location => 'Qual a sua cidade?',
-      Step.photo => 'Sua foto de perfil',
-      Step.celebration => '',
       Step.ready => 'Entrando, ${displayName ?? 'corredor'}…',
       Step.waiting => 'Você está na lista de espera',
       Step.closed => 'As entradas de novos usuários foram encerradas',
+      _ => '',
     };
     return Scaffold(
       appBar: AppBar(title: const RunPassWordmark(compact: true)),
@@ -942,8 +1046,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                       padding: EdgeInsets.symmetric(vertical: 80),
                       child: Center(child: CircularProgressIndicator()),
                     )
-                  : step == Step.celebration
-                  ? celebrationView(context)
                   : Form(
                       key: form,
                       child: Column(
@@ -965,13 +1067,41 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     size: 32,
                                   ),
                                   SizedBox(height: 18),
+                                  // Cada frase em uma linha, por FittedBox: nunca quebra
+                                  // no meio em telas estreitas (encolhe em vez de quebrar).
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      'Mais que corridas.',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 20,
+                                        height: 1.15,
+                                      ),
+                                    ),
+                                  ),
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      'São histórias para sempre.',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 20,
+                                        height: 1.15,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: 10),
                                   Text(
-                                    'Mais que corridas.\nSão histórias para sempre.',
+                                    'Crie sua conta e comece a montar \nseu Pódio de Medalhas e vitórias!',
                                     style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 23,
-                                      height: 1.08,
+                                      color: Colors.white70,
+                                      fontSize: 14.5,
+                                      height: 1.3,
                                     ),
                                   ),
                                 ],
@@ -979,22 +1109,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             ),
                           if (step == Step.signIn || step == Step.signUp)
                             const SizedBox(height: 24),
-                          if (_signupSteps.contains(step)) ...[
-                            RegistrationProgress(
-                              step: _signupSteps.indexOf(step) + 1,
-                            ),
-                            const SizedBox(height: 18),
-                            Text(
-                              'SUA FICHA DE INSCRIÇÃO',
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1,
-                                color: runPassOrange,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                          ],
                           Text(
                             title,
                             style: Theme.of(context).textTheme.headlineSmall
@@ -1006,28 +1120,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                 ),
                           ),
                           const SizedBox(height: 24),
-                          if (_signupSteps.contains(step)) ...[
-                            RegistrationCard(
-                              displayName: name.text.trim().isEmpty
-                                  ? displayName
-                                  : name.text.trim(),
-                              username: username.text.trim().isEmpty
-                                  ? null
-                                  : username.text.trim(),
-                              cityLabel:
-                                  selectedUf == null || selectedCity == null
-                                  ? null
-                                  : '$selectedCity, $selectedUf',
-                              birthDate: birthDate,
-                              gender: gender,
-                              registrationCode: registrationCode,
-                              photo: chosenPhoto == null
-                                  ? null
-                                  : Uint8List.fromList(chosenPhoto!),
-                              inscriptionDate: DateTime.now(),
-                            ),
-                            const SizedBox(height: 26),
-                          ],
                           if (initial) field(email, 'E-mail'),
                           if ([
                             Step.signIn,
@@ -1040,19 +1132,32 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   ? 'Crie uma senha'
                                   : 'Senha',
                               // Sem campo de confirmacao: o olho mostra/oculta a senha digitada.
+                              // Cada tela tem seu proprio estado de visibilidade.
                               secret: step == Step.setPassword
-                                  ? !showPassword
+                                  ? !showPasswordSetPassword
+                                  : step == Step.signIn
+                                  ? !showPasswordSignIn
                                   : true,
-                              suffixIcon: step == Step.setPassword
+                              suffixIcon:
+                                  step == Step.setPassword ||
+                                      step == Step.signIn
                                   ? IconButton(
                                       icon: Icon(
-                                        showPassword
+                                        (step == Step.setPassword
+                                                ? showPasswordSetPassword
+                                                : showPasswordSignIn)
                                             ? Icons.visibility_off
                                             : Icons.visibility,
                                       ),
-                                      onPressed: () => setState(
-                                        () => showPassword = !showPassword,
-                                      ),
+                                      onPressed: () => setState(() {
+                                        if (step == Step.setPassword) {
+                                          showPasswordSetPassword =
+                                              !showPasswordSetPassword;
+                                        } else {
+                                          showPasswordSignIn =
+                                              !showPasswordSignIn;
+                                        }
+                                      }),
                                     )
                                   : null,
                             ),
@@ -1071,214 +1176,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             ),
                           if ([Step.confirm, Step.reset].contains(step))
                             field(code, 'Código recebido'),
-                          if (step == Step.profile) ...[
-                            field(name, 'Nome de exibição', maxLength: 80),
-                            field(
-                              username,
-                              'Nome de usuário',
-                              maxLength: 30,
-                              // Mensagens curtas, que cabem em uma linha: a anterior era cortada no fim.
-                              check: (value) =>
-                                  RegExp(r'^[A-Za-z0-9_]{3,30}$')
-                                      .hasMatch(value)
-                                  ? null
-                                  : value.trim().length < 3
-                                  ? 'Use pelo menos 3 caracteres.'
-                                  : 'Só letras sem acento, números e _.',
-                            ),
-                          ],
-                          if (step == Step.location) ...[
-                            const Text(
-                              'Ajuda a conectar você com corredores perto de você.',
-                            ),
-                            const SizedBox(height: 12),
-                            InkWell(
-                              key: const Key('location-field'),
-                              onTap: busy
-                                  ? null
-                                  : () async {
-                                      final picked = await pickBrLocation(
-                                        context,
-                                        initialUf: selectedUf,
-                                        initialCity: selectedCity,
-                                      );
-                                      if (picked != null && mounted) {
-                                        setState(() {
-                                          selectedUf = picked.$1;
-                                          selectedCity = picked.$2;
-                                          selectedLat = picked.$3;
-                                          selectedLon = picked.$4;
-                                          message = null;
-                                        });
-                                      }
-                                    },
-                              child: InputDecorator(
-                                decoration: const InputDecoration(
-                                  labelText: 'Estado e cidade',
-                                ),
-                                child: Text(
-                                  selectedUf == null || selectedCity == null
-                                      ? 'Selecionar estado e cidade'
-                                      : '$selectedUf - $selectedCity',
-                                ),
-                              ),
-                            ),
-                          ],
-                          if (step == Step.admission) ...[
-                            if (full)
-                              const Text(
-                                'A lista de espera não garante vaga ou posição.',
-                              ),
-                            Text(
-                              'Gênero',
-                              style: TextStyle(
-                                color: context.muted,
-                                fontSize: 12.5,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: genderButton(
-                                    context,
-                                    'female',
-                                    'Feminino',
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: genderButton(
-                                    context,
-                                    'male',
-                                    'Masculino',
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            genderButton(
-                              context,
-                              'undisclosed',
-                              'Prefiro não me identificar',
-                              fullWidth: true,
-                            ),
-                            const SizedBox(height: 22),
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: InkWell(
-                                key: const Key('birth-date-field'),
-                                onTap: busy ? null : pickBirthDate,
-                                child: InputDecorator(
-                                  decoration: const InputDecoration(
-                                    labelText: 'Data de nascimento',
-                                  ),
-                                  child: Text(
-                                    birthDate == null
-                                        ? 'Selecionar data de nascimento'
-                                        : formatBirthDate(birthDate!),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (birthDate != null)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: context.softFill,
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.baseline,
-                                    textBaseline: TextBaseline.alphabetic,
-                                    children: [
-                                      Text(
-                                        '${ageInYears(birthDate!)}',
-                                        style: TextStyle(
-                                          fontSize: 34,
-                                          fontWeight: FontWeight.w800,
-                                          height: 1,
-                                          color: runPassOrange,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        'anos',
-                                        style: TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w600,
-                                          color: context.isDark
-                                              ? Colors.white
-                                              : runPassNavy,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            // Visivel so para o proprio titular (perfil); nunca publica.
-                            const Text(
-                              'Sua data de nascimento não é pública. Você pode vê-la depois no seu perfil.',
-                            ),
-                            CheckboxListTile(
-                              value: adult,
-                              onChanged: busy
-                                  ? null
-                                  : (value) =>
-                                        setState(() => adult = value ?? false),
-                              title: const Text(
-                                'Declaro ter 13 anos completos ou mais.',
-                              ),
-                            ),
-                          ],
-                          if (step == Step.photo) ...[
-                            const Text(
-                              'Para seus amigos reconhecerem você. Você pode pular e adicionar depois, no perfil.',
-                            ),
-                            // A fita da medalha sobe acima da foto: o respiro evita que cubra o texto.
-                            const SizedBox(height: 64),
-                            Center(
-                              child: InkWell(
-                                key: const Key('choose-photo'),
-                                customBorder: const CircleBorder(),
-                                onTap: busy ? null : choosePhoto,
-                                child: MedalAvatar(
-                                  radius: 64,
-                                  child: CircleAvatar(
-                                    radius: MedalAvatar.innerRadius(64),
-                                    backgroundColor: context.softFill,
-                                    backgroundImage: chosenPhoto == null
-                                        ? null
-                                        : MemoryImage(
-                                            Uint8List.fromList(chosenPhoto!),
-                                          ),
-                                    child: chosenPhoto == null
-                                        ? const Icon(
-                                            Icons.add_a_photo_outlined,
-                                            size: 40,
-                                            color: runPassOrange,
-                                          )
-                                        : null,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: busy ? null : choosePhoto,
-                              child: Text(
-                                chosenPhoto == null
-                                    ? 'Escolher foto'
-                                    : 'Trocar foto',
-                              ),
-                            ),
-                          ],
                           if (step == Step.ready)
                             const Center(child: CircularProgressIndicator()),
                           if (message != null)
@@ -1296,17 +1193,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             Step.ready,
                             Step.waiting,
                             Step.closed,
-                            Step.celebration,
                           ].contains(step))
                             FilledButton(
                               onPressed: busy ? null : submit,
                               child: Text(
                                 busy
                                     ? 'Aguarde…'
-                                    : step == Step.admission && full
-                                    ? 'Entrar na lista de espera'
-                                    : step == Step.photo && chosenPhoto == null
-                                    ? 'Pular por enquanto'
                                     : step == Step.signIn
                                     ? 'Entrar'
                                     : 'Continuar',
@@ -1389,6 +1281,341 @@ class _IdentityScreenState extends State<IdentityScreen> {
       ),
     );
   }
+
+  /// Nome/usuario, genero/nascimento, cidade e foto: cabecalho (voltar, progresso,
+  /// titulo e ficha) fixo no topo; so o conteudo proprio de cada passo rola, para o
+  /// cabecalho nunca se mexer e a tela caber sem rolagem sempre que possivel.
+  Widget _signupScaffold(BuildContext context, IdentityGateway gateway) {
+    final title = switch (step) {
+      Step.profile => 'Como você quer ser chamado?',
+      Step.admission =>
+        full ? 'Lista de espera' : 'Em qual categoria você corre?',
+      Step.location => 'Qual a sua cidade?',
+      Step.photo => 'Sua foto de perfil',
+      _ => '',
+    };
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 18, 24, 10),
+              child: Form(
+                key: form,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        if (step != Step.profile)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 14),
+                            child: InkWell(
+                              key: const Key('signup-back'),
+                              onTap: busy
+                                  ? null
+                                  : () => setState(
+                                      () => step = _previousSignupStep(step),
+                                    ),
+                              customBorder: const CircleBorder(),
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Theme.of(context).cardColor,
+                                  border: Border.all(
+                                    color: context.panelStrong,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.arrow_back,
+                                  size: 18,
+                                  color: context.isDark
+                                      ? Colors.white
+                                      : runPassNavy,
+                                ),
+                              ),
+                            ),
+                          ),
+                        Expanded(
+                          child: RegistrationProgress(
+                            step: _signupSteps.indexOf(step) + 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      'SUA FICHA DE INSCRIÇÃO',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1,
+                        color: runPassOrange,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 21,
+                        color: runPassNavy,
+                      ).copyWith(color: context.isDark ? Colors.white : null),
+                    ),
+                    const SizedBox(height: 12),
+                    RegistrationCard(
+                      displayName: name.text.trim().isEmpty
+                          ? displayName
+                          : name.text.trim(),
+                      username: username.text.trim().isEmpty
+                          ? null
+                          : username.text.trim(),
+                      cityLabel: selectedUf == null || selectedCity == null
+                          ? null
+                          : '$selectedCity, $selectedUf',
+                      birthDate: birthDate,
+                      gender: gender,
+                      registrationCode: registrationCode,
+                      photo: chosenPhoto == null
+                          ? null
+                          : Uint8List.fromList(chosenPhoto!),
+                      inscriptionDate: DateTime.now(),
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (step == Step.profile) ...[
+                              field(name, 'Nome e Sobrenome', maxLength: 80),
+                              field(
+                                username,
+                                'Nome de usuário',
+                                maxLength: 30,
+                                // Mensagens curtas, que cabem em uma linha: a anterior era cortada no fim.
+                                check: (value) =>
+                                    RegExp(r'^[A-Za-z0-9_]{3,30}$')
+                                        .hasMatch(value)
+                                    ? null
+                                    : value.trim().length < 3
+                                    ? 'Use pelo menos 3 caracteres.'
+                                    : 'Só letras sem acento, números e _.',
+                              ),
+                            ],
+                            if (step == Step.location) ...[
+                              Text(
+                                'Ajuda a conectar você com corredores perto.',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  color: context.muted,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              InkWell(
+                                key: const Key('location-field'),
+                                onTap: busy
+                                    ? null
+                                    : () async {
+                                        final picked = await pickBrLocation(
+                                          context,
+                                          initialUf: selectedUf,
+                                          initialCity: selectedCity,
+                                        );
+                                        if (picked != null && mounted) {
+                                          setState(() {
+                                            selectedUf = picked.$1;
+                                            selectedCity = picked.$2;
+                                            selectedLat = picked.$3;
+                                            selectedLon = picked.$4;
+                                            message = null;
+                                          });
+                                        }
+                                      },
+                                child: InputDecorator(
+                                  decoration: const InputDecoration(
+                                    labelText: 'Estado e cidade',
+                                  ),
+                                  child: Text(
+                                    selectedUf == null || selectedCity == null
+                                        ? 'Selecionar estado e cidade'
+                                        : '$selectedUf - $selectedCity',
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (step == Step.admission) ...[
+                              if (full)
+                                const Text(
+                                  'A lista de espera não garante vaga ou posição.',
+                                ),
+                              Text(
+                                'Gênero',
+                                style: TextStyle(
+                                  color: context.muted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: genderButton(
+                                      context,
+                                      'female',
+                                      'Feminino',
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: genderButton(
+                                      context,
+                                      'male',
+                                      'Masculino',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              genderButton(
+                                context,
+                                'undisclosed',
+                                'Prefiro não me identificar',
+                                fullWidth: true,
+                              ),
+                              const SizedBox(height: 14),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: InkWell(
+                                  key: const Key('birth-date-field'),
+                                  onTap: busy ? null : pickBirthDate,
+                                  child: InputDecorator(
+                                    decoration: const InputDecoration(
+                                      labelText: 'Data de nascimento',
+                                    ),
+                                    child: Text(
+                                      birthDate == null
+                                          ? 'Selecionar data de nascimento'
+                                          : formatBirthDate(birthDate!),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              // Visivel so para o proprio titular (perfil); nunca publica. Sem
+                              // mostrar a idade calculada: so a faixa etaria vai para a ficha.
+                              Text(
+                                'Sua data de nascimento não é pública. Você pode vê-la depois no seu perfil.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: context.muted,
+                                ),
+                              ),
+                              CheckboxListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                                controlAffinity: ListTileControlAffinity.leading,
+                                value: adult,
+                                onChanged: busy
+                                    ? null
+                                    : (value) => setState(
+                                        () => adult = value ?? false,
+                                      ),
+                                title: Text(
+                                  'Declaro ter 13 anos completos ou mais.',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: context.isDark
+                                        ? Colors.white
+                                        : runPassNavy,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (step == Step.photo) ...[
+                              const Text(
+                                'Para seus amigos reconhecerem você. Você pode pular e adicionar depois, no perfil.',
+                              ),
+                              const SizedBox(height: 24),
+                              Center(
+                                child: InkWell(
+                                  key: const Key('choose-photo'),
+                                  customBorder: const CircleBorder(),
+                                  onTap: busy ? null : choosePhoto,
+                                  child: MedalAvatar(
+                                    radius: 56,
+                                    child: CircleAvatar(
+                                      radius: MedalAvatar.innerRadius(56),
+                                      backgroundColor: context.softFill,
+                                      backgroundImage: chosenPhoto == null
+                                          ? null
+                                          : MemoryImage(
+                                              Uint8List.fromList(chosenPhoto!),
+                                            ),
+                                      child: chosenPhoto == null
+                                          ? const Icon(
+                                              Icons.add_a_photo_outlined,
+                                              size: 36,
+                                              color: runPassOrange,
+                                            )
+                                          : null,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: busy ? null : choosePhoto,
+                                child: Text(
+                                  chosenPhoto == null
+                                      ? 'Escolher foto'
+                                      : 'Trocar foto',
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (message != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          message!,
+                          semanticsLabel: message,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: FilledButton(
+                        onPressed: busy ? null : submit,
+                        child: Text(
+                          busy
+                              ? 'Aguarde…'
+                              : step == Step.admission && full
+                              ? 'Entrar na lista de espera'
+                              : step == Step.photo && chosenPhoto == null
+                              ? 'Pular por enquanto'
+                              : 'Continuar',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 String isoBirthDate(DateTime date) =>
@@ -1396,14 +1623,3 @@ String isoBirthDate(DateTime date) =>
 
 String formatBirthDate(DateTime date) =>
     '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
-
-/// So para mostrar na tela (ex.: "18 anos"); o servidor e a unica fonte confiavel da idade.
-int ageInYears(DateTime birth, {DateTime? today}) {
-  final now = today ?? DateTime.now();
-  var age = now.year - birth.year;
-  if (now.month < birth.month ||
-      (now.month == birth.month && now.day < birth.day)) {
-    age--;
-  }
-  return age;
-}

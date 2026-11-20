@@ -235,6 +235,7 @@ void main() {
         find.widgetWithText(TextFormField, 'Senha'),
         'Synthetic_password1!',
       );
+      await tester.ensureVisible(find.text('Entrar'));
       await tester.tap(find.text('Entrar'));
       await tester.pumpAndSettle();
       // Sem tela intermediaria: quem ja tem cadastro entra direto no app.
