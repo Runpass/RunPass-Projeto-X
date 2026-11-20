@@ -19,7 +19,7 @@ void main() {
     expect(cityPhotoFor({'city': 'Guarujá', 'state': 'SP'}), isNotNull);
     // Outro estado, cidade sem foto ou sem cidade: sem foto.
     expect(cityPhotoFor({'city': 'São Paulo', 'state': 'RJ'}), isNull);
-    expect(cityPhotoFor({'city': 'Campinas', 'state': 'SP'}), isNull);
+    expect(cityPhotoFor({'city': 'Itu', 'state': 'SP'}), isNull);
     expect(
       cityPhotoFor({'city': 'Bertioga', 'state': 'SP'})?.isIllustration,
       isTrue,
@@ -30,7 +30,7 @@ void main() {
   test(
     'toda foto tem licença livre sem crédito obrigatório e arquivo próprio',
     () {
-      expect(cityPhotoList.where((p) => !p.isIllustration), hasLength(28));
+      expect(cityPhotoList.where((p) => !p.isIllustration), hasLength(36));
       expect(cityPhotoList.where((p) => p.isIllustration), hasLength(10));
       for (final photo in cityPhotoList) {
         expect(
@@ -96,7 +96,7 @@ void main() {
               edition: {
                 ...entry('A'),
                 'id': 'EA',
-                'city': 'Campinas',
+                'city': 'Itu',
                 'state': 'SP',
               },
             ),
@@ -176,11 +176,11 @@ void main() {
         'assets/cidades/jundiai.jpg',
       );
       expect(
-        asset({'name': 'Corrida Teste', 'city': 'Campinas', 'state': 'SP'}),
+        asset({'name': 'Corrida Teste', 'city': 'Itu', 'state': 'SP'}),
         'assets/cidades/generica-rua.jpg',
       );
       expect(
-        asset({'name': 'Trail Run Teste', 'city': 'Campinas', 'state': 'SP'}),
+        asset({'name': 'Trail Run Teste', 'city': 'Itu', 'state': 'SP'}),
         'assets/cidades/generica-trilha.jpg',
       );
       expect(
