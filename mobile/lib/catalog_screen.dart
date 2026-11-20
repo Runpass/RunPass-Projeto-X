@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -3777,16 +3776,19 @@ Future<List<int>?> loadPostPhotoBytes(
   }
 }
 
-/// Abre o recorte da foto da corrida/medalha e devolve os bytes ajustados (nulo se cancelar).
+/// Foto da MEDALHA no editor único: abre inteira; o formato (recorte) é opcional. Nulo se cancelar.
 Future<List<int>?> cropRacePhoto(BuildContext context, List<int> photo) =>
     Navigator.of(context).push<List<int>>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => RacePhotoCropScreen(image: Uint8List.fromList(photo)),
+        builder: (_) => PhotoZoomScreen(
+          image: Uint8List.fromList(photo),
+          title: 'Foto da medalha',
+        ),
       ),
     );
 
-/// Foto da PUBLICAÇÃO: abre inteira; recortar (com os tamanhos) é opcional.
+/// Foto da PUBLICAÇÃO no mesmo editor: abre inteira; o formato (recorte) é opcional.
 Future<List<int>?> cropPostPhoto(BuildContext context, List<int> photo) =>
     Navigator.of(context).push<List<int>>(
       MaterialPageRoute(
@@ -4852,21 +4854,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       if (selector != null) {
         bytes = await selector();
       } else {
-        final file = await ImagePicker().pickImage(
-          source: ImageSource.gallery,
-          maxWidth: 2800,
-          maxHeight: 2800,
-          imageQuality: 88,
-          requestFullMetadata: false,
-        );
-        final original = await file?.readAsBytes();
-        if (original == null || !mounted) return;
-        bytes = await Navigator.of(context).push<List<int>>(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (_) => PhotoZoomScreen(image: original),
-          ),
-        );
+        bytes = await pickAndEditPhoto(context, title: 'Foto da publicação');
       }
       if (bytes == null) return;
       final reference = await uploadPostBytes(bytes);
@@ -4895,23 +4883,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       if (widget.photoSelector != null) {
         bytes = await widget.photoSelector!();
       } else {
-        final file = await ImagePicker().pickImage(
-          source: ImageSource.gallery,
-          // Limite menor que o antigo: o recorte devolve a imagem sem reduzir, e o envio aceita até 10 MB.
-          maxWidth: 2800,
-          maxHeight: 2800,
-          imageQuality: 88,
-          requestFullMetadata: false,
-        );
-        final original = await file?.readAsBytes();
-        if (original == null || !mounted) return;
-        // Ajuste antes de enviar: recortar, ampliar e escolher a proporção. Cancelar não envia nada.
-        bytes = await Navigator.of(context).push<List<int>>(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (_) => RacePhotoCropScreen(image: original),
-          ),
-        );
+        bytes = await pickAndEditPhoto(context, title: 'Foto da medalha');
       }
       if (bytes == null) return;
       await sendPhoto(bytes);
