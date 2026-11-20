@@ -558,13 +558,13 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
           onPressed: addMenu,
         ),
         IconButton(
-          key: const Key('home-agenda'),
+          key: const Key('find-friends'),
           visualDensity: VisualDensity.compact,
-          tooltip: 'Minha agenda',
-          icon: const Icon(Icons.calendar_month_rounded),
+          tooltip: 'Buscar amigos',
+          icon: const Icon(Icons.person_search_rounded),
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
-              builder: (_) => AgendaScreen(gateway: widget.gateway),
+              builder: (_) => FriendSearchScreen(gateway: widget.gateway),
             ),
           ),
         ),

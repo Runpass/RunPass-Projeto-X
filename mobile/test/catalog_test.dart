@@ -143,7 +143,7 @@ Future<void> pickFilterLocation(WidgetTester tester) async {
 
 /// O nome é o único campo obrigatório do formulário de filtros.
 Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
-  final field = find.widgetWithText(TextFormField, 'Busca corrida');
+  final field = find.widgetWithText(TextFormField, 'Buscar corridas');
   await reveal(tester, field, backwards: true);
   await tester.enterText(field, name);
 }

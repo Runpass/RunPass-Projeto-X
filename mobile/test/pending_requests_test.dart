@@ -80,7 +80,7 @@ void main() {
   );
 
   testWidgets(
-    'meu banner em análise aparece na corrida só para mim, com o aviso',
+    'banner em análise não aparece na corrida (banners desligados; vale a foto da cidade)',
     (tester) async {
       final g = await gateway([]);
       Future<void> open(
@@ -99,8 +99,8 @@ void main() {
       }
 
       await open((_, _) async => onePixelPng);
-      expect(find.byKey(const Key('hero-provisional')), findsOneWidget);
-      expect(find.byKey(const Key('hero-provisional-note')), findsOneWidget);
+      expect(find.byKey(const Key('hero-provisional')), findsNothing);
+      expect(find.byKey(const Key('hero-provisional-note')), findsNothing);
       // Sem sugestão minha esperando decisão: nada provisório (tela nova, sem o estado anterior).
       await tester.pumpWidget(const SizedBox());
       await open((_, _) async => null);

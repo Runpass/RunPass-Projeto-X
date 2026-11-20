@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/catalog_screen.dart';
 import 'package:runpass/identity_gateway.dart';
+import 'package:runpass/catalog_filters.dart';
 
 import 'catalog_test.dart' show entry, signed;
 
@@ -64,7 +65,14 @@ void main() {
       expect(calls.first['state'], 'SP');
       expect(calls.first.containsKey('city'), isFalse);
       expect(calls.first.containsKey('dateFrom'), isTrue);
-      expect(find.text('Perto de mim · 50 km'), findsOneWidget);
+      // "Perto de mim" é o padrão: a pílula aparece sem destaque.
+      expect(find.text('Perto de mim'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilterPill>(find.byKey(const Key('filter-near-me')))
+            .active,
+        isFalse,
+      );
     },
   );
 
@@ -113,7 +121,7 @@ void main() {
     expect(find.textContaining('50 km'), findsWidgets);
   });
 
-  testWidgets('desligar "Perto de mim" mostra as de qualquer cidade', (
+  testWidgets('tocar "Perto de mim" amplia para qualquer distância', (
     tester,
   ) async {
     final calls = await open(tester, [
@@ -125,7 +133,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(shown('sp'), isTrue);
     expect(shown('ca'), isTrue);
-    expect(find.text('Perto de mim'), findsOneWidget); // sem o "· 50 km"
+    // Ampliada: a pílula fica em destaque como "Qualquer distância"; o × volta ao padrão.
+    expect(find.text('Qualquer distância'), findsOneWidget);
     expect(calls.last.containsKey('state'), isFalse);
   });
 
