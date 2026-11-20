@@ -59,7 +59,7 @@ void main() {
               ...entry('A'),
               'id': 'EA',
               'date': '2026-11-19',
-              'city': 'Santos',
+              'city': 'Campinas',
               'state': 'SP',
               'distances': [
                 {'id': '5k', 'kilometers': 5},
@@ -73,7 +73,7 @@ void main() {
     // A data vai num selo sobre a foto; o local e as distâncias, embaixo, com ícone.
     expect(find.byKey(const Key('date-chip-EA')), findsOneWidget);
     expect(find.text('Amanhã'), findsOneWidget);
-    expect(find.text('Santos, SP'), findsOneWidget);
+    expect(find.text('Campinas, SP'), findsOneWidget);
     expect(find.byIcon(Icons.place_outlined), findsOneWidget);
     // O ícone de corrida aparece na linha das distâncias (e também na arte de tipo "rua").
     expect(find.byIcon(Icons.directions_run), findsWidgets);
@@ -82,7 +82,7 @@ void main() {
     expect(find.text('5K'), findsOneWidget);
     // Capa sem foto da prova: cartão postal com a cidade, rotulado como arte do app.
     expect(find.byKey(const Key('race-art-city')), findsOneWidget);
-    expect(find.text('SANTOS · SP'), findsOneWidget);
+    expect(find.text('CAMPINAS · SP'), findsOneWidget);
     expect(find.byKey(const Key('race-art-tag')), findsOneWidget);
   });
 
