@@ -666,6 +666,16 @@ class _EditionCoverState extends State<EditionCover> {
   return (from: '$year-01-01', to: '$year-12-31');
 }
 
+/// Antecedência mínima para a corrida entrar na lista de Corridas: a de hoje e a de amanhã já não dão para se
+/// inscrever. (A busca por nome continua achando qualquer corrida, inclusive para marcar "Já corri".)
+const signupMinDays = 2;
+
+/// A inscrição ainda é possível pelo que se sabe: não está encerrada nem esgotada.
+bool signupNotClosed(Map<String, dynamic> edition) {
+  final status = edition['registrationStatus'];
+  return status != 'closed' && status != 'sold_out';
+}
+
 /// Valor do filtro de ano que mostra só as corridas dos próximos [upcomingDays] dias (o padrão da lista).
 const upcomingFilter = 'next';
 const upcomingDays = 20;
@@ -1051,12 +1061,21 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// Datas do filtro de ano: o ano inteiro (no ano corrente, de hoje em diante); sem ano, de hoje em diante.
   Map<String, String> dateFilters() {
     final today = DateTime.now();
-    final todayIso = _isoDay(DateTime(today.year, today.month, today.day));
+    // Só o que ainda dá para se inscrever: a partir de depois de amanhã.
+    final todayIso = _isoDay(
+      DateTime(today.year, today.month, today.day + signupMinDays),
+    );
     final y = year;
     if (y == null) return {'dateFrom': todayIso};
     final start = y == today.year ? todayIso : '$y-01-01';
     return {'dateFrom': start, 'dateTo': '$y-12-31'};
   }
+
+  /// A lista (sem busca por nome) mostra só corridas com inscrição possível; num ano que já passou, todas.
+  bool listed(Map<String, dynamic> entry) =>
+      activeFilters.containsKey('q') ||
+      (year != null && year! < DateTime.now().year) ||
+      signupNotClosed(entry);
 
   Future<void> load({bool more = false}) async {
     if (loading) return;
@@ -1101,7 +1120,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         if (!mounted) return;
         for (final entry
             in (page['items'] as List).cast<Map<String, dynamic>>()) {
-          if (known.add(entry['id'])) items.add(entry);
+          if (listed(entry) && known.add(entry['id'])) items.add(entry);
         }
         nextCursor = page['nextCursor'] as String?;
       }
@@ -1148,7 +1167,9 @@ class _CatalogScreenState extends State<CatalogScreen> {
       if (!mounted) return;
       for (final entry
           in (page['items'] as List).cast<Map<String, dynamic>>()) {
-        if (withinRadiusOf(entry, myLat!, myLon!) && known.add(entry['id'])) {
+        if (listed(entry) &&
+            withinRadiusOf(entry, myLat!, myLon!) &&
+            known.add(entry['id'])) {
           nearQueue.add(entry);
         }
       }
@@ -2935,6 +2956,12 @@ class _EditionScreenState extends State<EditionScreen> {
     }
   }
 
+  /// Avaliações desta corrida que têm comentário escrito.
+  List<Map<String, dynamic>> get reviewComments => [
+    for (final review in reviews ?? const <Map<String, dynamic>>[])
+      if ('${review['comment'] ?? ''}'.trim().isNotEmpty) review,
+  ];
+
   /// Comentários da corrida: caixa para escrever e a lista (qualquer pessoa da beta comenta, com ou sem participação).
   List<Widget> commentsSection() => [
     const SizedBox(height: 18),
@@ -2976,7 +3003,9 @@ class _EditionScreenState extends State<EditionScreen> {
     const SizedBox(height: 8),
     if (loadingComments && comments.isEmpty)
       const Center(child: CircularProgressIndicator())
-    else if (comments.isEmpty && commentsError == null)
+    else if (comments.isEmpty &&
+        reviewComments.isEmpty &&
+        commentsError == null)
       Text(
         'Ainda não há comentários nesta corrida. Seja a primeira pessoa!',
         key: const Key('edition-comments-empty'),
@@ -3037,6 +3066,43 @@ class _EditionScreenState extends State<EditionScreen> {
                   icon: const Icon(Icons.delete_outline, size: 20),
                   onPressed: () => deleteComment(comment),
                 ),
+            ],
+          ),
+        ),
+      ),
+    // Comentários feitos na avaliação da corrida (no cadastro): aparecem aqui também.
+    for (final review in reviewComments)
+      Card(
+        key: Key('edition-review-comment-${review['participationId']}'),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ProfileAvatar(
+                radius: 18,
+                gateway: widget.gateway,
+                profile: review['author'] as Map?,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${review['authorName'] ?? 'Corredor RunPass'}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      'Na avaliação da corrida',
+                      style: TextStyle(fontSize: 12, color: context.muted),
+                    ),
+                    const SizedBox(height: 4),
+                    Text('${review['comment']}'),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -5538,6 +5604,19 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
             'comment': comment.text,
         },
       );
+      // Comentário escrito sem as notas: a avaliação não é criada, então ele vai como comentário da corrida
+      // (antes era descartado sem aviso). Falhou: fica no campo, para enviar junto com a avaliação depois.
+      if (!ratingsComplete && comment.text.trim().isNotEmpty) {
+        try {
+          await widget.gateway.request(
+            '/editions/${Uri.encodeComponent('${draft['editionId']}')}/comments',
+            method: 'POST',
+            body: {'text': comment.text.trim()},
+          );
+        } on Exception {
+          // Segue: a participação já foi concluída.
+        }
+      }
       if (mounted) {
         message = 'Participação concluída. Avaliação e medalha foram salvas.';
         // Ao concluir, leva a pessoa para a coleção de medalhas, onde a conquista aparece.
