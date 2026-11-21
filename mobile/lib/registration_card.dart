@@ -140,7 +140,7 @@ class RegistrationCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(32),
+        borderRadius: BorderRadius.circular(30),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: .1),
@@ -155,8 +155,8 @@ class RegistrationCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
-              width: 150,
-              padding: const EdgeInsets.symmetric(vertical: 26),
+              width: 128,
+              padding: const EdgeInsets.symmetric(vertical: 24),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
@@ -169,7 +169,7 @@ class RegistrationCard extends StatelessWidget {
                 children: [
                   tappable(
                     CircleAvatar(
-                      radius: 36,
+                      radius: 30,
                       backgroundColor: Colors.white.withValues(alpha: .2),
                       backgroundImage: photo == null
                           ? null
@@ -182,13 +182,12 @@ class RegistrationCard extends StatelessWidget {
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.w800,
-                                      fontSize: 23,
+                                      fontSize: 20,
                                     ),
                                   )
                                 : const Icon(
                                     Icons.person_outline,
                                     color: Colors.white,
-                                    size: 28,
                                   )),
                     ),
                     onTapPhoto,
@@ -200,17 +199,17 @@ class RegistrationCard extends StatelessWidget {
                         'Nº INSCRIÇÃO',
                         style: TextStyle(
                           color: Colors.white70,
-                          fontSize: 11.5,
+                          fontSize: 10.5,
                           fontWeight: FontWeight.w800,
                           letterSpacing: .5,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 3),
                       Text(
                         registrationCode ?? '00000',
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 26,
+                          fontSize: 23,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -221,7 +220,7 @@ class RegistrationCard extends StatelessWidget {
             ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 22, 18, 22),
+                padding: const EdgeInsets.fromLTRB(18, 20, 16, 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -234,45 +233,53 @@ class RegistrationCard extends StatelessWidget {
                             context.isDark
                                 ? 'assets/brand/logo-dark.png'
                                 : 'assets/brand/logo-light.png',
-                            height: 23,
+                            height: 20,
                             fit: BoxFit.contain,
                           ),
                         ),
-                        const Spacer(),
-                        Flexible(
-                          child: tappable(
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  dateText,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    color: context.muted,
+                        // Expanded (em vez de Spacer + Flexible competindo pelo mesmo
+                        // espaco em partes iguais): a data/cidade ganha todo o espaco que
+                        // sobrar do logo, nao so a metade, pra nao cortar cidades com nome
+                        // longo. O Align mantem o bloco encostado na direita.
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: tappable(
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    dateText,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      color: context.muted,
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  (cityLabel ?? '— cidade').toUpperCase(),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: .3,
+                                  Text(
+                                    (cityLabel ?? '— cidade').toUpperCase(),
+                                    // Duas linhas em vez de uma: cidade e estado com nome
+                                    // longo quebram a linha em vez de cortar com "...".
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                      fontSize: 7,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: .3,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
+                              onTapCity,
+                              key: const Key('registration-card-city'),
                             ),
-                            onTapCity,
-                            key: const Key('registration-card-city'),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 11),
+                    const SizedBox(height: 10),
                     tappable(
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -282,7 +289,7 @@ class RegistrationCard extends StatelessWidget {
                             maxLines: 2,
                             overflow: TextOverflow.visible,
                             style: TextStyle(
-                              fontSize: 24,
+                              fontSize: 21,
                               fontWeight: FontWeight.w800,
                               color: hasName ? null : context.muted,
                             ),
@@ -292,7 +299,7 @@ class RegistrationCard extends StatelessWidget {
                                 ? '@$username'
                                 : '@usuario',
                             style: TextStyle(
-                              fontSize: 11.5,
+                              fontSize: 10,
                               color: context.muted,
                             ),
                           ),
@@ -301,7 +308,7 @@ class RegistrationCard extends StatelessWidget {
                       onTapProfile,
                       key: const Key('registration-card-profile'),
                     ),
-                    const SizedBox(height: 11),
+                    const SizedBox(height: 10),
                     tappable(
                       Row(
                         children: [
@@ -313,7 +320,7 @@ class RegistrationCard extends StatelessWidget {
                                 Text(
                                   'NASCIMENTO',
                                   style: TextStyle(
-                                    fontSize: 9.5,
+                                    fontSize: 8.5,
                                     fontWeight: FontWeight.w800,
                                     color: context.archivedText,
                                   ),
@@ -323,7 +330,7 @@ class RegistrationCard extends StatelessWidget {
                                       ? '—'
                                       : formatBirthLabel(birthDate),
                                   style: const TextStyle(
-                                    fontSize: 13.5,
+                                    fontSize: 12,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
@@ -338,7 +345,7 @@ class RegistrationCard extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13.5,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w800,
                               ),
                             ),

@@ -107,9 +107,11 @@ class MedalAvatar extends StatelessWidget {
             child: CustomPaint(
               size: Size(radius * 1.15, ribbonHeight),
               painter: _RibbonPainter(
-                // Duas faixas do mesmo tom (uma mais clara), só para dar o volume da fita.
-                left: dark ? const Color(0xFF8B9096) : const Color(0xFF2E3238),
-                right: dark ? const Color(0xFFC4C7CC) : const Color(0xFF6B7078),
+                // Paleta do app (decisao de produto de 21/11/2026): fundo claro, cordao
+                // escuro (navy) + laranja; fundo escuro, cordao branco + laranja, para o
+                // cordao nao sumir contra o fundo.
+                left: dark ? Colors.white : runPassNavy,
+                right: runPassOrange,
               ),
             ),
           ),

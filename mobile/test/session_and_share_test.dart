@@ -192,16 +192,18 @@ void main() {
       expect(find.byType(TextFormField), findsNothing);
     });
 
-    testWidgets('a tela de entrada tem a opcao Manter conectado', (
-      tester,
-    ) async {
-      final gateway = gatewayWith(
-        (uri, method, headers, body) async => const JsonReply(200, {}),
-      );
-      await tester.pumpWidget(MainApp(gateway: gateway));
-      expect(find.byKey(const Key('keep-signed-in')), findsOneWidget);
-      expect(find.text('Manter conectado'), findsOneWidget);
-    });
+    testWidgets(
+      'a tela de entrada nao tem mais a opcao Manter conectado (fica em Configuracoes, ligada por padrao)',
+      (tester) async {
+        final gateway = gatewayWith(
+          (uri, method, headers, body) async => const JsonReply(200, {}),
+        );
+        await tester.pumpWidget(MainApp(gateway: gateway));
+        expect(find.byKey(const Key('keep-signed-in')), findsNothing);
+        expect(find.text('Manter conectado'), findsNothing);
+        expect(find.text('Entre no +1Pódio'), findsNothing);
+      },
+    );
   });
 
   group('compartilhar', () {

@@ -104,3 +104,25 @@ class BiometricPrefs {
     }
   }
 }
+
+/// "Manter conectado": ligado por padrao (decisao de produto de 21/11/2026); quem
+/// desligar em Configuracoes fica desconectado a cada reinicio do app.
+class KeepSignedInPrefs {
+  static const _key = 'keep-signed-in';
+
+  static Future<bool> enabled() async {
+    try {
+      return (await SharedPreferences.getInstance()).getBool(_key) ?? true;
+    } on Object {
+      return true;
+    }
+  }
+
+  static Future<void> setEnabled(bool value) async {
+    try {
+      await (await SharedPreferences.getInstance()).setBool(_key, value);
+    } on Object {
+      // Sem armazenamento: vale ate fechar o app.
+    }
+  }
+}

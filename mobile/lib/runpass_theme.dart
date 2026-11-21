@@ -39,10 +39,6 @@ ThemeData runPassTheme() {
       // pessoa digita (antes flutuava so ao focar, e sumia de volta ao desfocar
       // sem conteudo, o que parecia um bug).
       floatingLabelBehavior: FloatingLabelBehavior.always,
-      // Mais compacto que o padrao do Material (que reserva bastante espaco
-      // vertical pro rotulo flutuante): ajuda as telas do cadastro a caberem
-      // sem rolagem com a ficha de inscricao maior.
-      contentPadding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
@@ -132,7 +128,6 @@ ThemeData runPassDarkTheme() {
       fillColor: surface,
       // Rotulo sempre visivel acima do campo: ver comentario equivalente no tema claro.
       floatingLabelBehavior: FloatingLabelBehavior.always,
-      contentPadding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,

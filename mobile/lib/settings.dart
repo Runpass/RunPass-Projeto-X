@@ -110,7 +110,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     clearMedalCaches();
     await widget.gateway.forgetSession();
     if (mounted) {
-      toSignIn('Exclusão aceita. O acesso à conta foi encerrado.');
+      // autoRestore: false — a conta acabou de ser excluida; sem isso, a tela de
+      // entrada tentava restaurar a sessao de novo (canRestore so verifica se ha
+      // token store configurado, nao se a sessao ainda existe) e mostrava o
+      // indicador de carregamento por cima do aviso, como se o app tivesse
+      // reaberto, escondendo a mensagem de exclusao.
+      toSignIn('Exclusão aceita. O acesso à conta foi encerrado.', false);
     }
   }
 
@@ -149,6 +154,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 12),
         const Card(child: BiometricSwitch()),
+        const SizedBox(height: 12),
+        const Card(child: KeepSignedInSwitch()),
         const SizedBox(height: 12),
         const Card(child: OsAlertsSwitch()),
         const SizedBox(height: 12),
@@ -292,6 +299,42 @@ class _BiometricSwitchState extends State<BiometricSwitch> {
           onChanged: change,
         )
       : const SizedBox.shrink(key: Key('biometric-unavailable'));
+}
+
+/// "Manter conectado": ligado por padrão; desligar aqui tira a entrada automática
+/// (biometria ou sessão guardada) na próxima vez que o app abrir.
+class KeepSignedInSwitch extends StatefulWidget {
+  const KeepSignedInSwitch({super.key});
+
+  @override
+  State<KeepSignedInSwitch> createState() => _KeepSignedInSwitchState();
+}
+
+class _KeepSignedInSwitchState extends State<KeepSignedInSwitch> {
+  bool value = true;
+
+  @override
+  void initState() {
+    super.initState();
+    KeepSignedInPrefs.enabled().then((v) {
+      if (mounted) setState(() => value = v);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    key: const Key('keep-signed-in-switch'),
+    secondary: const Icon(Icons.lock_clock_outlined),
+    title: const Text('Manter conectado'),
+    subtitle: const Text(
+      'Continuar logado ao reabrir o app. Desligado, pede e-mail e senha de novo.',
+    ),
+    value: value,
+    onChanged: (next) async {
+      await KeepSignedInPrefs.setEnabled(next);
+      if (mounted) setState(() => value = next);
+    },
+  );
 }
 
 /// Créditos das fotos de cartão postal das cidades (capa das corridas sem banner autorizado).
