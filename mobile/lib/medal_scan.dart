@@ -333,10 +333,12 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
       try {
         final page = await widget.gateway.request(
           '/editions',
-          query: {'q': query, 'limit': '5'},
+          query: {'q': query, 'limit': '10'},
         );
         for (final item in (page['items'] as List? ?? const [])) {
           final edition = Map<String, dynamic>.from(item as Map);
+          // Medalha e publicação são de corrida que já aconteceu (a de hoje vale).
+          if (raceIsInFuture(edition)) continue;
           if (!matches.any((m) => m['id'] == edition['id'])) {
             matches.add(edition);
           }
@@ -345,6 +347,57 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         // Uma busca que falha não derruba as outras: a pessoa ainda pode procurar à mão.
       }
       if (matches.length >= 8) break;
+    }
+  }
+
+  /// Completa a lista com as corridas que já aconteceram nos últimos [recentPastDays] dias (no estado do
+  /// perfil, quando há), da mais recente para a mais antiga. É uma ajuda: falha não derruba a tela.
+  static const recentPastDays = 60;
+
+  Future<void> loadRecentPast() async {
+    String iso(DateTime d) =>
+        '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    try {
+      final today = DateTime.now();
+      var state = '${navProfileOf(widget.gateway)?['state'] ?? ''}'.trim();
+      if (state.isEmpty) {
+        try {
+          state = '${(await widget.gateway.request('/me'))['state'] ?? ''}'
+              .trim();
+        } on Exception {
+          state = '';
+        }
+      }
+      final recent = <Map<String, dynamic>>[];
+      String? cursor;
+      var pages = 0;
+      do {
+        final page = await widget.gateway.request(
+          '/editions',
+          query: {
+            if (state.isNotEmpty) 'state': state,
+            'dateFrom': iso(
+              today.subtract(const Duration(days: recentPastDays)),
+            ),
+            'dateTo': iso(today),
+            'limit': '100',
+            'cursor': ?cursor,
+          },
+        );
+        for (final item in (page['items'] as List? ?? const [])) {
+          if (item is Map) recent.add(Map<String, dynamic>.from(item));
+        }
+        cursor = page['nextCursor'] as String?;
+      } while (cursor != null && ++pages < 3);
+      recent.sort((a, b) => '${b['date']}'.compareTo('${a['date']}'));
+      for (final edition in recent.take(30)) {
+        if (edition['status'] == 'archived' || raceIsInFuture(edition)) {
+          continue;
+        }
+        if (!matches.any((m) => m['id'] == edition['id'])) matches.add(edition);
+      }
+    } on Exception {
+      // Sem a lista: a busca pelo nome continua valendo.
     }
   }
 
@@ -362,9 +415,14 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         note = 'Não consegui ler o nome da corrida nesta foto.';
       }
       await searchMatches(queries);
+      final found = matches.isNotEmpty;
+      // Depois das que batem com o texto da medalha, as corridas que aconteceram há pouco.
+      await loadRecentPast();
       if (matches.isNotEmpty) await markRegistered();
-      if (queries.isNotEmpty && matches.isEmpty) {
-        note = 'Li o texto da medalha, mas não achei uma corrida com ele.';
+      if (queries.isNotEmpty && !found) {
+        note = matches.isEmpty
+            ? 'Li o texto da medalha, mas não achei uma corrida com ele.'
+            : 'Não achei a corrida pelo texto da medalha. Veja as corridas recentes abaixo ou procure pelo nome.';
       }
     } on MedalReadUnavailable {
       unavailable = true;
@@ -386,6 +444,8 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
           matches.add(Map<String, dynamic>.from(edition));
         }
       }
+      // Depois das minhas, as corridas que aconteceram há pouco (para postar de uma que ainda não cadastrei).
+      await loadRecentPast();
       if (matches.isNotEmpty) await markRegistered();
     } on Exception {
       // Sem a lista: a busca pelo nome continua valendo.
