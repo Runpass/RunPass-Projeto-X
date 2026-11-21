@@ -177,7 +177,9 @@ Future<(String uf, String city, double? lat, double? lon)?> pickBrLocation(
                         style: TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 16,
-                          color: sheetContext.isDark ? Colors.white : runPassNavy,
+                          color: sheetContext.isDark
+                              ? Colors.white
+                              : runPassNavy,
                         ),
                       ),
                     ),
