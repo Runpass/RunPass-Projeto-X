@@ -175,6 +175,10 @@ void main() {
   });
 
   testWidgets('perfil privado fica nas configuracoes', (tester) async {
+    // Tela alta: Configurações ganhou "Enviar feedback" e o fim da lista saía da área visível.
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     final bodies = <Map<String, dynamic>?>[];
     final gateway = await gatewayWith((uri, method, headers, body) async {
       if (method == 'PATCH') {

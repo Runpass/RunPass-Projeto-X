@@ -19,6 +19,7 @@ from .models import (
     CreateComment,
     CreateEditionComment,
     CreateExtraPost,
+    CreateFeedback,
     CreateParticipation,
     CreateProfile,
     EditComment,
@@ -731,6 +732,12 @@ def create_app(
         id: str, body: CreateEditionComment, actor: Actor, idempotency_key: IdempotencyKey
     ):
         return friends().edition_comment(actor, id, idempotency_key, body.text)
+
+    @app.post("/feedback", status_code=201, operation_id="sendFeedback")
+    def send_feedback(body: CreateFeedback, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().send_feedback(
+            actor, idempotency_key, body.kind, body.text, body.appVersion
+        )
 
     @app.delete("/edition-comments/{id}", operation_id="deleteEditionComment")
     def delete_edition_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):

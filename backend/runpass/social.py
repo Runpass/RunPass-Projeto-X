@@ -1470,6 +1470,53 @@ class SocialService:
 
     # ---- comentarios na corrida (qualquer pessoa admitida comenta; independe de participacao) ---------------
 
+    # ---- feedback sobre o app ---------------------------------------------------------------
+    FEEDBACK_QUEUE = "FEEDBACK#ALL"
+    FEEDBACK_PER_DAY = 10
+
+    def send_feedback(self, actor, key, kind, text, app_version=None):
+        """Guarda um feedback sobre o app. So a equipe le (fila unica, mais recentes por ultimo na chave).
+        A linha da fila entra em `sharedKeys` na particao da pessoa, para o apagamento da conta leva-la junto."""
+        text = text.strip()
+        if not text or len(text) > 2000:
+            raise Problem(422, "INVALID_FEEDBACK")
+        self.identity.authorize(actor, admitted=True)
+        pk = "USER#" + actor.subject
+
+        def work(read, write, account, now, replay):
+            if replay is not None:
+                return {"id": replay["id"], "received": True}, replay
+            created = stamp(now)
+            today = [sk for sk, _ in self._list("identity", pk, "FEEDBACKREF#" + created[:10])]
+            if len(today) >= self.FEEDBACK_PER_DAY:
+                raise Problem(429, "FEEDBACK_LIMIT_REACHED")
+            feedback_id = str(uuid4())
+            row_key = ("history", self.FEEDBACK_QUEUE, f"F#{created}#{feedback_id}")
+            row = {
+                "id": feedback_id,
+                "author": actor.subject,
+                "kind": kind,
+                "text": text,
+                "createdAt": created,
+            }
+            if app_version:
+                row["appVersion"] = app_version
+            write(row_key, row)
+            write(
+                ("identity", pk, f"FEEDBACKREF#{created}#{feedback_id}"),
+                {"sharedKeys": [list(row_key)]},
+            )
+            return {"id": feedback_id, "received": True}, {"id": feedback_id}
+
+        return self.identity.transact(
+            actor,
+            "sendFeedback",
+            key,
+            {"kind": kind, "text": text, "appVersion": app_version},
+            work,
+            admitted=True,
+        )
+
     EDITION_COMMENT_MAX = 1000
     EDITION_COMMENTS_PER_PERSON = 10  # por corrida
     EDITION_COMMENT_SCAN = 500
@@ -1614,6 +1661,32 @@ def list_edition_comments_for_team(store, edition_id, limit=100):
     return [
         {k: r[k] for k in ("id", "editionId", "author", "text", "createdAt")} for r in rows[:limit]
     ]
+
+
+def list_feedback_for_team(store, limit=100):
+    """Feedbacks sobre o app para a equipe ler, do mais novo para o mais antigo, com quem enviou."""
+    rows, after = [], None
+    while len(rows) < 1000:
+        page, after = store.query(
+            "history", SocialService.FEEDBACK_QUEUE, prefix="F#", after=after, limit=100
+        )
+        rows.extend(r for _, r in page)
+        if after is None:
+            break
+    rows.sort(key=lambda r: (r["createdAt"], r["id"]), reverse=True)
+    items = []
+    for row in rows[:limit]:
+        profile = store.get(("identity", "USER#" + row["author"], "PROFILE")) or {}
+        items.append(
+            {
+                **{
+                    k: row[k] for k in ("id", "kind", "text", "createdAt", "appVersion") if k in row
+                },
+                "authorName": profile.get("displayName") or "Corredor RunPass",
+                "authorUsername": profile.get("username"),
+            }
+        )
+    return items
 
 
 __all__ = ["SocialService", "Unavailable"]
