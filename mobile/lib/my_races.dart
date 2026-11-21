@@ -3749,6 +3749,8 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
                   radius: 46,
                   gateway: widget.gateway,
                   profile: profile,
+                  // Sobre o banner fica só o círculo dourado: o cordão cobria a imagem do banner.
+                  ribbon: false,
                 ),
               ),
               Positioned(
