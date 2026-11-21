@@ -908,6 +908,19 @@ class AdminApiTests(unittest.TestCase):
         self.assertIn("Corrida Pia Sintética", aviso["text"])
         self.assertIn("Minhas solicitações", aviso["text"])
 
+    def test_equipe_le_os_feedbacks_do_app(self):
+        person = self.pessoa("fee")
+        SocialService(self.identity).send_feedback(person, "kf1", "problem", "A foto não abriu")
+        r = self.client.get("/admin/feedback", headers=self.auth())
+        self.assertEqual(r.status_code, 200, r.text)
+        items = r.json()["items"]
+        self.assertEqual([(i["kind"], i["text"]) for i in items], [("problem", "A foto não abriu")])
+        self.assertIn("authorName", items[0])
+        # sem permissao de catalogo: recusado
+        self.assertEqual(
+            self.client.get("/admin/feedback", headers=self.auth(token("mod"))).status_code, 403
+        )
+
     def test_equipe_ve_e_remove_comentario_da_corrida_com_auditoria(self):
         person = self.pessoa("tom")
         head = ("catalog", "EDITION#synthetic-sp-2026", "HEAD")

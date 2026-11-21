@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, quandoMensal, listaDiasMes, montarAprovacao, montarRenomear, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, quandoMensal, listaDiasMes, montarAprovacao, montarRenomear, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros, resumoFeedbacks, TIPOS_FEEDBACK,
   resumoPedido, segundosAteExpirar, statusCadastro, montarBannerArquivo, dimensoesEnvio, resumoImporte,
 } from './lib.js';
 
@@ -66,6 +66,7 @@ function sair(motivo) {
   etapa('senha');
   $('segredo').textContent = '';
   $('cadastros').replaceChildren();
+  $('feedbacks').replaceChildren();
   $('custos').replaceChildren();
   $('operadores').replaceChildren();
   $('banners-candidatas').replaceChildren();
@@ -1359,6 +1360,7 @@ function mostrarAba(nome) {
   if (nome === 'catalogo') carregarUltimoDisparo();
   if (nome === 'descobertas') carregarDescobertas();
   if (nome === 'cadastros') carregarCadastros();
+  if (nome === 'feedbacks') carregarFeedbacks();
   if (nome === 'qualidade') carregarQualidade();
   if (nome === 'custos') carregarCustos();
   if (nome === 'banners') carregarBanners();
@@ -1380,6 +1382,44 @@ async function carregarCadastros() {
             el('tbody', {}, r.items.map((u) => el('tr', {}, el('td', {}, u.id), el('td', {}, u.username ? '@' + u.username : '—'), el('td', {}, u.email), el('td', {}, statusCadastro(u.status) + (u.enabled ? '' : ' (desativado)')), el('td', {}, (u.createdAt || '').slice(0, 10).split('-').reverse().join('/'))))),
           )
         : el('p', { class: 'vazio' }, 'Nenhum cadastro ainda.'),
+    );
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+/** Feedbacks enviados pelo app: tipo, quando, quem e o texto inteiro (sem cortar: é para ler). */
+async function carregarFeedbacks() {
+  const alvo = $('feedbacks');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/feedback?limit=200');
+    $('resumo-feedbacks').textContent = resumoFeedbacks(r.items);
+    alvo.replaceChildren(
+      r.items.length
+        ? el(
+            'table',
+            { class: 'tabela' },
+            el('thead', {}, el('tr', {}, el('th', {}, 'Quando'), el('th', {}, 'Tipo'), el('th', {}, 'Quem'), el('th', {}, 'Mensagem'))),
+            el(
+              'tbody',
+              {},
+              r.items.map((f) =>
+                el(
+                  'tr',
+                  {},
+                  el('td', {}, dataHoraBr(f.createdAt)),
+                  el('td', {}, TIPOS_FEEDBACK[f.kind] || f.kind),
+                  el('td', {}, f.authorName + (f.authorUsername ? ` (@${f.authorUsername})` : '')),
+                  el('td', { style: 'white-space: pre-wrap' }, f.text),
+                ),
+              ),
+            ),
+          )
+        : el('p', { class: 'vazio' }, 'Nenhum feedback recebido ainda.'),
     );
   } catch (erro) {
     if (token) {
@@ -1958,6 +1998,7 @@ $('pref-padrao').addEventListener('click', () => {
 });
 $('atualizar').addEventListener('click', carregarPedidos);
 $('atualizar-cadastros').addEventListener('click', carregarCadastros);
+$('atualizar-feedbacks').addEventListener('click', carregarFeedbacks);
 $('atualizar-banners').addEventListener('click', carregarBanners);
 $('atualizar-operadores').addEventListener('click', carregarOperadores);
 $('atualizar-custos').addEventListener('click', carregarCustos);

@@ -424,11 +424,28 @@ export const ABAS = {
   catalogo: ['Atualizar catálogo', 'catalog_admin'],
   descobertas: ['Provas descobertas', 'catalog_admin'],
   cadastros: ['Cadastros no app', 'user_admin'],
+  feedbacks: ['Feedbacks do app', 'catalog_admin'],
   banners: ['Banners', 'catalog_admin'],
   qualidade: ['Qualidade da busca', 'catalog_admin'],
   custos: ['Custos', 'cost_read'],
   operadores: ['Operadores', 'user_admin'],
 };
+
+/** Tipo do feedback enviado pelo app (Configurações > Enviar feedback). */
+export const TIPOS_FEEDBACK = { suggestion: 'Sugestão', problem: 'Problema', praise: 'Elogio' };
+
+/** "3 feedbacks: 1 sugestão, 2 problemas" para o topo da lista. */
+export function resumoFeedbacks(itens) {
+  const total = itens.length;
+  if (!total) return 'Nenhum feedback recebido ainda.';
+  const conta = (tipo) => itens.filter((i) => i.kind === tipo).length;
+  const partes = [
+    [conta('suggestion'), 'sugestão', 'sugestões'],
+    [conta('problem'), 'problema', 'problemas'],
+    [conta('praise'), 'elogio', 'elogios'],
+  ].filter(([n]) => n > 0).map(([n, um, varios]) => `${n} ${n === 1 ? um : varios}`);
+  return `${total} ${total === 1 ? 'feedback' : 'feedbacks'}: ${partes.join(', ')}.`;
+}
 
 export const TEMAS = { auto: 'Automático (segue o sistema)', claro: 'Claro', escuro: 'Escuro' };
 
