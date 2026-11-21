@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'bib_card.dart';
 import 'catalog_screen.dart';
 import 'agenda.dart' show AgendaScreen;
 import 'city_photos.dart';
@@ -618,6 +619,7 @@ const _editionCacheTtl = Duration(minutes: 10);
 /// Filtro e ordem escolhidos na prateleira; sobrevivem a troca de aba (a tela e recriada).
 MedalGrouping _lastMedalGrouping = MedalGrouping.all;
 bool _lastMedalNewestFirst = true;
+bool _lastMedalFramesView = false;
 
 /// Zera o que a prateleira guarda entre telas. Usado ao sair da conta e nos testes.
 void clearMedalCaches() {
@@ -625,6 +627,7 @@ void clearMedalCaches() {
   _photoLinks.clear();
   _lastMedalGrouping = MedalGrouping.all;
   _lastMedalNewestFirst = true;
+  _lastMedalFramesView = false;
 }
 
 /// Edition details by id. Chamadas em no maximo 4 por vez, com ate 3 tentativas nas falhas passageiras.
@@ -1778,6 +1781,9 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late bool showEarned = widget.justEarned != null;
   MedalGrouping grouping = _lastMedalGrouping;
   bool newestFirst = _lastMedalNewestFirst;
+
+  /// Segunda visão de Medalhas: os quadros (medalha + número de peito) das corridas com número informado.
+  bool framesView = _lastMedalFramesView;
   bool _applying = false;
 
   /// Aviso da conquista, no alto da prateleira, logo depois de concluir uma corrida.
@@ -2811,6 +2817,49 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ),
   );
 
+  /// Quadros: uma moldura por corrida que tem número de peito, com a medalha de um lado e o cartão do número
+  /// (distância, nome, número e colocação) do outro. Segue a ordem escolhida (mais recentes ou mais antigas).
+  List<Widget> frames(List<RaceRecord> data) {
+    final ordered = newestFirst ? data : data.reversed.toList();
+    final items = [
+      for (final race in ordered)
+        if (BibCard.of(race) case final card?) (race, card),
+    ];
+    if (items.isEmpty) {
+      return [
+        Padding(
+          key: const Key('medal-frames-empty'),
+          padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 12),
+          child: Text(
+            'Os quadros aparecem para as corridas com número de peito. Abra uma medalha, toque em '
+            '"Alterar dados da corrida e avaliação" e informe o número de peito (e a colocação, se quiser).',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: context.muted),
+          ),
+        ),
+      ];
+    }
+    return [
+      for (final (race, card) in items)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
+          child: InkWell(
+            key: Key('medal-frame-${race.participation['id']}'),
+            onTap: () async {
+              await openMedal(context, widget.gateway, race);
+              _reloadShelf();
+            },
+            child: MedalBibFrame(
+              gateway: widget.gateway,
+              race: race,
+              card: card,
+              revision: shelfRevision,
+            ),
+          ),
+        ),
+    ];
+  }
+
   Widget chip(String label, MedalGrouping value) => Padding(
     padding: const EdgeInsets.only(right: 8),
     child: ChoiceChip(
@@ -2850,6 +2899,30 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               key: const Key('medals-list'),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
               children: [
+                // Segundo menu: a prateleira de medalhas ou os quadros com o número de peito.
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: SegmentedButton<bool>(
+                    key: const Key('medals-view'),
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(
+                        value: false,
+                        icon: Icon(Icons.workspace_premium_outlined),
+                        label: Text('Medalhas'),
+                      ),
+                      ButtonSegment(
+                        value: true,
+                        icon: Icon(Icons.confirmation_number_outlined),
+                        label: Text('Quadros'),
+                      ),
+                    ],
+                    selected: {framesView},
+                    onSelectionChanged: (value) => setState(
+                      () => framesView = _lastMedalFramesView = value.first,
+                    ),
+                  ),
+                ),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -2982,7 +3055,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                shelf(data),
+                if (framesView) ...frames(data) else shelf(data),
               ],
             );
           },
