@@ -745,17 +745,29 @@ class ParticipationService:
         if not missing:
             return
 
-        def work(read, write, account, now, replay):
-            for edition_id in missing:
-                current = read(("history", "USER#" + subject, "PLAN#" + edition_id))
-                if current and current.get("status") == "registered":
-                    _sync_plan_pointer(
-                        read, write, "USER#" + subject, subject, edition_id, True, now
-                    )
-            return None, {}
+        def work_for(batch):
+            def work(read, write, account, now, replay):
+                for edition_id in batch:
+                    current = read(("history", "USER#" + subject, "PLAN#" + edition_id))
+                    if current and current.get("status") == "registered":
+                        _sync_plan_pointer(
+                            read, write, "USER#" + subject, subject, edition_id, True, now
+                        )
+                return None, {}
 
+            return work
+
+        # Em lotes de 20: cada plano le 3 itens e a transacao do DynamoDB aceita ate 100.
         try:
-            self.identity.transact(actor, "repairPlanIndex", None, {}, work, admitted=True)
+            for start in range(0, len(missing), 20):
+                self.identity.transact(
+                    actor,
+                    "repairPlanIndex",
+                    None,
+                    {},
+                    work_for(missing[start : start + 20]),
+                    admitted=True,
+                )
         except Exception:  # noqa: BLE001 - reparo e opcional: a agenda abre mesmo assim
             return
 
@@ -1259,11 +1271,10 @@ class ParticipationService:
             item["version"] += 1
             item["updatedAt"] = stamp(now)
             write(part_key, item)
-            if item["state"] == "completed" and catalog_changed:
-                review_key = ("history", pk, "P#" + participation_id + "#REVIEW")
-                review = read(review_key)
-                if not review:
-                    raise Problem(503, "PARTICIPATION_INTEGRITY_FAILURE")
+            review_key = ("history", pk, "P#" + participation_id + "#REVIEW")
+            # Avaliacao e opcional: concluida sem avaliacao nao tem nota para transferir, so muda a distancia.
+            review = read(review_key) if item["state"] == "completed" and catalog_changed else None
+            if review:
                 updated_review = {
                     **review,
                     "editionId": edition_id,

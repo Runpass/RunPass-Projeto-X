@@ -2510,7 +2510,8 @@ class _EditionScreenState extends State<EditionScreen> {
         query: {'state': 'draft', 'limit': '100'},
       );
       for (final item in (page['items'] as List? ?? const [])) {
-        if ((item as Map)['editionId'] == widget.editionId) {
+        if ((item as Map)['editionId'] == widget.editionId &&
+            !pendingDeletions.contains(item['id'])) {
           existing = Map<String, dynamic>.from(item);
           break;
         }
@@ -3946,7 +3947,14 @@ Future<void> openRaceRegistration(
     } on IdentityIssue catch (issue) {
       if (issue.code != 'PARTICIPATION_EXISTS') rethrow;
       final mine = (await loadMyEditions(gateway))[id];
-      if (mine != null) await openMine(mine);
+      if (mine != null) {
+        await openMine(mine);
+      } else {
+        // O registro existe mas não aparece: é um rascunho na janela do "Desfazer" da exclusão.
+        say(
+          'O rascunho desta corrida ainda está sendo excluído. Aguarde alguns segundos e tente de novo.',
+        );
+      }
       return;
     }
     await navigator.push(
@@ -4048,9 +4056,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
 
   /// Fotos a mais da publicação (até 4 além da capa, até 5 no total), na ordem do carrossel.
   late List<String> morePostRefs = [
-    for (final r
-        in (widget.initial['morePostImageReferences'] as List? ?? const []))
-      if (r is String) r,
+    // Postar foto (publicação nova): começa só com as fotos escolhidas agora, sem herdar as da publicação
+    // que a corrida já tem.
+    if (widget.initialPostPhotos == null)
+      for (final r
+          in (widget.initial['morePostImageReferences'] as List? ?? const []))
+        if (r is String) r,
   ];
 
   /// Bytes das fotos a mais escolhidas nesta tela (para a miniatura); nulo nas que já estavam publicadas.
@@ -4246,6 +4257,14 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     declaredCompleted = saved['declaredCompleted'] == true;
     publishToFeed = saved['publishToFeed'] == true;
     postImageReference = saved['postImageReference'] as String?;
+    final savedMore = saved['morePostImageReferences'];
+    if (savedMore is List && postImageReference != null) {
+      morePostRefs = [
+        for (final r in savedMore)
+          if (r is String) r,
+      ];
+      morePostBytes = List.filled(morePostRefs.length, null, growable: true);
+    }
     postText.text = saved['postText'] as String? ?? '';
     comment.text = saved['comment'] as String? ?? '';
     final savedRatings = saved['ratings'];
@@ -4271,6 +4290,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     'declaredCompleted': declaredCompleted,
     'publishToFeed': publishToFeed,
     'postImageReference': postImageReference,
+    'morePostImageReferences': morePostRefs,
     'postText': postText.text,
     'comment': comment.text,
     'ratings': Map<String, int>.from(ratings),
@@ -4532,6 +4552,21 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
       return false;
     } finally {
       if (mounted) setState(() => saving = false);
+    }
+  }
+
+  /// Voltou de outra tela de edição aberta por cima desta: ela pode ter salvo (a versão muda a cada
+  /// gravação). Relê a participação para o próximo salvar daqui não dar "alterado em outro lugar".
+  Future<void> refreshDraft() async {
+    final id = draft['id'];
+    if (id is! String) return;
+    try {
+      final fresh = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}',
+      );
+      if (mounted) setState(() => draft = {...draft, ...fresh});
+    } on Exception {
+      // Sem a leitura, segue com o que tinha; o salvar avisa se a versão mudou.
     }
   }
 
@@ -4925,6 +4960,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         ),
       ),
     );
+    await refreshDraft();
   }
 
   /// Baixa a foto da medalha já enviada (participação concluída), para usá-la como foto do post.
@@ -5725,6 +5761,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                       ),
                     ),
                   );
+                  await refreshDraft();
                 },
           icon: const Icon(Icons.edit_note_rounded),
           label: const Text('Alterar dados da corrida e avaliação'),
@@ -5869,14 +5906,17 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
                 key: const Key('change-medal'),
                 onPressed: saving || uploadingPost
                     ? null
-                    : () => Navigator.of(context).push<void>(
-                        MaterialPageRoute<void>(
-                          builder: (_) => ParticipationDraftScreen(
-                            gateway: widget.gateway,
-                            initial: Map<String, dynamic>.from(draft),
+                    : () async {
+                        await Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => ParticipationDraftScreen(
+                              gateway: widget.gateway,
+                              initial: Map<String, dynamic>.from(draft),
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                        await refreshDraft();
+                      },
                 icon: const Icon(Icons.workspace_premium_outlined),
                 label: const Text('Alterar medalha'),
               ),

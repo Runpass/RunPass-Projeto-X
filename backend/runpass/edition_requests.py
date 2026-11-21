@@ -229,9 +229,11 @@ class EditionRequestService:
             "name": edition["name"],
             "date": edition["date"],
             "city": edition["city"],
-            "distanceKm": max(d["kilometers"] for d in edition["distances"]),
             "imageReference": image_reference,
         }
+        # Corrida sem distancia cadastrada: a sugestao segue sem o km (antes dava erro 500).
+        if edition["distances"]:
+            details["distanceKm"] = max(d["kilometers"] for d in edition["distances"])
         if edition.get("state"):
             details["state"] = edition["state"]
 
@@ -655,7 +657,10 @@ class EditionRequestReview:
             if not found:
                 continue
             decision = ReviewRequestDecision(
-                expectedVersion=item["version"], decision="link", editionId=found[0]["id"]
+                # int(): o DynamoDB devolve numero como Decimal e o modelo estrito recusa.
+                expectedVersion=int(item["version"]),
+                decision="link",
+                editionId=found[0]["id"],
             )
             try:
                 self.decide(actor, item["id"], decision)

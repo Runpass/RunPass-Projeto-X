@@ -289,6 +289,13 @@ class _RibbonPainter extends CustomPainter {
   bool shouldRepaint(_RibbonPainter oldDelegate) => false;
 }
 
+/// Últimas sugestões de pessoas de cada sessão: reabrir a busca mostra na hora e atualiza por trás.
+final _suggestionCache = Expando<List<Map<String, dynamic>>>();
+
+/// Saiu da conta: as sugestões de quem saiu não aparecem para a próxima pessoa.
+void forgetFriendSuggestions(IdentityGateway gateway) =>
+    _suggestionCache[gateway] = null;
+
 /// Procurar pessoas por nome ou usuário, para seguir.
 class FriendSearchScreen extends StatefulWidget {
   final IdentityGateway gateway;
@@ -310,9 +317,6 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
   // Busca enquanto digita: espera uma pausa curta e descarta respostas de buscas antigas.
   Timer? typing;
   int searchSeq = 0;
-
-  /// Últimas sugestões de cada sessão: reabrir a tela mostra na hora e atualiza por trás.
-  static final _suggestionCache = Expando<List<Map<String, dynamic>>>();
 
   @override
   void initState() {
@@ -945,10 +949,27 @@ class _RelationListScreenState extends State<RelationListScreen> {
   String? error;
   bool loadingMore = false;
 
+  /// A página seguinte falhou: para de pedir sozinho e oferece "Tentar de novo".
+  bool moreFailed = false;
+
   @override
   void initState() {
     super.initState();
     load();
+  }
+
+  /// Falha numa ação da linha (seguir, adicionar): a lista já está na tela, então o aviso vai embaixo.
+  void say(Object issue) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          friendsError(
+            issue is IdentityIssue ? issue : const IdentityIssue(''),
+          ),
+        ),
+      ),
+    );
   }
 
   String get _path => switch (widget.kind) {
@@ -960,7 +981,10 @@ class _RelationListScreenState extends State<RelationListScreen> {
   Future<void> load({bool more = false}) async {
     if (more) {
       if (loadingMore || nextCursor == null) return;
-      setState(() => loadingMore = true);
+      setState(() {
+        loadingMore = true;
+        moreFailed = false;
+      });
     }
     try {
       final page = await widget.gateway.request(
@@ -975,10 +999,19 @@ class _RelationListScreenState extends State<RelationListScreen> {
         error = null;
       });
     } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
+      if (mounted) {
+        setState(() {
+          error = friendsError(issue);
+          moreFailed = more;
+        });
+      }
     } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+      if (mounted) {
+        setState(() {
+          error = friendsError(const IdentityIssue(''));
+          moreFailed = more;
+        });
+      }
     } finally {
       if (more && mounted) setState(() => loadingMore = false);
     }
@@ -992,11 +1025,8 @@ class _RelationListScreenState extends State<RelationListScreen> {
         method: state == 'none' ? 'PUT' : 'DELETE',
       );
       if (mounted) setState(() => item['followState'] = result['state']);
-    } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
-    } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+    } on Exception catch (issue) {
+      say(issue);
     }
   }
 
@@ -1015,11 +1045,8 @@ class _RelationListScreenState extends State<RelationListScreen> {
               method: state == 'none' ? 'PUT' : 'DELETE',
             );
       if (mounted) setState(() => item['friendState'] = result['state']);
-    } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
-    } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+    } on Exception catch (issue) {
+      say(issue);
     }
   }
 
@@ -1088,6 +1115,22 @@ class _RelationListScreenState extends State<RelationListScreen> {
             padding: const EdgeInsets.all(12),
             itemCount: items!.length + (nextCursor != null ? 1 : 0),
             itemBuilder: (context, index) {
+              if (index == items!.length && moreFailed) {
+                return Padding(
+                  key: const Key('relation-more-failed'),
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      const Text('Não foi possível carregar mais agora.'),
+                      TextButton(
+                        key: const Key('relation-more-retry'),
+                        onPressed: () => load(more: true),
+                        child: const Text('Tentar de novo'),
+                      ),
+                    ],
+                  ),
+                );
+              }
               if (index == items!.length) {
                 // Nao chamar load() direto aqui: itemBuilder roda durante o layout, e setState
                 // nessa hora quebra o Flutter. Agenda para depois do frame atual.
@@ -1158,9 +1201,19 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen> {
         '/me/friend-requests/${Uri.encodeComponent(id)}',
         method: approve ? 'PUT' : 'DELETE',
       );
-    } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+    } on Exception catch (issue) {
+      // O aviso vai embaixo: a recarga da lista limpa o erro da tela.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              friendsError(
+                issue is IdentityIssue ? issue : const IdentityIssue(''),
+              ),
+            ),
+          ),
+        );
+      }
     }
     await load();
   }
@@ -1260,12 +1313,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
   @override
   void dispose() {
     mentionTimer?.cancel();
-    // Quem sai da tela com uma exclusao pendente: ela vale (nao fica meio apagada).
-    for (final id in pendingDeletes.toList()) {
-      widget.gateway
-          .request('/comments/${Uri.encodeComponent(id)}', method: 'DELETE')
-          .then<void>((_) {}, onError: (_) {});
-    }
+    // Exclusão em espera ao sair da tela: o aviso com "Desfazer" continua valendo e `remove` termina
+    // sozinho quando ele fecha (antes apagava aqui, e o "Desfazer" do aviso já não desfazia nada).
     text.dispose();
     input.dispose();
     super.dispose();
@@ -1284,10 +1333,22 @@ class _CommentsScreenState extends State<CommentsScreen> {
 
   Future<void> load() async {
     try {
-      final page = await widget.gateway.request(path, query: {'limit': '50'});
+      // Todas as páginas (até 500): com só a primeira, o comentário novo de um post com 50 ou mais não
+      // aparecia e parecia que o envio tinha falhado.
+      final all = <Map<String, dynamic>>[];
+      String? cursor;
+      var pages = 0;
+      do {
+        final page = await widget.gateway.request(
+          path,
+          query: {'limit': '50', 'cursor': ?cursor},
+        );
+        all.addAll((page['items'] as List).cast<Map<String, dynamic>>());
+        cursor = page['nextCursor'] as String?;
+      } while (cursor != null && ++pages < 10);
       if (mounted) {
         setState(() {
-          comments = (page['items'] as List).cast<Map<String, dynamic>>();
+          comments = all;
           error = null;
         });
       }
@@ -1412,6 +1473,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
   Future<void> remove(String id) async {
     setState(() => pendingDeletes.add(id));
     final messenger = ScaffoldMessenger.of(context);
+    final gateway = widget.gateway; // a tela pode fechar antes de o aviso sumir
     messenger.hideCurrentSnackBar();
     final reason = await messenger
         .showSnackBar(
@@ -1434,7 +1496,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
       return;
     }
     try {
-      await widget.gateway.request(
+      await gateway.request(
         '/comments/${Uri.encodeComponent(id)}',
         method: 'DELETE',
       );

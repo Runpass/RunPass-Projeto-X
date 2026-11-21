@@ -514,12 +514,16 @@ class PlanRow extends StatelessWidget {
 
   /// Controle do canto direito (ex.: o coração que tira a corrida de "Quero correr").
   final Widget? trailing;
+
+  /// Linha a mais em destaque (ex.: o motivo da indicação em "Pra você").
+  final String? note;
   const PlanRow({
     super.key,
     required this.gateway,
     required this.edition,
     this.onTap,
     this.trailing,
+    this.note,
   });
 
   @override
@@ -555,7 +559,7 @@ class PlanRow extends StatelessWidget {
         onTap: onTap,
         child: SizedBox(
           // Cabe nome em duas linhas, a data e o local (antes, com 92, o texto estourava uns 6 px).
-          height: 104,
+          height: note == null ? 104 : 124,
           child: Row(
             children: [
               SizedBox(
@@ -583,6 +587,20 @@ class PlanRow extends StatelessWidget {
                       if (date != null)
                         line(Icons.event_outlined, longDate(date)),
                       if (place.isNotEmpty) line(Icons.place_outlined, place),
+                      if (note != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            note!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: runPassOrange,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),

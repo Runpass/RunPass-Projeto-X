@@ -471,14 +471,30 @@ class _PostCardState extends State<PostCard> {
 
   Future<void> editMine() async {
     if (entry.extra) return editExtra();
-    await Navigator.of(context).push(
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    // O feed traz só a parte pública da participação. O editor precisa dela inteira (número de peito, texto,
+    // "exibir tempo", fotos a mais): abrir com a parte pública faria o salvar apagar o que faltava.
+    final Map<String, dynamic> full;
+    try {
+      full = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent('${entry.race.participation['id']}')}',
+      );
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível abrir a publicação agora. Tente de novo.',
+          ),
+        ),
+      );
+      return;
+    }
+    await navigator.push(
       MaterialPageRoute<void>(
         builder: (_) => ParticipationDraftScreen(
           gateway: widget.gateway,
-          initial: {
-            ...entry.race.participation,
-            'taggedProfiles': entry.tagged,
-          },
+          initial: {...full, 'taggedProfiles': entry.tagged},
           fromPost: true,
         ),
       ),

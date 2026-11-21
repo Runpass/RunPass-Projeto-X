@@ -533,6 +533,9 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                 : ParticipationDraftScreen(
                     gateway: widget.gateway,
                     initial: existing,
+                    // A foto da medalha tirada agora segue para o rascunho que já existia.
+                    initialPhoto: existing['state'] == 'draft' ? photo : null,
+                    photoSelector: widget.draftPhotoSelector,
                   ),
           ),
         );
