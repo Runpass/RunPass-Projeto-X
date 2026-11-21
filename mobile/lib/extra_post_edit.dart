@@ -185,6 +185,9 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
   List<int>? coverBytes;
   int coverRevision = 0;
   bool loading = true, busy = false, refsKnown = true;
+
+  /// Não deu para ler a publicação: o editor fica fechado (gravar sem as fotos atuais apagaria as fotos).
+  bool failed = false;
   int count = 1;
   String? message;
 
@@ -203,6 +206,13 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
   }
 
   Future<void> load() async {
+    if (failed && mounted) {
+      setState(() {
+        failed = false;
+        loading = true;
+        message = null;
+      });
+    }
     try {
       final post = await widget.gateway.request(base);
       final refs = [
@@ -224,6 +234,7 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
         version = (post['version'] as num).toInt();
       }
     } on Exception {
+      failed = true;
       message = 'Não foi possível abrir a publicação agora.';
     } finally {
       if (mounted) setState(() => loading = false);
@@ -376,6 +387,28 @@ class _ExtraPostEditScreenState extends State<ExtraPostEditScreen> {
     appBar: AppBar(title: const Text('Editar publicação')),
     body: loading
         ? const Center(child: CircularProgressIndicator())
+        : failed
+        ? Center(
+            key: const Key('extra-post-load-failed'),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Não foi possível abrir a publicação agora. Verifique a internet e tente de novo.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    key: const Key('extra-post-retry'),
+                    onPressed: load,
+                    child: const Text('Tentar de novo'),
+                  ),
+                ],
+              ),
+            ),
+          )
         : ListView(
             padding: const EdgeInsets.all(20),
             children: [

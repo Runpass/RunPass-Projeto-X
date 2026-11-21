@@ -5,7 +5,7 @@ import 'catalog_filters.dart' show raceCoordinate;
 import 'catalog_screen.dart'
     show CatalogScreen, EditionScreen, distanceLabel, loadMyEditions;
 import 'city_photos.dart' show chooseDistinctCovers;
-import 'edition_cards.dart' show EditionCompactCard;
+import 'edition_cards.dart' show EditionCompactCard, PlanRow;
 import 'home_screen.dart' show haversineKm;
 import 'identity_gateway.dart';
 import 'my_races.dart' show loadMyRaces;
@@ -134,11 +134,12 @@ double? preferredDistanceKm(Iterable<double> ran) {
 }
 
 /// Busca as candidatas (estado do perfil, próximos [recommendationDays] dias) e ordena para a pessoa.
-/// Qualquer falha devolve lista vazia: é uma ajuda, nunca derruba o Início.
+/// Falha ao ler o perfil ou as corridas sobe como exceção: a tela avisa e deixa tentar de novo (lista
+/// vazia quer dizer só "nada a indicar").
 Future<List<Recommendation>> loadRecommendations(
   IdentityGateway gateway,
 ) async {
-  try {
+  {
     final me = await gateway.request('/me');
     final state = '${me['state'] ?? ''}'.trim();
     final city = '${me['city'] ?? ''}'.trim();
@@ -146,21 +147,28 @@ Future<List<Recommendation>> loadRecommendations(
     final lat = (me['latitude'] as num?)?.toDouble() ?? center?.lat;
     final lon = (me['longitude'] as num?)?.toDouble() ?? center?.lon;
     final today = DateTime.now();
-    final page = await gateway.request(
-      '/editions',
-      query: {
-        if (state.isNotEmpty) 'state': state,
-        'dateFrom': _iso(
-          today.add(const Duration(days: recommendationMinDays)),
-        ),
-        'dateTo': _iso(today.add(const Duration(days: recommendationDays))),
-        'limit': '100',
-      },
-    );
-    final candidates = [
-      for (final item in (page['items'] as List? ?? const []))
-        if (item is Map) Map<String, dynamic>.from(item),
-    ];
+    // Até 300 corridas do período (3 páginas): com o estado inteiro, 100 deixavam de fora as mais adiante.
+    final candidates = <Map<String, dynamic>>[];
+    String? cursor;
+    var pages = 0;
+    do {
+      final page = await gateway.request(
+        '/editions',
+        query: {
+          if (state.isNotEmpty) 'state': state,
+          'dateFrom': _iso(
+            today.add(const Duration(days: recommendationMinDays)),
+          ),
+          'dateTo': _iso(today.add(const Duration(days: recommendationDays))),
+          'limit': '100',
+          'cursor': ?cursor,
+        },
+      );
+      for (final item in (page['items'] as List? ?? const [])) {
+        if (item is Map) candidates.add(Map<String, dynamic>.from(item));
+      }
+      cursor = page['nextCursor'] as String?;
+    } while (cursor != null && ++pages < 3);
     final mine = await loadMyEditions(gateway);
     final exclude = {...mine.keys};
     try {
@@ -184,8 +192,6 @@ Future<List<Recommendation>> loadRecommendations(
       preferredKm: preferredDistanceKm(ran),
       exclude: exclude,
     );
-  } on Exception {
-    return const [];
   }
 }
 
@@ -318,6 +324,27 @@ class _RecommendedRacesListState extends State<RecommendedRacesList> {
           child: Center(child: CircularProgressIndicator()),
         );
       }
+      if (snapshot.hasError) {
+        return Padding(
+          key: const Key('recommended-failed'),
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: Column(
+            children: [
+              const Text(
+                'Não foi possível buscar as indicações agora. Verifique a internet e tente de novo.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                key: const Key('recommended-retry'),
+                onPressed: () =>
+                    setState(() => items = widget.loader(widget.gateway)),
+                child: const Text('Tentar de novo'),
+              ),
+            ],
+          ),
+        );
+      }
       final list = snapshot.data ?? const <Recommendation>[];
       if (list.isEmpty) {
         return Padding(
@@ -345,12 +372,13 @@ class _RecommendedRacesListState extends State<RecommendedRacesList> {
             style: TextStyle(color: context.muted, fontSize: 12.5),
           ),
           const SizedBox(height: 10),
+          // Cartão pequeno, igual ao das listas do perfil e da agenda, com o motivo da indicação.
           for (final r in list)
-            EditionCompactCard(
+            PlanRow(
               key: Key('recommended-${r.edition['id']}'),
               gateway: widget.gateway,
               edition: r.edition,
-              rating: r.reasons.isEmpty ? null : r.reasons.take(2).join(' · '),
+              note: r.reasons.isEmpty ? null : r.reasons.take(2).join(' · '),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => EditionScreen(

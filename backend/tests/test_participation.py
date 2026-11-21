@@ -930,6 +930,21 @@ class ParticipationTests(unittest.TestCase):
         # O rascunho de outra pessoa continua la.
         self.assertEqual(self.service.get(other, draft["id"])["state"], "draft")
 
+    def test_change_distance_of_completed_participation_without_review(self):
+        # Concluida sem avaliacao: trocar a distancia so muda a participacao (antes dava 503).
+        draft = self.service.create(self.actor, "d-km", self.payload(timeSeconds=3600))
+        body = self.completion(draft)
+        body.pop("ratings")
+        done = self.service.complete(self.actor, draft["id"], "c-km", body)
+        changed = self.service.patch(
+            self.actor,
+            draft["id"],
+            "p-km",
+            {"expectedVersion": done["version"], "distanceId": "5k"},
+        )
+        self.assertEqual(changed["distanceId"], "5k")
+        self.assertIsNone(self.store.get(("history", "USER#owner", "P#" + draft["id"] + "#REVIEW")))
+
     def test_delete_completed_participation_without_review(self):
         draft = self.service.create(self.actor, "d-del", self.payload(timeSeconds=3600))
         body = self.completion(draft)

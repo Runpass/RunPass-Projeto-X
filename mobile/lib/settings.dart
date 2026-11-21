@@ -42,6 +42,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// apagados); sem ele, com biometria ligada, so tranca a sessao.
   Future<void> signOut({bool forget = false}) async {
     NotificationCenter.instance.stop();
+    // O que ficou guardado da conta que sai (inclusive quando só tranca com a biometria).
+    forgetNavProfile(widget.gateway);
+    forgetFriendSuggestions(widget.gateway);
     if (forget) await SavedAccount.clear();
     if (!forget &&
         await BiometricPrefs.enabled() &&

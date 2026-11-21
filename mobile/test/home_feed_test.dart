@@ -468,4 +468,114 @@ void main() {
       expect(circleColorOf(FeedFilter.all), isNot(runPassOrange));
     },
   );
+
+  // Dados fictícios [FICTICIA].
+  Map<String, dynamic> friendPost(String id, String at) => {
+    'id': id,
+    'author': {
+      'id': 'amiga',
+      'displayName': 'Amiga Corredora',
+      'username': 'amiga',
+      'version': 1,
+    },
+    'participation': {
+      'id': id,
+      'editionId': 'E1',
+      'distanceId': '10k',
+      'state': 'completed',
+      'completedAt': at,
+    },
+    'publishedAt': at,
+    'commentCount': 0,
+    'likeCount': 0,
+    'likedByMe': false,
+  };
+
+  Future<IdentityGateway> feedGateway(
+    Future<JsonReply> Function(Uri uri) feed,
+  ) async {
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.example'),
+      api: Uri.parse('https://api.example'),
+      clientId: 'synthetic',
+      transport: (uri, method, headers, body) async {
+        if (uri.host == 'cognito.example') {
+          return const JsonReply(200, {
+            'AuthenticationResult': {'AccessToken': 'synthetic'},
+          });
+        }
+        if (uri.path == '/me') {
+          return const JsonReply(200, {
+            'id': 'me',
+            'displayName': 'Eu',
+            'username': 'eu',
+            'version': 2,
+          });
+        }
+        if (uri.path == '/feed') return feed(uri);
+        return const JsonReply(200, {'items': []});
+      },
+    );
+    await gateway.signIn('synthetic@example.test', 'synthetic');
+    return gateway;
+  }
+
+  testWidgets(
+    '"Carregar mais" pede a página seguinte do feed e junta à lista',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 6000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final cursors = <String?>[];
+      final gateway = await feedGateway((uri) async {
+        final cursor = uri.queryParameters['cursor'];
+        cursors.add(cursor);
+        return cursor == null
+            ? JsonReply(200, {
+                'items': [friendPost('p1', '2026-11-05T10:00:00Z')],
+                'nextCursor': 'c2',
+              })
+            : JsonReply(200, {
+                'items': [friendPost('p2', '2026-11-01T10:00:00Z')],
+              });
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('share-p1')), findsOneWidget);
+      expect(find.byKey(const Key('share-p2')), findsNothing);
+      await tester.tap(find.byKey(const Key('feed-load-more')));
+      await tester.pumpAndSettle();
+      expect(cursors, [null, 'c2']);
+      expect(find.byKey(const Key('share-p1')), findsOneWidget);
+      expect(find.byKey(const Key('share-p2')), findsOneWidget);
+      expect(find.byKey(const Key('feed-load-more')), findsNothing); // acabou
+    },
+  );
+
+  testWidgets(
+    'feed sem resposta avisa e deixa tentar de novo, em vez de parecer conta vazia',
+    (tester) async {
+      var fail = true;
+      final gateway = await feedGateway(
+        (uri) async => fail
+            ? const JsonReply(400, {'code': 'INVALID_REQUEST'})
+            : JsonReply(200, {
+                'items': [friendPost('p1', '2026-11-05T10:00:00Z')],
+              }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('feed-failed')), findsOneWidget);
+      expect(find.text('Encontrar corridas'), findsNothing);
+      fail = false;
+      await tester.tap(find.byKey(const Key('feed-retry')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('feed-failed')), findsNothing);
+      expect(find.byKey(const Key('share-p1')), findsOneWidget);
+    },
+  );
 }
