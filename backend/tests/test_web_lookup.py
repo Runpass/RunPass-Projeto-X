@@ -7,7 +7,7 @@ from runpass.store import MemoryStore, Unavailable
 from runpass.web_lookup import DAILY_LIMIT, WebLookup
 
 NOW = datetime(2026, 11, 18, 15, tzinfo=timezone.utc)
-ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
+ADULT = {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
 
 # Dados [FICTICIA]: resposta da Lambda de busca do catalogo.
 FOUND = {

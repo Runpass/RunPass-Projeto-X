@@ -25,7 +25,7 @@ from runpass.service import IdentityService, Problem
 from runpass.store import DynamoStore, MemoryStore, Unavailable
 
 NOW = datetime(2026, 10, 28, 15, tzinfo=timezone.utc)
-ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
+ADULT = {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
 
 
 class ServiceTests(unittest.TestCase):
@@ -79,20 +79,53 @@ class ServiceTests(unittest.TestCase):
             actor = self.create(subject)
             before = self.service.profile(actor)["version"]
             self.service.admit(
-                actor, "admit-" + subject, {"birthDate": birth, "declaresAdult": True}
+                actor,
+                "admit-" + subject,
+                {"birthDate": birth, "declaresAdult": True, "gender": "undisclosed"},
             )
             profile = self.service.profile(actor)
             self.assertEqual(profile.get("isPrivate"), expected)
             self.assertEqual(profile["version"], before + (1 if expected else 0))
         # Repetir a admissao nao muda nada, e o menor pode tornar o perfil publico depois.
         minor = Principal("minor", True)
-        self.service.admit(minor, "admit-minor", {"birthDate": "2008-10-29", "declaresAdult": True})
+        self.service.admit(
+            minor,
+            "admit-minor",
+            {"birthDate": "2008-10-29", "declaresAdult": True, "gender": "undisclosed"},
+        )
         profile = self.service.profile(minor)
         self.assertIs(profile["isPrivate"], True)
         self.service.patch_profile(
             minor, "open", {"expectedVersion": profile["version"], "isPrivate": False}
         )
         self.assertIs(self.service.profile(minor)["isPrivate"], False)
+
+    def test_patch_profile_allows_name_and_username_before_admission_not_other_fields(
+        self,
+    ):
+        # Decisao de produto de 21/11/2026: quem ainda esta no meio do cadastro (perfil
+        # criado, nao admitido ainda) pode corrigir nome/usuario sem precisar esperar a
+        # admissao; qualquer outro campo continua exigindo conta admitida, como sempre.
+        actor = self.create("u1", "primeiro_nome")
+        with self.assertRaises(Problem) as e:
+            self.service.authorize(actor, admitted=True)
+        self.assertEqual(e.exception.code, "BETA_ADMISSION_REQUIRED")
+        changed = self.service.patch_profile(
+            actor,
+            "corrige-nome",
+            {
+                "expectedVersion": 1,
+                "displayName": "Nome Corrigido",
+                "username": "nome_corrigido",
+            },
+        )
+        self.assertEqual(changed["displayName"], "Nome Corrigido")
+        self.assertEqual(changed["username"], "nome_corrigido")
+        with self.assertRaises(Problem) as e:
+            self.service.patch_profile(
+                actor, "tenta-bio", {"expectedVersion": 2, "bio": "ainda nao admitido"}
+            )
+        self.assertEqual(e.exception.code, "BETA_ADMISSION_REQUIRED")
 
     def test_same_username_concurrently_casefolds_without_partial_account(self):
         def attempt(i):
@@ -252,10 +285,14 @@ class ServiceTests(unittest.TestCase):
         self.now = datetime(2026, 10, 29, 1, tzinfo=timezone.utc)  # still 28th in São Paulo
         with self.assertRaises(Problem):
             self.service.admit(
-                self.actor, "young", {"birthDate": "2013-10-29", "declaresAdult": True}
+                self.actor,
+                "young",
+                {"birthDate": "2013-10-29", "declaresAdult": True, "gender": "undisclosed"},
             )
         result = self.service.admit(
-            self.actor, "adult", {"birthDate": "2013-10-28", "declaresAdult": True}
+            self.actor,
+            "adult",
+            {"birthDate": "2013-10-28", "declaresAdult": True, "gender": "undisclosed"},
         )
         self.assertTrue(result["admitted"])
 

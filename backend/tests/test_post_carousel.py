@@ -60,7 +60,13 @@ class PostCarouselTests(unittest.TestCase):
             actor, "profile-" + subject, {"displayName": subject, "username": subject}
         )
         self.identity.admit(
-            actor, "admit-" + subject, {"birthDate": "1990-01-01", "declaresAdult": True}
+            actor,
+            "admit-" + subject,
+            {
+                "birthDate": "1990-01-01",
+                "declaresAdult": True,
+                "gender": "undisclosed",
+            },
         )
         return actor
 

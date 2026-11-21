@@ -36,7 +36,7 @@ class ParticipationTests(unittest.TestCase):
         self.identity.admit(
             actor,
             "admit-" + subject,
-            {"birthDate": "1990-01-01", "declaresAdult": True},
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
         )
         return actor
 
@@ -1197,7 +1197,11 @@ class ParticipationApiTests(unittest.TestCase):
         seed_synthetic(catalog, ROOT / "backend/fixtures/catalog.synthetic.json")
         actor = Principal("runner", True)
         identity.create_profile(actor, "profile", {"displayName": "Runner", "username": "runner"})
-        identity.admit(actor, "admit", {"birthDate": "1990-01-01", "declaresAdult": True})
+        identity.admit(
+            actor,
+            "admit",
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+        )
         service = ParticipationService(identity, catalog, Fernet.generate_key())
         client = TestClient(create_app(identity, lambda token: actor, catalog, service))
         headers = {"Authorization": "Bearer token", "Idempotency-Key": "create"}

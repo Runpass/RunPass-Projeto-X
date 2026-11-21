@@ -77,7 +77,9 @@ class OperatorAdminTest(unittest.TestCase):
         self.assertTrue(FIXTURE_ORIGIN.startswith("https://"))
         runner = Principal("runner", True)
         self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
-        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
+        )
         listed = self.catalog.list(runner, CatalogFilters())["items"]
         self.assertTrue(all("Sint" in e["name"] for e in listed))
 
@@ -94,7 +96,9 @@ class OperatorAdminTest(unittest.TestCase):
         self.assertEqual(head["version"], 2)
         runner = Principal("runner", True)
         self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
-        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
+        )
         body = self.catalog.detail(runner, "synthetic-archived")
         self.assertEqual(body["status"], "archived")
         self.assertEqual(body["archivedReason"], "unavailable")
@@ -109,7 +113,9 @@ class OperatorAdminTest(unittest.TestCase):
         self.assertEqual(again["arquivadas"], [])
         runner = Principal("runner", True)
         self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
-        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
+        )
         self.assertEqual(self.catalog.list(runner, CatalogFilters())["items"], [])
         self.assertEqual(self.catalog.detail(runner, "synthetic-sp-2026")["status"], "archived")
 
@@ -161,7 +167,9 @@ class OperatorAdminTest(unittest.TestCase):
         self.assertTrue(result["reference"].startswith("banner_"))
         runner = Principal("runner", True)
         self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
-        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
+        )
         edition = self.catalog.detail(runner, "synthetic-sp-2025")
         self.assertEqual(edition["imageCredit"], "Divulgação: Org")
         link = UploadService(self.identity, blobs).edition_banner(runner, edition)
@@ -212,7 +220,9 @@ class OperatorAdminTest(unittest.TestCase):
         self.assertEqual(result["version"], 3)
         runner = Principal("runner", True)
         self.identity.create_profile(runner, "p", {"username": "runner", "displayName": "R"})
-        self.identity.admit(runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            runner, "a", {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
+        )
         edition = self.catalog.detail(runner, "synthetic-sp-2025")
         self.assertNotIn("imageReference", edition)
         self.assertNotIn("imageCredit", edition)

@@ -3,11 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/main.dart';
 
-/// Regressao: o passo "De onde você é?" do cadastro roda antes da admissao, mas
-/// PATCH /me (que salva estado/cidade) exige conta admitida no backend
-/// (BETA_ADMISSION_REQUIRED). O app precisa guardar a escolha e so enviar depois
-/// que a admissao for concluida (ver status() em main.dart), nunca durante o
-/// passo de localizacao em si.
+/// Regressao: o passo "Qual a sua cidade?" do cadastro roda depois da admissao (genero
+/// e nascimento), mas PATCH /me (que salva estado/cidade) exige conta admitida no
+/// backend (BETA_ADMISSION_REQUIRED). O app precisa guardar a escolha e so enviar
+/// depois que a admissao for concluida (ver status() em main.dart), nunca antes.
 void main() {
   testWidgets(
     'cadastro novo: estado/cidade so vai ao servidor depois da admissao',
@@ -122,9 +121,9 @@ void main() {
       await tester.pumpAndSettle();
 
       // Perfil (nome/usuario).
-      expect(find.text('Seu perfil de corredor'), findsOneWidget);
+      expect(find.text('Como você quer ser chamado?'), findsOneWidget);
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Nome de exibição'),
+        find.widgetWithText(TextFormField, 'Nome e sobrenome'),
         'Corredora Teste',
       );
       await tester.enterText(
@@ -135,25 +134,11 @@ void main() {
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
 
-      // Localizacao: escolhe estado/cidade e avanca. Isto NAO deve chamar
-      // PATCH /me ainda (a conta nao foi admitida).
-      expect(find.text('De onde você é?'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('location-field')));
+      // Admissao: genero (obrigatorio) + data de nascimento + declaracao de maioridade.
+      expect(find.text('Em qual categoria você corre?'), findsOneWidget);
+      await tester.ensureVisible(find.text('Feminino'));
+      await tester.tap(find.text('Feminino'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('location-done')));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Continuar'));
-      await tester.tap(find.text('Continuar'));
-      await tester.pumpAndSettle();
-      expect(
-        patchesWhileLocked,
-        isEmpty,
-        reason: 'PATCH /me nao deve ser chamado para estado/cidade antes da admissao',
-      );
-      expect(savedState, isNull);
-
-      // Admissao (data de nascimento + declaracao de maioridade).
-      expect(find.text('Qual a sua idade?'), findsOneWidget);
       await tester.tap(find.byKey(const Key('birth-date-field')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('birth-date-done')));
@@ -165,8 +150,22 @@ void main() {
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
 
-      // So agora, depois da admissao, o estado/cidade escolhidos sao enviados.
-      expect(patchesWhileLocked, isEmpty);
+      // Localizacao: escolhe estado/cidade e avanca. A conta ja esta admitida aqui, entao
+      // o PATCH /me pode ir direto (nunca deve ter sido tentado antes, com a conta travada).
+      expect(find.text('Qual a sua cidade?'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('location-field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('location-done')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Continuar'));
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+
+      expect(
+        patchesWhileLocked,
+        isEmpty,
+        reason: 'PATCH /me nao deve ser chamado para estado/cidade antes da admissao',
+      );
       expect(patchesAfterAdmission, hasLength(1));
       expect(savedState, isNotNull);
       expect(savedCity, isNotNull);

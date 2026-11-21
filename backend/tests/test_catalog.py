@@ -27,7 +27,7 @@ from runpass.store import DynamoStore, MemoryStore, Unavailable
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "backend/fixtures/catalog.synthetic.json"
 NOW = datetime(2026, 10, 28, 15, tzinfo=timezone.utc)
-ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
+ADULT = {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
 
 
 def edition(id="one", **changes):

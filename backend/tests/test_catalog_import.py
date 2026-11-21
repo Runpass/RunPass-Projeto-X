@@ -37,7 +37,11 @@ class CatalogImportTests(unittest.TestCase):
         seed_synthetic(self.catalog, FIXTURE)
         self.actor = Principal("runner", True)
         identity.create_profile(self.actor, "p", {"displayName": "Corredor", "username": "runner"})
-        identity.admit(self.actor, "a", {"birthDate": "1990-01-01", "declaresAdult": True})
+        identity.admit(
+            self.actor,
+            "a",
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+        )
 
     def run_csv(self, text=CSV, dry_run=True, source="csv-sp"):
         return import_rows(

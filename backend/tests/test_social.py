@@ -26,7 +26,11 @@ class SocialTests(unittest.TestCase):
     def person(self, sub, name, username):
         actor = Principal(sub, True)
         self.identity.create_profile(actor, "p-" + sub, {"displayName": name, "username": username})
-        self.identity.admit(actor, "a-" + sub, {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            actor,
+            "a-" + sub,
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+        )
         return actor
 
     def complete(self, actor, pid, at, publish=True, comment=None):

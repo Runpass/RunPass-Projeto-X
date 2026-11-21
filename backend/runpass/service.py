@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+import secrets
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -134,6 +135,10 @@ class IdentityService:
             private = read(("identity", "USER#" + principal.subject, "PRIVATE"))
             if private and private.get("birthDate"):
                 body["birthDate"] = private["birthDate"]
+            if private and private.get("gender"):
+                body["gender"] = private["gender"]
+            if private and private.get("registrationCode"):
+                body["registrationCode"] = private["registrationCode"]
             return body, {}
 
         return self.transact(principal, "getOwnProfile", None, {}, work)
@@ -234,6 +239,15 @@ class IdentityService:
 
     def patch_profile(self, principal, key, payload):
         pk = "USER#" + principal.subject
+        # Decisao de produto de 21/11/2026: so nome/usuario podem ser corrigidos
+        # antes da admissao (a pessoa ainda esta no meio do cadastro); qualquer
+        # outro campo (foto, genero, nascimento, localizacao etc) continua exigindo
+        # conta ja admitida, como sempre.
+        only_profile_identity = set(payload) <= {
+            "expectedVersion",
+            "displayName",
+            "username",
+        }
 
         def work(read, write, account, now, replay):
             pkey = ("identity", pk, "PROFILE")
@@ -257,6 +271,12 @@ class IdentityService:
                 self.eligible({"birthDate": text, "declaresAdult": True}, now)
                 private_key = ("identity", pk, "PRIVATE")
                 write(private_key, {**(read(private_key) or {}), "birthDate": text})
+            if "gender" in payload:
+                gender = payload["gender"]
+                if gender is None:
+                    raise Problem(422, "GENDER_REQUIRED")
+                private_key = ("identity", pk, "PRIVATE")
+                write(private_key, {**(read(private_key) or {}), "gender": gender})
             new_username = payload.get("username", profile["username"]).lower()
             if new_username != profile["username"]:
                 new = ("identity", "USERNAME#" + new_username, "CLAIM")
@@ -268,7 +288,7 @@ class IdentityService:
                 write(new, {"owner": principal.subject})
                 write(old, None)
             for name, value in payload.items():
-                if name in ("expectedVersion", "birthDate"):
+                if name in ("expectedVersion", "birthDate", "gender"):
                     continue
                 if value is None:
                     profile.pop(name, None)
@@ -280,7 +300,14 @@ class IdentityService:
             self._sync_index(read, write, principal.subject, profile)
             return self.public_profile(profile), {}
 
-        return self.transact(principal, "patchOwnProfile", key, payload, work, admitted=True)
+        return self.transact(
+            principal,
+            "patchOwnProfile",
+            key,
+            payload,
+            work,
+            admitted=not only_profile_identity,
+        )
 
     def status(self, principal):
         def work(read, write, account, now, replay):
@@ -328,6 +355,10 @@ class IdentityService:
             if not account:
                 raise Problem(409, "PROFILE_REQUIRED")
             self.eligible(payload, now)
+            if not waitlist and not payload.get("gender"):
+                raise Problem(422, "GENDER_REQUIRED")
+            private_key = ("identity", pk, "PRIVATE")
+            private = read(private_key) or {}
             ckey = ("identity", "BETA#v1", "CONTROL")
             control = read(ckey) or {"count": 0}
             akey, wkey = ("identity", pk, "ADMISSION"), ("identity", pk, "WAITLIST")
@@ -368,7 +399,29 @@ class IdentityService:
             write(akey, {"admittedAt": stamp(now)})
             account["admitted"] = True
             write(("identity", pk, "ACCOUNT"), account)
-            write(("identity", pk, "PRIVATE"), {"birthDate": payload["birthDate"]})
+            # Codigo de inscricao: sorteado e reservado por claim atomico (mesmo padrao do username),
+            # nunca derivado de um contador sequencial — nao revela quantas contas existem nem a ordem
+            # de entrada (decisao de produto de 20/11/2026).
+            registration_code = private.get("registrationCode")
+            if not registration_code:
+                for _ in range(20):
+                    candidate = f"{secrets.randbelow(100000):05d}"
+                    claim = ("identity", "REGCODE#" + candidate, "CLAIM")
+                    if not read(claim):
+                        write(claim, {"owner": principal.subject})
+                        registration_code = candidate
+                        break
+                else:
+                    raise Problem(503, "CONCURRENT_RETRY_REQUIRED")
+            write(
+                ("identity", pk, "PRIVATE"),
+                {
+                    **private,
+                    "birthDate": payload["birthDate"],
+                    "gender": payload["gender"],
+                    "registrationCode": registration_code,
+                },
+            )
             # Menor de 18 anos entra com o perfil privado (decisao de 19/11/2026). So define o
             # padrao: quem ja escolheu um valor o mantem, e a pessoa pode mudar depois em PATCH /me.
             profile_key = ("identity", pk, "PROFILE")

@@ -1,10 +1,15 @@
+import 'dart:async' show unawaited;
+import 'dart:convert' show jsonEncode;
+import 'dart:math' show Random;
 import 'dart:typed_data';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:geolocator/geolocator.dart';
 
 import 'identity_gateway.dart';
+import 'br_locations.dart' show brCityCoordinates;
 import 'catalog_screen.dart';
 import 'friends.dart' show MedalAvatar;
 import 'biometrics.dart';
@@ -13,6 +18,7 @@ import 'location_picker.dart';
 import 'notifications.dart';
 import 'password_policy.dart';
 import 'profile_photo.dart';
+import 'registration_card.dart';
 import 'runpass_theme.dart';
 
 Future<void> main() async {
@@ -109,9 +115,10 @@ enum Step {
   forgot,
   reset,
   profile,
-  location,
   admission,
+  location,
   photo,
+  celebration,
   ready,
   waiting,
   closed,
@@ -143,9 +150,27 @@ class _IdentityScreenState extends State<IdentityScreen> {
   final code = TextEditingController();
   final name = TextEditingController();
   final username = TextEditingController();
+  // So pra saber se a mudanca no campo de usuario veio da propria pessoa digitando
+  // (campo com foco) ou da sugestao automatica escrevendo por conta propria (sem
+  // foco nele): onChanged dispara nos dois casos, so o foco distingue de verdade.
+  final usernameFocus = FocusNode();
+  // Mesma ideia para o campo de nome: resume()/onTapProfile preenchem name.text
+  // programaticamente (sem foco), e isso nao deve re-sugerir o usuario sozinho;
+  // so a pessoa digitando ali de verdade (campo com foco) deve.
+  final nameFocus = FocusNode();
   final form = GlobalKey<FormState>();
   Step step = Step.signIn;
   bool busy = false, adult = false, full = false;
+  // 'female' | 'male' | 'undisclosed'; obrigatorio para a admissao (decisao de 20/11/2026).
+  String? gender;
+  // Codigo de inscricao da ficha (sorteado pelo servidor, nunca sequencial); so leitura.
+  String? registrationCode;
+  // Verdadeiro so durante o cadastro que acabou de admitir: mostra a celebracao uma vez.
+  bool freshSignup = false;
+  // Verdadeiro so entre tocar num bloco da ficha na celebracao e salvar: o "Continuar"
+  // deve so corrigir o campo (PATCH /me) e voltar para a celebracao, nunca repetir a
+  // acao do cadastro original (recriar perfil, admitir de novo etc).
+  bool editingFromCelebration = false;
   // Seletor nativo de rolagem (dia/mes/ano), igual ao Instagram; sem campo de texto livre.
   DateTime? birthDate;
   // Estado e cidade: so por rolagem (lista fechada do IBGE), igual a data de nascimento.
@@ -153,6 +178,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
   String? selectedCity;
   double? selectedLat;
   double? selectedLon;
+  // Evita reenviar o mesmo PATCH de localizacao a cada chamada de status() depois
+  // que a admissao acontece (selectedUf/selectedCity continuam preenchidos, para a
+  // ficha mostrar a cidade nas telas seguintes).
+  bool locationSynced = false;
+  // So para o botao manual de localizacao mostrar um indicador de carregamento.
+  bool detectingLocation = false;
   String? message;
   String? displayName;
   // Cadastro novo ainda sem foto: a foto de perfil e obrigatoria antes de entrar.
@@ -162,8 +193,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
   // Entrando com a sessao guardada: mostra um indicador em vez do formulario.
   bool restoring = false;
   List<int>? chosenPhoto;
-  // "Crie sua senha": o olho mostra/oculta em vez de um campo de confirmacao.
-  bool showPassword = false;
+  // "Ver senha": independente por tela, nao deve seguir marcado entre uma tela e outra.
+  bool showPasswordSignIn = false;
+  bool showPasswordSetPassword = false;
+  // Enquanto false, o campo de usuario e sugerido a partir do nome; vira true assim
+  // que a pessoa digita nele por conta propria, e a sugestao automatica para.
+  bool usernameTouched = false;
 
   @override
   void initState() {
@@ -171,6 +206,29 @@ class _IdentityScreenState extends State<IdentityScreen> {
     message = widget.notice;
     email.addListener(() {
       if (mounted && step == Step.signIn) setState(() {});
+    });
+    // Ficha de inscricao: atualiza ao vivo conforme nome/usuario sao digitados.
+    name.addListener(() {
+      // Decisao de produto de 21/11/2026: o usuario sempre acompanha o nome, mesmo
+      // depois de a pessoa ter editado o campo de usuario na mao — editar o nome de
+      // novo reescreve o usuario com a sugestao atual (de proposito, apaga uma
+      // personalizacao anterior). usernameTouched volta a false aqui: o campo esta
+      // sugerido de novo, nao mais "escolhido a dedo", entao a autocorrecao de
+      // usuario-em-uso (mais abaixo) pode agir nele de novo se precisar.
+      if (nameFocus.hasFocus) {
+        final suggestion = suggestUsername(name.text);
+        if (suggestion != username.text) {
+          username.value = username.value.copyWith(
+            text: suggestion,
+            selection: TextSelection.collapsed(offset: suggestion.length),
+          );
+          usernameTouched = false;
+        }
+      }
+      if (mounted && step == Step.profile) setState(() {});
+    });
+    username.addListener(() {
+      if (mounted && step == Step.profile) setState(() {});
     });
     loadSavedAccount();
     if (widget.autoRestore && (widget.gateway?.canRestore ?? false)) {
@@ -250,6 +308,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
     for (final field in [email, password, code, name, username]) {
       field.dispose();
     }
+    usernameFocus.dispose();
+    nameFocus.dispose();
     super.dispose();
   }
 
@@ -268,6 +328,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
     // acusar admissao, cobre tanto o caso comum (admissao imediata) quanto quem ficou na
     // lista de espera e foi admitido depois, numa checagem de status futura.
     if (response['myStatus'] == 'admitted' &&
+        !locationSynced &&
         selectedUf != null &&
         selectedCity != null) {
       final current = await widget.gateway!.request('/me');
@@ -284,8 +345,10 @@ class _IdentityScreenState extends State<IdentityScreen> {
           ),
         },
       );
-      selectedUf = null;
-      selectedCity = null;
+      // Mantem selectedUf/selectedCity (nao zera): a ficha de inscricao usa esses
+      // mesmos campos para mostrar a cidade nas telas seguintes (foto, celebracao).
+      // O proprio flag evita reenviar o mesmo PATCH numa chamada futura a status().
+      locationSynced = true;
     }
     step = switch (response['myStatus']) {
       'admitted' => Step.ready,
@@ -294,6 +357,81 @@ class _IdentityScreenState extends State<IdentityScreen> {
       _ => Step.admission,
     };
     if (step == Step.ready && needsPhoto) step = Step.photo;
+    if (step == Step.ready && freshSignup) step = Step.celebration;
+  }
+
+  /// Tenta pre-selecionar estado/cidade pela localizacao do aparelho (cidade mais
+  /// proxima da lista fechada do IBGE). Silencioso: sem permissao, sem GPS ou
+  /// qualquer falha, a pessoa so segue escolhendo manualmente, como sempre.
+  /// `manual`: tocada pela pessoa (botao na tela), mostra motivo se nao der certo;
+  /// a chamada automatica ao entrar na tela continua sem avisar nada.
+  Future<void> tryAutoDetectLocation({bool manual = false}) async {
+    if (selectedUf != null && selectedCity != null) return;
+    if (manual && mounted) setState(() => detectingLocation = true);
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (manual && mounted) {
+          setState(
+            () => message =
+                'Permissão de localização negada. Selecione manualmente ou '
+                'permita o acesso à localização nos Ajustes do celular.',
+          );
+        }
+        return;
+      }
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        if (manual && mounted) {
+          setState(
+            () => message =
+                'Ative a localização do aparelho para preencher sozinho, ou '
+                'selecione manualmente.',
+          );
+        }
+        return;
+      }
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.low,
+          timeLimit: Duration(seconds: 6),
+        ),
+      );
+      String? bestKey;
+      var bestDist = double.infinity;
+      for (final entry in brCityCoordinates.entries) {
+        final dLat = entry.value.lat - position.latitude;
+        final dLon = entry.value.lon - position.longitude;
+        final dist = dLat * dLat + dLon * dLon;
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestKey = entry.key;
+        }
+      }
+      if (bestKey == null || !mounted || selectedUf != null) return;
+      final parts = bestKey.split('|');
+      final coordinate = brCityCoordinates[bestKey]!;
+      setState(() {
+        selectedUf = parts[0];
+        selectedCity = parts[1];
+        selectedLat = coordinate.lat;
+        selectedLon = coordinate.lon;
+      });
+    } on Object {
+      // Sem permissao, localizacao desligada ou qualquer outra falha: segue so
+      // com a escolha manual, sem mostrar erro quando automatico (e so uma
+      // conveniencia); quando tocada pela pessoa, avisa que nao deu certo agora.
+      if (manual && mounted) {
+        setState(
+          () => message = 'Não foi possível obter sua localização agora. Selecione manualmente.',
+        );
+      }
+    } finally {
+      if (manual && mounted) setState(() => detectingLocation = false);
+    }
   }
 
   /// Uma vez, depois de entrar com "Manter conectado": oferece ligar a biometria.
@@ -461,16 +599,19 @@ class _IdentityScreenState extends State<IdentityScreen> {
                   ),
                   const SizedBox(height: 14),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Data de nascimento',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
-                          color: sheetContext.isDark
-                              ? Colors.white
-                              : runPassNavy,
+                      Expanded(
+                        child: Text(
+                          'Data de nascimento',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            color: sheetContext.isDark
+                                ? Colors.white
+                                : runPassNavy,
+                          ),
                         ),
                       ),
                       TextButton(
@@ -550,12 +691,56 @@ class _IdentityScreenState extends State<IdentityScreen> {
     }
   }
 
+  /// Ajusta o enquadramento da foto ja escolhida, sem pedir pra escolher de novo
+  /// (abre direto o recorte na mesma imagem).
+  Future<void> repositionChosenPhoto() async {
+    final photo = chosenPhoto;
+    if (photo == null) return;
+    final cropped = await Navigator.of(context).push<List<int>>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) =>
+            ProfilePhotoCropScreen(image: Uint8List.fromList(photo)),
+      ),
+    );
+    if (cropped != null && mounted) {
+      setState(() {
+        chosenPhoto = cropped;
+        message = null;
+      });
+    }
+  }
+
   Future<void> resume() async {
     try {
       final profile = await widget.gateway!.request('/me');
       displayName = profile['displayName'] as String?;
-      // Versao 1 sem foto: o cadastro nao foi concluido. Quem apagou a foto depois, nao.
-      needsPhoto = profile['photoReference'] == null && profile['version'] == 1;
+      registrationCode = profile['registrationCode'] as String?;
+      // Reabrir o app no meio do cadastro (depois do perfil criado, antes da
+      // admissao) nao devia deixar esses campos em branco na ficha: a pessoa
+      // acabava preenchendo "Nome e sobrenome" de novo so pra ver o usuario
+      // reaparecer, e isso tentava CRIAR o perfil outra vez (ja existe),
+      // dando "PROFILE_EXISTS". Repopula os dois a partir do servidor.
+      if (displayName != null) name.text = displayName!;
+      final savedUsername = profile['username'] as String?;
+      if (savedUsername != null) username.text = savedUsername;
+      // Ja tem usuario salvo: a sugestao automatica por nome nao deve mais mexer nele.
+      usernameTouched = true;
+      // Sem foto e com poucas edicoes no perfil: o cadastro provavelmente nao foi
+      // concluido (so a criacao, mais talvez uma correcao de nome/usuario antes da
+      // admissao ou o patch de localizacao, nunca mais que isso nesta fase). Quem
+      // apagou a foto depois de usar o app por um tempo tem muito mais edicoes
+      // acumuladas (posts, legendas, perfil etc) e nao cai aqui. Nao e um sinal
+      // perfeito (um numero exato de edicoes concluidas nunca foi guardado), mas e
+      // bem mais seguro do que exigir a versao 1 exata, que quebrava so de corrigir
+      // o nome antes de terminar o cadastro.
+      // Versao ausente na resposta (nao deveria acontecer num backend real, mas
+      // alguns testes simulam respostas minimas): trata como "nao fresco", igual
+      // ao comportamento anterior, em vez de arriscar mostrar a tela de foto a
+      // toa pra quem ja usa o app ha tempo.
+      needsPhoto =
+          profile['photoReference'] == null &&
+          (profile['version'] as int? ?? 999) <= 4;
       await status();
     } on IdentityIssue catch (error) {
       if (error.code == 'PROFILE_NOT_FOUND') {
@@ -597,13 +782,23 @@ class _IdentityScreenState extends State<IdentityScreen> {
           'Confira o código recebido ou solicite outro.',
         'NOT_ELIGIBLE' => 'O app é para pessoas com 13 anos completos ou mais.',
         'BETA_FULL' => 'As vagas para novos usuários foram preenchidas. Você pode entrar na lista de espera.',
+        'BETA_CLOSED' => 'As entradas de novos usuários foram encerradas.',
+        'EMAIL_NOT_VERIFIED' =>
+          'Confirme seu e-mail antes de continuar (saia e entre de novo).',
+        'ADMISSION_INTEGRITY_FAILURE' ||
+        'CAPACITY_AVAILABLE' ||
+        'CONCURRENT_RETRY_REQUIRED' =>
+          'Instabilidade momentânea do servidor. Toque em Continuar de novo.',
         'IMAGE_TYPE_INVALID' ||
         'IMAGE_NOT_VALID' ||
         'IMAGE_SIZE_INVALID' ||
         'UPLOAD_UNAVAILABLE' => photoError(error),
         'ACCOUNT_UNAVAILABLE' => 'Esta conta está indisponível.',
         'INVALID_INPUT' => 'Confira os campos e tente novamente.',
-        _ => 'Não foi possível concluir agora (falta de conexão ou instabilidade do serviço). Seus dados continuam nesta tela; tente novamente em instantes.',
+        // Codigo exposto de proposito enquanto o app esta em teste DEV: sem isso,
+        // qualquer erro novo e inteiramente mudo sobre a causa, so "tente de novo".
+        _ =>
+          'Não foi possível concluir agora (código ${error.code}). Seus dados continuam nesta tela; tente novamente em instantes.',
       };
       if (error.code == 'BETA_FULL') full = true;
     } on Exception {
@@ -620,6 +815,23 @@ class _IdentityScreenState extends State<IdentityScreen> {
       await offerBiometrics();
       if (mounted) openHome();
     }
+  }
+
+  /// Corrige um campo da ficha editado a partir da celebracao (conta ja admitida, so
+  /// PATCH /me) e volta para a celebracao, em vez de seguir a jornada de cadastro.
+  Future<void> editProfile(
+    IdentityGateway gateway,
+    Map<String, dynamic> changes,
+  ) async {
+    final current = await gateway.request('/me');
+    final profile = await gateway.request(
+      '/me',
+      method: 'PATCH',
+      body: {'expectedVersion': current['version'], ...changes},
+    );
+    displayName = profile['displayName'] as String? ?? displayName;
+    editingFromCelebration = false;
+    step = Step.celebration;
   }
 
   Future<void> submit() => perform(() async {
@@ -650,7 +862,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
         }
         await gateway.setPassword(email.text.trim(), password.text);
         password.clear();
-        showPassword = false;
+        showPasswordSetPassword = false;
         await resume();
       case Step.forgot:
         await gateway.forgot(email.text.trim());
@@ -670,41 +882,89 @@ class _IdentityScreenState extends State<IdentityScreen> {
         step = Step.signIn;
         message = 'Senha atualizada. Entre na sua conta.';
       case Step.profile:
-        final profile = await gateway.request(
-          '/me',
-          method: 'PUT',
-          body: {'displayName': name.text.trim(), 'username': username.text},
-        );
+        if (editingFromCelebration) {
+          await editProfile(gateway, {
+            'displayName': name.text.trim(),
+            'username': username.text.trim(),
+          });
+          return;
+        }
+        var usernameToSend = username.text.trim();
+        Map<String, dynamic> profile;
+        // So true quando este PUT de fato criou o perfil agora (version==1 de
+        // verdade); falso quando caiu no PROFILE_EXISTS abaixo (so corrigindo
+        // nome/usuario de um perfil que ja existia). So nesse primeiro caso da
+        // pra confiar na versao pra saber se a foto ainda nao foi decidida —
+        // corrigir nome/usuario por si so nunca decide nada sobre foto.
+        var justCreated = false;
+        var attempt = 0;
+        while (true) {
+          try {
+            profile = await gateway.request(
+              '/me',
+              method: 'PUT',
+              body: {
+                'displayName': name.text.trim(),
+                'username': usernameToSend,
+              },
+            );
+            justCreated = true;
+            break;
+          } on IdentityIssue catch (error) {
+            // So quando o usuario foi sugerido automaticamente (a pessoa nunca mexeu
+            // nele): tenta garantir que fique unico sozinha, em vez de so devolver o
+            // erro e deixar a pessoa escolher outro na mao.
+            if (error.code == 'USERNAME_TAKEN' &&
+                !usernameTouched &&
+                attempt < 5) {
+              attempt += 1;
+              final base = suggestUsername(name.text);
+              final trimmedBase = base.length > 17
+                  ? base.substring(0, 17)
+                  : base;
+              usernameToSend = '$trimmedBase${100 + Random().nextInt(900)}';
+              continue;
+            }
+            // O perfil ja existe (cadastro retomado apos reabrir o app, ou a pessoa
+            // voltou pra corrigir nome/usuario depois de ja ter enviado uma vez):
+            // PATCH /me permite corrigir so esses dois campos antes da admissao
+            // (decisao de produto de 21/11/2026), entao corrige de verdade em vez
+            // de so mostrar um aviso.
+            if (error.code == 'PROFILE_EXISTS') {
+              final current = await gateway.request('/me');
+              profile = await gateway.request(
+                '/me',
+                method: 'PATCH',
+                body: {
+                  'expectedVersion': current['version'],
+                  'displayName': name.text.trim(),
+                  'username': usernameToSend,
+                },
+              );
+              break;
+            }
+            rethrow;
+          }
+        }
+        username.text = usernameToSend;
         displayName = profile['displayName'] as String?;
-        needsPhoto = true;
-        step = Step.location;
-      case Step.location:
-        if (selectedUf == null || selectedCity == null) {
-          message = 'Selecione seu estado e cidade.';
-          return;
+        registrationCode = profile['registrationCode'] as String?;
+        // So recalcula a partir da versao quando o perfil acabou de ser criado
+        // agora mesmo (version==1 de verdade); corrigir nome/usuario de um
+        // perfil ja existente (PROFILE_EXISTS acima) nunca mexeu na foto, entao
+        // mantem o que ja estava certo antes, em vez de reavaliar com uma
+        // versao que so subiu por causa dessa correcao.
+        if (justCreated) {
+          needsPhoto =
+              profile['photoReference'] == null && profile['version'] == 1;
         }
-        // So fica guardado aqui; o envio ao servidor espera a admissao (ver status()).
-        await status();
-      case Step.photo:
-        final photo = chosenPhoto;
-        if (photo == null) {
-          message = 'Escolha uma foto para continuar.';
-          return;
-        }
-        final reference = await uploadProfilePhoto(gateway, photo);
-        final current = await gateway.request('/me');
-        await gateway.request(
-          '/me',
-          method: 'PATCH',
-          body: {
-            'expectedVersion': current['version'],
-            'photoReference': reference,
-          },
-        );
-        needsPhoto = false;
-        chosenPhoto = null;
-        step = Step.ready;
+        freshSignup = true;
+        step = Step.admission;
       case Step.admission:
+        if (gender == null) {
+          message = 'Selecione seu gênero.';
+          return;
+        }
         final birth = birthDate;
         if (birth == null) {
           message = 'Selecione sua data de nascimento.';
@@ -714,14 +974,98 @@ class _IdentityScreenState extends State<IdentityScreen> {
           message = 'Confirme que tem 13 anos completos ou mais.';
           return;
         }
-        await gateway.request(
-          full ? '/beta/waitlist' : '/beta/admissions',
-          method: 'POST',
-          body: {'birthDate': isoBirthDate(birth), 'declaresAdult': adult},
-        );
-        birthDate = null;
+        if (editingFromCelebration) {
+          await editProfile(gateway, {
+            'birthDate': isoBirthDate(birth),
+            'gender': gender,
+          });
+          return;
+        }
+        final admissionBody = {
+          'birthDate': isoBirthDate(birth),
+          'declaresAdult': adult,
+          'gender': gender,
+        };
+        try {
+          await gateway.request(
+            full ? '/beta/waitlist' : '/beta/admissions',
+            method: 'POST',
+            body: admissionBody,
+          );
+        } on IdentityIssue catch (error) {
+          // A admissao pode ja ter sido concluida no servidor numa tentativa anterior
+          // (por exemplo, se a chamada seguinte falhou por instabilidade de rede antes
+          // de avancar a tela): nao trata como erro, so segue, senao a pessoa fica
+          // presa aqui para sempre (toda nova tentativa recusada do mesmo jeito).
+          if (error.code == 'ALREADY_ADMITTED') {
+            // segue.
+          } else if (error.code == 'INVALID_INPUT') {
+            // Diagnostico temporario (fase de teste DEV): o servidor nao registra o
+            // corpo por privacidade (pode conter data de nascimento), entao mostra
+            // aqui o que foi enviado para achar a causa raiz de verdade.
+            message =
+                'Não foi possível concluir agora (código INVALID_INPUT). '
+                'Rota: ${full ? '/beta/waitlist' : '/beta/admissions'}. '
+                'Dados enviados: ${jsonEncode(admissionBody)}';
+            return;
+          } else {
+            rethrow;
+          }
+        }
+        // O codigo de inscricao so existe a partir da admissao (sorteado no servidor);
+        // GET /me e a unica rota que devolve o campo (PUT/PATCH nao), entao busca aqui
+        // para a ficha parar de mostrar "00000" dali em diante. So uma conveniencia:
+        // se falhar, resume() pega o codigo normalmente na proxima vez, sem travar
+        // o avanco do cadastro por causa disso.
+        if (!full) {
+          try {
+            final admitted = await gateway.request('/me');
+            registrationCode = admitted['registrationCode'] as String?;
+          } on Object {
+            // Ignora: ver comentario acima.
+          }
+        }
+        step = Step.location;
+        unawaited(tryAutoDetectLocation());
+      case Step.location:
+        if (selectedUf == null || selectedCity == null) {
+          message = 'Selecione seu estado e cidade.';
+          return;
+        }
+        if (editingFromCelebration) {
+          locationSynced = true;
+          await editProfile(
+            gateway,
+            brLocationPatch(
+              selectedUf!,
+              selectedCity!,
+              selectedLat,
+              selectedLon,
+            ),
+          );
+          return;
+        }
+        // So fica guardado aqui; o envio ao servidor espera a admissao (ver status()).
         await status();
-      case Step.ready || Step.waiting || Step.closed:
+      case Step.photo:
+        final photo = chosenPhoto;
+        if (photo != null) {
+          final reference = await uploadProfilePhoto(gateway, photo);
+          final current = await gateway.request('/me');
+          await gateway.request(
+            '/me',
+            method: 'PATCH',
+            body: {
+              'expectedVersion': current['version'],
+              'photoReference': reference,
+            },
+          );
+        }
+        needsPhoto = false;
+        // Nao limpa chosenPhoto aqui: a ficha da celebracao reaproveita o mesmo
+        // bytes para mostrar a foto escolhida (sumia antes, por causa disso).
+        step = freshSignup ? Step.celebration : Step.ready;
+      case Step.ready || Step.waiting || Step.closed || Step.celebration:
         break;
     }
   }, validate: true);
@@ -733,11 +1077,19 @@ class _IdentityScreenState extends State<IdentityScreen> {
     int? maxLength,
     String? Function(String)? check,
     Widget? suffixIcon,
+    String? prefixText,
+    FocusNode? focusNode,
+    ValueChanged<String>? onChanged,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: TextFormField(
       controller: controller,
-      decoration: InputDecoration(labelText: label, suffixIcon: suffixIcon),
+      focusNode: focusNode,
+      decoration: InputDecoration(
+        labelText: label,
+        suffixIcon: suffixIcon,
+        prefixText: prefixText,
+      ),
       obscureText: secret,
       autocorrect: !secret,
       enableSuggestions: !secret,
@@ -745,6 +1097,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
           ? TextInputType.emailAddress
           : TextInputType.text,
       maxLength: maxLength,
+      onChanged: onChanged,
       validator: (value) {
         if (value == null || value.trim().isEmpty) {
           return 'Preencha este campo.';
@@ -754,9 +1107,217 @@ class _IdentityScreenState extends State<IdentityScreen> {
     ),
   );
 
+  static const _signupSteps = [
+    Step.profile,
+    Step.admission,
+    Step.location,
+    Step.photo,
+  ];
+
+  static Step _previousSignupStep(Step step) => switch (step) {
+    Step.admission => Step.profile,
+    Step.location => Step.admission,
+    Step.photo => Step.location,
+    _ => Step.profile,
+  };
+
+  Widget genderButton(
+    BuildContext context,
+    String value,
+    String label, {
+    bool fullWidth = false,
+  }) {
+    final selected = gender == value;
+    final button = OutlinedButton(
+      onPressed: busy ? null : () => setState(() => gender = value),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: selected ? context.softFill : context.panel,
+        side: BorderSide(
+          color: selected ? runPassOrange : Colors.transparent,
+          width: 1.5,
+        ),
+        foregroundColor: selected
+            ? runPassOrange
+            : (context.isDark ? Colors.white : runPassNavy),
+        // Pilula, mesma altura nas tres opcoes: igual ao prototipo, menor e uniforme.
+        // shrinkWrap: sem isso, o botao reserva a area de toque minima do Material
+        // (48dp) mesmo com minimumSize menor, e a altura visivel nao diminui.
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        minimumSize: const Size(0, 28),
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        shape: const StadiumBorder(),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+      ),
+    );
+    return fullWidth ? SizedBox(width: double.infinity, child: button) : button;
+  }
+
+  Widget celebrationView(BuildContext context) {
+    final trimmedDisplay = (displayName ?? '').trim();
+    final firstName = trimmedDisplay.isEmpty
+        ? null
+        : trimmedDisplay.split(RegExp(r'\s+')).first;
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [runPassOrange, runPassGold],
+        ),
+      ),
+      // Conteudo centralizado na tela toda (nao so no alto, com sobra embaixo):
+      // o LayoutBuilder da a altura real disponivel para o ConstrainedBox exigir
+      // pelo menos essa altura, e o Center usa a sobra pra centralizar; telas
+      // mais altas que o conteudo deixam de ter espaco morto, e ainda rola se
+      // precisar (telas baixas).
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight - 64),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 480),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RegistrationCard(
+                      displayName: displayName,
+                      username: username.text.trim().isEmpty
+                          ? null
+                          : username.text.trim(),
+                      cityLabel: selectedUf == null || selectedCity == null
+                          ? null
+                          : '$selectedCity, $selectedUf',
+                      birthDate: birthDate,
+                      gender: gender,
+                      registrationCode: registrationCode,
+                      photo: chosenPhoto == null
+                          ? null
+                          : Uint8List.fromList(chosenPhoto!),
+                      inscriptionDate: DateTime.now(),
+                      onTapPhoto: () => setState(() => step = Step.photo),
+                      onTapProfile: () => setState(() {
+                        // Ja tem usuario definido: a sugestao automatica por nome e so para
+                        // quem ainda nao escolheu um, no cadastro original.
+                        usernameTouched = true;
+                        editingFromCelebration = true;
+                        step = Step.profile;
+                      }),
+                      onTapBirth: () => setState(() {
+                        editingFromCelebration = true;
+                        step = Step.admission;
+                      }),
+                      onTapCity: () => setState(() {
+                        editingFromCelebration = true;
+                        step = Step.location;
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Toque em qualquer valor da ficha para alterar.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: runPassNavy.withValues(alpha: .6),
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: .18),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Image(
+                            image: AssetImage('assets/icons/verificado.png'),
+                            width: 14,
+                            height: 14,
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            'INSCRIÇÃO CONFIRMADA',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 10.5,
+                              letterSpacing: .6,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      firstName == null
+                          ? 'Bem-vindo!'
+                          : 'Bem-vindo\n$firstName!',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        height: 1.25,
+                        color: runPassNavy,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        color: runPassNavy.withValues(alpha: .75),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: runPassNavy,
+                        minimumSize: const Size.fromHeight(54),
+                      ),
+                      onPressed: openHome,
+                      child: const Text('Começar minha jornada'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final gateway = widget.gateway;
+    if (gateway != null && !restoring) {
+      if (step == Step.celebration) {
+        return Scaffold(body: SafeArea(child: celebrationView(context)));
+      }
+      if (_signupSteps.contains(step)) {
+        return _signupScaffold(context, gateway);
+      }
+    }
+    return _authScaffold(context, gateway);
+  }
+
+  /// Entrar/criar conta, confirmar e-mail/senha, lista de espera/fechado: tela com
+  /// rolagem unica, igual a antes da reformulacao do cadastro.
+  Widget _authScaffold(BuildContext context, IdentityGateway? gateway) {
     final initial = [
       Step.signIn,
       Step.signUp,
@@ -772,13 +1333,10 @@ class _IdentityScreenState extends State<IdentityScreen> {
       Step.setPassword => 'Crie sua senha',
       Step.forgot => 'Recupere sua senha',
       Step.reset => 'Defina uma nova senha',
-      Step.profile => 'Seu perfil de corredor',
-      Step.location => 'De onde você é?',
-      Step.admission => full ? 'Lista de espera' : 'Qual a sua idade?',
-      Step.photo => 'Sua foto de perfil',
       Step.ready => 'Entrando, ${displayName ?? 'corredor'}…',
       Step.waiting => 'Você está na lista de espera',
       Step.closed => 'As entradas de novos usuários foram encerradas',
+      _ => '',
     };
     return Scaffold(
       appBar: AppBar(title: const RunPassWordmark(compact: true)),
@@ -818,13 +1376,41 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     size: 32,
                                   ),
                                   SizedBox(height: 18),
+                                  // Cada frase em uma linha, por FittedBox: nunca quebra
+                                  // no meio em telas estreitas (encolhe em vez de quebrar).
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      'Mais que corridas.',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 20,
+                                        height: 1.15,
+                                      ),
+                                    ),
+                                  ),
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      'São histórias para sempre.',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 20,
+                                        height: 1.15,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: 10),
                                   Text(
-                                    'Mais que corridas.\nSão histórias para sempre.',
+                                    'Crie sua conta e comece a montar \nseu Pódio de Medalhas e vitórias!',
                                     style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 23,
-                                      height: 1.08,
+                                      color: Colors.white70,
+                                      fontSize: 14.5,
+                                      height: 1.3,
                                     ),
                                   ),
                                 ],
@@ -855,19 +1441,32 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   ? 'Crie uma senha'
                                   : 'Senha',
                               // Sem campo de confirmacao: o olho mostra/oculta a senha digitada.
+                              // Cada tela tem seu proprio estado de visibilidade.
                               secret: step == Step.setPassword
-                                  ? !showPassword
+                                  ? !showPasswordSetPassword
+                                  : step == Step.signIn
+                                  ? !showPasswordSignIn
                                   : true,
-                              suffixIcon: step == Step.setPassword
+                              suffixIcon:
+                                  step == Step.setPassword ||
+                                      step == Step.signIn
                                   ? IconButton(
                                       icon: Icon(
-                                        showPassword
+                                        (step == Step.setPassword
+                                                ? showPasswordSetPassword
+                                                : showPasswordSignIn)
                                             ? Icons.visibility_off
                                             : Icons.visibility,
                                       ),
-                                      onPressed: () => setState(
-                                        () => showPassword = !showPassword,
-                                      ),
+                                      onPressed: () => setState(() {
+                                        if (step == Step.setPassword) {
+                                          showPasswordSetPassword =
+                                              !showPasswordSetPassword;
+                                        } else {
+                                          showPasswordSignIn =
+                                              !showPasswordSignIn;
+                                        }
+                                      }),
                                     )
                                   : null,
                             ),
@@ -886,179 +1485,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             ),
                           if ([Step.confirm, Step.reset].contains(step))
                             field(code, 'Código recebido'),
-                          if (step == Step.profile) ...[
-                            field(name, 'Nome de exibição', maxLength: 80),
-                            field(
-                              username,
-                              'Nome de usuário',
-                              maxLength: 30,
-                              // Mensagens curtas, que cabem em uma linha: a anterior era cortada no fim.
-                              check: (value) =>
-                                  RegExp(r'^[A-Za-z0-9_]{3,30}$')
-                                      .hasMatch(value)
-                                  ? null
-                                  : value.trim().length < 3
-                                  ? 'Use pelo menos 3 caracteres.'
-                                  : 'Só letras sem acento, números e _.',
-                            ),
-                          ],
-                          if (step == Step.location) ...[
-                            const Text(
-                              'Ajuda a conectar você com corredores perto de você.',
-                            ),
-                            const SizedBox(height: 12),
-                            InkWell(
-                              key: const Key('location-field'),
-                              onTap: busy
-                                  ? null
-                                  : () async {
-                                      final picked = await pickBrLocation(
-                                        context,
-                                        initialUf: selectedUf,
-                                        initialCity: selectedCity,
-                                      );
-                                      if (picked != null && mounted) {
-                                        setState(() {
-                                          selectedUf = picked.$1;
-                                          selectedCity = picked.$2;
-                                          selectedLat = picked.$3;
-                                          selectedLon = picked.$4;
-                                          message = null;
-                                        });
-                                      }
-                                    },
-                              child: InputDecorator(
-                                decoration: const InputDecoration(
-                                  labelText: 'Estado e cidade',
-                                ),
-                                child: Text(
-                                  selectedUf == null || selectedCity == null
-                                      ? 'Selecionar estado e cidade'
-                                      : '$selectedUf - $selectedCity',
-                                ),
-                              ),
-                            ),
-                          ],
-                          if (step == Step.admission) ...[
-                            if (full)
-                              const Text(
-                                'A lista de espera não garante vaga ou posição.',
-                              ),
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: InkWell(
-                                key: const Key('birth-date-field'),
-                                onTap: busy ? null : pickBirthDate,
-                                child: InputDecorator(
-                                  decoration: const InputDecoration(
-                                    labelText: 'Data de nascimento',
-                                  ),
-                                  child: Text(
-                                    birthDate == null
-                                        ? 'Selecionar data de nascimento'
-                                        : formatBirthDate(birthDate!),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (birthDate != null)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: context.softFill,
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.baseline,
-                                    textBaseline: TextBaseline.alphabetic,
-                                    children: [
-                                      Text(
-                                        '${ageInYears(birthDate!)}',
-                                        style: TextStyle(
-                                          fontSize: 34,
-                                          fontWeight: FontWeight.w800,
-                                          height: 1,
-                                          color: runPassOrange,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        'anos',
-                                        style: TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w600,
-                                          color: context.isDark
-                                              ? Colors.white
-                                              : runPassNavy,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            // Visivel so para o proprio titular (perfil); nunca publica.
-                            const Text(
-                              'Sua data de nascimento não é pública. Você pode vê-la depois no seu perfil.',
-                            ),
-                            CheckboxListTile(
-                              value: adult,
-                              onChanged: busy
-                                  ? null
-                                  : (value) =>
-                                        setState(() => adult = value ?? false),
-                              title: const Text(
-                                'Declaro ter 13 anos completos ou mais.',
-                              ),
-                            ),
-                          ],
-                          if (step == Step.photo) ...[
-                            const Text(
-                              'Para seus amigos reconhecerem você, adicione uma foto. Ela é obrigatória e você poderá trocar ou remover depois, no perfil.',
-                            ),
-                            // A fita da medalha sobe acima da foto: o respiro evita que cubra o texto.
-                            const SizedBox(height: 64),
-                            Center(
-                              child: InkWell(
-                                key: const Key('choose-photo'),
-                                customBorder: const CircleBorder(),
-                                onTap: busy ? null : choosePhoto,
-                                child: MedalAvatar(
-                                  radius: 64,
-                                  child: CircleAvatar(
-                                    radius: MedalAvatar.innerRadius(64),
-                                    backgroundColor: context.softFill,
-                                    backgroundImage: chosenPhoto == null
-                                        ? null
-                                        : MemoryImage(
-                                            Uint8List.fromList(chosenPhoto!),
-                                          ),
-                                    child: chosenPhoto == null
-                                        ? const Icon(
-                                            Icons.add_a_photo_outlined,
-                                            size: 40,
-                                            color: runPassOrange,
-                                          )
-                                        : null,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: busy ? null : choosePhoto,
-                              child: Text(
-                                chosenPhoto == null
-                                    ? 'Escolher foto'
-                                    : 'Trocar foto',
-                              ),
-                            ),
-                          ],
                           if (step == Step.ready)
                             const Center(child: CircularProgressIndicator()),
                           if (message != null)
@@ -1082,8 +1508,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               child: Text(
                                 busy
                                     ? 'Aguarde…'
-                                    : step == Step.admission && full
-                                    ? 'Entrar na lista de espera'
                                     : step == Step.signIn
                                     ? 'Entrar'
                                     : 'Continuar',
@@ -1166,6 +1590,455 @@ class _IdentityScreenState extends State<IdentityScreen> {
       ),
     );
   }
+
+  /// Nome/usuario, genero/nascimento, cidade e foto: cabecalho (voltar, progresso,
+  /// titulo e ficha) fixo no topo; so o conteudo proprio de cada passo rola, para o
+  /// cabecalho nunca se mexer e a tela caber sem rolagem sempre que possivel.
+  Widget _signupScaffold(BuildContext context, IdentityGateway gateway) {
+    final title = switch (step) {
+      Step.profile => 'Como você quer ser chamado?',
+      Step.admission =>
+        full ? 'Lista de espera' : 'Em qual categoria você corre?',
+      Step.location => 'Qual a sua cidade?',
+      Step.photo => 'Sua foto de perfil',
+      _ => '',
+    };
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 6, 24, 2),
+              child: Form(
+                key: form,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        if (step != Step.profile || editingFromCelebration)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 14),
+                            child: InkWell(
+                              key: const Key('signup-back'),
+                              onTap: busy
+                                  ? null
+                                  : () => setState(() {
+                                      if (editingFromCelebration) {
+                                        editingFromCelebration = false;
+                                        step = Step.celebration;
+                                      } else {
+                                        step = _previousSignupStep(step);
+                                      }
+                                    }),
+                              customBorder: const CircleBorder(),
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Theme.of(context).cardColor,
+                                  border: Border.all(
+                                    color: context.panelStrong,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.arrow_back,
+                                  size: 18,
+                                  color: context.isDark
+                                      ? Colors.white
+                                      : runPassNavy,
+                                ),
+                              ),
+                            ),
+                          ),
+                        Expanded(
+                          child: RegistrationProgress(
+                            step: _signupSteps.indexOf(step) + 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'SUA FICHA DE INSCRIÇÃO',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1,
+                        color: runPassOrange,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 19,
+                        color: runPassNavy,
+                      ).copyWith(color: context.isDark ? Colors.white : null),
+                    ),
+                    const SizedBox(height: 6),
+                    RegistrationCard(
+                      displayName: name.text.trim().isEmpty
+                          ? displayName
+                          : name.text.trim(),
+                      username: username.text.trim().isEmpty
+                          ? null
+                          : username.text.trim(),
+                      cityLabel: selectedUf == null || selectedCity == null
+                          ? null
+                          : '$selectedCity, $selectedUf',
+                      birthDate: birthDate,
+                      gender: gender,
+                      registrationCode: registrationCode,
+                      photo: chosenPhoto == null
+                          ? null
+                          : Uint8List.fromList(chosenPhoto!),
+                      inscriptionDate: DateTime.now(),
+                    ),
+                    const SizedBox(height: 4),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (step == Step.profile) ...[
+                              // So aqui, um pouco mais de distancia da ficha: os campos
+                              // ficavam colados nela.
+                              const SizedBox(height: 20),
+                              field(
+                                name,
+                                'Nome e sobrenome',
+                                maxLength: 30,
+                                focusNode: nameFocus,
+                              ),
+                              field(
+                                username,
+                                'Nome de usuário',
+                                maxLength: 20,
+                                prefixText: '@',
+                                focusNode: usernameFocus,
+                                // onChanged tambem dispara quando a sugestao automatica escreve
+                                // aqui (mudanca no controller, nao so digitacao); so conta como
+                                // "mexeu por conta propria" se o campo estiver com foco.
+                                onChanged: (_) {
+                                  if (usernameFocus.hasFocus) {
+                                    usernameTouched = true;
+                                  }
+                                },
+                                // Mensagens curtas, que cabem em uma linha: a anterior era cortada no fim.
+                                check: (value) =>
+                                    RegExp(r'^[A-Za-z0-9_]{3,30}$')
+                                        .hasMatch(value)
+                                    ? null
+                                    : value.trim().length < 3
+                                    ? 'Use pelo menos 3 caracteres.'
+                                    : 'Só letras sem acento, números e _.',
+                              ),
+                            ],
+                            if (step == Step.location) ...[
+                              Text(
+                                'Ajuda a conectar você com corredores perto.',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  color: context.muted,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              InkWell(
+                                key: const Key('location-field'),
+                                onTap: busy
+                                    ? null
+                                    : () async {
+                                        final picked = await pickBrLocation(
+                                          context,
+                                          initialUf: selectedUf,
+                                          initialCity: selectedCity,
+                                        );
+                                        if (picked != null && mounted) {
+                                          setState(() {
+                                            selectedUf = picked.$1;
+                                            selectedCity = picked.$2;
+                                            selectedLat = picked.$3;
+                                            selectedLon = picked.$4;
+                                            message = null;
+                                          });
+                                        }
+                                      },
+                                child: InputDecorator(
+                                  decoration: InputDecoration(
+                                    labelText: 'Estado e cidade',
+                                    // Repete a tentativa automatica, se ela nao tiver dado
+                                    // certo (sem permissao ainda, GPS tardio etc).
+                                    suffixIcon:
+                                        selectedUf == null &&
+                                            selectedCity == null
+                                        ? IconButton(
+                                            key: const Key('use-my-location'),
+                                            tooltip: 'Usar minha localização',
+                                            icon: detectingLocation
+                                                ? const SizedBox(
+                                                    width: 18,
+                                                    height: 18,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                        ),
+                                                  )
+                                                : const Icon(Icons.my_location),
+                                            onPressed: busy || detectingLocation
+                                                ? null
+                                                : () => tryAutoDetectLocation(
+                                                    manual: true,
+                                                  ),
+                                          )
+                                        : null,
+                                  ),
+                                  child: Text(
+                                    selectedUf == null || selectedCity == null
+                                        ? 'Selecionar estado e cidade'
+                                        : '$selectedUf - $selectedCity',
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (step == Step.admission) ...[
+                              if (full)
+                                const Text(
+                                  'A lista de espera não garante vaga ou posição.',
+                                ),
+                              Padding(
+                                // Mesmo recuo da esquerda do rotulo flutuante do campo
+                                // "Data de nascimento" logo abaixo, pra ficar alinhado.
+                                padding: const EdgeInsets.only(left: 12),
+                                child: Text(
+                                  'Gênero',
+                                  style: TextStyle(
+                                    color: context.muted,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: genderButton(
+                                      context,
+                                      'female',
+                                      'Feminino',
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: genderButton(
+                                      context,
+                                      'male',
+                                      'Masculino',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              genderButton(
+                                context,
+                                'undisclosed',
+                                'Prefiro não me identificar',
+                                fullWidth: true,
+                              ),
+                              const SizedBox(height: 6),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 2),
+                                child: InkWell(
+                                  key: const Key('birth-date-field'),
+                                  onTap: busy ? null : pickBirthDate,
+                                  child: InputDecorator(
+                                    // Visivel so para o proprio titular (perfil); nunca publica
+                                    // (tooltip no icone, em vez de uma linha de texto a parte,
+                                    // pra ficha maior continuar cabendo sem rolagem).
+                                    decoration: InputDecoration(
+                                      labelText: 'Data de nascimento',
+                                      suffixIcon: Tooltip(
+                                        message:
+                                            'Não é pública; você pode vê-la '
+                                            'depois no seu perfil.',
+                                        child: Icon(
+                                          Icons.info_outline,
+                                          size: 18,
+                                          color: context.muted,
+                                        ),
+                                      ),
+                                    ),
+                                    child: birthDate == null
+                                        ? Text(
+                                            'DD/MM/AAAA',
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              color: context.muted,
+                                            ),
+                                          )
+                                        : Text(formatBirthDate(birthDate!)),
+                                  ),
+                                ),
+                              ),
+                              CheckboxListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                minVerticalPadding: 0,
+                                visualDensity: const VisualDensity(
+                                  horizontal: -4,
+                                  vertical: -4,
+                                ),
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                value: adult,
+                                onChanged: busy
+                                    ? null
+                                    : (value) => setState(
+                                        () => adult = value ?? false,
+                                      ),
+                                title: Text(
+                                  'Declaro ter 13 anos completos ou mais.',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: context.isDark
+                                        ? Colors.white
+                                        : runPassNavy,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (step == Step.photo) ...[
+                              Text(
+                                'Para seus amigos reconhecerem você. Você pode pular e adicionar depois, no perfil.',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: context.muted,
+                                ),
+                              ),
+                              // A fita do MedalAvatar pinta acima do proprio circulo (Clip.none,
+                              // de proposito, para nao ser cortada); esse espaco extra evita que
+                              // ela sobreponha o texto logo acima, com folga confortavel (a
+                              // ficha maior nesta tela exige um avatar um pouco menor pra
+                              // tudo continuar cabendo sem rolar).
+                              const SizedBox(height: 44),
+                              Center(
+                                child: InkWell(
+                                  key: const Key('choose-photo'),
+                                  customBorder: const CircleBorder(),
+                                  // Com foto ja escolhida, tocar reajusta o enquadramento dela;
+                                  // sem foto, abre a escolha (camera/galeria/web).
+                                  onTap: busy
+                                      ? null
+                                      : (chosenPhoto == null
+                                            ? choosePhoto
+                                            : repositionChosenPhoto),
+                                  child: MedalAvatar(
+                                    radius: 48,
+                                    child: CircleAvatar(
+                                      radius: MedalAvatar.innerRadius(48),
+                                      backgroundColor: context.softFill,
+                                      backgroundImage: chosenPhoto == null
+                                          ? null
+                                          : MemoryImage(
+                                              Uint8List.fromList(chosenPhoto!),
+                                            ),
+                                      child: chosenPhoto == null
+                                          ? const Icon(
+                                              Icons.add_a_photo_outlined,
+                                              size: 32,
+                                              color: runPassOrange,
+                                            )
+                                          : null,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                  ),
+                                  minimumSize: const Size(0, 32),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                onPressed: busy ? null : choosePhoto,
+                                child: Text(
+                                  chosenPhoto == null
+                                      ? 'Escolher foto'
+                                      : 'Trocar foto',
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (message != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          message!,
+                          semanticsLabel: message,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: FilledButton(
+                        onPressed: busy ? null : submit,
+                        child: Text(
+                          busy
+                              ? 'Aguarde…'
+                              : step == Step.admission &&
+                                    full &&
+                                    !editingFromCelebration
+                              ? 'Entrar na lista de espera'
+                              : step == Step.photo && chosenPhoto == null
+                              ? 'Pular por enquanto'
+                              : 'Continuar',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+const _accentedChars =
+    'áàâãäåāăąèéêëēĕėęěìíîïĩīĭįòóôõöøōŏőùúûüũūŭůűçñÁÀÂÃÄÅĀĂĄÈÉÊËĒĔĖĘĚÌÍÎÏĨĪĬĮÒÓÔÕÖØŌŎŐÙÚÛÜŨŪŬŮŰÇÑ';
+const _plainChars =
+    'aaaaaaaaaeeeeeeeeiiiiiiiiooooooooouuuuuuuuucnAAAAAAAAAEEEEEEEEIIIIIIIIOOOOOOOOOUUUUUUUUUCN';
+
+/// Sugestao de nome de usuario a partir do "Nome e Sobrenome": sem acento, minusculo,
+/// palavras separadas por "_", so letras/numeros/"_" (mesma regra do campo), 3-30
+/// caracteres. So uma sugestao de partida; a pessoa pode mudar livremente.
+String suggestUsername(String displayName) {
+  final buffer = StringBuffer();
+  for (final char in displayName.trim().toLowerCase().split('')) {
+    final accentIndex = _accentedChars.indexOf(char);
+    buffer.write(accentIndex >= 0 ? _plainChars[accentIndex] : char);
+  }
+  final slug = buffer
+      .toString()
+      .split(RegExp(r'\s+'))
+      .where((w) => w.isNotEmpty)
+      .join('_')
+      .replaceAll(RegExp(r'[^a-z0-9_]'), '');
+  return slug.length > 20 ? slug.substring(0, 20) : slug;
 }
 
 String isoBirthDate(DateTime date) =>
@@ -1173,14 +2046,3 @@ String isoBirthDate(DateTime date) =>
 
 String formatBirthDate(DateTime date) =>
     '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
-
-/// So para mostrar na tela (ex.: "18 anos"); o servidor e a unica fonte confiavel da idade.
-int ageInYears(DateTime birth, {DateTime? today}) {
-  final now = today ?? DateTime.now();
-  var age = now.year - birth.year;
-  if (now.month < birth.month ||
-      (now.month == birth.month && now.day < birth.day)) {
-    age--;
-  }
-  return age;
-}

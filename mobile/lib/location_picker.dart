@@ -168,14 +168,19 @@ Future<(String uf, String city, double? lat, double? lon)?> pickBrLocation(
                 ),
                 const SizedBox(height: 14),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Estado e cidade',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                        color: sheetContext.isDark ? Colors.white : runPassNavy,
+                    Expanded(
+                      child: Text(
+                        'Estado e cidade',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                          color: sheetContext.isDark
+                              ? Colors.white
+                              : runPassNavy,
+                        ),
                       ),
                     ),
                     TextButton(

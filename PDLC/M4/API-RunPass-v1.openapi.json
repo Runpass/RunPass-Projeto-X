@@ -1534,7 +1534,7 @@
       },
       "patch": {
         "operationId": "patchOwnProfile",
-        "description": "Owner changes profile fields, not age eligibility or operational roles. No birth date changes or role management through this route.",
+        "description": "Owner changes profile fields, not operational roles or admission eligibility itself (birthDate/gender here only correct a value already captured at admission; they never (re)admit). Exception (decision 21/11/2026): displayName/username alone may be patched before beta admission too, so a person mid-signup can fix a typo before finishing; every other field still requires admission.",
         "responses": {
           "200": {
             "description": "Authorized result",
@@ -7867,10 +7867,24 @@
             "type": "string",
             "format": "date",
             "description": "Presente so depois da admissao gravar a data. Visivel apenas para o proprio titular em GET /me; nunca retornada por GetPublicProfile, busca, feed ou qualquer outra rota, nem logada."
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "female",
+              "male",
+              "undisclosed"
+            ],
+            "description": "Obrigatorio para concluir a admissao (decisao de produto de 20/11/2026); presente so depois de informado no cadastro. Visivel apenas para o proprio titular em GET /me; nunca retornado por GetPublicProfile, busca, feed ou qualquer outra rota, nem logado — mesmo tratamento do birthDate."
+          },
+          "registrationCode": {
+            "type": "string",
+            "pattern": "^[0-9]{5}$",
+            "description": "Codigo de inscricao exibido na ficha do corredor, atribuido uma unica vez na admissao. Sorteado e reservado de forma atomica (mesmo padrao de USERNAME#.../CLAIM), nunca derivado de um contador sequencial: nao revela quantas contas existem nem a ordem de entrada. Visivel apenas para o proprio titular em GET /me; nunca retornado por GetPublicProfile, busca, feed ou qualquer outra rota."
           }
         },
         "additionalProperties": false,
-        "description": "Owner projection of the profile. Fields are the same as PublicProfile plus the owner's own private birthDate (decision 2026-11-06: visible only to the account holder, like the app's date-of-birth disclosure model). Do not append email or any other private account field here without an explicit decision; this schema intentionally does not reuse PublicProfile via allOf because additionalProperties:false on that schema would reject the extra birthDate field."
+        "description": "Owner projection of the profile. Fields are the same as PublicProfile plus the owner's own private birthDate, gender and registrationCode (decision 2026-11-06 for birthDate; 2026-11-20 for gender and registrationCode: all visible only to the account holder, like the app's date-of-birth disclosure model). Do not append email or any other private account field here without an explicit decision; this schema intentionally does not reuse PublicProfile via allOf because additionalProperties:false on that schema would reject the extra fields."
       },
       "PatchOwnProfile": {
         "type": "object",
@@ -7942,6 +7956,15 @@
             "type": "string",
             "format": "date",
             "description": "Owner-only birth date. Must keep the admission minimum age (13). Never returned by public profile routes."
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "female",
+              "male",
+              "undisclosed"
+            ],
+            "description": "Owner-only. Obrigatorio para concluir a admissao (decisao de produto de 20/11/2026). Never returned by public profile routes."
           }
         },
         "description": "Somente campos enviados mudam; null limpa opcionais. Username ASCII normalizado em minúsculas e reservado atomicamente. Nome não pode ser apenas whitespace. Versão obrigatória; não altera idade, admissão ou papéis."
@@ -8668,13 +8691,23 @@
             "enum": [
               true
             ]
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "female",
+              "male",
+              "undisclosed"
+            ],
+            "description": "Obrigatorio (decisao de produto de 20/11/2026). Gravado junto do birthDate, owner-only, no mesmo lugar e com a mesma visibilidade."
           }
         },
         "required": [
           "birthDate",
-          "declaresAdult"
+          "declaresAdult",
+          "gender"
         ],
-        "description": "Authenticated verified identity required. Server validates complete age >=18 at admission; birth date private. Future, impossible or underage dates rejected. Never trust an age computed only by client."
+        "description": "Authenticated verified identity required. Server validates complete age >=13 at admission; birth date and gender private. Future, impossible or underage dates rejected. Never trust an age computed only by client."
       },
       "BetaAdmission": {
         "type": "object",

@@ -32,6 +32,8 @@
 	<string>Tirar uma foto de perfil ou da medalha para usar no +1Pódio.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Selecionar uma foto da corrida para validar e associar à participação.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Sugerir sua cidade no cadastro, sem rastrear em segundo plano.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

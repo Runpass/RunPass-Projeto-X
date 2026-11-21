@@ -70,8 +70,17 @@ cases = [
         },
         False,
     ),
-    ("BetaAdmissionInput", {"birthDate": "1990-01-01", "declaresAdult": True}, True),
-    ("BetaAdmissionInput", {"birthDate": "1990-01-01", "declaresAdult": False}, False),
+    (
+        "BetaAdmissionInput",
+        {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+        True,
+    ),
+    (
+        "BetaAdmissionInput",
+        {"birthDate": "1990-01-01", "declaresAdult": False, "gender": "undisclosed"},
+        False,
+    ),
+    ("BetaAdmissionInput", {"birthDate": "1990-01-01", "declaresAdult": True}, False),
     (
         "ReviewAuditRecord",
         {
