@@ -38,11 +38,15 @@ class ProfileAvatar extends StatelessWidget {
   final double radius;
   final IdentityGateway? gateway;
   final Map? profile;
+
+  /// Sem o cordão: só o círculo dourado (para a foto que fica sobre o banner do perfil).
+  final bool ribbon;
   const ProfileAvatar({
     super.key,
     this.radius = 22,
     this.gateway,
     this.profile,
+    this.ribbon = true,
   });
 
   @override
@@ -54,6 +58,7 @@ class ProfileAvatar extends StatelessWidget {
         gateway != null && id != null && profile?['photoReference'] != null;
     return MedalAvatar(
       radius: radius,
+      ribbon: ribbon,
       child: CircleAvatar(
         radius: inner,
         backgroundColor: context.softFill,
@@ -75,13 +80,20 @@ class ProfileAvatar extends StatelessWidget {
   }
 }
 
-/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child]. A fita é
-/// neutra (dois tons de cinza, conforme o tema), para acompanhar o preto e branco do app: sem fita de duas
-/// cores.
+/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child]. O cordão
+/// tem um lado laranja (a cor da marca) e o outro conforme o tema: branco no escuro, azul-marinho no claro.
 class MedalAvatar extends StatelessWidget {
   final double radius;
   final Widget child;
-  const MedalAvatar({super.key, required this.radius, required this.child});
+
+  /// Falso: só o aro dourado, sem o cordão em cima.
+  final bool ribbon;
+  const MedalAvatar({
+    super.key,
+    required this.radius,
+    required this.child,
+    this.ribbon = true,
+  });
 
   /// Raio do circulo de dentro (a foto), descontando o aro dourado.
   static double innerRadius(double radius) => radius * 0.87;
@@ -102,19 +114,21 @@ class MedalAvatar extends StatelessWidget {
         clipBehavior: Clip.none,
         alignment: Alignment.center,
         children: [
-          Positioned(
-            top: -ribbonHeight * 0.75,
-            child: CustomPaint(
-              size: Size(radius * 1.15, ribbonHeight),
-              painter: _RibbonPainter(
-                // Paleta do app (decisao de produto de 21/11/2026): fundo claro, cordao
-                // escuro (navy) + laranja; fundo escuro, cordao branco + laranja, para o
-                // cordao nao sumir contra o fundo.
-                left: dark ? Colors.white : runPassNavy,
-                right: runPassOrange,
+          if (ribbon)
+            Positioned(
+              key: const Key('medal-avatar-ribbon'),
+              top: -ribbonHeight * 0.75,
+              child: CustomPaint(
+                size: Size(radius * 1.15, ribbonHeight),
+                painter: _RibbonPainter(
+                  // Paleta do app (decisao de produto de 21/11/2026): fundo claro, cordao
+                  // escuro (navy) + laranja; fundo escuro, cordao branco + laranja, para o
+                  // cordao nao sumir contra o fundo.
+                  left: dark ? Colors.white : runPassNavy,
+                  right: runPassOrange,
+                ),
               ),
             ),
-          ),
           Container(
             width: size,
             height: size,

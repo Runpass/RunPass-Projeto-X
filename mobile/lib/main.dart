@@ -1175,9 +1175,10 @@ class _IdentityScreenState extends State<IdentityScreen> {
           colors: [runPassOrange, runPassGold],
         ),
       ),
-      // Mesma estrutura das telas de cadastro (_signupScaffold): bloco fixo no
-      // topo, meio que rola se precisar (Expanded+SingleChildScrollView, nunca
-      // Spacer — altura indefinida dentro de scroll da erro), e o botao no
+      // Mesma estrutura das telas de cadastro (_signupScaffold): bloco de cima
+      // (aviso, ficha, "Bem-vindo") dentro da area que rola se precisar, nunca
+      // usando Expanded/Spacer ali dentro (altura indefinida dentro de scroll
+      // da erro); o texto final e o botao ficam fixos fora da rolagem, no
       // mesmo recuo do rodape que o "Continuar" das telas anteriores.
       child: Center(
         child: ConstrainedBox(
@@ -1187,114 +1188,151 @@ class _IdentityScreenState extends State<IdentityScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // "INSCRIÇÃO CONFIRMADA" no topo, acima da ficha: destaca que o
-                // cadastro deu certo antes de qualquer outra informacao.
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: .18),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        Image(
-                          image: AssetImage('assets/icons/verificado.png'),
-                          width: 14,
-                          height: 14,
+                Expanded(
+                  // LayoutBuilder+ConstrainedBox(minHeight)+Column com
+                  // mainAxisAlignment.spaceBetween (em vez de Expanded/Spacer
+                  // aqui dentro, que da erro de altura indefinida dentro de
+                  // scroll): com 3 "filhos" (bloco de cima, "Bem-vindo" e um
+                  // marcador invisivel no fim), os dois espacos que sobram
+                  // ficam iguais — "Bem-vindo" fica centralizado entre a ficha
+                  // e o fim deste bloco (ali comeca "A partir de agora...",
+                  // fora da rolagem). Sem espaco de sobra (tela baixa), os
+                  // espacos encolhem a zero e o bloco todo rola normalmente.
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
                         ),
-                        SizedBox(width: 6),
-                        Text(
-                          'INSCRIÇÃO CONFIRMADA',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 10.5,
-                            letterSpacing: .6,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Mesmo recuo do topo das telas de cadastro antes
+                                // da ficha (ali ocupado pela seta de voltar,
+                                // progresso, titulo etc.): sem isso, a ficha
+                                // ficava mais alta aqui que nas outras.
+                                const SizedBox(height: 94),
+                                // "INSCRIÇÃO CONFIRMADA" logo acima da ficha, com
+                                // um espaco pequeno: destaca que o cadastro deu
+                                // certo, coladinho nela.
+                                Center(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 6,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(
+                                        alpha: .18,
+                                      ),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: const [
+                                        Image(
+                                          image: AssetImage(
+                                            'assets/icons/verificado.png',
+                                          ),
+                                          width: 14,
+                                          height: 14,
+                                        ),
+                                        SizedBox(width: 6),
+                                        Text(
+                                          'INSCRIÇÃO CONFIRMADA',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 10.5,
+                                            letterSpacing: .6,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                RegistrationCard(
+                                  displayName: displayName,
+                                  username: username.text.trim().isEmpty
+                                      ? null
+                                      : username.text.trim(),
+                                  cityLabel:
+                                      selectedUf == null || selectedCity == null
+                                      ? null
+                                      : '$selectedCity, $selectedUf',
+                                  birthDate: birthDate,
+                                  gender: gender,
+                                  registrationCode: registrationCode,
+                                  photo: chosenPhoto == null
+                                      ? null
+                                      : Uint8List.fromList(chosenPhoto!),
+                                  inscriptionDate: DateTime.now(),
+                                  onTapPhoto: () =>
+                                      setState(() => step = Step.photo),
+                                  onTapProfile: () => setState(() {
+                                    // Ja tem usuario definido: a sugestao automatica por nome e so para
+                                    // quem ainda nao escolheu um, no cadastro original.
+                                    usernameTouched = true;
+                                    editingFromCelebration = true;
+                                    step = Step.profile;
+                                  }),
+                                  onTapBirth: () => setState(() {
+                                    editingFromCelebration = true;
+                                    step = Step.admission;
+                                  }),
+                                  onTapCity: () => setState(() {
+                                    editingFromCelebration = true;
+                                    step = Step.location;
+                                  }),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Toque em qualquer valor da ficha para alterar.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: runPassNavy.withValues(alpha: .6),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              firstName == null
+                                  ? 'Bem-vindo!'
+                                  : 'Bem-vindo\n$firstName!',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.w900,
+                                height: 1.25,
+                                color: runPassNavy,
+                              ),
+                            ),
+                            const SizedBox.shrink(),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 18),
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        RegistrationCard(
-                          displayName: displayName,
-                          username: username.text.trim().isEmpty
-                              ? null
-                              : username.text.trim(),
-                          cityLabel: selectedUf == null || selectedCity == null
-                              ? null
-                              : '$selectedCity, $selectedUf',
-                          birthDate: birthDate,
-                          gender: gender,
-                          registrationCode: registrationCode,
-                          photo: chosenPhoto == null
-                              ? null
-                              : Uint8List.fromList(chosenPhoto!),
-                          inscriptionDate: DateTime.now(),
-                          onTapPhoto: () => setState(() => step = Step.photo),
-                          onTapProfile: () => setState(() {
-                            // Ja tem usuario definido: a sugestao automatica por nome e so para
-                            // quem ainda nao escolheu um, no cadastro original.
-                            usernameTouched = true;
-                            editingFromCelebration = true;
-                            step = Step.profile;
-                          }),
-                          onTapBirth: () => setState(() {
-                            editingFromCelebration = true;
-                            step = Step.admission;
-                          }),
-                          onTapCity: () => setState(() {
-                            editingFromCelebration = true;
-                            step = Step.location;
-                          }),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Toque em qualquer valor da ficha para alterar.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: runPassNavy.withValues(alpha: .6),
-                          ),
-                        ),
-                        const SizedBox(height: 28),
-                        Text(
-                          firstName == null
-                              ? 'Bem-vindo!'
-                              : 'Bem-vindo\n$firstName!',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            height: 1.25,
-                            color: runPassNavy,
-                          ),
-                        ),
-                        const SizedBox(height: 28),
-                        Text(
-                          'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            color: runPassNavy.withValues(alpha: .75),
-                          ),
-                        ),
-                      ],
-                    ),
+                Text(
+                  // Fora da area que rola, sempre visivel logo acima do botao.
+                  'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    color: runPassNavy.withValues(alpha: .75),
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.only(top: 8),
+                  padding: const EdgeInsets.only(top: 20),
                   child: FilledButton(
                     style: FilledButton.styleFrom(
                       backgroundColor: runPassNavy,
@@ -1634,118 +1672,137 @@ class _IdentityScreenState extends State<IdentityScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Row(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(right: 14),
-                          // Espaco sempre reservado (visivel ou nao): sem isso, a linha do
-                          // topo fica mais baixa so no passo do perfil (sem seta de voltar),
-                          // e a ficha de inscricao muda de altura entre as telas.
-                          child:
-                              (step != Step.profile || editingFromCelebration)
-                              ? InkWell(
-                                  key: const Key('signup-back'),
-                                  onTap: busy
-                                      ? null
-                                      : () => setState(() {
-                                          if (editingFromCelebration) {
-                                            editingFromCelebration = false;
-                                            step = Step.celebration;
-                                          } else {
-                                            step = _previousSignupStep(step);
-                                          }
-                                        }),
-                                  customBorder: const CircleBorder(),
-                                  child: Container(
-                                    width: 40,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Theme.of(context).cardColor,
-                                      border: Border.all(
-                                        color: context.panelStrong,
-                                      ),
-                                    ),
-                                    child: Icon(
-                                      Icons.arrow_back,
-                                      size: 18,
-                                      color: context.isDark
-                                          ? Colors.white
-                                          : runPassNavy,
-                                    ),
-                                  ),
-                                )
-                              : const SizedBox(width: 40, height: 40),
-                        ),
-                        Expanded(
-                          child: RegistrationProgress(
-                            step: _signupSteps.indexOf(step) + 1,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      'SUA FICHA DE INSCRIÇÃO',
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1,
-                        color: runPassOrange,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    // Altura fixa pro titulo (2 linhas): alguns titulos quebram em duas
-                    // linhas em telas estreitas e outros nao, o que mudava a altura do
-                    // cabecalho e empurrava a ficha de inscricao pra uma posicao diferente
-                    // em cada tela do cadastro.
-                    SizedBox(
-                      height: 52,
-                      child: Align(
-                        alignment: Alignment.topLeft,
-                        child: Text(
-                          title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style:
-                              const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 21,
-                                color: runPassNavy,
-                              ).copyWith(
-                                color: context.isDark ? Colors.white : null,
-                              ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    RegistrationCard(
-                      displayName: name.text.trim().isEmpty
-                          ? displayName
-                          : name.text.trim(),
-                      username: username.text.trim().isEmpty
-                          ? null
-                          : username.text.trim(),
-                      cityLabel: selectedUf == null || selectedCity == null
-                          ? null
-                          : '$selectedCity, $selectedUf',
-                      birthDate: birthDate,
-                      gender: gender,
-                      registrationCode: registrationCode,
-                      photo: chosenPhoto == null
-                          ? null
-                          : Uint8List.fromList(chosenPhoto!),
-                      inscriptionDate: DateTime.now(),
-                    ),
-                    // Distancia uniforme da ficha em todas as telas do cadastro: antes so
-                    // o perfil tinha folga extra, e as outras (genero/nascimento,
-                    // localizacao) ficavam coladas na ficha.
-                    const SizedBox(height: 18),
+                    // Cabecalho (voltar, progresso, titulo, ficha) agora dentro da
+                    // mesma area que rola que os campos: sozinho, fixo fora da
+                    // rolagem, ele nao cedia espaco quando o teclado aparecia, e o
+                    // botao "Continuar" ficava colado no campo focado. Sem foco, a
+                    // rolagem comeca no topo, entao a posicao inicial da ficha nao
+                    // muda.
                     Expanded(
                       child: SingleChildScrollView(
+                        // Folga embaixo do conteudo: sem ela, o campo focado encosta
+                        // bem na borda da area rolavel quando o teclado aparece,
+                        // ficando colado (quase escondido) no botao "Continuar" logo
+                        // abaixo, fora da area que rola.
+                        padding: const EdgeInsets.only(bottom: 24),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
+                            Row(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 14),
+                                  // Espaco sempre reservado (visivel ou nao): sem isso, a linha do
+                                  // topo fica mais baixa so no passo do perfil (sem seta de voltar),
+                                  // e a ficha de inscricao muda de altura entre as telas.
+                                  child:
+                                      (step != Step.profile ||
+                                          editingFromCelebration)
+                                      ? InkWell(
+                                          key: const Key('signup-back'),
+                                          onTap: busy
+                                              ? null
+                                              : () => setState(() {
+                                                  if (editingFromCelebration) {
+                                                    editingFromCelebration =
+                                                        false;
+                                                    step = Step.celebration;
+                                                  } else {
+                                                    step = _previousSignupStep(
+                                                      step,
+                                                    );
+                                                  }
+                                                }),
+                                          customBorder: const CircleBorder(),
+                                          child: Container(
+                                            width: 40,
+                                            height: 40,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: Theme.of(context)
+                                                  .cardColor,
+                                              border: Border.all(
+                                                color: context.panelStrong,
+                                              ),
+                                            ),
+                                            child: Icon(
+                                              Icons.arrow_back,
+                                              size: 18,
+                                              color: context.isDark
+                                                  ? Colors.white
+                                                  : runPassNavy,
+                                            ),
+                                          ),
+                                        )
+                                      : const SizedBox(width: 40, height: 40),
+                                ),
+                                Expanded(
+                                  child: RegistrationProgress(
+                                    step: _signupSteps.indexOf(step) + 1,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              'SUA FICHA DE INSCRIÇÃO',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1,
+                                color: runPassOrange,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            // Altura fixa pro titulo (2 linhas): alguns titulos quebram em duas
+                            // linhas em telas estreitas e outros nao, o que mudava a altura do
+                            // cabecalho e empurrava a ficha de inscricao pra uma posicao diferente
+                            // em cada tela do cadastro.
+                            SizedBox(
+                              height: 52,
+                              child: Align(
+                                alignment: Alignment.topLeft,
+                                child: Text(
+                                  title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style:
+                                      const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 21,
+                                        color: runPassNavy,
+                                      ).copyWith(
+                                        color: context.isDark
+                                            ? Colors.white
+                                            : null,
+                                      ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            RegistrationCard(
+                              displayName: name.text.trim().isEmpty
+                                  ? displayName
+                                  : name.text.trim(),
+                              username: username.text.trim().isEmpty
+                                  ? null
+                                  : username.text.trim(),
+                              cityLabel:
+                                  selectedUf == null || selectedCity == null
+                                  ? null
+                                  : '$selectedCity, $selectedUf',
+                              birthDate: birthDate,
+                              gender: gender,
+                              registrationCode: registrationCode,
+                              photo: chosenPhoto == null
+                                  ? null
+                                  : Uint8List.fromList(chosenPhoto!),
+                              inscriptionDate: DateTime.now(),
+                            ),
+                            // Distancia uniforme da ficha em todas as telas do cadastro: antes so
+                            // o perfil tinha folga extra, e as outras (genero/nascimento,
+                            // localizacao) ficavam coladas na ficha.
+                            const SizedBox(height: 18),
                             if (step == Step.profile) ...[
                               // Rotulo sempre visivel (floatingLabelBehavior.always) deixa o
                               // campo com texto logo no topo; um pouco mais de distancia

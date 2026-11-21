@@ -110,12 +110,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     clearMedalCaches();
     await widget.gateway.forgetSession();
     if (mounted) {
-      // autoRestore: false — a conta acabou de ser excluida; sem isso, a tela de
-      // entrada tentava restaurar a sessao de novo (canRestore so verifica se ha
-      // token store configurado, nao se a sessao ainda existe) e mostrava o
-      // indicador de carregamento por cima do aviso, como se o app tivesse
-      // reaberto, escondendo a mensagem de exclusao.
-      toSignIn('Exclusão aceita. O acesso à conta foi encerrado.', false);
+      // autoRestore: false — a conta acabou de ser excluida, a sessao nao deve
+      // voltar sozinha. Sem mensagem: volta para a tela inicial normal, como um
+      // primeiro acesso (decisao de produto de 21/11/2026).
+      toSignIn(null, false);
     }
   }
 
