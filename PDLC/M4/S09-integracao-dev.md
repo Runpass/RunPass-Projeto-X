@@ -417,3 +417,11 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 - Entrou: trocar a distancia de participacao concluida sem avaliacao deixa de dar 503 `PARTICIPATION_INTEGRITY_FAILURE`; sugestao de banner em corrida sem distancia deixa de dar 500; a varredura de pedidos do portal converte a versao (Decimal do DynamoDB) para inteiro; o reparo do indice de inscritos roda em lotes de 20.
 - Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem IAM, sem recursos novos, sem tabelas. Resultado: `UPDATE_COMPLETE`.
 - Verificacao feita: `GET /me` responde 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: nenhuma das correcoes acima nem as do app do PR #135.
+
+## Deploy do feedback do app no DEV - 21/11/2026
+
+- **`feedback-013341`** (UPDATE, `runpass-dev-app`): autorizado pelo usuario ("publique o backend do DEV"). Pacote `lambda/runpass-7504960b0c51788d.zip` (commit `b87b4f8`, PR #143). Anterior: `lambda/runpass-d36ee4d5c6cb4730.zip`. `--use-previous-template`: o template no ar so difere do repositorio por uma linha em branco no fim.
+- Entrou: `POST /feedback` (Configuracoes > Enviar feedback no app): grava em `history / FEEDBACK#ALL`, ate 10 por dia por pessoa, com a linha em `sharedKeys` para o apagamento da conta.
+- Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem IAM, sem recursos novos, sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- Verificacao feita: `GET /me` e `POST /feedback` respondem 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: o envio de um feedback pelo app.
+- Pendente: `GET /admin/feedback` (leitura pela equipe) so vale depois de publicar a Lambda do portal, e ainda nao ha tela no portal para ler os feedbacks.

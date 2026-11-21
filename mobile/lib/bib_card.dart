@@ -193,7 +193,7 @@ class BibCard extends StatelessWidget {
   );
 }
 
-/// Quadro de parede: moldura preta, passe-partout branco e duas janelas, a medalha à esquerda e o número de
+/// Quadro de parede: moldura de madeira (a da prateleira das medalhas), passe-partout branco e duas janelas, a medalha à esquerda e o número de
 /// peito à direita.
 class MedalBibFrame extends StatelessWidget {
   final IdentityGateway gateway;
@@ -214,20 +214,18 @@ class MedalBibFrame extends StatelessWidget {
     child: LayoutBuilder(
       builder: (context, box) {
         final u = box.maxWidth / 100;
-        // No tema escuro a moldura preta sumia no fundo do app: lá ela é grafite, com um filete claro.
-        final dark = Theme.of(context).brightness == Brightness.dark;
+        // Moldura na mesma madeira (nogueira) da prateleira das medalhas, nos dois temas. A cor de fundo é a
+        // da madeira, para o caso de a imagem não carregar.
         return Container(
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: dark
-                  ? const [Color(0xff5a5f67), Color(0xff3a3e45)]
-                  : const [Color(0xff2a2a2a), Color(0xff141414)],
+            color: const Color(0xff5a2c14),
+            image: const DecorationImage(
+              image: AssetImage('assets/medal_shelf/nicho_nogueira.png'),
+              fit: BoxFit.cover,
+              // A parte de cima da imagem: só o fundo de madeira, sem a prateleira.
+              alignment: Alignment(0, -0.55),
             ),
-            border: dark
-                ? Border.all(color: const Color(0xff7b818a), width: .35 * u)
-                : null,
+            border: Border.all(color: const Color(0xff2e1508), width: .35 * u),
             borderRadius: BorderRadius.circular(1.2 * u),
             boxShadow: const [
               BoxShadow(
@@ -239,7 +237,11 @@ class MedalBibFrame extends StatelessWidget {
           ),
           padding: EdgeInsets.all(5.5 * u),
           child: Container(
-            color: const Color(0xfffafafa),
+            // Filete escuro entre a madeira e o passe-partout, como o rebaixo de uma moldura.
+            decoration: BoxDecoration(
+              color: const Color(0xfffafafa),
+              border: Border.all(color: const Color(0x8a1c0c04), width: .5 * u),
+            ),
             padding: EdgeInsets.all(4 * u),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
