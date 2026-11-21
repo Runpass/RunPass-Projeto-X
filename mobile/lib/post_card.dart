@@ -14,6 +14,7 @@ import 'friends.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
 import 'tagged_people.dart';
+import 'bib_card.dart';
 import 'undo_delete.dart' show deleteWithUndo, pendingDeletions;
 import 'post_stats.dart';
 import 'runpass_theme.dart';
@@ -135,6 +136,9 @@ final Map<String, double> _postPhotoAspects = {};
 typedef ShareFunction = Future<ShareResult> Function(ShareParams params);
 ShareFunction shareFunction = (params) => SharePlus.instance.share(params);
 
+/// Número de peito para o cartão da imagem de compartilhar (com a distância e a colocação, quando há).
+typedef BibShare = ({String number, String? distance, String? placement});
+
 /// Monta a imagem da publicacao para compartilhar. Trocavel nos testes.
 typedef ShareCardBuilder = Future<Uint8List> Function({
   required String title,
@@ -144,6 +148,7 @@ typedef ShareCardBuilder = Future<Uint8List> Function({
   Uint8List? photoBytes,
   Uint8List? medalBytes,
   MedalFrame? medalFrame,
+  BibShare? bib,
 });
 ShareCardBuilder shareCardBuilder = buildShareCard;
 
@@ -191,6 +196,7 @@ Future<Uint8List> buildShareCard({
   Uint8List? photoBytes,
   Uint8List? medalBytes,
   MedalFrame? medalFrame,
+  BibShare? bib,
 }) async {
   ui.Image? photo;
   if (photoBytes != null) {
@@ -275,6 +281,26 @@ Future<Uint8List> buildShareCard({
   // A medalha, com a moldura do modelo escolhido, no canto de baixo da foto.
   if (medalBytes != null && medalFrame != null) {
     await _drawMedal(canvas, photoRect, medalBytes, medalFrame);
+  }
+
+  // O cartão do número de peito, no canto de baixo à esquerda da foto (a medalha fica à direita).
+  if (bib != null) {
+    final height = (photoRect.height * 0.30).clamp(200.0, 330.0);
+    final width = height * 0.86;
+    const margin = 28.0;
+    drawBibCard(
+      canvas,
+      Rect.fromLTWH(
+        photoRect.left + margin,
+        photoRect.bottom - height - margin,
+        width,
+        height,
+      ),
+      bib: bib.number,
+      title: title,
+      distance: bib.distance,
+      placement: bib.placement,
+    );
   }
 
   // Rodapé: distância, tempo e pace, cada um com o seu ícone (sempre os três, com "--" quando falta o
@@ -697,13 +723,40 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
+  /// Número de peito da MINHA participação (o feed traz só a parte pública, sem ele): lido na hora de
+  /// compartilhar. Sem número, ou publicação de outra pessoa, não há cartão.
+  Future<BibShare?> _fetchBib() async {
+    if (!entry.mine) return null;
+    final id = entry.race.participation['id'];
+    if (id is! String) return null;
+    try {
+      var participation = entry.race.participation;
+      if (bibNumberOf(participation) == null) {
+        participation = await widget.gateway.request(
+          '/participations/${Uri.encodeComponent(id)}',
+        );
+      }
+      final number = bibNumberOf(participation);
+      if (number == null) return null;
+      return (
+        number: number,
+        distance: bibDistanceLabel(entry.race.kilometers),
+        placement: bibPlacementLabel(participation['placement'] as num?),
+      );
+    } on Exception {
+      return null; // sem o número, compartilha sem o cartão
+    }
+  }
+
   /// Monta a imagem para compartilhar: a foto, o nome da corrida e as informações, com o logo.
   /// Nada de curtir, comentar, marcar ou compartilhar na imagem.
   Future<XFile> shareImage() async {
     soon('Preparando para compartilhar...');
     final photoBytes = await _fetchPhotoBytes();
     final medalBytes = await _fetchMedalBytes();
+    final bib = await _fetchBib();
     final card = await shareCardBuilder(
+      bib: bib,
       title: entry.title,
       distance: entry.race.kilometers == null
           ? statEmpty

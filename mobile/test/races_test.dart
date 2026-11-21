@@ -1132,6 +1132,11 @@ void main() {
       // Aprovada: tem o lápis de editar, sem cadeado, e tocar leva ao rascunho da participação.
       expect(find.byKey(const Key('pending-edit-r2')), findsOneWidget);
       expect(find.byKey(const Key('pending-locked-r2-false')), findsOneWidget);
+      // O segundo menu (Medalhas | Quadros) empurra a prateleira para baixo: rola até a medalha.
+      await tester.ensureVisible(
+        find.byKey(const Key('pending-locked-r2-false')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('pending-locked-r2-false')));
       await tester.pumpAndSettle();
       expect(find.byType(ParticipationDraftScreen), findsOneWidget);

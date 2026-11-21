@@ -243,6 +243,7 @@ void main() {
           photoBytes,
           medalBytes,
           medalFrame,
+          bib,
         }) async => Uint8List.fromList([1, 2, 3]);
         addTearDown(() {
           shareFunction = (params) => SharePlus.instance.share(params);
@@ -302,6 +303,7 @@ void main() {
         photoBytes,
         medalBytes,
         medalFrame,
+        bib,
       }) async => Uint8List.fromList([1]);
       addTearDown(() {
         shareFunction = (params) => SharePlus.instance.share(params);
