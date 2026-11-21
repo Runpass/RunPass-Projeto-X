@@ -410,3 +410,10 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 - Entrou: `dynamodb:PutItem` na tabela do catalogo para `ApiFunctionRole` (sem `DeleteItem`); busca de pessoas e sugestoes ordenadas por amigos, amigos de amigos (com `mutualFriends`), seguidos dos seguidos e proximidade (`nearby`), com leituras em paralelo.
 - Mudancas: `ApiFunctionRole` (politica inline, sem substituicao) e codigo das Lambdas com re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem recursos novos e sem tabelas. Resultado: `UPDATE_COMPLETE`.
 - Verificacao feita: `GET /me` responde 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: informar o km na corrida sem distancia e a busca de amigos nova.
+
+## Deploy das correcoes da busca geral de bugs no DEV - 20/11/2026
+
+- **`bugs-geral-223712`** (UPDATE, `runpass-dev-app`): autorizado pelo usuario ("ok pode seguir", apos o pedido de merge do PR #135, instalacao e publicacao do backend do DEV). Pacote `lambda/runpass-d36ee4d5c6cb4730.zip` (commit `c04a9ec`, PR #135). Anterior: `lambda/runpass-9b89311641fad6e4.zip`. `--use-previous-template`: o template no ar so difere do repositorio por uma linha em branco no fim.
+- Entrou: trocar a distancia de participacao concluida sem avaliacao deixa de dar 503 `PARTICIPATION_INTEGRITY_FAILURE`; sugestao de banner em corrida sem distancia deixa de dar 500; a varredura de pedidos do portal converte a versao (Decimal do DynamoDB) para inteiro; o reparo do indice de inscritos roda em lotes de 20.
+- Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem IAM, sem recursos novos, sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- Verificacao feita: `GET /me` responde 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: nenhuma das correcoes acima nem as do app do PR #135.
