@@ -72,10 +72,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(calls, contains('DELETE /me'));
     expect(gateway.signedIn, isFalse);
+    // Sem mensagem: volta pra tela inicial normal, como um primeiro acesso.
     expect(find.widgetWithText(TextFormField, 'E-mail'), findsOneWidget);
     expect(
       find.text('Exclusão aceita. O acesso à conta foi encerrado.'),
-      findsOneWidget,
+      findsNothing,
     );
   });
 
