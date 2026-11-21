@@ -2376,6 +2376,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             gateway: widget.gateway,
             initial: draft,
             initialPhoto: photo,
+            initialPhotoCropper: (context, bytes) async => bytes,
+            initialShelfCropper: widget.openCropScreen,
           ),
         ),
       );

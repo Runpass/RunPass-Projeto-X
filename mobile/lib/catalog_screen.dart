@@ -4088,6 +4088,10 @@ class ParticipationDraftScreen extends StatefulWidget {
   /// Ajuste (recorte) da foto inicial antes do envio; nulo se a pessoa desistir. Trocável nos testes.
   final Future<List<int>?> Function(BuildContext context, List<int> photo)
   initialPhotoCropper;
+
+  /// Cadastrar medalha: depois da foto, abre o ajuste no círculo da prateleira (o mesmo da edição da medalha)
+  /// antes de seguir para o cadastro. O recorte vale ao concluir; nulo (padrão) não abre esse passo.
+  final MedalCropOpener? initialShelfCropper;
   const ParticipationDraftScreen({
     super.key,
     required this.gateway,
@@ -4103,6 +4107,7 @@ class ParticipationDraftScreen extends StatefulWidget {
     this.initialPostPhotos,
     this.postPhotoAtLoader = loadPostPhotoAt,
     this.initialPhotoCropper = cropRacePhoto,
+    this.initialShelfCropper,
   });
 
   @override
@@ -4815,6 +4820,33 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
+  /// Recorte da medalha para a prateleira, escolhido antes do cadastro; é gravado ao concluir (o servidor só
+  /// aceita o recorte em participação concluída).
+  List<int>? shelfPhoto;
+
+  /// Grava o recorte da prateleira na participação recém-concluída. Falhou: a medalha fica no enquadramento
+  /// padrão e a pessoa ajusta depois pela edição da medalha.
+  Future<void> saveShelfPhoto() async {
+    final bytes = shelfPhoto;
+    final id = draft['id'];
+    if (bytes == null || id is! String) return;
+    try {
+      final reference = await uploadProfilePhoto(widget.gateway, bytes);
+      draft = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': draft['version'],
+          'medalDisplayImageReference': reference,
+        },
+      );
+      forgetMedalDisplayImage(id);
+      shelfPhoto = null;
+    } on Exception {
+      // Segue: a participação já foi concluída.
+    }
+  }
+
   /// Foto que já veio escolhida (medalha): envia ao abrir, mostrando o mesmo andamento de sempre.
   Future<void> sendInitialPhoto() async {
     final bytes = widget.initialPhoto;
@@ -4831,6 +4863,16 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           message = 'Foto não enviada. Toque em Selecionar foto quando quiser anexá-la.';
         }
         return;
+      }
+      // Ajuste no círculo, como na edição da medalha. Desistir aqui só deixa a medalha no enquadramento padrão.
+      final shelf = widget.initialShelfCropper;
+      if (shelf != null && mounted) {
+        shelfPhoto = await shelf(
+          context,
+          Uint8List.fromList(cropped),
+          medalFrameFor(draft['medalFrameId'] as String?),
+        );
+        if (!mounted) return;
       }
       await sendPhoto(cropped);
     } on IdentityIssue catch (issue) {
@@ -5617,6 +5659,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
           // Segue: a participação já foi concluída.
         }
       }
+      await saveShelfPhoto();
       if (mounted) {
         message = 'Participação concluída. Avaliação e medalha foram salvas.';
         // Ao concluir, leva a pessoa para a coleção de medalhas, onde a conquista aparece.
