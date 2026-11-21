@@ -1175,133 +1175,136 @@ class _IdentityScreenState extends State<IdentityScreen> {
           colors: [runPassOrange, runPassGold],
         ),
       ),
-      // Conteudo centralizado na tela toda (nao so no alto, com sobra embaixo):
-      // o LayoutBuilder da a altura real disponivel para o ConstrainedBox exigir
-      // pelo menos essa altura, e o Center usa a sobra pra centralizar; telas
-      // mais altas que o conteudo deixam de ter espaco morto, e ainda rola se
-      // precisar (telas baixas). O botao "Começar minha jornada" fica perto do
-      // rodape por um espaco fixo generoso antes dele (nao por Spacer: um Spacer
-      // aqui dá erro de altura indefinida dentro do SingleChildScrollView).
-      child: LayoutBuilder(
-        builder: (context, constraints) => SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 32, 24, 16),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight - 48),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 480),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    RegistrationCard(
-                      displayName: displayName,
-                      username: username.text.trim().isEmpty
-                          ? null
-                          : username.text.trim(),
-                      cityLabel: selectedUf == null || selectedCity == null
-                          ? null
-                          : '$selectedCity, $selectedUf',
-                      birthDate: birthDate,
-                      gender: gender,
-                      registrationCode: registrationCode,
-                      photo: chosenPhoto == null
-                          ? null
-                          : Uint8List.fromList(chosenPhoto!),
-                      inscriptionDate: DateTime.now(),
-                      onTapPhoto: () => setState(() => step = Step.photo),
-                      onTapProfile: () => setState(() {
-                        // Ja tem usuario definido: a sugestao automatica por nome e so para
-                        // quem ainda nao escolheu um, no cadastro original.
-                        usernameTouched = true;
-                        editingFromCelebration = true;
-                        step = Step.profile;
-                      }),
-                      onTapBirth: () => setState(() {
-                        editingFromCelebration = true;
-                        step = Step.admission;
-                      }),
-                      onTapCity: () => setState(() {
-                        editingFromCelebration = true;
-                        step = Step.location;
-                      }),
+      // Mesma estrutura das telas de cadastro (_signupScaffold): bloco fixo no
+      // topo, meio que rola se precisar (Expanded+SingleChildScrollView, nunca
+      // Spacer — altura indefinida dentro de scroll da erro), e o botao no
+      // mesmo recuo do rodape que o "Continuar" das telas anteriores.
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // "INSCRIÇÃO CONFIRMADA" no topo, acima da ficha: destaca que o
+                // cadastro deu certo antes de qualquer outra informacao.
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Toque em qualquer valor da ficha para alterar.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: runPassNavy.withValues(alpha: .6),
-                      ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: .18),
+                      borderRadius: BorderRadius.circular(20),
                     ),
-                    const SizedBox(height: 22),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: .18),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          Image(
-                            image: AssetImage('assets/icons/verificado.png'),
-                            width: 14,
-                            height: 14,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Image(
+                          image: AssetImage('assets/icons/verificado.png'),
+                          width: 14,
+                          height: 14,
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'INSCRIÇÃO CONFIRMADA',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 10.5,
+                            letterSpacing: .6,
                           ),
-                          SizedBox(width: 6),
-                          Text(
-                            'INSCRIÇÃO CONFIRMADA',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 10.5,
-                              letterSpacing: .6,
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 18),
-                    Text(
-                      firstName == null
-                          ? 'Bem-vindo!'
-                          : 'Bem-vindo\n$firstName!',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                        height: 1.25,
-                        color: runPassNavy,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        color: runPassNavy.withValues(alpha: .75),
-                      ),
-                    ),
-                    // Espaco fixo generoso antes do botao: deixa "Começar minha
-                    // jornada" perto do rodape, mesma orientacao do "Continuar" das
-                    // telas de cadastro.
-                    const SizedBox(height: 72),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: runPassNavy,
-                        minimumSize: const Size.fromHeight(54),
-                      ),
-                      onPressed: openHome,
-                      child: const Text('Começar minha jornada'),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
+                const SizedBox(height: 18),
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        RegistrationCard(
+                          displayName: displayName,
+                          username: username.text.trim().isEmpty
+                              ? null
+                              : username.text.trim(),
+                          cityLabel: selectedUf == null || selectedCity == null
+                              ? null
+                              : '$selectedCity, $selectedUf',
+                          birthDate: birthDate,
+                          gender: gender,
+                          registrationCode: registrationCode,
+                          photo: chosenPhoto == null
+                              ? null
+                              : Uint8List.fromList(chosenPhoto!),
+                          inscriptionDate: DateTime.now(),
+                          onTapPhoto: () => setState(() => step = Step.photo),
+                          onTapProfile: () => setState(() {
+                            // Ja tem usuario definido: a sugestao automatica por nome e so para
+                            // quem ainda nao escolheu um, no cadastro original.
+                            usernameTouched = true;
+                            editingFromCelebration = true;
+                            step = Step.profile;
+                          }),
+                          onTapBirth: () => setState(() {
+                            editingFromCelebration = true;
+                            step = Step.admission;
+                          }),
+                          onTapCity: () => setState(() {
+                            editingFromCelebration = true;
+                            step = Step.location;
+                          }),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Toque em qualquer valor da ficha para alterar.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: runPassNavy.withValues(alpha: .6),
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        Text(
+                          firstName == null
+                              ? 'Bem-vindo!'
+                              : 'Bem-vindo\n$firstName!',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            height: 1.25,
+                            color: runPassNavy,
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        Text(
+                          'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            color: runPassNavy.withValues(alpha: .75),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: runPassNavy,
+                      minimumSize: const Size.fromHeight(54),
+                    ),
+                    onPressed: openHome,
+                    child: const Text('Começar minha jornada'),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
