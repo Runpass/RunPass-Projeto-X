@@ -75,9 +75,9 @@ class ProfileAvatar extends StatelessWidget {
   }
 }
 
-/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro em volta do [child]. Tudo em tons neutros
-/// (prata no tema escuro, grafite no claro), para acompanhar o preto e branco do app: sem dourado nem fita
-/// de duas cores.
+/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child]. A fita é
+/// neutra (dois tons de cinza, conforme o tema), para acompanhar o preto e branco do app: sem fita de duas
+/// cores.
 class MedalAvatar extends StatelessWidget {
   final double radius;
   final Widget child;
@@ -91,11 +91,9 @@ class MedalAvatar extends StatelessWidget {
     final size = radius * 2;
     final ribbonHeight = radius * (radius < 24 ? 0.7 : 0.9);
     final dark = Theme.of(context).brightness == Brightness.dark;
-    // Aro: do claro para o escuro, na diagonal, como metal escovado.
-    final ring = dark
-        ? const [Color(0xFFFFFFFF), Color(0xFFC4C7CC), Color(0xFF8B9096)]
-        : const [Color(0xFF6B7078), Color(0xFF2E3238), Color(0xFF14171B)];
-    final rim = dark ? const Color(0xFFF2F3F5) : const Color(0xFF8B9096);
+    // Aro dourado, do claro para o escuro na diagonal.
+    const ring = [Color(0xFFFFE08A), Color(0xFFD4A017), Color(0xFF9C7412)];
+    const rim = Color(0xFFFFF3C4);
     return SizedBox(
       key: const Key('medal-avatar'),
       width: size,
