@@ -302,6 +302,10 @@ class EditionCompactCard extends StatelessWidget {
   /// Sem a imagem e menor: só para a escolha da corrida na nova publicação (nas outras listas a imagem
   /// ocupa a largura inteira do cartão).
   final bool showImage;
+
+  /// Mesmo tamanho para todos os cartões de uma faixa: o nome reserva sempre duas linhas e o cartão ocupa a
+  /// altura que receber (a faixa dá a altura do mais alto).
+  final bool uniform;
   const EditionCompactCard({
     super.key,
     required this.gateway,
@@ -312,6 +316,7 @@ class EditionCompactCard extends StatelessWidget {
     this.now,
     this.trailing,
     this.showImage = true,
+    this.uniform = false,
   });
 
   @override
@@ -327,7 +332,7 @@ class EditionCompactCard extends StatelessWidget {
     return Card(
       key: Key('compact-card-${edition['id']}'),
       clipBehavior: Clip.antiAlias,
-      margin: EdgeInsets.only(bottom: showImage ? 10 : 6),
+      margin: EdgeInsets.only(bottom: uniform ? 0 : (showImage ? 10 : 6)),
       child: InkWell(
         onTap: onTap,
         child: Column(
@@ -341,6 +346,13 @@ class EditionCompactCard extends StatelessWidget {
                   fit: StackFit.expand,
                   children: [
                     EditionCover(gateway: gateway, edition: edition),
+                    // Inscrição na própria foto: o link da prova; sem link, procurar a inscrição na internet.
+                    if (!archived && signupOpen(edition, now))
+                      Positioned(
+                        left: 10,
+                        bottom: 10,
+                        child: SignupChip(edition: edition),
+                      ),
                     // Só a data sobre a foto; o resto das informações fica embaixo.
                     Positioned(
                       top: 10,
@@ -392,15 +404,24 @@ class EditionCompactCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 2),
                         ],
-                        Text(
-                          edition['name'] as String? ?? 'Corrida',
-                          maxLines: showImage ? 2 : 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: showImage ? 16 : 14.5,
-                            height: 1.2,
-                            color: archived ? context.archivedText : null,
+                        SizedBox(
+                          // Duas linhas sempre reservadas: nome curto ou longo, o cartão fica igual.
+                          height: uniform
+                              ? MediaQuery.textScalerOf(context).scale(16) *
+                                        1.2 *
+                                        2 +
+                                    1
+                              : null,
+                          child: Text(
+                            edition['name'] as String? ?? 'Corrida',
+                            maxLines: showImage ? 2 : 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: showImage ? 16 : 14.5,
+                              height: 1.2,
+                              color: archived ? context.archivedText : null,
+                            ),
                           ),
                         ),
                         if (!showImage) ...[
@@ -493,12 +514,16 @@ class PlanRow extends StatelessWidget {
 
   /// Controle do canto direito (ex.: o coração que tira a corrida de "Quero correr").
   final Widget? trailing;
+
+  /// Linha a mais em destaque (ex.: o motivo da indicação em "Pra você").
+  final String? note;
   const PlanRow({
     super.key,
     required this.gateway,
     required this.edition,
     this.onTap,
     this.trailing,
+    this.note,
   });
 
   @override
@@ -533,7 +558,8 @@ class PlanRow extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: SizedBox(
-          height: 92,
+          // Cabe nome em duas linhas, a data e o local (antes, com 92, o texto estourava uns 6 px).
+          height: note == null ? 104 : 124,
           child: Row(
             children: [
               SizedBox(
@@ -561,6 +587,20 @@ class PlanRow extends StatelessWidget {
                       if (date != null)
                         line(Icons.event_outlined, longDate(date)),
                       if (place.isNotEmpty) line(Icons.place_outlined, place),
+                      if (note != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            note!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: runPassOrange,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -601,4 +641,81 @@ class _InfoLine extends StatelessWidget {
       ),
     ],
   );
+}
+
+/// A corrida ainda vai acontecer (hoje conta): vale mostrar a inscrição.
+bool signupOpen(Map<String, dynamic> edition, [DateTime? now]) {
+  final date = DateTime.tryParse('${edition['date'] ?? ''}');
+  if (date == null) return false;
+  final today = now ?? DateTime.now();
+  return !date.isBefore(DateTime(today.year, today.month, today.day));
+}
+
+/// Endereço da inscrição: a página de inscrição; sem ela, o site oficial; sem os dois, uma busca na internet
+/// pela inscrição (nunca inventa um link da prova).
+({Uri uri, bool search}) signupLink(Map<String, dynamic> edition) {
+  final link =
+      safeHttpsUri(edition['registrationUrl']) ??
+      safeHttpsUri(edition['officialUrl']);
+  if (link != null) return (uri: link, search: false);
+  final year = '${edition['date'] ?? ''}'.split('-').first;
+  final query = ['inscrição', edition['name'], edition['city'], year]
+      .whereType<Object>()
+      .map((v) => '$v'.trim())
+      .where((v) => v.isNotEmpty)
+      .join(' ');
+  return (
+    uri: Uri.https('www.google.com', '/search', {'q': query}),
+    search: true,
+  );
+}
+
+/// Selo de inscrição sobre a foto da corrida (canto de baixo à esquerda).
+class SignupChip extends StatelessWidget {
+  final Map<String, dynamic> edition;
+  const SignupChip({super.key, required this.edition});
+
+  @override
+  Widget build(BuildContext context) {
+    final target = signupLink(edition);
+    return Material(
+      color: target.search ? const Color(0xb3000000) : runPassOrange,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        key: Key('signup-${edition['id']}'),
+        borderRadius: BorderRadius.circular(999),
+        onTap: () async {
+          if (!await linkOpener(target.uri) && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Não foi possível abrir o link.')),
+            );
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                target.search
+                    ? Icons.search_rounded
+                    : Icons.open_in_new_rounded,
+                size: 15,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                target.search ? 'Procurar inscrição' : 'Inscrição',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

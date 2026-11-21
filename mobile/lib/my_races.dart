@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'bib_card.dart';
 import 'catalog_screen.dart';
 import 'agenda.dart' show AgendaScreen;
 import 'city_photos.dart';
@@ -618,6 +619,7 @@ const _editionCacheTtl = Duration(minutes: 10);
 /// Filtro e ordem escolhidos na prateleira; sobrevivem a troca de aba (a tela e recriada).
 MedalGrouping _lastMedalGrouping = MedalGrouping.all;
 bool _lastMedalNewestFirst = true;
+bool _lastMedalFramesView = false;
 
 /// Zera o que a prateleira guarda entre telas. Usado ao sair da conta e nos testes.
 void clearMedalCaches() {
@@ -625,6 +627,7 @@ void clearMedalCaches() {
   _photoLinks.clear();
   _lastMedalGrouping = MedalGrouping.all;
   _lastMedalNewestFirst = true;
+  _lastMedalFramesView = false;
 }
 
 /// Edition details by id. Chamadas em no maximo 4 por vez, com ate 3 tentativas nas falhas passageiras.
@@ -786,8 +789,13 @@ class _SignedPhotoState extends State<SignedPhoto> {
       return;
     }
     try {
+      // O endereço pode trazer a consulta (ex.: `?index=2`, a 3ª foto de uma publicação com várias).
+      final parts = Uri.parse(endpoint);
       final reply = await _photoGate.run(
-        () => widget.gateway.request(endpoint),
+        () => widget.gateway.request(
+          parts.path,
+          query: parts.queryParameters.isEmpty ? null : parts.queryParameters,
+        ),
       );
       _applyLink(endpoint, reply);
     } on Exception catch (error) {
@@ -1508,7 +1516,12 @@ Future<List<int>?> openMedalCropScreen(
 ) => Navigator.of(context).push<List<int>>(
   MaterialPageRoute(
     fullscreenDialog: true,
-    builder: (_) => TouchCropScreen(image: image, frame: frame),
+    // O mesmo editor da foto da medalha e da publicação, aberto no formato "Prateleira".
+    builder: (_) => PhotoZoomScreen(
+      image: image,
+      title: 'Foto da medalha',
+      shelf: (key) => MedalShelfCrop(key: key, image: image, frame: frame),
+    ),
   ),
 );
 
@@ -1614,21 +1627,19 @@ class _FrameGuidePainter extends CustomPainter {
       oldDelegate.frame.id != frame.id;
 }
 
-/// Tela de reposicionamento por toque: arrastar com um dedo move a foto,
-/// pinçar com dois dedos amplia/reduz, e girar com dois dedos gira a foto —
-/// tudo junto, como em qualquer editor de foto. Devolve um PNG no mesmo
-/// formato do furo do modelo escolhido (circulo, hexagono, quadrada ou
-/// poligono — ver [medalCropAspectRatio]), ou nulo se a pessoa desistir.
-class TouchCropScreen extends StatefulWidget {
+/// Recorte no formato do furo da medalha (o "Prateleira" do editor de foto): arrastar com um dedo move a
+/// foto, pinçar amplia/reduz e girar com dois dedos gira, tudo junto. [export] devolve um PNG no mesmo
+/// formato do furo do modelo (círculo, hexágono, quadrada ou polígono — ver [medalCropAspectRatio]).
+class MedalShelfCrop extends StatefulWidget {
   final Uint8List image;
   final MedalFrame frame;
-  const TouchCropScreen({super.key, required this.image, required this.frame});
+  const MedalShelfCrop({super.key, required this.image, required this.frame});
 
   @override
-  State<TouchCropScreen> createState() => _TouchCropScreenState();
+  State<MedalShelfCrop> createState() => MedalShelfCropState();
 }
 
-class _TouchCropScreenState extends State<TouchCropScreen> {
+class MedalShelfCropState extends State<MedalShelfCrop> {
   ui.Image? decoded;
   double scale = 1;
   double rotation = 0;
@@ -1636,7 +1647,6 @@ class _TouchCropScreenState extends State<TouchCropScreen> {
   double _baseScale = 1;
   double _baseRotation = 0;
   Size viewportSize = const Size(320, 320);
-  bool busy = false;
 
   @override
   void initState() {
@@ -1651,158 +1661,82 @@ class _TouchCropScreenState extends State<TouchCropScreen> {
     setState(() => decoded = codecFrame.image);
   }
 
-  void _onScaleStart(ScaleStartDetails details) {
-    _baseScale = scale;
-    _baseRotation = rotation;
-  }
+  bool get ready => decoded != null;
 
-  void _onScaleUpdate(ScaleUpdateDetails details) {
-    setState(() {
-      scale = (_baseScale * details.scale).clamp(0.2, 8.0);
-      rotation = _baseRotation + details.rotation;
-      offset += details.focalPointDelta;
-    });
-  }
-
-  Future<void> _confirm(Size viewport) async {
+  /// PNG do que está dentro da área da prateleira; nulo se a foto ainda não carregou.
+  Future<List<int>?> export() async {
     final image = decoded;
-    if (image == null || busy) return;
-    setState(() => busy = true);
-    try {
-      final width = viewport.width.round();
-      final height = viewport.height.round();
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-      TouchCropPainter(
-        image: image,
-        scale: scale,
-        rotation: rotation,
-        offset: offset,
-      ).paint(canvas, viewport);
-      final output = await recorder.endRecording().toImage(width, height);
-      final data = await output.toByteData(format: ui.ImageByteFormat.png);
-      if (!mounted) return;
-      Navigator.of(context).pop<List<int>>(data!.buffer.asUint8List());
-    } on Exception {
-      if (!mounted) return;
-      setState(() => busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Não foi possível recortar a foto. Tente de novo.'),
-        ),
-      );
-    }
+    if (image == null) return null;
+    final viewport = viewportSize;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    TouchCropPainter(
+      image: image,
+      scale: scale,
+      rotation: rotation,
+      offset: offset,
+    ).paint(canvas, viewport);
+    final output = await recorder.endRecording().toImage(
+      viewport.width.round(),
+      viewport.height.round(),
+    );
+    final data = await output.toByteData(format: ui.ImageByteFormat.png);
+    return data?.buffer.asUint8List();
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: Colors.black,
-    appBar: AppBar(
-      backgroundColor: Colors.black,
-      foregroundColor: Colors.white,
-      title: const Text('Reposicionar foto'),
-    ),
-    body: SafeArea(
-      child: Column(
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: Text(
-              'Arraste para posicionar, pinça para o zoom e gire com dois '
-              'dedos. Essa área é o que aparece na prateleira de medalhas.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70),
-            ),
-          ),
-          Expanded(
-            child: decoded == null
-                ? const Center(
-                    child: CircularProgressIndicator(color: Colors.white),
-                  )
-                : LayoutBuilder(
-                    builder: (context, constraints) {
-                      final aspect = medalCropAspectRatio(widget.frame);
-                      final available = constraints.biggest;
-                      var viewport = Size(
-                        available.width,
-                        available.width / aspect,
-                      );
-                      if (viewport.height > available.height) {
-                        viewport = Size(
-                          available.height * aspect,
-                          available.height,
-                        );
-                      }
-                      viewportSize = viewport;
-                      return Center(
-                        child: ClipRect(
-                          child: GestureDetector(
-                            key: const Key('crop-touch-area'),
-                            onScaleStart: _onScaleStart,
-                            onScaleUpdate: _onScaleUpdate,
-                            child: SizedBox(
-                              width: viewport.width,
-                              height: viewport.height,
-                              child: Stack(
-                                children: [
-                                  CustomPaint(
-                                    size: viewport,
-                                    painter: TouchCropPainter(
-                                      image: decoded!,
-                                      scale: scale,
-                                      rotation: rotation,
-                                      offset: offset,
-                                    ),
-                                  ),
-                                  IgnorePointer(
-                                    child: CustomPaint(
-                                      size: viewport,
-                                      painter: _FrameGuidePainter(widget.frame),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+  Widget build(BuildContext context) => decoded == null
+      ? const Center(child: CircularProgressIndicator(color: Colors.white))
+      : LayoutBuilder(
+          builder: (context, constraints) {
+            final aspect = medalCropAspectRatio(widget.frame);
+            final available = constraints.biggest;
+            var viewport = Size(available.width, available.width / aspect);
+            if (viewport.height > available.height) {
+              viewport = Size(available.height * aspect, available.height);
+            }
+            viewportSize = viewport;
+            return Center(
+              child: ClipRect(
+                child: GestureDetector(
+                  key: const Key('crop-touch-area'),
+                  onScaleStart: (_) {
+                    _baseScale = scale;
+                    _baseRotation = rotation;
+                  },
+                  onScaleUpdate: (details) => setState(() {
+                    scale = (_baseScale * details.scale).clamp(0.2, 8.0);
+                    rotation = _baseRotation + details.rotation;
+                    offset += details.focalPointDelta;
+                  }),
+                  child: SizedBox(
+                    width: viewport.width,
+                    height: viewport.height,
+                    child: Stack(
+                      children: [
+                        CustomPaint(
+                          size: viewport,
+                          painter: TouchCropPainter(
+                            image: decoded!,
+                            scale: scale,
+                            rotation: rotation,
+                            offset: offset,
                           ),
                         ),
-                      );
-                    },
-                  ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('crop-cancel'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
+                        IgnorePointer(
+                          child: CustomPaint(
+                            size: viewport,
+                            painter: _FrameGuidePainter(widget.frame),
+                          ),
+                        ),
+                      ],
                     ),
-                    onPressed: busy ? null : () => Navigator.of(context).pop(),
-                    child: const Text('Cancelar'),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    key: const Key('crop-confirm'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: runPassOrange,
-                    ),
-                    onPressed: busy || decoded == null
-                        ? null
-                        : () => _confirm(viewportSize),
-                    child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
+              ),
+            );
+          },
+        );
 }
 
 class MedalCollectionScreen extends StatefulWidget {
@@ -1847,6 +1781,9 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
   late bool showEarned = widget.justEarned != null;
   MedalGrouping grouping = _lastMedalGrouping;
   bool newestFirst = _lastMedalNewestFirst;
+
+  /// Segunda visão de Medalhas: os quadros (medalha + número de peito) das corridas com número informado.
+  bool framesView = _lastMedalFramesView;
   bool _applying = false;
 
   /// Aviso da conquista, no alto da prateleira, logo depois de concluir uma corrida.
@@ -1894,7 +1831,9 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       };
       final list = [
         for (final draft in snapshot.data ?? const <RaceRecord>[])
-          if (!earned.contains('${draft.participation['editionId']}')) draft,
+          if (!earned.contains('${draft.participation['editionId']}') &&
+              !hiddenDrafts.contains(draft.participation['id']))
+            draft,
       ];
       if (list.isEmpty) return const SizedBox.shrink();
       return Column(
@@ -1919,12 +1858,26 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 subtitle: const Text('Rascunho · falta concluir'),
-                trailing: const Text(
-                  'Continuar',
-                  style: TextStyle(
-                    color: runPassOrange,
-                    fontWeight: FontWeight.w700,
-                  ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Continuar',
+                      style: TextStyle(
+                        color: runPassOrange,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    IconButton(
+                      key: Key(
+                        'medal-draft-delete-${draft.participation['id']}',
+                      ),
+                      tooltip: 'Excluir rascunho',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                      onPressed: () => deleteDraft(draft),
+                    ),
+                  ],
                 ),
                 onTap: () => continueDraft(draft),
               ),
@@ -1934,6 +1887,37 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
       );
     },
   );
+
+  /// Rascunhos tirados da lista agora (com "Desfazer"): somem na hora, antes de o servidor confirmar.
+  final hiddenDrafts = <Object?>{};
+
+  /// × no rascunho: exclui com "Desfazer" (some na hora; a exclusão só vai ao servidor depois da janela).
+  Future<void> deleteDraft(RaceRecord draft) async {
+    final id = draft.participation['id'] as String;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final done = await deleteWithUndo(
+        context,
+        id: id,
+        message: 'Rascunho excluído.',
+        hide: () => setState(() => hiddenDrafts.add(id)),
+        restore: () {
+          if (mounted) setState(() => hiddenDrafts.remove(id));
+        },
+        perform: () => deleteParticipation(widget.gateway, id),
+      );
+      if (done && mounted) {
+        setState(() => drafts = loadMyDrafts(widget.gateway));
+      }
+    } on Exception {
+      if (mounted) setState(() => hiddenDrafts.remove(id));
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível excluir o rascunho. Tente de novo.'),
+        ),
+      );
+    }
+  }
 
   Future<void> continueDraft(RaceRecord draft) async {
     await Navigator.of(context).push(
@@ -2398,6 +2382,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
             gateway: widget.gateway,
             initial: draft,
             initialPhoto: photo,
+            initialPhotoCropper: (context, bytes) async => bytes,
+            initialShelfCropper: widget.openCropScreen,
           ),
         ),
       );
@@ -2831,6 +2817,49 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     ),
   );
 
+  /// Quadros: uma moldura por corrida que tem número de peito, com a medalha de um lado e o cartão do número
+  /// (distância, nome, número e colocação) do outro. Segue a ordem escolhida (mais recentes ou mais antigas).
+  List<Widget> frames(List<RaceRecord> data) {
+    final ordered = newestFirst ? data : data.reversed.toList();
+    final items = [
+      for (final race in ordered)
+        if (BibCard.of(race) case final card?) (race, card),
+    ];
+    if (items.isEmpty) {
+      return [
+        Padding(
+          key: const Key('medal-frames-empty'),
+          padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 12),
+          child: Text(
+            'Os quadros aparecem para as corridas com número de peito. Abra uma medalha, toque em '
+            '"Alterar dados da corrida e avaliação" e informe o número de peito (e a colocação, se quiser).',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: context.muted),
+          ),
+        ),
+      ];
+    }
+    return [
+      for (final (race, card) in items)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
+          child: InkWell(
+            key: Key('medal-frame-${race.participation['id']}'),
+            onTap: () async {
+              await openMedal(context, widget.gateway, race);
+              _reloadShelf();
+            },
+            child: MedalBibFrame(
+              gateway: widget.gateway,
+              race: race,
+              card: card,
+              revision: shelfRevision,
+            ),
+          ),
+        ),
+    ];
+  }
+
   Widget chip(String label, MedalGrouping value) => Padding(
     padding: const EdgeInsets.only(right: 8),
     child: ChoiceChip(
@@ -2870,17 +2899,44 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
               key: const Key('medals-list'),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
               children: [
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      chip('Todas', MedalGrouping.all),
-                      chip('Por ano', MedalGrouping.year),
-                      chip('Por distância', MedalGrouping.distance),
-                      chip('Por cidade', MedalGrouping.city),
+                // Segundo menu: a prateleira de medalhas ou os quadros com o número de peito.
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: SegmentedButton<bool>(
+                    key: const Key('medals-view'),
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(
+                        value: false,
+                        icon: Icon(Icons.workspace_premium_outlined),
+                        label: Text('Medalhas'),
+                      ),
+                      ButtonSegment(
+                        value: true,
+                        icon: Icon(Icons.confirmation_number_outlined),
+                        label: Text('Quadros'),
+                      ),
                     ],
+                    selected: {framesView},
+                    onSelectionChanged: (value) => setState(
+                      () => framesView = _lastMedalFramesView = value.first,
+                    ),
                   ),
                 ),
+                // Os filtros de agrupar valem para a prateleira; em Quadros não aparecem.
+                if (!framesView)
+                  SingleChildScrollView(
+                    key: const Key('medal-grouping'),
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        chip('Todas', MedalGrouping.all),
+                        chip('Por ano', MedalGrouping.year),
+                        chip('Por distância', MedalGrouping.distance),
+                        chip('Por cidade', MedalGrouping.city),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 6),
                 Card(
                   child: Padding(
@@ -3002,7 +3058,7 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                shelf(data),
+                if (framesView) ...frames(data) else shelf(data),
               ],
             );
           },

@@ -143,7 +143,7 @@ Future<void> pickFilterLocation(WidgetTester tester) async {
 
 /// O nome é o único campo obrigatório do formulário de filtros.
 Future<void> fillName(WidgetTester tester, [String name = 'Corrida']) async {
-  final field = find.widgetWithText(TextFormField, 'Nome da corrida');
+  final field = find.widgetWithText(TextFormField, 'Buscar corridas');
   await reveal(tester, field, backwards: true);
   await tester.enterText(field, name);
 }
@@ -179,6 +179,7 @@ void main() {
     );
     expect(requestStatusLabel('outro'), 'Situação desconhecida');
   });
+  signupOpenListTests();
   priorityOrderTests();
   defaultOrderTests();
   test('query parameters preserve stage and encode filters without leaking into path', () async {
@@ -219,7 +220,10 @@ void main() {
       expect(find.text('Corrida A'), findsOneWidget);
       await tester.tap(find.text('10K'));
       await tester.pumpAndSettle();
-      expect(find.text('Distância selecionada.'), findsOneWidget);
+      expect(
+        find.text('Distância selecionada.'),
+        findsNothing,
+      ); // sem a frase: a distância fica marcada
       expect(
         paths.where(
           (c) =>
@@ -450,7 +454,6 @@ void main() {
         findsOneWidget,
       );
 
-      final declaration = find.text('Declaro que concluí esta corrida');
       final list = find.byType(Scrollable).first;
       final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
@@ -478,8 +481,6 @@ void main() {
       );
       await tapStar(tester, 'rating-Segurança-4');
       await tester.pump();
-      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
-      await tester.tap(declaration);
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tester.ensureVisible(finish);
@@ -594,15 +595,12 @@ void main() {
       await tester.tap(find.text('Selecionar foto'));
       await tester.pumpAndSettle();
       final list = find.byType(Scrollable).first;
-      final declaration = find.text('Declaro que concluí esta corrida');
       final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await rateAll(tester, skip: 'Segurança');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tapStar(tester, 'rating-Segurança-4');
       await tester.pump();
-      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
-      await tester.tap(declaration);
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
       await tester.ensureVisible(finish);
@@ -1054,9 +1052,6 @@ void main() {
       );
       await tapStar(tester, 'rating-Kit-2');
       await tester.pump();
-      final declaration = find.text('Declaro que concluí esta corrida');
-      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
-      await tester.tap(declaration);
       await tester.pump();
       final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
@@ -1778,7 +1773,12 @@ void main() {
         // Limpar a busca volta à lista padrão.
         await tester.tap(find.byKey(const Key('catalog-search-clear')));
         await tester.pumpAndSettle();
-        expect(calls.last['dateFrom'], upcomingRange().from);
+        // A lista começa depois de amanhã: só corridas em que ainda dá para se inscrever.
+        final start = DateTime.now().add(const Duration(days: signupMinDays));
+        expect(
+          calls.last['dateFrom'],
+          '${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')}',
+        );
         expect(calls.last.containsKey('q'), isFalse);
       },
     );
@@ -2088,8 +2088,9 @@ void main() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      double top(String text) =>
-          tester.getTopLeft(find.textContaining(text)).dy;
+      double top(String text) => tester
+          .getTopLeft(find.textContaining(text))
+          .dx; // mesma cidade: a ordem é da esquerda para a direita na faixa
       expect(top('Corrida A') < top('Corrida B'), isTrue);
       expect(top('Corrida B') < top('Corrida C'), isTrue);
       expect(find.byKey(const Key('catalog-sort')), findsNothing);
@@ -2267,6 +2268,42 @@ void main() {
   );
 }
 
+void signupOpenListTests() {
+  testWidgets(
+    'Corridas lista só o que ainda dá para se inscrever; a busca por nome acha todas',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final queries = <Map<String, String>>[];
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          queries.add(uri.queryParameters);
+          return JsonReply(200, {
+            'items': [
+              {...entry('A'), 'id': 'EA', 'registrationStatus': 'open'},
+              {...entry('B'), 'id': 'EB', 'registrationStatus': 'closed'},
+              {...entry('C'), 'id': 'EC', 'registrationStatus': 'sold_out'},
+              {...entry('D'), 'id': 'ED'}, // situação não informada: fica
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('quick-ran-EA')), findsOneWidget);
+      expect(find.byKey(const Key('quick-ran-ED')), findsOneWidget);
+      expect(find.byKey(const Key('quick-ran-EB')), findsNothing);
+      expect(find.byKey(const Key('quick-ran-EC')), findsNothing);
+      expect(signupNotClosed({'registrationStatus': 'closed'}), isFalse);
+      expect(signupNotClosed({}), isTrue);
+    },
+  );
+}
+
 void priorityOrderTests() {
   testWidgets(
     'as minhas corridas não passam mais na frente: a lista segue a ordem do servidor (da mais antiga para a mais nova)',
@@ -2322,7 +2359,7 @@ void priorityOrderTests() {
       );
       await tester.pumpAndSettle();
       double top(String id) =>
-          tester.getTopLeft(find.byKey(Key('quick-ran-E$id'))).dy;
+          tester.getTopLeft(find.byKey(Key('quick-ran-E$id'))).dx;
       List<String> order() =>
           (['A', 'B', 'C', 'D', 'E', 'F']
             ..sort((a, b) => top(a).compareTo(top(b))));
@@ -2355,12 +2392,69 @@ void defaultOrderTests() {
     await tester.pumpWidget(MaterialApp(home: CatalogScreen(gateway: gateway)));
     await tester.pumpAndSettle();
     expect(limits.first, '20');
-    double top(String text) => tester.getTopLeft(find.textContaining(text)).dy;
+    double top(String text) => tester.getTopLeft(find.textContaining(text)).dx;
     expect(top('Corrida A') < top('Corrida B'), isTrue);
   });
 
   testWidgets(
-    'cartão da lista: ícone do link da prova só quando há link https',
+    'lista em faixas por cidade: rola na horizontal dentro da cidade, na vertical entre cidades',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              {
+                ...entry('A'),
+                'id': 'EA',
+                'date': '2026-12-01',
+                'city': 'Santos',
+              },
+              {...entry('B'), 'id': 'EB', 'date': '2026-12-02'},
+              {
+                ...entry('C'),
+                'id': 'EC',
+                'date': '2026-12-03',
+                'name': 'Corrida C com um nome bem comprido que ocupa duas linhas no cartão',
+              },
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      // São Paulo (2 corridas) vem antes de Santos (1); cada cidade é uma faixa com título e contagem.
+      final sp = find.byKey(const Key('catalog-city-São Paulo, SP'));
+      final santos = find.byKey(const Key('catalog-city-Santos, SP'));
+      expect(sp, findsOneWidget);
+      expect(santos, findsOneWidget);
+      expect(tester.getTopLeft(sp).dy < tester.getTopLeft(santos).dy, isTrue);
+      expect(find.text('2 corridas'), findsOneWidget);
+      expect(find.text('1 corrida'), findsOneWidget);
+      // Na mesma cidade, lado a lado (mesma altura), da data mais próxima para a mais distante.
+      final b = tester.getTopLeft(find.text('Corrida B'));
+      final c = tester.getTopLeft(find.textContaining('Corrida C'));
+      expect(b.dy, c.dy);
+      expect(b.dx < c.dx, isTrue);
+      final row = tester.widget<SingleChildScrollView>(
+        find.byKey(const Key('catalog-row-São Paulo, SP')),
+      );
+      expect(row.scrollDirection, Axis.horizontal);
+      // Mesmo tamanho: nome curto ao lado de nome longo, os cartões ficam com a mesma altura.
+      expect(
+        tester.getSize(find.byKey(const Key('compact-card-EB'))),
+        tester.getSize(find.byKey(const Key('compact-card-EC'))),
+      );
+    },
+  );
+
+  testWidgets(
+    'foto do cartão: inscrição pelo link da prova; sem link https, procurar a inscrição',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -2376,12 +2470,26 @@ void defaultOrderTests() {
         if (uri.path == '/editions') {
           return JsonReply(200, {
             'items': [
-              {...entry('A'), 'officialUrl': 'https://corrida.exemplo.test/'},
+              {
+                ...entry('A'),
+                'date': '2099-01-01',
+                'status': 'upcoming',
+                'officialUrl': 'https://corrida.exemplo.test/',
+              },
               {
                 ...entry('B'),
+                'date': '2099-01-02',
+                'status': 'upcoming',
+                'officialUrl': 'https://corrida.exemplo.test/b',
                 'registrationUrl': 'https://ingressos.exemplo.test/b',
               },
-              {...entry('C'), 'officialUrl': 'javascript:alert(1)'},
+              {
+                ...entry('C'),
+                'date': '2099-01-03',
+                'status': 'upcoming',
+                'officialUrl': 'javascript:alert(1)',
+              },
+              {...entry('D'), 'date': '2020-01-01'}, // já passou: sem inscrição
             ],
           });
         }
@@ -2391,16 +2499,25 @@ void defaultOrderTests() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('card-link-A')), findsOneWidget);
-      expect(find.byKey(const Key('card-link-B')), findsOneWidget);
-      expect(find.byKey(const Key('card-link-C')), findsNothing);
-      await tester.tap(find.byKey(const Key('card-link-A')));
-      await tester.tap(find.byKey(const Key('card-link-B')));
-      await tester.pump();
-      expect(opened.map((u) => u.toString()), [
-        'https://corrida.exemplo.test/',
-        'https://ingressos.exemplo.test/b',
-      ]);
+      Future<void> tapChip(String id) async {
+        final chip = find.byKey(Key('signup-$id'));
+        await tester.ensureVisible(chip);
+        await tester.pumpAndSettle();
+        await tester.tap(chip);
+        await tester.pump();
+      }
+
+      expect(find.byKey(const Key('signup-D')), findsNothing);
+      await tapChip('A');
+      await tapChip('B');
+      await tapChip('C');
+      expect(opened[0].toString(), 'https://corrida.exemplo.test/');
+      // A página de inscrição vem antes do site oficial.
+      expect(opened[1].toString(), 'https://ingressos.exemplo.test/b');
+      // Sem link https: busca a inscrição na internet (nunca inventa o link da prova).
+      expect(opened[2].host, 'www.google.com');
+      expect(opened[2].queryParameters['q'], contains('Corrida C'));
+      expect(find.text('Procurar inscrição'), findsOneWidget);
     },
   );
 }

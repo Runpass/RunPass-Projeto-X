@@ -456,7 +456,7 @@ class DiscoveryStore:
         try:
             CatalogImporter(self.catalog, allow_system=True).put(
                 payload,
-                expected_version=body["version"],
+                expected_version=int(body["version"]),
                 origin=f"https://descobertas.runpass.invalid/{discovery_id_of(item)}",
                 actor=DiscoveryBulkActor(),
             )

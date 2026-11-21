@@ -333,3 +333,15 @@ test('o portal não tem mais as abas de fontes e divergências', async () => {
   assert.ok(!('fontes' in ABAS) && !('divergencias' in ABAS));
   assert.ok('catalogo' in ABAS && 'descobertas' in ABAS);
 });
+
+test('feedbacks do app: aba, tipos e resumo', async () => {
+  const { ABAS, TIPOS_FEEDBACK, resumoFeedbacks } = await import('./lib.js');
+  assert.deepEqual(ABAS.feedbacks, ['Feedbacks do app', 'catalog_admin']);
+  assert.equal(TIPOS_FEEDBACK.problem, 'Problema');
+  assert.equal(resumoFeedbacks([]), 'Nenhum feedback recebido ainda.');
+  assert.equal(resumoFeedbacks([{ kind: 'praise' }]), '1 feedback: 1 elogio.');
+  assert.equal(
+    resumoFeedbacks([{ kind: 'suggestion' }, { kind: 'problem' }, { kind: 'problem' }]),
+    '3 feedbacks: 1 sugestão, 2 problemas.',
+  );
+});

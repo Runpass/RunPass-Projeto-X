@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from runpass.erasure import ErasureProcessor
 from runpass.identity import Principal
@@ -115,6 +116,85 @@ class SocialTests(unittest.TestCase):
         self.social.follow(self.ana, "caio", "s3")
         first = self.social.suggestions(self.bia)["items"][0]
         self.assertEqual(first["username"], "caio")
+
+    def befriend(self, a, b, key):
+        self.social.add_friend(a, b.subject, "fa-" + key)
+        self.social.decide_friend(b, a.subject, True, "fd-" + key)
+
+    def test_suggestions_put_friends_of_friends_first_and_tell_how_many_in_common(self):
+        dani = self.person("dani", "Daniela Rocha", "dani_r")
+        edu = self.person("edu", "Eduardo Reis", "edu_r")
+        self.befriend(self.bia, self.ana, "1")
+        self.befriend(self.bia, dani, "2")
+        self.befriend(self.ana, self.caio, "3")
+        self.befriend(dani, self.caio, "4")
+        self.befriend(dani, edu, "5")
+        items = self.social.suggestions(self.bia)["items"]
+        self.assertEqual([p["username"] for p in items[:2]], ["caio", "edu_r"])
+        self.assertEqual(items[0]["mutualFriends"], 2)  # amigo da Ana e da Dani
+        self.assertEqual(items[1]["mutualFriends"], 1)
+
+    def test_suggestions_and_search_prefer_people_nearby(self):
+        here = {
+            "city": "Campinas",
+            "state": "SP",
+            "latitude": Decimal("-22.9"),
+            "longitude": Decimal("-47.06"),
+        }
+        far = {
+            "city": "Recife",
+            "state": "PE",
+            "latitude": Decimal("-8.05"),
+            "longitude": Decimal("-34.9"),
+        }
+        self.identity.patch_profile(self.bia, "u-bia", {**here, "expectedVersion": 1})
+        self.person("anna", "Ana Longe", "ana_longe")
+        self.identity.patch_profile(
+            Principal("anna", True), "u-anna", {**far, "expectedVersion": 1}
+        )
+        self.identity.patch_profile(self.ana, "u-ana", {**here, "expectedVersion": 1})
+        found = self.social.search(self.bia, "ana")["items"]
+        self.assertEqual([p["username"] for p in found], ["ana_runs", "ana_longe"])
+        self.assertTrue(found[0]["nearby"])
+        self.assertNotIn("nearby", found[1])
+        first = self.social.suggestions(self.bia)["items"][0]
+        self.assertEqual(first["username"], "ana_runs")
+
+    def test_search_puts_friends_of_friends_before_strangers(self):
+        self.person("caio2", "Caio Alves", "caio_alves")
+        self.befriend(self.bia, self.ana, "1")
+        self.befriend(self.ana, self.caio, "2")
+        found = [p["username"] for p in self.social.search(self.bia, "caio")["items"]]
+        self.assertEqual(found, ["caio", "caio_alves"])
+
+    # ---- feedback ----
+    def test_feedback_is_stored_for_the_team_and_limited_per_day(self):
+        from runpass.social import list_feedback_for_team
+
+        out = self.social.send_feedback(
+            self.bia, "f1", "suggestion", "  Quero ver o pace medio  ", "1.0"
+        )
+        self.assertTrue(out["received"])
+        again = self.social.send_feedback(
+            self.bia, "f1", "suggestion", "  Quero ver o pace medio  ", "1.0"
+        )
+        self.assertEqual(again["id"], out["id"])  # mesma chave: nao duplica
+        self.social.send_feedback(self.ana, "f2", "problem", "A foto nao abriu")
+        items = list_feedback_for_team(self.store)
+        self.assertEqual(len(items), 2)
+        mine = next(i for i in items if i["id"] == out["id"])
+        self.assertEqual(mine["text"], "Quero ver o pace medio")
+        self.assertEqual(mine["authorUsername"], "bia_lima")
+        self.assertEqual(mine["appVersion"], "1.0")
+        # A linha da fila fica registrada na particao da pessoa, para o apagamento da conta.
+        refs = self.store.query("identity", "USER#bia", prefix="FEEDBACKREF#", limit=10)[0]
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0][1]["sharedKeys"][0][1], "FEEDBACK#ALL")
+        for n in range(self.social.FEEDBACK_PER_DAY - 1):
+            self.social.send_feedback(self.bia, f"more-{n}", "praise", f"Gostei {n}")
+        with self.assertRaises(Problem) as error:
+            self.social.send_feedback(self.bia, "over", "praise", "Mais um")
+        self.assertEqual(error.exception.code, "FEEDBACK_LIMIT_REACHED")
 
     # ---- search ----
     def test_search_by_username_and_by_name_ignoring_accents_and_excluding_self(self):

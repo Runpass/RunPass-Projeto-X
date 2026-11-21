@@ -106,6 +106,47 @@ void main() {
       expect(gateway.signedIn, isTrue);
     });
 
+    test('sem rede na hora de renovar o acesso: a sessão continua e a próxima chamada renova', () async {
+      final store = MemoryTokenStore();
+      var offline = true;
+      var expired = true;
+      final gateway = gatewayWith((uri, method, headers, body) async {
+        if (uri.host == 'cognito.example') {
+          if (body!['AuthFlow'] == 'REFRESH_TOKEN_AUTH') {
+            if (offline) throw const SocketException('sem rede');
+            expired = false;
+            return const JsonReply(200, {
+              'AuthenticationResult': {'AccessToken': 'novo'},
+            });
+          }
+          return const JsonReply(200, {
+            'AuthenticationResult': {
+              'AccessToken': 'velho',
+              'RefreshToken': 'r1',
+            },
+          });
+        }
+        return expired
+            ? const JsonReply(401, {})
+            : const JsonReply(200, {'ok': true});
+      }, store: store);
+      await gateway.signIn('a@x.test', 'senha', keepSignedIn: true);
+      await expectLater(
+        gateway.request('/me'),
+        throwsA(
+          isA<IdentityIssue>().having(
+            (i) => i.code,
+            'code',
+            'SERVICE_UNAVAILABLE',
+          ),
+        ),
+      );
+      expect(gateway.signedIn, isTrue); // não deslogou
+      expect(store.value, 'r1');
+      offline = false;
+      expect((await gateway.request('/me'))['ok'], true);
+    });
+
     test('token recusado limpa o armazenamento e sair tambem', () async {
       final store = MemoryTokenStore()..value = 'revogado';
       final gateway = gatewayWith((uri, method, headers, body) async {
@@ -467,6 +508,24 @@ void main() {
           );
           expect(withoutPhoto.width, 1080);
           expect(withoutPhoto.height, 190 + 1350 + 380); // sem foto, quadro 4:5
+
+          // A foto vai limpa: sem medalha nem cartão do número de peito por cima. Os dois cantos de baixo
+          // da foto têm a mesma cor (a da própria foto).
+          final clean = await decode(
+            await buildShareCard(
+              title: 'Corrida A',
+              distance: '10 km',
+              time: '58:23',
+              pace: '5:50/km',
+              photoBytes: photo,
+            ),
+          );
+          expect(clean.height, 190 + 1080 + 380);
+          final bottomLeft = await pixel(clean, 120, 190 + 1080 - 120);
+          final bottomRight = await pixel(clean, 1080 - 120, 190 + 1080 - 120);
+          final middle = await pixel(clean, 540, 190 + 540);
+          expect(bottomLeft, middle, reason: 'sem cartão do número de peito');
+          expect(bottomRight, middle, reason: 'sem medalha');
         });
       },
     );

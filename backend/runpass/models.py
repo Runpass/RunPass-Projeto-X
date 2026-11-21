@@ -6,6 +6,10 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Username = Annotated[str, Field(min_length=3, max_length=30, pattern=r"^[A-Za-z0-9_]+$")]
+ImageReference = Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+# Fotos extras da publicacao (carrossel): a capa e `postImageReference`; aqui vao ate 4 a mais, na ordem
+# em que aparecem. Repetidas, iguais a capa ou a foto da medalha sao recusadas no servico.
+MorePostImages = Annotated[list[ImageReference], Field(max_length=4)]
 
 
 class Input(BaseModel):
@@ -138,6 +142,7 @@ class PatchParticipation(Input):
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
     # Foto e texto da publicacao no feed (so de participacao concluida e ja publicada).
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
     taggedUserIds: (
@@ -220,6 +225,7 @@ class CompleteParticipation(Input):
     comment: Annotated[str, Field(max_length=2000)] | None = None
     # Outra foto, separada da medalha, para a publicacao no feed. Exigida quando publishToFeed e verdadeiro.
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
     taggedUserIds: (
@@ -246,6 +252,7 @@ class PublishParticipation(Input):
 
     expectedVersion: Annotated[int, Field(ge=1)]
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
     taggedUserIds: (
@@ -271,6 +278,21 @@ class CreateEditionComment(Input):
     def not_blank(cls, value):
         if not value.strip():
             raise ValueError("Comentario vazio")
+        return value
+
+
+class CreateFeedback(Input):
+    """Feedback sobre o app (sugestao, problema ou elogio), lido so pela equipe."""
+
+    kind: Literal["suggestion", "problem", "praise"]
+    text: Annotated[str, Field(min_length=1, max_length=2000)]
+    appVersion: Annotated[str, Field(max_length=40)] | None = None
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Feedback vazio")
         return value
 
 
@@ -334,6 +356,24 @@ class PendingParticipation(Input):
 class AddDistance(Input):
     kilometers: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
 
+    @field_validator("kilometers", mode="before")
+    @classmethod
+    def kilometers_value(cls, value):
+        # O modo estrito so aceita Decimal, que o JSON nao tem: sem esta conversao todo pedido
+        # caia em 422 (o app mostrava erro ao informar o km de corrida sem distancia).
+        if isinstance(value, bool):
+            raise ValueError("Distancia invalida")
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, str):
+            value = value.strip().replace(",", ".")
+        elif not isinstance(value, int | float):
+            raise ValueError("Distancia invalida")
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError("Distancia invalida") from error
+
 
 class WebLookupRequest(Input):
     name: Annotated[str, Field(min_length=3, max_length=160)]
@@ -344,6 +384,7 @@ class WebLookupRequest(Input):
 class CreateExtraPost(Input):
     participationId: Annotated[str, Field(min_length=1, max_length=100)]
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     taggedUserIds: (
         Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
@@ -354,6 +395,7 @@ class CreateExtraPost(Input):
 class PatchExtraPost(Input):
     expectedVersion: Annotated[int, Field(ge=1)]
     postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    morePostImageReferences: MorePostImages | None = None
     postText: Annotated[str, Field(max_length=500)] | None = None
     taggedUserIds: (
         Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]

@@ -1,13 +1,12 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import 'catalog_screen.dart';
 import 'edition_cards.dart' show EditionCompactCard;
 import 'medal_scan.dart' show MedalScanScreen, pickMedalPhotoPath;
 import 'identity_gateway.dart';
-import 'profile_photo.dart' show PhotoZoomScreen;
+import 'profile_photo.dart' show pickAndEditPhoto;
 import 'tagged_people.dart';
 import 'runpass_theme.dart';
 
@@ -101,21 +100,7 @@ class _NewPostScreenState extends State<NewPostScreen> {
       if (widget.photoSelector != null) {
         bytes = await widget.photoSelector!(context);
       } else {
-        final file = await ImagePicker().pickImage(
-          source: ImageSource.gallery,
-          maxWidth: 2800,
-          maxHeight: 2800,
-          imageQuality: 88,
-          requestFullMetadata: false,
-        );
-        final original = await file?.readAsBytes();
-        if (original == null || !mounted) return;
-        bytes = await Navigator.of(context).push<List<int>>(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (_) => PhotoZoomScreen(image: original),
-          ),
-        );
+        bytes = await pickAndEditPhoto(context, title: 'Foto da publicação');
       }
       if (bytes == null) return;
       final type = imageContentType(bytes);

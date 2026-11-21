@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'biometrics.dart';
 import 'catalog_screen.dart';
 import 'city_photos.dart';
+import 'feedback_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'main.dart' show IdentityScreen;
@@ -42,6 +43,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// apagados); sem ele, com biometria ligada, so tranca a sessao.
   Future<void> signOut({bool forget = false}) async {
     NotificationCenter.instance.stop();
+    // O que ficou guardado da conta que sai (inclusive quando só tranca com a biometria).
+    forgetNavProfile(widget.gateway);
+    forgetFriendSuggestions(widget.gateway);
     if (forget) await SavedAccount.clear();
     if (!forget &&
         await BiometricPrefs.enabled() &&
@@ -160,6 +164,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               value: dark,
               onChanged: ThemeController.set,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            key: const Key('send-feedback'),
+            leading: const Icon(Icons.rate_review_outlined),
+            title: const Text('Enviar feedback'),
+            subtitle: const Text(
+              'Sugestão, problema ou elogio: conte para a equipe.',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => FeedbackScreen(gateway: widget.gateway),
+              ),
             ),
           ),
         ),
@@ -285,15 +306,18 @@ class PhotoCreditsScreen extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       children: [
         Text(
-          'Quando uma corrida não tem banner autorizado, o cartão mostra uma foto da cidade. '
-          'Estas fotos têm licença livre (CC0 ou domínio público), da Wikimedia Commons.',
+          'Quando uma corrida não tem banner autorizado, o cartão mostra uma foto da cidade '
+          '(na capital, do lugar da prova; corrida noturna, uma imagem à noite). '
+          'Cidade sem foto ganha uma foto genérica de corrida. '
+          'As fotos são da Wikimedia Commons, com licença livre (CC0, domínio público, '
+          'CC BY ou CC BY-SA). Toque numa foto para ver a página de origem.',
           style: TextStyle(color: context.muted, fontSize: 13),
         ),
         const SizedBox(height: 12),
-        for (final photo in cityPhotoList)
+        for (final photo in allCoverPhotos)
           Card(
             child: ListTile(
-              key: Key('photo-credit-${photo.city}'),
+              key: Key('photo-credit-${photo.asset}'),
               leading: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: Image.asset(
@@ -305,13 +329,26 @@ class PhotoCreditsScreen extends StatelessWidget {
                       const SizedBox(width: 56, height: 56),
                 ),
               ),
-              title: Text(photo.city),
+              title: Text(
+                photo.city == 'Tema'
+                    ? 'Tema · ${photo.title}'
+                    : photo.city == 'São Paulo' &&
+                          photo.asset != cityPhotoList.first.asset
+                    ? 'São Paulo · ${photo.title}'
+                    : photo.city,
+              ),
               subtitle: Text(
-                '${photo.title}\nFoto: ${photo.author} · ${photo.license}',
+                photo.isIllustration
+                    ? '${photo.title}\n${photo.license}'
+                    : '${photo.title}\nFoto: ${photo.author} · ${photo.license}',
               ),
               isThreeLine: true,
-              trailing: const Icon(Icons.open_in_new, size: 18),
-              onTap: () => linkOpener(Uri.parse(photo.sourceUrl)),
+              trailing: photo.isIllustration
+                  ? null
+                  : const Icon(Icons.open_in_new, size: 18),
+              onTap: photo.isIllustration
+                  ? null
+                  : () => linkOpener(Uri.parse(photo.sourceUrl)),
             ),
           ),
       ],

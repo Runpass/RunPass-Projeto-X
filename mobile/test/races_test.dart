@@ -680,9 +680,6 @@ void main() {
         await tester.tap(star);
         await tester.pump();
       }
-      final declaration = find.text('Declaro que concluí esta corrida');
-      await tester.scrollUntilVisible(declaration, 200, scrollable: list);
-      await tester.tap(declaration);
       await tester.pumpAndSettle();
       final finish = find.text('Concluir participação');
       await tester.scrollUntilVisible(finish, 200, scrollable: list);
@@ -1135,6 +1132,11 @@ void main() {
       // Aprovada: tem o lápis de editar, sem cadeado, e tocar leva ao rascunho da participação.
       expect(find.byKey(const Key('pending-edit-r2')), findsOneWidget);
       expect(find.byKey(const Key('pending-locked-r2-false')), findsOneWidget);
+      // O segundo menu (Medalhas | Quadros) empurra a prateleira para baixo: rola até a medalha.
+      await tester.ensureVisible(
+        find.byKey(const Key('pending-locked-r2-false')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('pending-locked-r2-false')));
       await tester.pumpAndSettle();
       expect(find.byType(ParticipationDraftScreen), findsOneWidget);
@@ -1447,18 +1449,14 @@ void main() {
         );
         expect(screen.medalMode, isTrue);
         expect(screen.fromPost, isFalse);
-        // Opcoes da medalha (nao do post): foto, foto+modelo+legenda, dados e legenda.
+        // Opcoes da medalha (nao do post): foto, dados e legenda ("Ajustar foto, modelo e legenda" saiu).
         expect(find.byKey(const Key('medal-options')), findsOneWidget);
         expect(find.byKey(const Key('change-medal-photo')), findsOneWidget);
-        expect(find.byKey(const Key('edit-medal-info')), findsOneWidget);
+        expect(find.byKey(const Key('edit-medal-info')), findsNothing);
         expect(find.byKey(const Key('open-race-data')), findsOneWidget);
         expect(find.byKey(const Key('medal-legend-edit')), findsOneWidget);
         // Os tres botoes seguem o mesmo padrao: contornados, com icone.
-        for (final key in [
-          'change-medal-photo',
-          'edit-medal-info',
-          'open-race-data',
-        ]) {
+        for (final key in ['change-medal-photo', 'open-race-data']) {
           expect(
             find.descendant(
               of: find.byKey(Key(key)),
@@ -1470,7 +1468,7 @@ void main() {
         }
         // Nada da publicacao aqui, e o post nem e buscado.
         expect(find.byKey(const Key('post-text-edit')), findsNothing);
-        expect(find.byKey(const Key('replace-post-photo')), findsNothing);
+        expect(find.byKey(const Key('post-photo-thumb-0')), findsNothing);
         expect(calls.any((c) => c.startsWith('GET /posts/')), isFalse);
       }
     },

@@ -142,8 +142,8 @@ void main() {
     (tester) async {
       final (gateway, _) = await setup();
       await open(tester, gateway);
-      expect(find.byKey(const Key('adjust-post-photo')), findsOneWidget);
-      expect(find.byKey(const Key('replace-post-photo')), findsOneWidget);
+      expect(find.byKey(const Key('post-photos-editor')), findsOneWidget);
+      expect(find.byKey(const Key('post-photo-thumb-0')), findsOneWidget);
       expect(
         find.byKey(const Key('change-medal-photo')),
         findsNothing,
@@ -174,8 +174,8 @@ void main() {
     final (gateway, _) = await setup();
     await open(tester, gateway, fromPost: false);
     expect(find.byKey(const Key('change-medal-photo')), findsOneWidget);
-    expect(find.byKey(const Key('adjust-post-photo')), findsNothing);
-    expect(find.byKey(const Key('replace-post-photo')), findsNothing);
+    expect(find.byKey(const Key('post-photos-editor')), findsNothing);
+    expect(find.byKey(const Key('post-photo-thumb-0')), findsNothing);
   });
 
   testWidgets(
@@ -196,7 +196,9 @@ void main() {
           return [...photo, 0x00];
         },
       );
-      await tester.tap(find.byKey(const Key('adjust-post-photo')));
+      await tester.tap(find.byKey(const Key('post-photo-thumb-0')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('post-photo-adjust')));
       await tester.pumpAndSettle();
       expect(loaded, ['c1']);
       expect(cropped, isTrue);
@@ -217,7 +219,9 @@ void main() {
   testWidgets('desistir do recorte não envia nada', (tester) async {
     final (gateway, b) = await setup();
     await open(tester, gateway, cropper: (_, _) async => null);
-    await tester.tap(find.byKey(const Key('adjust-post-photo')));
+    await tester.tap(find.byKey(const Key('post-photo-thumb-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('post-photo-adjust')));
     await tester.pumpAndSettle();
     expect(b.uploads, 0);
     expect(b.patches, isEmpty);
@@ -228,7 +232,9 @@ void main() {
   ) async {
     final (gateway, b) = await setup();
     await open(tester, gateway, loader: (_, _) async => null);
-    await tester.tap(find.byKey(const Key('adjust-post-photo')));
+    await tester.tap(find.byKey(const Key('post-photo-thumb-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('post-photo-adjust')));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('Não foi possível abrir a foto da publicação'),
@@ -242,7 +248,9 @@ void main() {
   ) async {
     final (gateway, b) = await setup();
     await open(tester, gateway, selector: () async => jpeg);
-    await tester.tap(find.byKey(const Key('replace-post-photo')));
+    await tester.tap(find.byKey(const Key('post-photo-thumb-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('post-photo-replace')));
     await tester.pumpAndSettle();
     expect(b.patches.single['postImageReference'], 'img_novo1');
     expect(find.text('Foto da publicação trocada.'), findsOneWidget);

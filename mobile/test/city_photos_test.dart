@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/city_photos.dart';
@@ -17,26 +19,42 @@ void main() {
     expect(cityPhotoFor({'city': 'Guarujá', 'state': 'SP'}), isNotNull);
     // Outro estado, cidade sem foto ou sem cidade: sem foto.
     expect(cityPhotoFor({'city': 'São Paulo', 'state': 'RJ'}), isNull);
-    expect(cityPhotoFor({'city': 'Campinas', 'state': 'SP'}), isNull);
+    expect(cityPhotoFor({'city': 'Itu', 'state': 'SP'}), isNull);
+    expect(
+      cityPhotoFor({'city': 'Bertioga', 'state': 'SP'})?.isIllustration,
+      isFalse,
+    );
     expect(cityPhotoFor({'state': 'SP'}), isNull);
   });
 
-  test(
-    'toda foto tem licença livre sem crédito obrigatório e arquivo próprio',
-    () {
-      expect(cityPhotoList, hasLength(6));
-      for (final photo in cityPhotoList) {
-        expect(
-          photo.license == 'CC0 1.0' || photo.license == 'Domínio público',
-          isTrue,
-          reason: photo.city,
-        );
-        expect(photo.author, isNotEmpty);
-        expect(photo.sourceUrl, startsWith('https://commons.wikimedia.org/'));
-        expect(photo.asset, startsWith('assets/cidades/'));
-      }
-    },
-  );
+  test('só fotos reais com licença livre, autor e página de origem', () {
+    expect(cityPhotoList, hasLength(46));
+    const licenses = {
+      'CC0 1.0',
+      'Domínio público',
+      'CC BY 2.0',
+      'CC BY 2.5',
+      'CC BY 3.0',
+      'CC BY 3.0 BR',
+      'CC BY 4.0',
+      'CC BY-SA 2.0',
+      'CC BY-SA 2.5',
+      'CC BY-SA 3.0',
+      'CC BY-SA 4.0',
+    };
+    for (final photo in allCoverPhotos) {
+      // Nada de ilustração: lugares e temas são fotos reais (decisão de 20/11/2026).
+      expect(photo.isIllustration, isFalse, reason: photo.asset);
+      expect(licenses, contains(photo.license), reason: photo.asset);
+      expect(photo.author, isNotEmpty, reason: photo.asset);
+      expect(
+        photo.sourceUrl,
+        startsWith('https://commons.wikimedia.org/'),
+        reason: photo.asset,
+      );
+      expect(photo.asset, startsWith('assets/cidades/'));
+    }
+  });
 
   testWidgets('cartão sem banner usa a foto da cidade, sem texto por cima', (
     tester,
@@ -71,42 +89,255 @@ void main() {
     expect(find.byKey(const Key('date-chip-EA')), findsOneWidget);
   });
 
-  testWidgets('cidade sem foto continua com a arte do app', (tester) async {
-    final gateway = await signed(
-      (uri, method, headers, body) async => const JsonReply(200, {}),
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: EditionCompactCard(
-            gateway: gateway,
-            edition: {
-              ...entry('A'),
-              'id': 'EA',
-              'city': 'Campinas',
-              'state': 'SP',
-            },
+  testWidgets(
+    'cidade sem foto ganha a capa genérica: nenhuma corrida fica sem imagem',
+    (tester) async {
+      final gateway = await signed(
+        (uri, method, headers, body) async => const JsonReply(200, {}),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EditionCompactCard(
+              gateway: gateway,
+              edition: {
+                ...entry('A'),
+                'id': 'EA',
+                'city': 'Itu',
+                'state': 'SP',
+              },
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pump();
-    expect(find.byKey(const Key('race-art-photo')), findsNothing);
-    expect(find.text('arte do app'), findsOneWidget);
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('race-art-photo')), findsOneWidget);
+    },
+  );
+
+  group('capa da corrida [FICTICIA]', () {
+    String asset(Map<String, dynamic> e) => coverPhotoFor(e).asset;
+    test('corrida noturna: foto noturna da capital, genérica fora dela', () {
+      expect(
+        asset({'name': 'Night Run Teste', 'city': 'São Paulo', 'state': 'SP'}),
+        'assets/cidades/sp-noite.jpg',
+      );
+      expect(
+        asset({
+          'name': 'Corrida Noturna Teste',
+          'city': 'Santos',
+          'state': 'SP',
+        }),
+        'assets/cidades/generica-noite.jpg',
+      );
+    });
+    test('capital: o ponto pelo local ou pelo nome da prova', () {
+      expect(
+        asset({
+          'name': 'Corrida Teste',
+          'venue': 'Praça Charles Miller',
+          'city': 'São Paulo',
+          'state': 'SP',
+        }),
+        'assets/cidades/sp-pacaembu.jpg',
+      );
+      expect(
+        asset({
+          'name': 'Tricolor Run Teste',
+          'city': 'São Paulo',
+          'state': 'SP',
+        }),
+        'assets/cidades/sp-morumbi.jpg',
+      );
+      expect(
+        asset({
+          'name': 'Corrida Novo Rio Pinheiros Teste',
+          'city': 'Sao Paulo',
+          'state': 'SP',
+        }),
+        'assets/cidades/sp-ponte-estaiada.jpg',
+      );
+      expect(
+        asset({
+          'name': 'Corrida Teste',
+          'venue': 'Parque Villa-Lobos',
+          'city': 'São Paulo',
+          'state': 'SP',
+        }),
+        'assets/cidades/sp-villa-lobos.jpg',
+      );
+    });
+    test('capital sem local: uma das fotos da capital, sempre a mesma', () {
+      final e = {
+        'id': 'E-FICTICIA',
+        'name': 'Corrida Teste',
+        'city': 'São Paulo',
+        'state': 'SP',
+      };
+      expect(spDefaultPhotos.map((p) => p.asset), contains(asset(e)));
+      expect(asset(e), asset(Map.of(e)));
+    });
+    test('fora da capital: a foto da cidade, ou a genérica do tipo', () {
+      expect(
+        asset({'name': 'Corrida Teste', 'city': 'Jundiaí', 'state': 'SP'}),
+        'assets/cidades/jundiai.jpg',
+      );
+      expect(
+        asset({'name': 'Corrida Teste', 'city': 'Itu', 'state': 'SP'}),
+        'assets/cidades/generica-rua.jpg',
+      );
+      expect(
+        asset({'name': 'Trail Run Teste', 'city': 'Itu', 'state': 'SP'}),
+        'assets/cidades/generica-trilha.jpg',
+      );
+      expect(
+        asset({'name': 'Corrida Teste', 'city': 'São Paulo', 'state': 'RJ'}),
+        'assets/cidades/generica-rua.jpg',
+      );
+    });
+    test('lista sem foto repetida enquanto houver opção', () {
+      coverChoices.clear();
+      final list = [
+        for (var i = 0; i < 6; i++)
+          {
+            'id': 'SP$i',
+            'name': 'Corrida Teste $i',
+            'city': 'São Paulo',
+            'state': 'SP',
+          },
+        {
+          'id': 'P1',
+          'name': 'Corrida Teste',
+          'venue': 'Praça Charles Miller',
+          'city': 'São Paulo',
+          'state': 'SP',
+        },
+        {
+          'id': 'P2',
+          'name': 'Outra Corrida',
+          'venue': 'Estádio do Pacaembu',
+          'city': 'São Paulo',
+          'state': 'SP',
+        },
+        {'id': 'J1', 'name': 'Corrida Teste', 'city': 'Jundiaí', 'state': 'SP'},
+        {'id': 'J2', 'name': 'Corrida Teste', 'city': 'Jundiaí', 'state': 'SP'},
+      ];
+      chooseDistinctCovers(list);
+      final assets = [for (final e in list) coverPhotoFor(e).asset];
+      expect(assets.toSet(), hasLength(assets.length));
+      // A primeira do Pacaembu fica com a foto do lugar; a segunda ganha outra foto da capital.
+      expect(coverPhotoFor(list[6]).asset, 'assets/cidades/sp-pacaembu.jpg');
+      expect(
+        coverPhotoFor(list[7]).asset,
+        isNot('assets/cidades/sp-pacaembu.jpg'),
+      );
+      // Segunda corrida da mesma cidade: outra foto da cidade, não a mesma de novo.
+      expect(coverPhotoFor(list[8]).asset, 'assets/cidades/jundiai.jpg');
+      expect(
+        coverPhotoFor(list[9]).asset,
+        startsWith('assets/cidades/jundiai-'),
+      );
+      coverChoices.clear();
+    });
+
+    test('cidade sem foto principal usa uma das fotos extras; acabando as da cidade, a genérica', () {
+      coverChoices.clear();
+      final list = [
+        for (var i = 0; i < 4; i++)
+          {
+            'id': 'PI$i',
+            'name': 'Corrida Teste',
+            'city': 'Piracicaba',
+            'state': 'SP',
+          },
+      ];
+      chooseDistinctCovers(list);
+      final assets = [for (final e in list) coverPhotoFor(e).asset];
+      expect(
+        assets.take(3).every((a) => a.startsWith('assets/cidades/piracicaba')),
+        isTrue,
+      );
+      expect(assets.toSet(), hasLength(4));
+      expect(assets.last, 'assets/cidades/generica-rua.jpg');
+      expect(cityPhotoFor({'city': 'Piracicaba', 'state': 'SP'}), isNotNull);
+      coverChoices.clear();
+    });
+
+    test('corrida temática ganha a capa do tema; as outras, a do lugar', () {
+      String? theme(String name) => themeCoverFor({'name': name})?.asset;
+      expect(theme('8ª Batman Run Series'), 'assets/cidades/tema-heroi.jpg');
+      expect(
+        theme('12ª Corrida Mulher Maravilha'),
+        'assets/cidades/tema-heroi.jpg',
+      );
+      expect(theme('Barbie Run São Paulo'), isNull); // sem foto real do tema
+      expect(theme('Corrida do Naruto - São Paulo'), isNull);
+      expect(
+        theme('Hot Wheels Run Experience'),
+        'assets/cidades/tema-brinquedo.jpg',
+      );
+      expect(
+        theme('Night Run Outubro Rosa e Novembro Azul'),
+        'assets/cidades/tema-outubro-rosa.jpg',
+      );
+      expect(
+        theme('10ª Corrida Novembro Azul'),
+        'assets/cidades/tema-novembro-azul.jpg',
+      );
+      expect(theme('Corrida de Natal 2026'), 'assets/cidades/tema-natal.jpg');
+      expect(
+        theme('Corrida da Virada 2026'),
+        'assets/cidades/tema-reveillon.jpg',
+      );
+      expect(
+        theme('Athenas Kids Run Faster 2027'),
+        'assets/cidades/tema-kids.jpg',
+      );
+      expect(
+        theme("Venus Women's Half Marathon"),
+        'assets/cidades/tema-mulheres.jpg',
+      );
+      expect(
+        theme('Tricolor Run'),
+        isNull,
+      ); // é do Morumbi, não corrida colorida
+      expect(theme('Meia Maratona de São Paulo'), isNull);
+      expect(
+        coverPhotoFor({
+          'name': 'Batman Run Teste',
+          'city': 'São Paulo',
+          'state': 'SP',
+        }).asset,
+        'assets/cidades/tema-heroi.jpg',
+      );
+    });
+
+    test('toda imagem tem arquivo no projeto', () {
+      for (final photo in allCoverPhotos) {
+        expect(File(photo.asset).existsSync(), isTrue, reason: photo.asset);
+      }
+    });
   });
 
   testWidgets('créditos das fotos listam autor e licença de cada cidade', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(800, 3200);
+    tester.view.physicalSize = const Size(800, 20000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(const MaterialApp(home: PhotoCreditsScreen()));
-    for (final photo in cityPhotoList) {
-      final tile = find.byKey(Key('photo-credit-${photo.city}'));
+    for (final photo in allCoverPhotos) {
+      final tile = find.byKey(Key('photo-credit-${photo.asset}'));
       expect(tile, findsOneWidget);
       expect(
-        find.textContaining('Foto: ${photo.author} · ${photo.license}'),
+        find.descendant(
+          of: tile,
+          matching: find.textContaining(
+            photo.isIllustration
+                ? photo.license
+                : 'Foto: ${photo.author} · ${photo.license}',
+          ),
+        ),
         findsOneWidget,
         reason: photo.city,
       );

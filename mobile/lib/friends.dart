@@ -75,7 +75,9 @@ class ProfileAvatar extends StatelessWidget {
   }
 }
 
-/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child].
+/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child]. A fita é
+/// neutra (dois tons de cinza, conforme o tema), para acompanhar o preto e branco do app: sem fita de duas
+/// cores.
 class MedalAvatar extends StatelessWidget {
   final double radius;
   final Widget child;
@@ -88,6 +90,10 @@ class MedalAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final size = radius * 2;
     final ribbonHeight = radius * (radius < 24 ? 0.7 : 0.9);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    // Aro dourado, do claro para o escuro na diagonal.
+    const ring = [Color(0xFFFFE08A), Color(0xFFD4A017), Color(0xFF9C7412)];
+    const rim = Color(0xFFFFF3C4);
     return SizedBox(
       key: const Key('medal-avatar'),
       width: size,
@@ -100,10 +106,10 @@ class MedalAvatar extends StatelessWidget {
             top: -ribbonHeight * 0.75,
             child: CustomPaint(
               size: Size(radius * 1.15, ribbonHeight),
-              // Fundo claro: cordao escuro (navy) + laranja. Fundo escuro: cordao
-              // branco + laranja, para o cordao nao sumir contra o fundo.
               painter: _RibbonPainter(
-                context.isDark ? Colors.white : runPassNavy,
+                // Duas faixas do mesmo tom (uma mais clara), só para dar o volume da fita.
+                left: dark ? const Color(0xFF8B9096) : const Color(0xFF2E3238),
+                right: dark ? const Color(0xFFC4C7CC) : const Color(0xFF6B7078),
               ),
             ),
           ),
@@ -111,18 +117,14 @@ class MedalAvatar extends StatelessWidget {
             width: size,
             height: size,
             padding: EdgeInsets.all(radius * 0.09),
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFFFFE08A),
-                  Color(0xFFD4A017),
-                  Color(0xFF9C7412),
-                ],
+                colors: ring,
               ),
-              boxShadow: [
+              boxShadow: const [
                 BoxShadow(
                   color: Colors.black26,
                   blurRadius: 6,
@@ -133,7 +135,7 @@ class MedalAvatar extends StatelessWidget {
             child: Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: const Color(0xFFFFF3C4), width: 1.5),
+                border: Border.all(color: rim, width: 1.5),
               ),
               child: Center(child: child),
             ),
@@ -270,8 +272,8 @@ class ProfilePhotoViewer extends StatelessWidget {
 
 /// Fita da medalha em V, nas cores do app (laranja e azul-marinho).
 class _RibbonPainter extends CustomPainter {
-  final Color leftColor;
-  const _RibbonPainter(this.leftColor);
+  final Color left, right;
+  const _RibbonPainter({required this.left, required this.right});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -288,14 +290,21 @@ class _RibbonPainter extends CustomPainter {
       ..lineTo(w * 0.38, h)
       ..lineTo(w * 0.8, h)
       ..close();
-    canvas.drawPath(left, Paint()..color = leftColor);
-    canvas.drawPath(right, Paint()..color = runPassOrange);
+    canvas.drawPath(left, Paint()..color = this.left);
+    canvas.drawPath(right, Paint()..color = this.right);
   }
 
   @override
   bool shouldRepaint(_RibbonPainter oldDelegate) =>
-      oldDelegate.leftColor != leftColor;
+      oldDelegate.left != left || oldDelegate.right != right;
 }
+
+/// Últimas sugestões de pessoas de cada sessão: reabrir a busca mostra na hora e atualiza por trás.
+final _suggestionCache = Expando<List<Map<String, dynamic>>>();
+
+/// Saiu da conta: as sugestões de quem saiu não aparecem para a próxima pessoa.
+void forgetFriendSuggestions(IdentityGateway gateway) =>
+    _suggestionCache[gateway] = null;
 
 /// Procurar pessoas por nome ou usuário, para seguir.
 class FriendSearchScreen extends StatefulWidget {
@@ -315,19 +324,29 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
   // Sugestoes: loading -> ok | failed (a busca segue valendo em qualquer caso).
   String suggestionsState = 'loading';
   String? suggestionsIssue;
+  // Busca enquanto digita: espera uma pausa curta e descarta respostas de buscas antigas.
+  Timer? typing;
+  int searchSeq = 0;
 
   @override
   void initState() {
     super.initState();
-    loadSuggestions();
+    final cached = _suggestionCache[widget.gateway];
+    if (cached != null) {
+      suggestions = cached;
+      suggestionsState = 'ok';
+    }
+    loadSuggestions(quiet: cached != null);
   }
 
   /// Sugestões já na tela, antes de qualquer busca.
-  Future<void> loadSuggestions() async {
-    setState(() {
-      suggestionsState = 'loading';
-      suggestionsIssue = null;
-    });
+  Future<void> loadSuggestions({bool quiet = false}) async {
+    if (!quiet) {
+      setState(() {
+        suggestionsState = 'loading';
+        suggestionsIssue = null;
+      });
+    }
     try {
       final page = await widget.gateway.request(
         '/profiles/suggestions',
@@ -338,7 +357,9 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
         suggestions = (page['items'] as List).cast<Map<String, dynamic>>();
         suggestionsState = 'ok';
       });
+      _suggestionCache[widget.gateway] = suggestions;
     } on IdentityIssue catch (issue) {
+      if (quiet) return; // já há sugestões na tela
       if (mounted) {
         setState(() {
           suggestionsState = 'failed';
@@ -346,6 +367,7 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
         });
       }
     } on Object catch (error) {
+      if (quiet) return;
       if (mounted) {
         setState(() {
           suggestionsState = 'failed';
@@ -357,11 +379,31 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
 
   @override
   void dispose() {
+    typing?.cancel();
     query.dispose();
     super.dispose();
   }
 
+  /// Digitando: com 2 letras ou mais busca sozinho depois de uma pausa curta; apagou tudo, volta às
+  /// sugestões.
+  void onTyping(String value) {
+    typing?.cancel();
+    final text = value.trim();
+    if (text.isEmpty) {
+      searchSeq++;
+      setState(() {
+        results = null;
+        error = null;
+        loading = false;
+      });
+      return;
+    }
+    if (text.length < 2) return;
+    typing = Timer(const Duration(milliseconds: 300), search);
+  }
+
   Future<void> search() async {
+    typing?.cancel();
     final text = query.text.trim();
     if (text.length < 2) {
       setState(
@@ -369,6 +411,7 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
       );
       return;
     }
+    final seq = ++searchSeq;
     setState(() {
       loading = true;
       error = null;
@@ -378,18 +421,32 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
         '/profiles',
         query: {'q': text, 'limit': '30'},
       );
-      if (!mounted) return;
+      if (!mounted || seq != searchSeq) return;
       setState(
         () => results = (page['items'] as List).cast<Map<String, dynamic>>(),
       );
     } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
+      if (mounted && seq == searchSeq) {
+        setState(() => error = friendsError(issue));
+      }
     } on Exception {
-      if (mounted)
+      if (mounted && seq == searchSeq) {
         setState(() => error = friendsError(const IdentityIssue('')));
+      }
     } finally {
-      if (mounted) setState(() => loading = false);
+      if (mounted && seq == searchSeq) setState(() => loading = false);
     }
+  }
+
+  /// Por que a pessoa aparece: amigos em comum e se é de perto.
+  static String? closeness(Map<String, dynamic> profile) {
+    final mutual = profile['mutualFriends'];
+    final parts = [
+      if (mutual is num && mutual > 0)
+        mutual == 1 ? '1 amigo em comum' : '${mutual.toInt()} amigos em comum',
+      if (profile['nearby'] == true) 'Perto de você',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   Future<void> open(Map<String, dynamic> profile) async {
@@ -415,6 +472,7 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
           key: const Key('friend-search-field'),
           controller: query,
           textInputAction: TextInputAction.search,
+          onChanged: onTyping,
           onSubmitted: (_) => search(),
           decoration: InputDecoration(
             labelText: 'Nome ou usuário',
@@ -429,7 +487,8 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
         ),
         const SizedBox(height: 12),
         if (error != null) Text(error!, key: const Key('friend-error')),
-        if (loading) const Center(child: CircularProgressIndicator()),
+        // Discreto: a lista anterior continua na tela enquanto a busca nova chega.
+        if (loading) const LinearProgressIndicator(minHeight: 2),
         if (!loading && results != null && results!.isEmpty)
           const Text(
             'Ninguém encontrado. Confira a escrita ou tente só o primeiro nome.',
@@ -489,13 +548,22 @@ class _FriendSearchScreenState extends State<FriendSearchScreen> {
             in results ??
                 (loading ? const <Map<String, dynamic>>[] : suggestions))
           Card(
+            // Espaço entre um perfil e outro.
+            margin: const EdgeInsets.only(bottom: 10),
             child: ListTile(
               key: Key('friend-${profile['id']}'),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 6,
+              ),
               leading: ProfileAvatar(gateway: widget.gateway, profile: profile),
               title: Text(profile['displayName'] as String? ?? ''),
               subtitle: Text(
-                '@${profile['username']}'
-                '${profile['isPrivate'] == true ? ' · perfil privado' : ''}',
+                [
+                  '@${profile['username']}'
+                      '${profile['isPrivate'] == true ? ' · perfil privado' : ''}',
+                  ?closeness(profile),
+                ].join('\n'),
               ),
               trailing: profile['friendState'] == 'friends'
                   ? const Chip(label: Text('Amigo'))
@@ -891,10 +959,27 @@ class _RelationListScreenState extends State<RelationListScreen> {
   String? error;
   bool loadingMore = false;
 
+  /// A página seguinte falhou: para de pedir sozinho e oferece "Tentar de novo".
+  bool moreFailed = false;
+
   @override
   void initState() {
     super.initState();
     load();
+  }
+
+  /// Falha numa ação da linha (seguir, adicionar): a lista já está na tela, então o aviso vai embaixo.
+  void say(Object issue) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          friendsError(
+            issue is IdentityIssue ? issue : const IdentityIssue(''),
+          ),
+        ),
+      ),
+    );
   }
 
   String get _path => switch (widget.kind) {
@@ -906,7 +991,10 @@ class _RelationListScreenState extends State<RelationListScreen> {
   Future<void> load({bool more = false}) async {
     if (more) {
       if (loadingMore || nextCursor == null) return;
-      setState(() => loadingMore = true);
+      setState(() {
+        loadingMore = true;
+        moreFailed = false;
+      });
     }
     try {
       final page = await widget.gateway.request(
@@ -921,10 +1009,19 @@ class _RelationListScreenState extends State<RelationListScreen> {
         error = null;
       });
     } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
+      if (mounted) {
+        setState(() {
+          error = friendsError(issue);
+          moreFailed = more;
+        });
+      }
     } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+      if (mounted) {
+        setState(() {
+          error = friendsError(const IdentityIssue(''));
+          moreFailed = more;
+        });
+      }
     } finally {
       if (more && mounted) setState(() => loadingMore = false);
     }
@@ -938,11 +1035,8 @@ class _RelationListScreenState extends State<RelationListScreen> {
         method: state == 'none' ? 'PUT' : 'DELETE',
       );
       if (mounted) setState(() => item['followState'] = result['state']);
-    } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
-    } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+    } on Exception catch (issue) {
+      say(issue);
     }
   }
 
@@ -961,11 +1055,8 @@ class _RelationListScreenState extends State<RelationListScreen> {
               method: state == 'none' ? 'PUT' : 'DELETE',
             );
       if (mounted) setState(() => item['friendState'] = result['state']);
-    } on IdentityIssue catch (issue) {
-      if (mounted) setState(() => error = friendsError(issue));
-    } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+    } on Exception catch (issue) {
+      say(issue);
     }
   }
 
@@ -1034,6 +1125,22 @@ class _RelationListScreenState extends State<RelationListScreen> {
             padding: const EdgeInsets.all(12),
             itemCount: items!.length + (nextCursor != null ? 1 : 0),
             itemBuilder: (context, index) {
+              if (index == items!.length && moreFailed) {
+                return Padding(
+                  key: const Key('relation-more-failed'),
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      const Text('Não foi possível carregar mais agora.'),
+                      TextButton(
+                        key: const Key('relation-more-retry'),
+                        onPressed: () => load(more: true),
+                        child: const Text('Tentar de novo'),
+                      ),
+                    ],
+                  ),
+                );
+              }
               if (index == items!.length) {
                 // Nao chamar load() direto aqui: itemBuilder roda durante o layout, e setState
                 // nessa hora quebra o Flutter. Agenda para depois do frame atual.
@@ -1104,9 +1211,19 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen> {
         '/me/friend-requests/${Uri.encodeComponent(id)}',
         method: approve ? 'PUT' : 'DELETE',
       );
-    } on Exception {
-      if (mounted)
-        setState(() => error = friendsError(const IdentityIssue('')));
+    } on Exception catch (issue) {
+      // O aviso vai embaixo: a recarga da lista limpa o erro da tela.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              friendsError(
+                issue is IdentityIssue ? issue : const IdentityIssue(''),
+              ),
+            ),
+          ),
+        );
+      }
     }
     await load();
   }
@@ -1206,12 +1323,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
   @override
   void dispose() {
     mentionTimer?.cancel();
-    // Quem sai da tela com uma exclusao pendente: ela vale (nao fica meio apagada).
-    for (final id in pendingDeletes.toList()) {
-      widget.gateway
-          .request('/comments/${Uri.encodeComponent(id)}', method: 'DELETE')
-          .then<void>((_) {}, onError: (_) {});
-    }
+    // Exclusão em espera ao sair da tela: o aviso com "Desfazer" continua valendo e `remove` termina
+    // sozinho quando ele fecha (antes apagava aqui, e o "Desfazer" do aviso já não desfazia nada).
     text.dispose();
     input.dispose();
     super.dispose();
@@ -1230,10 +1343,22 @@ class _CommentsScreenState extends State<CommentsScreen> {
 
   Future<void> load() async {
     try {
-      final page = await widget.gateway.request(path, query: {'limit': '50'});
+      // Todas as páginas (até 500): com só a primeira, o comentário novo de um post com 50 ou mais não
+      // aparecia e parecia que o envio tinha falhado.
+      final all = <Map<String, dynamic>>[];
+      String? cursor;
+      var pages = 0;
+      do {
+        final page = await widget.gateway.request(
+          path,
+          query: {'limit': '50', 'cursor': ?cursor},
+        );
+        all.addAll((page['items'] as List).cast<Map<String, dynamic>>());
+        cursor = page['nextCursor'] as String?;
+      } while (cursor != null && ++pages < 10);
       if (mounted) {
         setState(() {
-          comments = (page['items'] as List).cast<Map<String, dynamic>>();
+          comments = all;
           error = null;
         });
       }
@@ -1358,6 +1483,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
   Future<void> remove(String id) async {
     setState(() => pendingDeletes.add(id));
     final messenger = ScaffoldMessenger.of(context);
+    final gateway = widget.gateway; // a tela pode fechar antes de o aviso sumir
     messenger.hideCurrentSnackBar();
     final reason = await messenger
         .showSnackBar(
@@ -1380,7 +1506,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
       return;
     }
     try {
-      await widget.gateway.request(
+      await gateway.request(
         '/comments/${Uri.encodeComponent(id)}',
         method: 'DELETE',
       );

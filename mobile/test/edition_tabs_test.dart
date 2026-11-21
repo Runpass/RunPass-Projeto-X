@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -134,6 +132,30 @@ Future<void> open(
 }
 
 void main() {
+  testWidgets('as quatro abas mostram o nome inteiro num celular estreito', (
+    tester,
+  ) async {
+    final gateway = await gatewayWith();
+    tester.view.physicalSize = const Size(375 * 3, 812 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditionScreen(gateway: gateway, editionId: 'E1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    final tabs = ['Sobre', 'Avaliações', 'Fotos', 'Participantes'];
+    for (var i = 0; i < tabs.length; i++) {
+      final text = tester.getRect(find.text(tabs[i]));
+      final tab = tester.getRect(find.byType(Tab).at(i));
+      expect(text.left, greaterThanOrEqualTo(tab.left - 0.5), reason: tabs[i]);
+      expect(text.right, lessThanOrEqualTo(tab.right + 0.5), reason: tabs[i]);
+      expect(text.right, lessThanOrEqualTo(375), reason: tabs[i]);
+    }
+  });
+
   testWidgets('Avaliações: média, quantidade e as '
       'barras dos itens', (tester) async {
     final gateway = await gatewayWith(
@@ -522,10 +544,6 @@ void main() {
     },
   );
 
-  final onePixelPng = base64Decode(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  );
-
   Future<(IdentityGateway, List<String>, List<Map<String, dynamic>?>)>
   suggestionGateway({int status = 201, String code = 'X'}) async {
     final calls = <String>[];
@@ -571,54 +589,21 @@ void main() {
     return (gateway, calls, bodies);
   }
 
-  Future<void> tapSuggest(WidgetTester tester, IdentityGateway gateway) async {
+  testWidgets('tela da corrida não oferece mais "Sugerir banner"', (
+    tester,
+  ) async {
+    final (gateway, _, _) = await suggestionGateway();
     tester.view.physicalSize = const Size(800, 3200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
-        home: EditionScreen(
-          gateway: gateway,
-          editionId: 'E1',
-          bannerSelector: (context) async => onePixelPng,
-        ),
+        home: EditionScreen(gateway: gateway, editionId: 'E1'),
       ),
     );
     await tester.pumpAndSettle();
-    final button = find.byKey(const Key('suggest-banner'));
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-  }
-
-  testWidgets(
-    'Sugerir banner: envia a imagem e a sugestão só leva a referência',
-    (tester) async {
-      final (gateway, calls, bodies) = await suggestionGateway();
-      await tapSuggest(tester, gateway);
-      expect(calls.where((c) => c.startsWith('POST')), [
-        'POST /uploads',
-        'POST /uploads/up1/finalize',
-        'POST /editions/E1/banner-suggestions',
-      ]);
-      expect(bodies.single, {'imageReference': 'img_${'a' * 64}'});
-      expect(
-        find.textContaining('A equipe confere a autorização'),
-        findsWidgets,
-      );
-      expect(find.text('Sugerir banner desta corrida'), findsOneWidget);
-    },
-  );
-
-  testWidgets('Sugerir banner: avisa quando já há uma sugestão aguardando', (
-    tester,
-  ) async {
-    final (gateway, _, _) = await suggestionGateway(
-      status: 409,
-      code: 'BANNER_SUGGESTION_EXISTS',
-    );
-    await tapSuggest(tester, gateway);
-    expect(find.textContaining('aguarda a decisão da equipe'), findsOneWidget);
+    expect(find.byKey(const Key('suggest-banner')), findsNothing);
+    expect(find.text('Sugerir banner desta corrida'), findsNothing);
   });
 
   testWidgets('Fotos: sem fotos mostra o aviso', (tester) async {

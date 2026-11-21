@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from copy import deepcopy
 from datetime import date, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -46,6 +47,39 @@ def _sync_plan_pointer(read, write, pk, subject, edition_id, registered, now):
         write(ref, None)
 
 
+MAX_MORE_POST_IMAGES = 4
+
+
+def post_image_count(item):
+    """Quantas fotos a publicacao tem: a capa (`postImageReference`) mais as extras do carrossel."""
+    if not item.get("postImageReference"):
+        return 0
+    return 1 + len(item.get("morePostImageReferences") or [])
+
+
+def _own_writes(read, write):
+    """read/write que enxergam as escritas ja feitas nesta transacao. O `read` do servico devolve sempre
+    o valor lido do banco; sem isto, duas mudancas na contagem de uso da mesma imagem (trocar a capa por
+    uma extra, por exemplo) se sobrescreviam."""
+    pending = {}
+
+    def own_read(key):
+        return deepcopy(pending[key]) if key in pending else read(key)
+
+    def own_write(key, value):
+        pending[key] = deepcopy(value)
+        write(key, value)
+
+    return own_read, own_write
+
+
+def _bump_image(read, write, pk, reference, delta):
+    key = ("operations", pk, "IMAGE#" + reference)
+    image = read(key)
+    if image:
+        write(key, {**image, "refs": max(0, image.get("refs", 0) + delta)})
+
+
 PLAN_STATES = ("wanted", "registered")
 MAX_PLANS = 200
 
@@ -65,7 +99,8 @@ class ParticipationService:
 
     @staticmethod
     def projection(item):
-        return {
+        """Visao do DONO (inclui as referencias das fotos; terceiros so veem `postImageCount`)."""
+        out = {
             key: item[key]
             for key in (
                 "id",
@@ -83,6 +118,7 @@ class ParticipationService:
                 "medalImageReference",
                 "publishToFeed",
                 "postImageReference",
+                "morePostImageReferences",
                 "postText",
                 "taggedUserIds",
                 "medalFrameId",
@@ -94,6 +130,8 @@ class ParticipationService:
             )
             if key in item
         }
+        out["postImageCount"] = post_image_count(item)
+        return out
 
     @staticmethod
     def _post_image(read, subject, reference, medal_reference=None):
@@ -110,6 +148,40 @@ class ParticipationService:
         ):
             raise Problem(422, "IMAGE_NOT_VALID")
         return key, image
+
+    @classmethod
+    def _more_post_images(cls, read, subject, cover, more, medal_reference):
+        """Fotos extras da publicacao (carrossel): ate 4, sem repetir, nenhuma igual a capa nem a medalha,
+        cada uma com as mesmas regras da capa (imagem valida e da propria pessoa). Devolve (chave, registro)."""
+        more = list(more or [])
+        if more and not cover:
+            raise Problem(422, "POST_IMAGE_REQUIRED")
+        if len(more) > MAX_MORE_POST_IMAGES:
+            raise Problem(422, "TOO_MANY_POST_IMAGES")
+        if len(set(more)) != len(more) or cover in more:
+            raise Problem(422, "POST_IMAGE_DUPLICATE")
+        return [cls._post_image(read, subject, ref, medal_reference) for ref in more]
+
+    @classmethod
+    def _replace_post_images(cls, read, write, subject, old, new, medal_reference):
+        """Troca capa e extras de uma publicacao. `old`/`new` sao (capa, [extras]). Valida so as fotos que
+        entram (as que ficam ja foram validadas), soma uso nas novas e libera as que sairam. Use com
+        `_own_writes`: a mesma imagem pode mudar de posicao (extra vira capa) sem perder a contagem."""
+        new_cover, new_more = new[0], list(new[1] or [])
+        if len(set(new_more)) != len(new_more) or new_cover in new_more:
+            raise Problem(422, "POST_IMAGE_DUPLICATE")
+        if len(new_more) > MAX_MORE_POST_IMAGES:
+            raise Problem(422, "TOO_MANY_POST_IMAGES")
+        old_refs = [r for r in (old[0], *(old[1] or [])) if r]
+        new_refs = [r for r in (new_cover, *new_more) if r]
+        added = [r for r in new_refs if r not in old_refs]
+        checked = [cls._post_image(read, subject, ref, medal_reference) for ref in added]
+        pk = "USER#" + subject
+        for key, image in checked:
+            write(key, {**image, "refs": image.get("refs", 0) + 1})
+        for ref in old_refs:
+            if ref not in new_refs:
+                _bump_image(read, write, pk, ref, -1)
 
     def _catalog_guard(self, read, edition_id, expected_catalog_version):
         head = read(("catalog", "EDITION#" + edition_id, "HEAD"))
@@ -242,8 +314,14 @@ class ParticipationService:
                 raise Problem(422, "POST_IMAGE_REQUIRED")
             if post_ref and not payload["publishToFeed"]:
                 raise Problem(422, "POST_IMAGE_NOT_ALLOWED")
+            more_refs = payload.get("morePostImageReferences") or []
+            if more_refs and not payload["publishToFeed"]:
+                raise Problem(422, "POST_IMAGE_NOT_ALLOWED")
             post_image = (
                 self._post_image(read, actor.subject, post_ref, reference) if post_ref else None
+            )
+            more_images = self._more_post_images(
+                read, actor.subject, post_ref, more_refs, reference
             )
             review_key = ("history", pk, "P#" + participation_id + "#REVIEW")
             medal_key = ("history", pk, "P#" + participation_id + "#MEDAL")
@@ -277,6 +355,8 @@ class ParticipationService:
             )
             if post_image:
                 item["postImageReference"] = post_ref
+                if more_refs:
+                    item["morePostImageReferences"] = more_refs
                 if payload.get("postText"):
                     item["postText"] = payload["postText"]
                 if payload.get("taggedUserIds"):
@@ -333,6 +413,8 @@ class ParticipationService:
             write(image_key, {**image, "refs": image.get("refs", 0) + 1})
             if post_image:
                 write(post_image[0], {**post_image[1], "refs": post_image[1].get("refs", 0) + 1})
+            for more_key, more_image in more_images:
+                write(more_key, {**more_image, "refs": more_image.get("refs", 0) + 1})
             write(claim_key, {"participationId": participation_id, "version": item["version"]})
             if review is not None:
                 _write_review_pointer(
@@ -377,7 +459,12 @@ class ParticipationService:
                 "version",
             )
             if k in item
-        } | {"hasPostImage": True}
+        } | {
+            "hasPostImage": True,
+            # So o dono recebe esta visao (criar/editar/abrir a propria publicacao extra).
+            "morePostImageReferences": list(item.get("morePostImageReferences") or []),
+            "postImageCount": post_image_count(item),
+        }
 
     def create_extra_post(self, actor, key, payload):
         """Outra publicação de uma corrida que eu já concluí (além da que nasce ao concluir). Foto própria
@@ -401,6 +488,14 @@ class ParticipationService:
             image_key, image = self._post_image(
                 read, actor.subject, payload["postImageReference"], part.get("medalImageReference")
             )
+            more_refs = payload.get("morePostImageReferences") or []
+            more_images = self._more_post_images(
+                read,
+                actor.subject,
+                payload["postImageReference"],
+                more_refs,
+                part.get("medalImageReference"),
+            )
             post_id = "x-" + uuid4().hex[:24]
             published = stamp(now)
             owner_key = ("history", "XPOST#" + post_id, "OWNER")
@@ -414,6 +509,8 @@ class ParticipationService:
                 # Linhas da conta guardadas fora da partição dela: a exclusão da conta apaga junto.
                 "sharedKeys": [list(owner_key), list(feed_key)],
             }
+            if more_refs:
+                item["morePostImageReferences"] = more_refs
             if payload.get("postText"):
                 item["postText"] = payload["postText"]
             if payload.get("taggedUserIds"):
@@ -427,6 +524,8 @@ class ParticipationService:
                 {"owner": actor.subject, "id": post_id, "completedAt": published, "extra": True},
             )
             write(image_key, {**image, "refs": image.get("refs", 0) + 1})
+            for more_key, more_image in more_images:
+                write(more_key, {**more_image, "refs": more_image.get("refs", 0) + 1})
             return self._extra_view(item), {"id": post_id}
 
         return self.identity.transact(actor, "createExtraPost", key, payload, work, admitted=True)
@@ -459,23 +558,29 @@ class ParticipationService:
                     new["taggedUserIds"] = tags
                 else:
                     new.pop("taggedUserIds", None)
-            if (
-                payload.get("postImageReference")
-                and payload["postImageReference"] != item["postImageReference"]
-            ):
+            old_images = (item["postImageReference"], item.get("morePostImageReferences") or [])
+            new_images = (
+                payload.get("postImageReference") or old_images[0],
+                (payload.get("morePostImageReferences") or [])
+                if "morePostImageReferences" in payload
+                else old_images[1],
+            )
+            if new_images != old_images:
                 part = read(("history", pk, "P#" + item["participationId"] + "#PART")) or {}
-                image_key, image = self._post_image(
-                    read,
+                own_read, own_write = _own_writes(read, write)
+                self._replace_post_images(
+                    own_read,
+                    own_write,
                     actor.subject,
-                    payload["postImageReference"],
+                    old_images,
+                    new_images,
                     part.get("medalImageReference"),
                 )
-                write(image_key, {**image, "refs": image.get("refs", 0) + 1})
-                old_key = ("operations", pk, "IMAGE#" + item["postImageReference"])
-                old = read(old_key)
-                if old:
-                    write(old_key, {**old, "refs": max(0, old.get("refs", 0) - 1)})
-                new["postImageReference"] = payload["postImageReference"]
+                new["postImageReference"] = new_images[0]
+                if new_images[1]:
+                    new["morePostImageReferences"] = list(new_images[1])
+                else:
+                    new.pop("morePostImageReferences", None)
             new["version"] = item["version"] + 1
             write(("history", pk, "XP#" + post_id), new)
             return self._extra_view(new), {"id": post_id}
@@ -493,10 +598,8 @@ class ParticipationService:
                 read(shared)
                 write(shared, None)
             write(("history", pk, "XP#" + post_id), None)
-            image_key = ("operations", pk, "IMAGE#" + item["postImageReference"])
-            image = read(image_key)
-            if image:
-                write(image_key, {**image, "refs": max(0, image.get("refs", 0) - 1)})
+            for ref in (item["postImageReference"], *(item.get("morePostImageReferences") or [])):
+                _bump_image(read, write, pk, ref, -1)
             return {"deleted": post_id}, {"id": post_id}
 
         return self.identity.transact(actor, "deleteExtraPost", key, {}, work, admitted=True)
@@ -524,12 +627,20 @@ class ParticipationService:
             image_key, image = self._post_image(
                 read, actor.subject, post_ref, item.get("medalImageReference")
             )
+            more_refs = payload.get("morePostImageReferences") or []
+            more_images = self._more_post_images(
+                read, actor.subject, post_ref, more_refs, item.get("medalImageReference")
+            )
             item.update(
                 publishToFeed=True,
                 postImageReference=post_ref,
                 version=item["version"] + 1,
                 updatedAt=stamp(now),
             )
+            if more_refs:
+                item["morePostImageReferences"] = more_refs
+            else:
+                item.pop("morePostImageReferences", None)
             if payload.get("postText"):
                 item["postText"] = payload["postText"]
             else:
@@ -551,6 +662,8 @@ class ParticipationService:
             )
             write(feed_ref_key, {"sharedKeys": [list(feed_key)]})
             write(image_key, {**image, "refs": image.get("refs", 0) + 1})
+            for more_key, more_image in more_images:
+                write(more_key, {**more_image, "refs": more_image.get("refs", 0) + 1})
             return self.projection(item), {"id": participation_id}
 
         return self.identity.transact(
@@ -632,17 +745,29 @@ class ParticipationService:
         if not missing:
             return
 
-        def work(read, write, account, now, replay):
-            for edition_id in missing:
-                current = read(("history", "USER#" + subject, "PLAN#" + edition_id))
-                if current and current.get("status") == "registered":
-                    _sync_plan_pointer(
-                        read, write, "USER#" + subject, subject, edition_id, True, now
-                    )
-            return None, {}
+        def work_for(batch):
+            def work(read, write, account, now, replay):
+                for edition_id in batch:
+                    current = read(("history", "USER#" + subject, "PLAN#" + edition_id))
+                    if current and current.get("status") == "registered":
+                        _sync_plan_pointer(
+                            read, write, "USER#" + subject, subject, edition_id, True, now
+                        )
+                return None, {}
 
+            return work
+
+        # Em lotes de 20: cada plano le 3 itens e a transacao do DynamoDB aceita ate 100.
         try:
-            self.identity.transact(actor, "repairPlanIndex", None, {}, work, admitted=True)
+            for start in range(0, len(missing), 20):
+                self.identity.transact(
+                    actor,
+                    "repairPlanIndex",
+                    None,
+                    {},
+                    work_for(missing[start : start + 20]),
+                    admitted=True,
+                )
         except Exception:  # noqa: BLE001 - reparo e opcional: a agenda abre mesmo assim
             return
 
@@ -892,6 +1017,8 @@ class ParticipationService:
                 post_image = read(post_key)
                 if post_image:
                     write(post_key, {**post_image, "refs": max(0, post_image.get("refs", 0) - 1)})
+            for more_ref in part.get("morePostImageReferences") or []:
+                _bump_image(read, write, pk, more_ref, -1)
             event = {
                 "id": event_id,
                 "type": "participation_deleted",
@@ -1020,6 +1147,7 @@ class ParticipationService:
         pk = "USER#" + actor.subject
 
         def work(read, write, account, now, replay):
+            read, write = _own_writes(read, write)
             part_key = ("history", pk, "P#" + participation_id + "#PART")
             item = read(part_key)
             owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
@@ -1087,21 +1215,41 @@ class ParticipationService:
                     item["taggedUserIds"] = tags
                 else:
                     item.pop("taggedUserIds", None)
-            if payload.get("postImageReference") is not None:
-                new_ref = payload["postImageReference"]
+            # Capa e extras do carrossel: `morePostImageReferences` substitui a lista inteira quando vem
+            # ([] ou null removem as extras); quando nao vem, as extras ficam (mesmo trocando a capa).
+            more_given = "morePostImageReferences" in payload
+            new_more = (payload.get("morePostImageReferences") or []) if more_given else None
+            if payload.get("postImageReference") is not None or new_more:
                 if item.get("state") != "completed" or not item.get("publishToFeed"):
                     raise Problem(409, "NOT_PUBLISHED")
-                old_ref = item.get("postImageReference")
-                if new_ref != old_ref:
-                    new_key, new_image = self._post_image(
-                        read, actor.subject, new_ref, item.get("medalImageReference")
-                    )
-                    old_key = ("operations", pk, "IMAGE#" + old_ref) if old_ref else None
-                    old_image = read(old_key) if old_key else None
-                    write(new_key, {**new_image, "refs": new_image.get("refs", 0) + 1})
-                    if old_image:
-                        write(old_key, {**old_image, "refs": max(0, old_image.get("refs", 0) - 1)})
-                    item["postImageReference"] = new_ref
+            old_images = (
+                item.get("postImageReference"),
+                item.get("morePostImageReferences") or [],
+            )
+            new_images = (
+                payload.get("postImageReference") or old_images[0],
+                new_more if more_given else old_images[1],
+            )
+            if new_images[1] and not new_images[0]:
+                raise Problem(422, "POST_IMAGE_REQUIRED")
+            medal_after = payload.get("medalImageReference") or item.get("medalImageReference")
+            if medal_after != item.get("medalImageReference") and medal_after in new_images[1]:
+                # Medalha nova igual a uma foto extra que fica na publicacao.
+                raise Problem(422, "POST_IMAGE_MUST_DIFFER")
+            if new_images != old_images:
+                self._replace_post_images(
+                    read,
+                    write,
+                    actor.subject,
+                    old_images,
+                    new_images,
+                    item.get("medalImageReference"),
+                )
+                item["postImageReference"] = new_images[0]
+                if new_images[1]:
+                    item["morePostImageReferences"] = list(new_images[1])
+                else:
+                    item.pop("morePostImageReferences", None)
             if "medalImageReference" in payload:
                 before = item.get("medalImageReference")
                 self._replace_medal_image(
@@ -1123,11 +1271,10 @@ class ParticipationService:
             item["version"] += 1
             item["updatedAt"] = stamp(now)
             write(part_key, item)
-            if item["state"] == "completed" and catalog_changed:
-                review_key = ("history", pk, "P#" + participation_id + "#REVIEW")
-                review = read(review_key)
-                if not review:
-                    raise Problem(503, "PARTICIPATION_INTEGRITY_FAILURE")
+            review_key = ("history", pk, "P#" + participation_id + "#REVIEW")
+            # Avaliacao e opcional: concluida sem avaliacao nao tem nota para transferir, so muda a distancia.
+            review = read(review_key) if item["state"] == "completed" and catalog_changed else None
+            if review:
                 updated_review = {
                     **review,
                     "editionId": edition_id,

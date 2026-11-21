@@ -54,6 +54,25 @@ Future<(IdentityGateway, List<String>)> setup({String? officialUrl}) async {
           'comment': 'Percurso bonito e bem sinalizado',
         });
       }
+      if (uri.path == '/participations/d9/complete') {
+        return const JsonReply(200, {
+          'id': 'd9',
+          'editionId': 'E1',
+          'distanceId': '5k',
+          'state': 'completed',
+          'version': 2,
+        });
+      }
+      if (uri.path == '/participations/d9' && method == 'PATCH') {
+        calls.add('display=${(body! as Map)['medalDisplayImageReference']}');
+        return const JsonReply(200, {
+          'id': 'd9',
+          'editionId': 'E1',
+          'distanceId': '5k',
+          'state': 'completed',
+          'version': 3,
+        });
+      }
       if (uri.path == '/participations/d5' && method == 'PATCH') {
         return JsonReply(200, {
           'id': 'd5',
@@ -324,6 +343,50 @@ void main() {
         opened.single.queryParameters['q'],
         contains('[FICTICIA] Corrida'),
       );
+    },
+  );
+
+  testWidgets(
+    'cadastrar medalha: ajusta no círculo antes do cadastro e grava o recorte ao concluir',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final (gateway, calls) = await setup();
+      var asked = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(
+            gateway: gateway,
+            initial: const {
+              'id': 'd9',
+              'editionId': 'E1',
+              'distanceId': '5k',
+              'state': 'draft',
+              'version': 1,
+            },
+            initialPhoto: onePixelPng,
+            initialPhotoCropper: (context, photo) async => photo,
+            initialShelfCropper: (context, image, frame) async {
+              asked++;
+              return onePixelPng;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(asked, 1); // o ajuste no círculo abriu uma vez, antes do cadastro
+      // Antes de concluir nada é gravado: o servidor só aceita o recorte em participação concluída.
+      expect(calls.where((c) => c.startsWith('display=')), isEmpty);
+      await tester.scrollUntilVisible(
+        find.text('Concluir participação'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Concluir participação'));
+      await tester.pumpAndSettle();
+      expect(calls, contains('POST /participations/d9/complete'));
+      expect(calls, contains('display=img_ok'));
     },
   );
 }

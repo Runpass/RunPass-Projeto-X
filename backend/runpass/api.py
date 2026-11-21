@@ -19,6 +19,7 @@ from .models import (
     CreateComment,
     CreateEditionComment,
     CreateExtraPost,
+    CreateFeedback,
     CreateParticipation,
     CreateProfile,
     EditComment,
@@ -674,10 +675,11 @@ def create_app(
         return participations.delete_extra_post(actor, id, idempotency_key)
 
     @app.get("/posts/{id}/image", operation_id="getExtraPostImage")
-    def extra_post_image(id: str, actor: Actor):
+    def extra_post_image(id: str, actor: Actor, index: int = Query(0, ge=0, le=4)):
+        # index 0 = capa (postImageReference); 1..4 = morePostImageReferences[index - 1].
         if uploads is None:
             raise Unavailable()
-        return uploads.extra_post_image(actor, id)
+        return uploads.extra_post_image(actor, id, index)
 
     @app.get("/posts/{id}", operation_id="getPost")
     def get_post(id: str, actor: Actor):
@@ -731,6 +733,12 @@ def create_app(
     ):
         return friends().edition_comment(actor, id, idempotency_key, body.text)
 
+    @app.post("/feedback", status_code=201, operation_id="sendFeedback")
+    def send_feedback(body: CreateFeedback, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().send_feedback(
+            actor, idempotency_key, body.kind, body.text, body.appVersion
+        )
+
     @app.delete("/edition-comments/{id}", operation_id="deleteEditionComment")
     def delete_edition_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):
         return friends().delete_edition_comment(actor, id, idempotency_key)
@@ -770,10 +778,11 @@ def create_app(
         return uploads.medal_image(actor, id)
 
     @app.get("/participations/{id}/post-image", operation_id="getParticipationPostImage")
-    def participation_post_image(id: str, actor: Actor):
+    def participation_post_image(id: str, actor: Actor, index: int = Query(0, ge=0, le=4)):
+        # index 0 = capa (postImageReference); 1..4 = morePostImageReferences[index - 1].
         if uploads is None:
             raise Unavailable()
-        return uploads.post_image(actor, id)
+        return uploads.post_image(actor, id, index)
 
     @app.get("/participations/{id}/display-image", operation_id="getParticipationDisplayImage")
     def participation_display_image(id: str, actor: Actor):

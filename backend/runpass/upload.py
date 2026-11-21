@@ -110,6 +110,16 @@ VIEW_SECONDS = 5 * 60
 CATALOG_OWNER = "catalog"
 
 
+def post_image_at(item, index):
+    """Foto `index` de uma publicacao: 0 e a capa (`postImageReference`), N >= 1 e a extra N-1 de
+    `morePostImageReferences`. None quando nao existe (a rota responde 404 como "sem imagem")."""
+    cover = item.get("postImageReference")
+    if not cover:
+        return None
+    images = [cover, *(item.get("morePostImageReferences") or [])]
+    return images[index] if 0 <= index < len(images) else None
+
+
 class UploadService:
     def __init__(self, identity, blobs, may_view=None, may_view_profile=None):
         self.identity, self.store, self.blobs = identity, identity.store, blobs
@@ -165,7 +175,7 @@ class UploadService:
             "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
         }
 
-    def post_image(self, actor, participation_id):
+    def post_image(self, actor, participation_id, index=0):
         """Link curto da foto da PUBLICACAO (outra foto, separada da medalha); so de quem pode ver a participacao."""
 
         def work(read, write, account, now, replay):
@@ -176,7 +186,7 @@ class UploadService:
             part = read(("history", "USER#" + subject, "P#" + participation_id + "#PART"))
             if not part or not self.may_view(read, actor, subject, part):
                 raise Problem(404, "IMAGE_NOT_AVAILABLE")
-            reference = part.get("postImageReference")
+            reference = post_image_at(part, index)
             if part.get("state") != "completed" or not reference:
                 raise Problem(404, "IMAGE_NOT_AVAILABLE")
             return {"owner": subject, "reference": reference, "now": now}, {}
@@ -189,7 +199,7 @@ class UploadService:
             "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
         }
 
-    def extra_post_image(self, actor, post_id):
+    def extra_post_image(self, actor, post_id, index=0):
         """Link curto da foto de uma publicação extra; a publicação é pública enquanto a corrida estiver
         concluída e a conta do autor ativa (mesma regra das outras publicações)."""
 
@@ -204,7 +214,10 @@ class UploadService:
                 raise Problem(404, "IMAGE_NOT_AVAILABLE")
             if not self.may_view(read, actor, subject, {**part, "publishToFeed": True}):
                 raise Problem(404, "IMAGE_NOT_AVAILABLE")
-            return {"owner": subject, "reference": item["postImageReference"], "now": now}, {}
+            reference = post_image_at(item, index)
+            if not reference:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            return {"owner": subject, "reference": reference, "now": now}, {}
 
         found = self.identity.transact(actor, "getExtraPostImage", None, {}, work, admitted=True)
         link = self.blobs.view_url(found["owner"], found["reference"])

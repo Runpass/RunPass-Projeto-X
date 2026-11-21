@@ -59,7 +59,7 @@ void main() {
               ...entry('A'),
               'id': 'EA',
               'date': '2026-11-19',
-              'city': 'Santos',
+              'city': 'Itu',
               'state': 'SP',
               'distances': [
                 {'id': '5k', 'kilometers': 5},
@@ -73,17 +73,17 @@ void main() {
     // A data vai num selo sobre a foto; o local e as distâncias, embaixo, com ícone.
     expect(find.byKey(const Key('date-chip-EA')), findsOneWidget);
     expect(find.text('Amanhã'), findsOneWidget);
-    expect(find.text('Santos, SP'), findsOneWidget);
+    expect(find.text('Itu, SP'), findsOneWidget);
     expect(find.byIcon(Icons.place_outlined), findsOneWidget);
     // O ícone de corrida aparece na linha das distâncias (e também na arte de tipo "rua").
     expect(find.byIcon(Icons.directions_run), findsWidgets);
     expect(find.text('Corrida A'), findsOneWidget);
     // A pílula da distância (a imagem ocupa a largura inteira do cartão e desenha a distância).
     expect(find.text('5K'), findsOneWidget);
-    // Capa sem foto da prova: cartão postal com a cidade, rotulado como arte do app.
-    expect(find.byKey(const Key('race-art-city')), findsOneWidget);
-    expect(find.text('SANTOS · SP'), findsOneWidget);
-    expect(find.byKey(const Key('race-art-tag')), findsOneWidget);
+    // Cidade sem foto: capa genérica, no mesmo padrão das fotos (imagem limpa, sem texto por cima).
+    expect(find.byKey(const Key('race-art-photo')), findsOneWidget);
+    expect(find.byKey(const Key('race-art-city')), findsNothing);
+    expect(find.text('ITU · SP'), findsNothing);
   });
 
   test('tipo da prova pelo nome, para a arte padrão', () {
@@ -110,7 +110,7 @@ void main() {
       await art({
         'id': 'a',
         'name': 'Trail da Serra',
-        'city': 'Campinas',
+        'city': 'Itu',
         'distances': [
           {'kilometers': 21.0975},
           {'kilometers': 5},
@@ -126,6 +126,41 @@ void main() {
       });
       expect(find.byKey(const Key('race-art-rua')), findsOneWidget);
       expect(find.text('SAN'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'linha de "Quero correr": nome em duas linhas, data e local cabem sem estourar',
+    (tester) async {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final gateway = await signed(
+        (uri, method, headers, body) async => const JsonReply(200, {}),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PlanRow(
+              gateway: gateway,
+              edition: {
+                ...entry('A'),
+                'id': 'EA',
+                'name': 'Circuito das Estações de Corrida de Rua - Etapa Outono 2027',
+                'date': '2027-03-14',
+                'city': 'São Bernardo do Campo',
+                'state': 'SP',
+              },
+              trailing: const Icon(Icons.favorite),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      // Sem "RenderFlex overflowed": o texto cabe na linha.
+      expect(tester.takeException(), isNull);
+      expect(find.text('14 de março de 2027'), findsOneWidget);
+      expect(find.text('São Bernardo do Campo, SP'), findsOneWidget);
     },
   );
 }

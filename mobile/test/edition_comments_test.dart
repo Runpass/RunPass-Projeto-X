@@ -17,6 +17,7 @@ class Server {
   final List<String> calls = [];
   Server(this.comments);
   String? postError;
+  List<Map<String, dynamic>> reviews = [];
 }
 
 Future<(IdentityGateway, Server)> setup(
@@ -47,6 +48,9 @@ Future<(IdentityGateway, Server)> setup(
             {'id': '5k', 'kilometers': 5},
           ],
         });
+      }
+      if (uri.path == '/editions/E1/reviews') {
+        return JsonReply(200, {'items': server.reviews, 'summary': null});
       }
       if (uri.path == '/editions/E1/comments' && method == 'GET') {
         return JsonReply(200, {'items': server.comments});
@@ -85,13 +89,12 @@ Future<void> openReviews(WidgetTester tester, IdentityGateway gateway) async {
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Avaliações'));
-  await tester.pumpAndSettle();
+  // Os comentários ficam na aba principal (Sobre), embaixo das informações.
 }
 
 void main() {
   testWidgets(
-    'a aba Avaliações lista os comentários da corrida e mostra a caixa para comentar',
+    'a aba Sobre lista os comentários da corrida e mostra a caixa para comentar',
     (tester) async {
       final (gateway, server) = await setup([
         comment('a', 'Percurso plano e bem sinalizado'),
@@ -192,4 +195,42 @@ void main() {
       'mais um',
     ); // não perde o texto
   });
+
+  testWidgets(
+    'o comentário feito na avaliação (no cadastro) também aparece nos comentários da corrida',
+    (tester) async {
+      final (gateway, server) = await setup([]);
+      server.reviews = [
+        {
+          'participationId': 'p1',
+          'version': 1,
+          'ratings': {'organization': 5},
+          'moderationState': 'valid',
+          'comment': 'Kit entregue rápido [FICTICIA]',
+          'authorName': 'Pessoa da avaliação',
+          'createdAt': '2026-11-14T15:00:00Z',
+        },
+        {
+          'participationId': 'p2',
+          'version': 1,
+          'ratings': {'organization': 4},
+          'moderationState': 'valid',
+          'authorName': 'Sem comentário',
+          'createdAt': '2026-11-13T15:00:00Z',
+        },
+      ];
+      await openReviews(tester, gateway);
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('edition-comments-title')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        find.byKey(const Key('edition-review-comment-p1')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('edition-review-comment-p2')), findsNothing);
+      expect(find.byKey(const Key('edition-comments-empty')), findsNothing);
+    },
+  );
 }

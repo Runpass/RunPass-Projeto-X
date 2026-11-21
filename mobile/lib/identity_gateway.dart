@@ -605,18 +605,23 @@ class IdentityGateway {
     if (result.status == 401) {
       // O acesso vale 60 minutos; com "manter conectado" renova uma vez e repete a chamada.
       if (retry && _refreshToken != null) {
+        final bool restored;
         try {
-          if (await restoreSession()) {
-            return await _request(
-              path,
-              method: method,
-              body: body,
-              query: query,
-              retry: false,
-            );
-          }
-        } on IdentityIssue {
-          // Sem rede para renovar: cai na regra abaixo.
+          restored = await restoreSession();
+        } on Exception {
+          // Sem rede para renovar: a sessão continua guardada e a próxima chamada tenta de novo
+          // (antes ela era descartada e o app ficava "vazio" até ser fechado).
+          throw const IdentityIssue('SERVICE_UNAVAILABLE');
+        }
+        if (restored) {
+          // Fora do try: um erro da chamada repetida (ex.: 409) sobe como é, sem derrubar a sessão.
+          return await _request(
+            path,
+            method: method,
+            body: body,
+            query: query,
+            retry: false,
+          );
         }
       }
       clearSession();

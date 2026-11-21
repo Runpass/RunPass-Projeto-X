@@ -14,7 +14,8 @@ import 'medal_scan.dart'
         MedalTextReader,
         PlatformMedalTextReader,
         pickMedalPhotoPath;
-import 'new_post.dart';
+import 'profile_photo.dart' show pickPostPhotos;
+import 'recommendations.dart' show RecommendedRacesList;
 import 'notifications.dart';
 import 'post_card.dart';
 import 'runpass_theme.dart';
@@ -31,7 +32,7 @@ enum FeedFilter {
   all('Todos', Icons.public_rounded),
   friends('Amigos', Icons.people_outline),
   network('Seguindo', Icons.hub_outlined),
-  city('Minha Cidade', Icons.location_city);
+  forYou('Pra você', Icons.auto_awesome_rounded);
 
   final String label;
   final IconData icon;
@@ -40,7 +41,7 @@ enum FeedFilter {
 
 /// Escopo enviado ao servidor para cada filtro: "Todos" traz qualquer publicação visível;
 /// "Amigos" só de amigos aceitos (sem as minhas); "Seguindo" só de quem eu sigo (sem as
-/// minhas). "Minha Cidade" recorta dentro de "Todos" (feedFilterMatches).
+/// minhas). "Pra você" mostra as corridas indicadas (não publicações).
 String feedScopeFor(FeedFilter filter) => switch (filter) {
   FeedFilter.friends => 'friends',
   FeedFilter.network => 'network',
@@ -75,7 +76,7 @@ bool feedFilterMatches(
   FeedEntry entry,
   Map<String, dynamic>? myProfile,
 ) => switch (filter) {
-  FeedFilter.city => _sameCity(myProfile, entry),
+  FeedFilter.forYou => true, // mostra as corridas indicadas, não publicações
   // Todos, Amigos e Seguindo já chegam filtrados pelo servidor (feedScopeFor).
   FeedFilter.all || FeedFilter.friends || FeedFilter.network => true,
 };
@@ -129,7 +130,14 @@ List<FeedEntry> cityScopedEntries(
 
 /// Resultado de [loadFeed]: as publicações a mostrar e o perfil do usuário (para o filtro
 /// "Minha Cidade" e para saber se falta cadastrar estado/cidade).
-typedef FeedLoad = ({List<FeedEntry> items, Map<String, dynamic>? profile});
+/// [failed]: o feed não respondeu (sem rede ou sessão): a tela avisa, em vez de parecer conta vazia.
+/// [nextCursor]: há mais publicações (o "Carregar mais" pede a página seguinte).
+typedef FeedLoad = ({
+  List<FeedEntry> items,
+  Map<String, dynamic>? profile,
+  bool failed,
+  String? nextCursor,
+});
 
 /// Published posts first come from the API; the runner's own completed races that are not in
 /// the feed are added on top in "Todos" (só ali) so a new registration is always visible on
@@ -137,6 +145,7 @@ typedef FeedLoad = ({List<FeedEntry> items, Map<String, dynamic>? profile});
 Future<FeedLoad> loadFeed(
   IdentityGateway gateway, {
   FeedFilter filter = FeedFilter.all,
+  String? cursor,
 }) async {
   Map<String, dynamic>? profile;
   try {
@@ -165,16 +174,23 @@ Future<FeedLoad> loadFeed(
   }
 
   var posts = <Map<String, dynamic>>[];
+  var failed = false;
+  String? nextCursor;
   try {
     final page = await gateway.request(
       '/feed',
-      query: {'limit': '20', 'scope': feedScopeFor(filter)},
+      query: {'limit': '20', 'scope': feedScopeFor(filter), 'cursor': ?cursor},
     );
     posts = (page['items'] as List? ?? const []).cast<Map<String, dynamic>>();
+    nextCursor = page['nextCursor'] as String?;
   } on Exception {
     posts = const [];
+    failed = true;
   }
-  final mine = await loadMyRaces(gateway).catchError((_) => <RaceRecord>[]);
+  // As minhas corridas só entram na primeira página de "Todos".
+  final mine = cursor == null && filter == FeedFilter.all
+      ? await loadMyRaces(gateway).catchError((_) => <RaceRecord>[])
+      : const <RaceRecord>[];
   final editions = await loadEditions(
     gateway,
     [
@@ -198,11 +214,18 @@ Future<FeedLoad> loadFeed(
     );
   }
   // Só em "Todos": garante que uma corrida recém-registrada apareça no Início. Nos outros
-  // filtros (Amigos, Seguindo, Minha Cidade) as minhas publicações não entram por aqui.
+  // filtros (Amigos, Seguindo, Pra você) as minhas publicações não entram por aqui.
+  // Só as minhas corridas do período desta página: havendo mais páginas, as mais antigas que a última
+  // publicação mostrada não sobem para o topo (antes todas as minhas medalhas antigas vinham na frente).
+  String when(RaceRecord race) => '${race.participation['completedAt'] ?? ''}';
+  final oldest = nextCursor == null || entries.isEmpty
+      ? ''
+      : when(entries.last.race);
   final own = filter == FeedFilter.all
       ? [
           for (final race in mine)
-            if (!posted.contains(race.participation['id']))
+            if (!posted.contains(race.participation['id']) &&
+                when(race).compareTo(oldest) >= 0)
               FeedEntry(
                 postId: null,
                 author: myName,
@@ -215,7 +238,23 @@ Future<FeedLoad> loadFeed(
               ),
         ]
       : const <FeedEntry>[];
-  return (items: [...own, ...entries], profile: profile);
+  // Junta pela data (mais nova primeiro), mantendo a ordem do servidor; empate: a minha antes.
+  final items = <FeedEntry>[];
+  var i = 0;
+  for (final entry in entries) {
+    while (i < own.length &&
+        when(own[i].race).compareTo(when(entry.race)) >= 0) {
+      items.add(own[i++]);
+    }
+    items.add(entry);
+  }
+  items.addAll(own.skip(i));
+  return (
+    items: items,
+    profile: profile,
+    failed: failed,
+    nextCursor: nextCursor,
+  );
 }
 
 class RunPassHomeScreen extends StatefulWidget {
@@ -224,11 +263,15 @@ class RunPassHomeScreen extends StatefulWidget {
   /// Escolha da foto da medalha e leitura do texto dela (só os testes trocam).
   final MedalPhotoPicker medalPhotoPicker;
   final MedalTextReader medalTextReader;
+
+  /// Foto da publicação do "Postar foto" (só os testes trocam).
+  final Future<List<List<int>>?> Function(BuildContext context) postPhotoPicker;
   const RunPassHomeScreen({
     super.key,
     required this.gateway,
     this.medalPhotoPicker = pickMedalPhotoPath,
     this.medalTextReader = const PlatformMedalTextReader(),
+    this.postPhotoPicker = pickPostPhotos,
   });
 
   @override
@@ -240,16 +283,63 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
   late Future<FeedLoad> feed = loadFeed(widget.gateway);
   FeedFilter filter = FeedFilter.all;
 
-  Future<void> selectFilter(FeedFilter item) async {
-    if (item == FeedFilter.city && !await ensureLocation()) return;
-    if (!mounted) return;
+  /// Páginas seguintes do feed ("Carregar mais"), o cursor da próxima e a vez de cada carga (uma resposta
+  /// atrasada de outro filtro ou de antes de recarregar é descartada).
+  List<FeedEntry> moreEntries = const [];
+  String? moreCursor;
+  bool moreKnown = false, loadingMore = false, moreFailed = false;
+  int feedSeq = 0;
+
+  /// Troca a primeira página; as seguintes são descartadas.
+  void setFeed(Future<FeedLoad> next) {
+    feedSeq++;
+    feed = next;
+    moreEntries = const [];
+    moreCursor = null;
+    moreKnown = false;
+    moreFailed = false;
+    loadingMore = false;
+  }
+
+  Future<void> loadMore(String cursor) async {
+    if (loadingMore) return;
+    final seq = feedSeq;
     setState(() {
-      filter = item;
-      feed = loadFeed(widget.gateway, filter: item);
+      loadingMore = true;
+      moreFailed = false;
+    });
+    final page = await loadFeed(widget.gateway, filter: filter, cursor: cursor);
+    if (!mounted || seq != feedSeq) return;
+    setState(() {
+      loadingMore = false;
+      if (page.failed) {
+        moreFailed = true;
+        return;
+      }
+      final have = {
+        for (final e in moreEntries) e.postId ?? e.race.participation['id'],
+      };
+      moreEntries = [
+        ...moreEntries,
+        for (final e in page.items)
+          if (!have.contains(e.postId ?? e.race.participation['id'])) e,
+      ];
+      moreCursor = page.nextCursor;
+      moreKnown = true;
     });
   }
 
-  /// "Minha Cidade" exige estado/cidade no perfil; se faltar, pede uma vez (fica salvo depois,
+  Future<void> selectFilter(FeedFilter item) async {
+    // "Pra você" indica pela cidade do perfil: se faltar, pede uma vez.
+    if (item == FeedFilter.forYou && !await ensureLocation()) return;
+    if (!mounted) return;
+    setState(() {
+      filter = item;
+      setFeed(loadFeed(widget.gateway, filter: item));
+    });
+  }
+
+  /// "Pra você" usa a cidade do perfil; se faltar, pede uma vez (fica salvo depois,
   /// não pergunta de novo).
   Future<bool> ensureLocation() async {
     Map<String, dynamic>? profile;
@@ -333,12 +423,16 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
     );
     if (!mounted || choice == null) return;
     if (choice == 'photo') {
-      final published = await Navigator.of(context).push<bool>(
-        MaterialPageRoute<bool>(
-          builder: (_) => NewPostScreen(gateway: widget.gateway),
+      // Começa pela foto da publicação; depois a mesma escolha de corrida e o mesmo cadastro das outras telas.
+      final photos = await widget.postPhotoPicker(context);
+      if (photos == null || photos.isEmpty || !mounted) return;
+      await Navigator.of(context).push<Object?>(
+        MaterialPageRoute<Object?>(
+          builder: (_) =>
+              MedalScanScreen(gateway: widget.gateway, postPhotos: photos),
         ),
       );
-      if (published == true) reload(); // a postagem nova aparece no feed
+      if (mounted) reload(); // a postagem nova aparece no feed
       return;
     }
     final path = await widget.medalPhotoPicker(context);
@@ -368,16 +462,29 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
   void reload() {
     if (!mounted) return;
     setState(() {
-      feed = loadFeed(widget.gateway, filter: filter);
+      setFeed(loadFeed(widget.gateway, filter: filter));
     });
   }
 
+  /// Voltou para o Início (de outra tela ou do segundo plano): atualiza, mas não quando a pessoa já
+  /// carregou mais páginas, para não a devolver ao começo da lista.
+  void softReload() {
+    if (filter == FeedFilter.forYou) {
+      if (mounted) setState(() => recommendedRevision++);
+      return;
+    }
+    if (moreEntries.isEmpty) reload();
+  }
+
+  /// Vez das indicações de "Pra você": mudar recria a lista (ela busca de novo).
+  int recommendedRevision = 0;
+
   @override
-  void didPopNext() => reload();
+  void didPopNext() => softReload();
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) reload();
+    if (state == AppLifecycleState.resumed) softReload();
   }
 
   void go(Widget screen) =>
@@ -576,30 +683,61 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
       onRefresh: () async {
         final next = loadFeed(widget.gateway, filter: filter);
         setState(() {
-          feed = next;
+          setFeed(next);
+          recommendedRevision++;
         });
         await next;
       },
       child: FutureBuilder<FeedLoad>(
+        // Outro filtro: começa do zero (não mostra a lista do filtro anterior enquanto carrega).
+        key: ValueKey(filter),
         future: feed,
         builder: (context, snapshot) {
-          final loading = snapshot.connectionState != ConnectionState.done;
-          final all = snapshot.data?.items ?? const <FeedEntry>[];
-          final myProfile = snapshot.data?.profile;
-          final shown = filter == FeedFilter.city
-              ? cityScopedEntries(all, myProfile)
-              : [
-                  for (final entry in all)
-                    if (feedFilterMatches(filter, entry, myProfile)) entry,
-                ];
+          // Recarregando com a lista já na tela: ela continua (sem tela em branco nem volta ao topo).
+          final loading =
+              snapshot.connectionState != ConnectionState.done &&
+              snapshot.data == null;
+          final first = snapshot.data;
+          final all = [...?first?.items, ...moreEntries];
+          final myProfile = first?.profile;
+          final nextCursor = moreKnown ? moreCursor : first?.nextCursor;
+          final shown = [
+            for (final entry in all)
+              if (feedFilterMatches(filter, entry, myProfile)) entry,
+          ];
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(16),
             children: [
               filters(),
               const SizedBox(height: 8),
-              if (loading)
+              // "Pra você": as corridas indicadas para a pessoa, no lugar das publicações.
+              if (filter == FeedFilter.forYou)
+                RecommendedRacesList(
+                  // Muda ao puxar para atualizar ou ao voltar de outra tela: indica de novo.
+                  key: ValueKey('recommended-$recommendedRevision'),
+                  gateway: widget.gateway,
+                )
+              else if (loading)
                 const Center(child: CircularProgressIndicator())
+              // Sem resposta do servidor e nada para mostrar: avisa (não é uma conta vazia).
+              else if (first?.failed == true && all.isEmpty)
+                Column(
+                  key: const Key('feed-failed'),
+                  children: [
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Não foi possível carregar as publicações agora. Verifique a internet e tente de novo.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      key: const Key('feed-retry'),
+                      onPressed: reload,
+                      child: const Text('Tentar de novo'),
+                    ),
+                  ],
+                )
               // O convite "sem corridas ainda" só faz sentido em "Todos"; nos outros
               // filtros, uma lista vazia já é coberta por emptyFilterState.
               else if (all.isEmpty && filter == FeedFilter.all) ...[
@@ -621,6 +759,33 @@ class _RunPassHomeScreenState extends State<RunPassHomeScreen>
                   ),
                   const SizedBox(height: 14),
                 ],
+              if (filter != FeedFilter.forYou &&
+                  shown.isNotEmpty &&
+                  nextCursor != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Column(
+                    children: [
+                      if (moreFailed)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 6),
+                          child: Text(
+                            'Não foi possível carregar mais agora.',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      OutlinedButton(
+                        key: const Key('feed-load-more'),
+                        onPressed: loadingMore
+                            ? null
+                            : () => loadMore(nextCursor),
+                        child: Text(
+                          loadingMore ? 'Carregando…' : 'Carregar mais',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           );
         },

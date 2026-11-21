@@ -34,7 +34,11 @@ from .models import ReviewRequestDecision
 from .operator_admin import rename_edition, set_social_links
 from .quality_report import REPORT as QUALITY_REPORT
 from .service import Problem
-from .social import list_edition_comments_for_team, remove_edition_comment_as_team
+from .social import (
+    list_edition_comments_for_team,
+    list_feedback_for_team,
+    remove_edition_comment_as_team,
+)
 from .store import Conflict, Unavailable
 
 MAX_AUTH_AGE = 3600
@@ -387,6 +391,12 @@ def create_admin_app(
     def edition_comments_team(edition_id: str, op: Operator):
         need(op, "catalog_admin")
         return {"items": list_edition_comments_for_team(store, edition_id)}
+
+    @app.get("/admin/feedback")
+    def feedback_team(op: Operator, limit: int = Query(100, ge=1, le=200)):
+        """Feedbacks sobre o app enviados pelos corredores (Configuracoes > Enviar feedback)."""
+        need(op, "catalog_admin")
+        return {"items": list_feedback_for_team(store, limit)}
 
     @app.delete("/admin/edition-comments/{comment_id}")
     def edition_comment_remove(comment_id: str, op: Operator):

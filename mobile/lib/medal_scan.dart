@@ -243,8 +243,11 @@ Future<String?> pickMedalPhotoPath(BuildContext context) async {
     source: choice == PhotoChoice.camera
         ? ImageSource.camera
         : ImageSource.gallery,
-    maxWidth: 2000,
-    imageQuality: 90,
+    // Mesma resolução da foto da publicação (o editor e o envio são os mesmos).
+    maxWidth: 2800,
+    maxHeight: 2800,
+    imageQuality: 88,
+    requestFullMetadata: false,
   );
   return file?.path;
 }
@@ -256,13 +259,24 @@ class MedalScanScreen extends StatefulWidget {
 
   /// Seleção de foto do rascunho da participação (só os testes trocam; o app usa a galeria).
   final PhotoSelector? draftPhotoSelector;
+
+  /// Postar foto: a mesma escolha de corrida, começando pelas fotos da PUBLICAÇÃO (até 5; a primeira é a capa;
+  /// sem ler texto). A lista abre com as minhas corridas e tocar numa corrida segue para o mesmo cadastro.
+  final List<List<int>>? postPhotos;
+
+  /// Ajuste da medalha no círculo antes do cadastro (o mesmo da edição). Só os testes trocam.
+  final MedalCropOpener? shelfCropper;
   const MedalScanScreen({
     super.key,
     required this.gateway,
-    required this.photoPath,
+    this.photoPath = '',
     this.reader = const PlatformMedalTextReader(),
     this.draftPhotoSelector,
+    this.postPhotos,
+    this.shelfCropper = openMedalCropScreen,
   });
+
+  bool get forPost => postPhotos != null && postPhotos!.isNotEmpty;
 
   @override
   State<MedalScanScreen> createState() => _MedalScanScreenState();
@@ -319,10 +333,12 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
       try {
         final page = await widget.gateway.request(
           '/editions',
-          query: {'q': query, 'limit': '5'},
+          query: {'q': query, 'limit': '10'},
         );
         for (final item in (page['items'] as List? ?? const [])) {
           final edition = Map<String, dynamic>.from(item as Map);
+          // Medalha e publicação são de corrida que já aconteceu (a de hoje vale).
+          if (raceIsInFuture(edition)) continue;
           if (!matches.any((m) => m['id'] == edition['id'])) {
             matches.add(edition);
           }
@@ -334,7 +350,59 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     }
   }
 
+  /// Completa a lista com as corridas que já aconteceram nos últimos [recentPastDays] dias (no estado do
+  /// perfil, quando há), da mais recente para a mais antiga. É uma ajuda: falha não derruba a tela.
+  static const recentPastDays = 60;
+
+  Future<void> loadRecentPast() async {
+    String iso(DateTime d) =>
+        '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    try {
+      final today = DateTime.now();
+      var state = '${navProfileOf(widget.gateway)?['state'] ?? ''}'.trim();
+      if (state.isEmpty) {
+        try {
+          state = '${(await widget.gateway.request('/me'))['state'] ?? ''}'
+              .trim();
+        } on Exception {
+          state = '';
+        }
+      }
+      final recent = <Map<String, dynamic>>[];
+      String? cursor;
+      var pages = 0;
+      do {
+        final page = await widget.gateway.request(
+          '/editions',
+          query: {
+            if (state.isNotEmpty) 'state': state,
+            'dateFrom': iso(
+              today.subtract(const Duration(days: recentPastDays)),
+            ),
+            'dateTo': iso(today),
+            'limit': '100',
+            'cursor': ?cursor,
+          },
+        );
+        for (final item in (page['items'] as List? ?? const [])) {
+          if (item is Map) recent.add(Map<String, dynamic>.from(item));
+        }
+        cursor = page['nextCursor'] as String?;
+      } while (cursor != null && ++pages < 3);
+      recent.sort((a, b) => '${b['date']}'.compareTo('${a['date']}'));
+      for (final edition in recent.take(30)) {
+        if (edition['status'] == 'archived' || raceIsInFuture(edition)) {
+          continue;
+        }
+        if (!matches.any((m) => m['id'] == edition['id'])) matches.add(edition);
+      }
+    } on Exception {
+      // Sem a lista: a busca pelo nome continua valendo.
+    }
+  }
+
   Future<void> scan() async {
+    if (widget.forPost) return loadMine();
     try {
       final lines = await widget.reader.read(widget.photoPath);
       // Todo o texto da medalha vira busca, do trecho mais específico ao menos específico.
@@ -347,15 +415,40 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         note = 'Não consegui ler o nome da corrida nesta foto.';
       }
       await searchMatches(queries);
+      final found = matches.isNotEmpty;
+      // Depois das que batem com o texto da medalha, as corridas que aconteceram há pouco.
+      await loadRecentPast();
       if (matches.isNotEmpty) await markRegistered();
-      if (queries.isNotEmpty && matches.isEmpty) {
-        note = 'Li o texto da medalha, mas não achei uma corrida com ele.';
+      if (queries.isNotEmpty && !found) {
+        note = matches.isEmpty
+            ? 'Li o texto da medalha, mas não achei uma corrida com ele.'
+            : 'Não achei a corrida pelo texto da medalha. Veja as corridas recentes abaixo ou procure pelo nome.';
       }
     } on MedalReadUnavailable {
       unavailable = true;
       note = 'Este aparelho ainda não lê o texto da medalha. Preencha abaixo.';
     } on Exception {
       note = 'Não consegui ler esta foto. Tente outra, mais nítida e de frente, ou preencha abaixo.';
+    } finally {
+      if (mounted) setState(() => working = false);
+    }
+  }
+
+  /// Postar foto: a lista abre com as corridas que já cadastrei (a mais recente primeiro); a busca acha outras.
+  Future<void> loadMine() async {
+    try {
+      final mine = await loadMyRaces(widget.gateway);
+      for (final race in mine) {
+        final edition = race.edition;
+        if (edition != null && !matches.any((m) => m['id'] == edition['id'])) {
+          matches.add(Map<String, dynamic>.from(edition));
+        }
+      }
+      // Depois das minhas, as corridas que aconteceram há pouco (para postar de uma que ainda não cadastrei).
+      await loadRecentPast();
+      if (matches.isNotEmpty) await markRegistered();
+    } on Exception {
+      // Sem a lista: a busca pelo nome continua valendo.
     } finally {
       if (mounted) setState(() => working = false);
     }
@@ -476,6 +569,9 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             gateway: widget.gateway,
             initial: draft,
             initialPhoto: photo,
+            // Um editor só: a foto oficial vai inteira e a pessoa ajusta a medalha no círculo.
+            initialPhotoCropper: (context, bytes) async => bytes,
+            initialShelfCropper: widget.shelfCropper,
             photoSelector: widget.draftPhotoSelector,
           ),
         ),
@@ -504,6 +600,11 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                 : ParticipationDraftScreen(
                     gateway: widget.gateway,
                     initial: existing,
+                    // A foto da medalha tirada agora segue para o rascunho que já existia.
+                    initialPhoto: existing['state'] == 'draft' ? photo : null,
+                    initialPhotoCropper: (context, bytes) async => bytes,
+                    initialShelfCropper: widget.shelfCropper,
+                    photoSelector: widget.draftPhotoSelector,
                   ),
           ),
         );
@@ -610,9 +711,23 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     }
   }
 
+  /// Postar foto: tocar na corrida segue para o mesmo cadastro da corrida, com a foto da publicação.
+  Future<void> openForPost(Map<String, dynamic> edition) async {
+    final navigator = Navigator.of(context);
+    await openRaceRegistration(
+      context,
+      widget.gateway,
+      edition,
+      postPhotos: widget.postPhotos,
+    );
+    if (mounted && navigator.canPop()) navigator.pop(true);
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Cadastrar medalha')),
+    appBar: AppBar(
+      title: Text(widget.forPost ? 'Postar foto' : 'Cadastrar medalha'),
+    ),
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -620,12 +735,19 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
           borderRadius: BorderRadius.circular(16),
           child: SizedBox(
             height: 160,
-            child: Image.file(
-              File(widget.photoPath),
-              key: const Key('medal-scan-photo'),
-              fit: BoxFit.contain,
-              errorBuilder: (_, _, _) => const SizedBox.shrink(),
-            ),
+            child: widget.forPost
+                ? Image.memory(
+                    Uint8List.fromList(widget.postPhotos!.first),
+                    key: const Key('post-scan-photo'),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  )
+                : Image.file(
+                    File(widget.photoPath),
+                    key: const Key('medal-scan-photo'),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  ),
           ),
         ),
         const SizedBox(height: 16),
@@ -639,7 +761,9 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
           onSubmitted: (_) => searchAgain(),
           decoration: InputDecoration(
             labelText: 'Nome da corrida',
-            hintText: 'Procure a corrida da sua medalha',
+            hintText: widget.forPost
+                ? 'Procure a corrida desta foto'
+                : 'Procure a corrida da sua medalha',
             counterText: '',
             prefixIcon: const Icon(Icons.search_rounded),
             suffixIcon: IconButton(
@@ -652,16 +776,22 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
         ),
         const SizedBox(height: 12),
         if (working)
-          const Row(
-            key: Key('medal-scan-working'),
+          Row(
+            key: const Key('medal-scan-working'),
             children: [
-              SizedBox(
+              const SizedBox(
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              SizedBox(width: 12),
-              Expanded(child: Text('Lendo a medalha e procurando a corrida…')),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  widget.forPost
+                      ? 'Carregando as suas corridas…'
+                      : 'Lendo a medalha e procurando a corrida…',
+                ),
+              ),
             ],
           )
         else ...[
@@ -695,10 +825,12 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                           ),
                         )
                       : null,
-                  onTap: () {
-                    fillFrom(edition);
-                    concludeChosen();
-                  },
+                  onTap: widget.forPost
+                      ? () => openForPost(edition)
+                      : () {
+                          fillFrom(edition);
+                          concludeChosen();
+                        },
                 ),
               ),
           ] else

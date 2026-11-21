@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'catalog_screen.dart'
     show EditionScreen, ParticipationDraftScreen, catalogError;
+import 'extra_post_edit.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'my_races.dart';
@@ -57,6 +58,19 @@ class FeedEntry {
     this.version,
   });
 
+  /// Quantas fotos a publicação tem (até 5; a primeira é a capa). Sem a informação, uma.
+  int get photoCount {
+    final count = (race.participation['postImageCount'] as num?)?.toInt() ?? 1;
+    return count < 1 ? 1 : (count > 5 ? 5 : count);
+  }
+
+  /// Endereço da foto [index] da publicação (0 é a capa, o mesmo de [photoEndpoint]).
+  String? photoEndpointAt(int index) {
+    final base = photoEndpoint;
+    if (base == null || index == 0) return base;
+    return '$base?index=$index';
+  }
+
   /// Endereço da foto: a da publicação extra, a da publicação ou a da medalha.
   String? get photoEndpoint {
     if (extra && postId != null) {
@@ -79,6 +93,9 @@ FeedEntry entryFromPost(
   );
   final author = Map<String, dynamic>.from(post['author'] as Map? ?? const {});
   participation['hasPostImage'] = post['hasPostImage'] == true;
+  if (post['postImageCount'] is num) {
+    participation['postImageCount'] = post['postImageCount'];
+  }
   final race = RaceRecord(participation, edition);
   return FeedEntry(
     postId: post['id'] as String?,
@@ -202,6 +219,8 @@ Future<Uint8List> buildShareCard({
     Color color = Colors.black,
     int maxLines = 2,
     String? family,
+    // Altura da faixa em que o texto fica centralizado na vertical (a partir de [y]); sem ela, começa em [y].
+    double? centerIn,
   }) {
     final painter = TextPainter(
       text: TextSpan(
@@ -218,12 +237,14 @@ Future<Uint8List> buildShareCard({
       maxLines: maxLines,
       ellipsis: '…',
     )..layout(maxWidth: _cardSide - 160);
-    painter.paint(canvas, Offset((_cardSide - painter.width) / 2, y));
+    final top = centerIn == null ? y : y + (centerIn - painter.height) / 2;
+    painter.paint(canvas, Offset((_cardSide - painter.width) / 2, top));
   }
 
   // Cabeçalho: só o nome da corrida.
   bg(const Rect.fromLTWH(0, 0, _cardSide, _cardHeaderHeight));
-  text(title, 34, 56, weight: FontWeight.w900);
+  // Centralizado na faixa do cabeçalho, na horizontal e na vertical (com uma ou duas linhas).
+  text(title, 0, 56, weight: FontWeight.w900, centerIn: _cardHeaderHeight);
 
   // Foto de ponta a ponta; sem foto, usa um marcador no lugar.
   final photoRect = Rect.fromLTWH(0, _cardHeaderHeight, _cardSide, photoHeight);
@@ -381,6 +402,18 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
+  /// Dois toques na foto curtem (como no Instagram): só curte, nunca descurte, e mostra um coração.
+  bool heartVisible = false;
+
+  Future<void> likeByDoubleTap() async {
+    if (entry.postId == null) return;
+    setState(() => heartVisible = true);
+    Future<void>.delayed(const Duration(milliseconds: 700), () {
+      if (mounted) setState(() => heartVisible = false);
+    });
+    if (!entry.liked) await toggleLike();
+  }
+
   Future<void> openComments() async {
     final id = entry.postId;
     if (id == null) {
@@ -413,61 +446,50 @@ class _PostCardState extends State<PostCard> {
   bool removed = false;
 
   /// Editar a minha publicação: abre a participação concluída (tempo, foto, avaliação e comentário).
-  /// Publicação extra: edita só o texto (a foto e a corrida ficam).
+  /// Publicação extra: edita as fotos e o texto (a corrida fica).
   Future<void> editExtra() async {
-    final controller = TextEditingController(text: entry.comment ?? '');
-    final text = await showDialog<String>(
-      context: context,
-      builder: (dialog) => AlertDialog(
-        title: const Text('Editar publicação'),
-        content: TextField(
-          key: const Key('extra-post-text'),
-          controller: controller,
-          maxLength: 500,
-          minLines: 1,
-          maxLines: 4,
-          decoration: const InputDecoration(labelText: 'Texto da publicação'),
+    if (entry.postId == null) return;
+    // Fotos (capa e as a mais) e texto da publicação extra, na mesma tela.
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ExtraPostEditScreen(
+          gateway: widget.gateway,
+          postId: entry.postId!,
+          version: entry.version ?? 1,
+          text: entry.comment,
+          tagged: entry.tagged,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            key: const Key('extra-post-save'),
-            onPressed: () => Navigator.pop(dialog, controller.text.trim()),
-            child: const Text('Salvar'),
-          ),
-        ],
       ),
     );
-    controller.dispose();
-    if (text == null || !mounted || entry.postId == null) return;
-    try {
-      await widget.gateway.request(
-        '/posts/${Uri.encodeComponent(entry.postId!)}/extra',
-        method: 'PATCH',
-        body: {'expectedVersion': entry.version ?? 1, 'postText': text},
-      );
-      soon('Publicação atualizada.');
-      widget.onChanged?.call();
-    } on IdentityIssue catch (issue) {
-      soon(catalogError(issue));
-    } on Exception {
-      soon('Não foi possível salvar agora.');
-    }
+    if (mounted) widget.onChanged?.call();
   }
 
   Future<void> editMine() async {
     if (entry.extra) return editExtra();
-    await Navigator.of(context).push(
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    // O feed traz só a parte pública da participação. O editor precisa dela inteira (número de peito, texto,
+    // "exibir tempo", fotos a mais): abrir com a parte pública faria o salvar apagar o que faltava.
+    final Map<String, dynamic> full;
+    try {
+      full = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent('${entry.race.participation['id']}')}',
+      );
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível abrir a publicação agora. Tente de novo.',
+          ),
+        ),
+      );
+      return;
+    }
+    await navigator.push(
       MaterialPageRoute<void>(
         builder: (_) => ParticipationDraftScreen(
           gateway: widget.gateway,
-          initial: {
-            ...entry.race.participation,
-            'taggedProfiles': entry.tagged,
-          },
+          initial: {...full, 'taggedProfiles': entry.tagged},
           fromPost: true,
         ),
       ),
@@ -610,14 +632,29 @@ class _PostCardState extends State<PostCard> {
     return XFile(file.path, mimeType: mimeType, name: name);
   }
 
-  /// Bytes da foto da medalha pelo link assinado; sem foto, sem rede ou demora, retorna nulo
+  /// Foto do carrossel que está na tela (0 é a capa): é a que vai na imagem de compartilhar.
+  int shownPhoto = 0;
+
+  /// Bytes da foto da publicação pelo link assinado; sem foto, sem rede ou demora, retorna nulo
   /// (o cartao e montado sem foto nesse caso, nao se compartilha a foto crua sozinha).
   Future<Uint8List?> _fetchPhotoBytes() async {
-    final endpoint = entry.photoEndpoint;
+    final endpoint = entry.photoCount > 1 && entry.race.hasPostImage
+        ? entry.photoEndpointAt(shownPhoto.clamp(0, entry.photoCount - 1))
+        : entry.photoEndpoint;
     if (endpoint == null) return null;
+    return _fetchBytes(endpoint);
+  }
+
+  /// Baixa uma imagem do app pelo link assinado; sem acesso, sem rede ou demora, nulo.
+  Future<Uint8List?> _fetchBytes(String endpoint) async {
     try {
+      // O endereço pode trazer `?index=N` (a foto N de uma publicação com várias).
+      final parts = Uri.parse(endpoint);
       final reply = await widget.gateway
-          .request(endpoint)
+          .request(
+            parts.path,
+            query: parts.queryParameters.isEmpty ? null : parts.queryParameters,
+          )
           .timeout(const Duration(seconds: 6));
       final url = Uri.tryParse(reply['url'] as String? ?? '');
       if (url == null || url.scheme != 'https') return null;
@@ -887,18 +924,65 @@ class _PostCardState extends State<PostCard> {
           // faixas pretas e sem cortar.
           AspectRatio(
             aspectRatio: postPhotoFrameRatio(_postPhotoAspects[aspectKey]),
-            child: MedalPhoto(
-              key: Key('post-photo-${entry.postId}'),
-              gateway: widget.gateway,
-              participationId: entry.race.participation['id'] as String?,
-              endpoint: entry.extra ? entry.photoEndpoint : null,
-              size: 72,
-              usePostImage: entry.race.hasPostImage,
-              fit: BoxFit.cover,
-              onAspect: (aspect) {
-                if (_postPhotoAspects[aspectKey] == aspect) return;
-                setState(() => _postPhotoAspects[aspectKey] = aspect);
-              },
+            child: GestureDetector(
+              key: Key('post-photo-double-tap-${entry.postId}'),
+              onDoubleTap: likeByDoubleTap,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  entry.photoCount > 1 && entry.race.hasPostImage
+                      ? PostPhotoCarousel(
+                          key: Key('post-photo-${entry.postId}'),
+                          gateway: widget.gateway,
+                          entry: entry,
+                          onPage: (index) => shownPhoto = index,
+                          onAspect: (aspect) {
+                            if (_postPhotoAspects[aspectKey] == aspect) return;
+                            setState(
+                              () => _postPhotoAspects[aspectKey] = aspect,
+                            );
+                          },
+                        )
+                      : MedalPhoto(
+                          key: Key('post-photo-${entry.postId}'),
+                          gateway: widget.gateway,
+                          participationId:
+                              entry.race.participation['id'] as String?,
+                          endpoint: entry.extra ? entry.photoEndpoint : null,
+                          size: 72,
+                          usePostImage: entry.race.hasPostImage,
+                          fit: BoxFit.cover,
+                          onAspect: (aspect) {
+                            if (_postPhotoAspects[aspectKey] == aspect) return;
+                            setState(
+                              () => _postPhotoAspects[aspectKey] = aspect,
+                            );
+                          },
+                        ),
+                  // Coração ao curtir com dois toques.
+                  IgnorePointer(
+                    child: Center(
+                      child: AnimatedOpacity(
+                        opacity: heartVisible ? 1 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: AnimatedScale(
+                          scale: heartVisible ? 1 : 0.6,
+                          duration: const Duration(milliseconds: 200),
+                          child: const Icon(
+                            Icons.favorite,
+                            key: Key('double-tap-heart'),
+                            color: Colors.white,
+                            size: 96,
+                            shadows: [
+                              Shadow(blurRadius: 12, color: Colors.black45),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           // Ações logo abaixo da foto e, depois, a legenda (prova, texto, números e último comentário).
@@ -1150,4 +1234,99 @@ Future<void> deleteParticipation(IdentityGateway gateway, String id) async {
     method: 'DELETE',
     query: {'expectedVersion': '${current['version']}'},
   );
+}
+
+/// Publicação com várias fotos (até 5): uma por vez, deslizando para o lado, com bolinhas e "2/5" no canto.
+/// O quadro segue a proporção da primeira foto (a capa), para o cartão não mudar de tamanho ao deslizar.
+class PostPhotoCarousel extends StatefulWidget {
+  final IdentityGateway gateway;
+  final FeedEntry entry;
+  final ValueChanged<double>? onAspect;
+
+  /// Foto que está na tela (0 é a capa), para compartilhar a que a pessoa está vendo.
+  final ValueChanged<int>? onPage;
+  const PostPhotoCarousel({
+    super.key,
+    required this.gateway,
+    required this.entry,
+    this.onAspect,
+    this.onPage,
+  });
+
+  @override
+  State<PostPhotoCarousel> createState() => _PostPhotoCarouselState();
+}
+
+class _PostPhotoCarouselState extends State<PostPhotoCarousel> {
+  int page = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = widget.entry.photoCount;
+    final participationId = widget.entry.race.participation['id'] as String?;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        PageView.builder(
+          key: const Key('post-photo-pages'),
+          itemCount: count,
+          onPageChanged: (index) {
+            setState(() => page = index);
+            widget.onPage?.call(index);
+          },
+          itemBuilder: (context, index) => MedalPhoto(
+            key: Key('post-photo-page-$index'),
+            gateway: widget.gateway,
+            participationId: participationId,
+            endpoint: widget.entry.photoEndpointAt(index),
+            size: 72,
+            usePostImage: true,
+            fit: BoxFit.cover,
+            onAspect: index == 0 ? widget.onAspect : null,
+          ),
+        ),
+        Positioned(
+          top: 10,
+          right: 10,
+          child: Container(
+            key: const Key('post-photo-counter'),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              '${page + 1}/$count',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 8,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < count; i++)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  width: i == page ? 8 : 6,
+                  height: i == page ? 8 : 6,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: i == page ? Colors.white : Colors.white54,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }

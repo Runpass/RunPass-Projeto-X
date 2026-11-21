@@ -634,6 +634,9 @@ class ParticipationTests(unittest.TestCase):
         page = social.edition_reviews(reader, "synthetic-sp-2024")
         self.assertEqual(len(page["items"]), 2)
         self.assertEqual({i["authorName"] for i in page["items"]}, {"owner", "other"})
+        # O cartao publico de quem avaliou vai junto (o app mostra a foto do perfil).
+        self.assertTrue(all(i["author"]["id"] for i in page["items"]))
+        self.assertTrue(all("displayName" in i["author"] for i in page["items"]))
         self.assertEqual(
             next(i for i in page["items"] if i["authorName"] == "owner")["comment"],
             "Prova sensacional",
@@ -926,6 +929,21 @@ class ParticipationTests(unittest.TestCase):
         ErasureProcessor(self.identity, blobs).run_pending_participations()
         # O rascunho de outra pessoa continua la.
         self.assertEqual(self.service.get(other, draft["id"])["state"], "draft")
+
+    def test_change_distance_of_completed_participation_without_review(self):
+        # Concluida sem avaliacao: trocar a distancia so muda a participacao (antes dava 503).
+        draft = self.service.create(self.actor, "d-km", self.payload(timeSeconds=3600))
+        body = self.completion(draft)
+        body.pop("ratings")
+        done = self.service.complete(self.actor, draft["id"], "c-km", body)
+        changed = self.service.patch(
+            self.actor,
+            draft["id"],
+            "p-km",
+            {"expectedVersion": done["version"], "distanceId": "5k"},
+        )
+        self.assertEqual(changed["distanceId"], "5k")
+        self.assertIsNone(self.store.get(("history", "USER#owner", "P#" + draft["id"] + "#REVIEW")))
 
     def test_delete_completed_participation_without_review(self):
         draft = self.service.create(self.actor, "d-del", self.payload(timeSeconds=3600))

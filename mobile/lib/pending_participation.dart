@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import 'catalog_screen.dart';
 import 'duration_field.dart';
 import 'identity_gateway.dart';
 import 'post_preview.dart';
-import 'profile_photo.dart' show PhotoZoomScreen;
+import 'profile_photo.dart' show pickAndEditPhoto;
 
 /// Dados da minha participação, informados junto do pedido de cadastro de uma corrida que ainda não existe.
 /// Ficam guardados com o pedido e o app os aplica sozinho quando a equipe aprova: a pessoa não preenche de novo.
@@ -118,21 +117,7 @@ class _PendingParticipationScreenState
       if (widget.postPhotoSelector != null) {
         bytes = await widget.postPhotoSelector!(context);
       } else {
-        final file = await ImagePicker().pickImage(
-          source: ImageSource.gallery,
-          maxWidth: 2800,
-          maxHeight: 2800,
-          imageQuality: 88,
-          requestFullMetadata: false,
-        );
-        final original = await file?.readAsBytes();
-        if (original == null || !mounted) return;
-        bytes = await Navigator.of(context).push<List<int>>(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (_) => PhotoZoomScreen(image: original),
-          ),
-        );
+        bytes = await pickAndEditPhoto(context, title: 'Foto da publicação');
       }
       if (bytes == null) return;
       final type = imageContentType(bytes);

@@ -1,13 +1,16 @@
 import 'dart:io';
+import 'dart:isolate';
+import 'dart:ui' as ui;
 import 'dart:typed_data';
 
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'identity_gateway.dart';
-import 'my_races.dart' show imageContentType;
+import 'my_races.dart' show imageContentType, MedalShelfCropState;
 import 'runpass_theme.dart';
 
 enum PhotoChoice { camera, gallery, web, remove }
@@ -398,191 +401,251 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
   );
 }
 
-/// Recorte da foto da medalha/corrida: arrastar, ampliar com dois dedos e escolher a proporção.
-/// "Livre" deixa o quadro ser redimensionado pelas bordas; as demais fixam a proporção do quadro.
-class RacePhotoCropScreen extends StatefulWidget {
-  final Uint8List image;
+/// Formatos do editor de foto: a foto inteira (padrão), o recorte livre e as proporções fixas
+/// (largura / altura). A "Prateleira" (furo da medalha) só aparece quando o editor recebe [PhotoZoomScreen.shelf].
+const photoAspects = <(String, double?)>[
+  ('Livre', null),
+  ('1:1', 1),
+  ('4:3', 4 / 3),
+  ('3:4', 3 / 4),
+  ('16:9', 16 / 9),
+  ('Feed 16:10', 16 / 10),
+];
 
-  /// Índice de [aspects] escolhido de início (4:3 para a medalha; 16:10 para a foto da publicação).
-  final int initialAspect;
-  const RacePhotoCropScreen({
-    super.key,
-    required this.image,
-    this.initialAspect = 2,
-  });
-
-  /// Proporção do quadro da publicação no Feed: a foto recortada nela preenche o quadro sem cortes.
-  static const feedAspect = 5;
-
-  /// Proporções oferecidas (largura / altura); `null` é o recorte livre.
-  static const aspects = <(String, double?)>[
-    ('Livre', null),
-    ('1:1', 1),
-    ('4:3', 4 / 3),
-    ('3:4', 3 / 4),
-    ('16:9', 16 / 9),
-    ('Feed 16:10', 16 / 10),
-  ];
-
-  @override
-  State<RacePhotoCropScreen> createState() => _RacePhotoCropScreenState();
-}
-
-class _RacePhotoCropScreenState extends State<RacePhotoCropScreen> {
-  final controller = CropController();
-  late int selected = widget.initialAspect;
-  bool busy = false;
-
-  double? get aspect => RacePhotoCropScreen.aspects[selected].$2;
-
-  void done(CropResult result) {
-    if (!mounted) return;
-    switch (result) {
-      case CropSuccess(:final croppedImage):
-        Navigator.of(context).pop<List<int>>(croppedImage);
-      case CropFailure():
-        setState(() => busy = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Não foi possível recortar a foto. Tente de novo.'),
-          ),
-        );
-    }
+/// Foto da medalha ou da publicação, igual em todas as telas: a folha com câmera e galeria, a mesma
+/// resolução (até 2800 px, qualidade 88) e o mesmo editor. Devolve os bytes, ou nulo se a pessoa desistir.
+Future<List<int>?> pickAndEditPhoto(
+  BuildContext context, {
+  required String title,
+}) async {
+  final choice = await askPhotoChoice(context);
+  if (choice == null || choice == PhotoChoice.remove || !context.mounted) {
+    return null;
   }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: Colors.black,
-    appBar: AppBar(
-      backgroundColor: Colors.black,
-      foregroundColor: Colors.white,
-      title: const Text('Ajustar foto'),
-    ),
-    body: SafeArea(
-      child: Column(
-        children: [
-          Expanded(
-            child: Crop(
-              // Trocar a proporção recria o quadro do zero (a foto volta inteira).
-              key: ValueKey(selected),
-              image: widget.image,
-              controller: controller,
-              aspectRatio: aspect,
-              interactive: true,
-              fixCropRect: aspect != null,
-              baseColor: Colors.black,
-              maskColor: Colors.black.withValues(alpha: 0.6),
-              onCropped: done,
-            ),
-          ),
-          CropAspectBar(
-            selected: selected,
-            onSelected: busy
-                ? null
-                : (index) => setState(() => selected = index),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('crop-cancel'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: busy ? null : () => Navigator.of(context).pop(),
-                    child: const Text('Cancelar'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    key: const Key('crop-confirm'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: runPassOrange,
-                    ),
-                    onPressed: busy
-                        ? null
-                        : () {
-                            setState(() => busy = true);
-                            controller.crop();
-                          },
-                    child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+  final file = await ImagePicker().pickImage(
+    source: choice == PhotoChoice.camera
+        ? ImageSource.camera
+        : ImageSource.gallery,
+    maxWidth: 2800,
+    maxHeight: 2800,
+    imageQuality: 88,
+    requestFullMetadata: false,
+  );
+  final original = await file?.readAsBytes();
+  if (original == null || !context.mounted) return null;
+  return Navigator.of(context).push<List<int>>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => PhotoZoomScreen(image: original, title: title),
     ),
   );
 }
 
-/// Tamanhos do recorte em linha discreta (chips pequenos, rolagem lateral).
-class CropAspectBar extends StatelessWidget {
-  final int selected;
-  final ValueChanged<int>? onSelected;
-  const CropAspectBar({super.key, required this.selected, this.onSelected});
-
-  @override
-  Widget build(BuildContext context) => Theme(
-    // O chip se apoia num fundo com a cor de tela do tema (branca no tema claro), o que deixava as
-    // opções não escolhidas brancas com o rótulo claro, ilegíveis. Nesta barra escura o fundo é transparente.
-    data: Theme.of(context).copyWith(canvasColor: Colors.transparent),
-    child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-      child: Row(
-        children: [
-          for (final (index, option) in RacePhotoCropScreen.aspects.indexed)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: ChoiceChip(
-                key: Key('crop-aspect-$index'),
-                label: Text(option.$1),
-                labelStyle: TextStyle(
-                  fontSize: 12,
-                  color: selected == index ? Colors.black : Colors.white70,
-                ),
-                color: WidgetStateProperty.resolveWith(
-                  (states) => states.contains(WidgetState.selected)
-                      ? Colors.white
-                      : Colors.white12,
-                ),
-                side: BorderSide.none,
-                showCheckmark: false,
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                selected: selected == index,
-                onSelected: onSelected == null
-                    ? null
-                    : (_) => onSelected!(index),
-              ),
-            ),
-        ],
-      ),
-    ),
+/// Fotos da publicação (Postar foto): a mesma folha. A câmera tira uma foto e abre o editor; a galeria escolhe
+/// até 5 de uma vez (só uma: abre o editor, como antes; várias: vão inteiras, e cada uma se ajusta depois na
+/// edição da publicação). Devolve a lista na ordem escolhida (a primeira é a capa), ou nulo se desistir.
+Future<List<List<int>>?> pickPostPhotos(BuildContext context) async {
+  final choice = await askPhotoChoice(context);
+  if (choice == null || choice == PhotoChoice.remove || !context.mounted) {
+    return null;
+  }
+  if (choice == PhotoChoice.camera) {
+    final file = await ImagePicker().pickImage(
+      source: ImageSource.camera,
+      maxWidth: 2800,
+      maxHeight: 2800,
+      imageQuality: 88,
+      requestFullMetadata: false,
+    );
+    final original = await file?.readAsBytes();
+    if (original == null || !context.mounted) return null;
+    final edited = await editPhoto(context, original, 'Foto da publicação');
+    return edited == null ? null : [edited];
+  }
+  final files = await ImagePicker().pickMultiImage(
+    limit: 5,
+    maxWidth: 2800,
+    maxHeight: 2800,
+    imageQuality: 88,
+    requestFullMetadata: false,
   );
+  if (files.isEmpty || !context.mounted) return null;
+  final photos = [for (final file in files.take(5)) await file.readAsBytes()];
+  if (!context.mounted) return null;
+  if (photos.length == 1) {
+    final edited = await editPhoto(context, photos.first, 'Foto da publicação');
+    return edited == null ? null : [edited];
+  }
+  return photos;
 }
 
-/// Foto da publicação: abre sempre a foto inteira. "Recortar" (discreto, no topo) mostra o quadro de
-/// recorte com os tamanhos; "Foto inteira" volta sem recortar. Sem recorte, vai a foto original.
+/// Abre o editor único numa foto já escolhida; nulo se cancelar.
+Future<List<int>?> editPhoto(
+  BuildContext context,
+  List<int> photo,
+  String title,
+) => Navigator.of(context).push<List<int>>(
+  MaterialPageRoute(
+    fullscreenDialog: true,
+    builder: (_) => PhotoZoomScreen(
+      image: Uint8List.fromList(photo),
+      title: title,
+      original: photoOriginals[photo],
+    ),
+  ),
+);
+
+/// Editor único de foto (medalha e publicação). Abre sempre na foto inteira, com arrastar e zoom; o ícone
+/// "Formato" (discreto, no topo) mostra ou esconde a barra de formatos: Foto inteira, Prateleira (só na
+/// medalha, no formato do furo, com giro), Livre e as proporções. "Foto inteira" envia a original.
 class PhotoZoomScreen extends StatefulWidget {
   final Uint8List image;
-  const PhotoZoomScreen({super.key, required this.image});
+
+  /// "Foto da medalha" ou "Foto da publicação".
+  final String title;
+
+  /// Recorte no formato da medalha (o "Prateleira"); com ele, o editor abre nesse formato.
+  final Widget Function(GlobalKey<MedalShelfCropState> key)? shelf;
+
+  /// A foto antes de um recorte anterior (nesta sessão): "Foto original" volta para ela.
+  final Uint8List? original;
+  const PhotoZoomScreen({
+    super.key,
+    required this.image,
+    this.title = 'Foto da publicação',
+    this.shelf,
+    this.original,
+  });
 
   @override
   State<PhotoZoomScreen> createState() => _PhotoZoomScreenState();
 }
 
+/// Foto original de cada foto recortada no editor (na sessão): ao ajustar de novo, dá para voltar a ela.
+final photoOriginals = Expando<Uint8List>('foto original');
+
+/// Recorta a parte [frac] (em frações de 0 a 1 da foto já na orientação certa) e devolve um JPEG (qualidade
+/// 88). Roda fora da tela, para não travar o app.
+Future<List<int>> cropPhotoFraction(Uint8List bytes, Rect frac) =>
+    Isolate.run(() {
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) throw const FormatException('foto');
+      final photo = img.bakeOrientation(decoded);
+      final x = (frac.left * photo.width).round().clamp(0, photo.width - 1);
+      final y = (frac.top * photo.height).round().clamp(0, photo.height - 1);
+      final w = (frac.width * photo.width).round().clamp(1, photo.width - x);
+      final h = (frac.height * photo.height).round().clamp(1, photo.height - y);
+      return img.encodeJpg(
+        img.copyCrop(photo, x: x, y: y, width: w, height: h),
+        quality: 88,
+      );
+    });
+
+/// Parte da foto que aparece na área [viewport] (em frações de 0 a 1), com a foto encaixada inteira
+/// (`BoxFit.contain`) e depois aproximada/arrastada por [transform]; nula se aparece a foto inteira.
+Rect? visiblePhotoFraction({
+  required Size viewport,
+  required double aspect,
+  required Matrix4 transform,
+}) {
+  if (viewport.isEmpty || aspect <= 0) return null;
+  final v = viewport;
+  final fitted = aspect > v.width / v.height
+      ? Rect.fromCenter(
+          center: v.center(Offset.zero),
+          width: v.width,
+          height: v.width / aspect,
+        )
+      : Rect.fromCenter(
+          center: v.center(Offset.zero),
+          width: v.height * aspect,
+          height: v.height,
+        );
+  final inverse = Matrix4.inverted(transform);
+  final shown = Rect.fromPoints(
+    MatrixUtils.transformPoint(inverse, Offset.zero),
+    MatrixUtils.transformPoint(inverse, Offset(v.width, v.height)),
+  ).intersect(fitted);
+  if (shown.width <= 0 || shown.height <= 0) return null;
+  final frac = Rect.fromLTWH(
+    (shown.left - fitted.left) / fitted.width,
+    (shown.top - fitted.top) / fitted.height,
+    shown.width / fitted.width,
+    shown.height / fitted.height,
+  );
+  return frac.width * frac.height > 0.98 ? null : frac;
+}
+
 class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
   static const minScale = 1.0, maxScale = 4.0, step = 0.5;
+  static const whole = -1, shelfFormat = -2;
   final controller = TransformationController();
   final crop = CropController();
-  bool cropping = false, busy = false;
-  int aspect = 0;
+  final shelfKey = GlobalKey<MedalShelfCropState>();
+  bool showFormats = false, busy = false;
+  late int format = widget.shelf != null ? shelfFormat : whole;
+
+  /// Tamanho da área da foto e proporção da foto (para saber o que está visível depois da pinça).
+  Size viewport = Size.zero;
+  double? photoAspect;
+
+  /// A foto em edição: começa na recebida; "Foto original" troca pela de antes do recorte.
+  late Uint8List image = widget.image;
+
+  /// A original de tudo o que sair daqui (para um próximo ajuste poder voltar a ela).
+  Uint8List get source =>
+      widget.original ?? photoOriginals[widget.image] ?? widget.image;
+
+  bool get canRestore =>
+      !identical(image, source) ||
+      !controller.value.isIdentity() ||
+      (format != whole && format != shelfFormat);
+
+  void restoreOriginal() => setState(() {
+    image = source;
+    photoAspect = null;
+    controller.value = Matrix4.identity();
+    if (format != shelfFormat) format = whole;
+    _readAspect();
+  });
+
+  void _readAspect() {
+    final current = image;
+    ui
+        .instantiateImageCodec(current)
+        .then((codec) async {
+          final frame = await codec.getNextFrame();
+          if (mounted && identical(current, image)) {
+            setState(
+              () => photoAspect = frame.image.width / frame.image.height,
+            );
+          }
+        })
+        .catchError((Object _) {});
+  }
+
+  /// Devolve a foto pronta, lembrando a original dela.
+  void finish(List<int> result) {
+    final bytes = result is Uint8List ? result : Uint8List.fromList(result);
+    if (!identical(bytes, source)) photoOriginals[bytes] = source;
+    Navigator.of(context).pop<List<int>>(bytes);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _readAspect();
+  }
+
+  Rect? visibleFraction() {
+    final aspect = photoAspect;
+    if (aspect == null) return null;
+    return visiblePhotoFraction(
+      viewport: viewport,
+      aspect: aspect,
+      transform: controller.value,
+    );
+  }
 
   double get scale => controller.value.getMaxScaleOnAxis();
 
@@ -591,18 +654,68 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
     setState(() => controller.value = Matrix4.diagonal3Values(next, next, 1));
   }
 
+  void failed() {
+    setState(() => busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Não foi possível recortar a foto. Tente de novo.'),
+      ),
+    );
+  }
+
   void cropped(CropResult result) {
     if (!mounted) return;
     switch (result) {
       case CropSuccess(:final croppedImage):
-        Navigator.of(context).pop<List<int>>(croppedImage);
+        finish(croppedImage);
       case CropFailure():
-        setState(() => busy = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Não foi possível recortar a foto. Tente de novo.'),
-          ),
-        );
+        failed();
+    }
+  }
+
+  Future<void> use() async {
+    if (format == whole) {
+      // Com a pinça (aproximou ou arrastou), vai o que aparece na tela; sem ela, a foto original, inteira.
+      if (controller.value.isIdentity()) {
+        finish(image);
+        return;
+      }
+      if (photoAspect == null) {
+        try {
+          final frame = await (await ui.instantiateImageCodec(image))
+              .getNextFrame();
+          photoAspect = frame.image.width / frame.image.height;
+        } on Object {
+          photoAspect = null; // sem ler a foto, vai inteira
+        }
+        if (!mounted) return;
+      }
+      final frac = visibleFraction();
+      if (frac == null) {
+        finish(image);
+        return;
+      }
+      setState(() => busy = true);
+      try {
+        final bytes = await cropPhotoFraction(image, frac);
+        if (mounted) finish(bytes);
+      } on Object {
+        if (mounted) failed();
+      }
+      return;
+    }
+    setState(() => busy = true);
+    if (format != shelfFormat) {
+      crop.crop();
+      return;
+    }
+    try {
+      final bytes = await shelfKey.currentState?.export();
+      if (!mounted) return;
+      if (bytes == null) return failed();
+      finish(bytes);
+    } on Exception {
+      if (mounted) failed();
     }
   }
 
@@ -612,64 +725,126 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
     super.dispose();
   }
 
+  Widget formatChip(String key, String label, int value) => Padding(
+    padding: const EdgeInsets.only(right: 6),
+    child: ChoiceChip(
+      key: Key(key),
+      label: Text(label),
+      labelStyle: TextStyle(
+        fontSize: 12,
+        color: format == value ? Colors.black : Colors.white70,
+      ),
+      color: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.selected)
+            ? Colors.white
+            : Colors.white12,
+      ),
+      side: BorderSide.none,
+      showCheckmark: false,
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      selected: format == value,
+      onSelected: busy
+          ? null
+          : (_) => setState(() {
+              format = value;
+              controller.value = Matrix4.identity();
+            }),
+    ),
+  );
+
+  Widget formats() => Theme(
+    // Fundo transparente: no tema claro o chip não escolhido ficaria branco com o rótulo claro.
+    data: Theme.of(context).copyWith(canvasColor: Colors.transparent),
+    child: SingleChildScrollView(
+      key: const Key('photo-formats'),
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      child: Row(
+        children: [
+          formatChip('photo-format-whole', 'Foto inteira', whole),
+          if (widget.shelf != null)
+            formatChip('photo-format-shelf', 'Prateleira', shelfFormat),
+          for (final (index, option) in photoAspects.indexed)
+            formatChip('crop-aspect-$index', option.$1, index),
+        ],
+      ),
+    ),
+  );
+
+  Widget area() {
+    if (format == shelfFormat) return widget.shelf!(shelfKey);
+    if (format == whole) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          viewport = constraints.biggest;
+          return InteractiveViewer(
+            key: const Key('photo-zoom-viewer'),
+            transformationController: controller,
+            minScale: minScale,
+            maxScale: maxScale,
+            onInteractionEnd: (_) => setState(() {}),
+            child: Center(child: Image.memory(image, fit: BoxFit.contain)),
+          );
+        },
+      );
+    }
+    final ratio = photoAspects[format].$2;
+    return Crop(
+      // Trocar o formato recria o quadro do zero (a foto volta inteira).
+      key: ValueKey(format),
+      image: image,
+      controller: crop,
+      aspectRatio: ratio,
+      interactive: true,
+      fixCropRect: ratio != null,
+      baseColor: Colors.black,
+      maskColor: Colors.black.withValues(alpha: 0.6),
+      onCropped: cropped,
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: Colors.black,
     appBar: AppBar(
       backgroundColor: Colors.black,
       foregroundColor: Colors.white,
-      title: const Text('Foto da publicação'),
+      title: Text(widget.title),
       actions: [
-        TextButton.icon(
-          key: Key(cropping ? 'photo-crop-off' : 'photo-crop'),
-          style: TextButton.styleFrom(foregroundColor: Colors.white70),
+        if (canRestore)
+          IconButton(
+            key: const Key('photo-original'),
+            tooltip: 'Foto original',
+            color: Colors.white70,
+            onPressed: busy ? null : restoreOriginal,
+            icon: const Icon(Icons.restore_rounded, size: 20),
+          ),
+        IconButton(
+          key: Key(showFormats ? 'photo-crop-off' : 'photo-crop'),
+          tooltip: showFormats ? 'Esconder formatos' : 'Formato',
+          color: showFormats ? Colors.white : Colors.white70,
           onPressed: busy
               ? null
-              : () => setState(() {
-                  cropping = !cropping;
-                  controller.value = Matrix4.identity();
-                }),
-          icon: Icon(cropping ? Icons.fullscreen : Icons.crop, size: 18),
-          label: Text(cropping ? 'Foto inteira' : 'Recortar'),
+              : () => setState(() => showFormats = !showFormats),
+          icon: const Icon(Icons.crop, size: 20),
         ),
       ],
     ),
     body: SafeArea(
       child: Column(
         children: [
-          Expanded(
-            child: cropping
-                ? Crop(
-                    // Trocar o tamanho recria o quadro do zero (a foto volta inteira).
-                    key: ValueKey(aspect),
-                    image: widget.image,
-                    controller: crop,
-                    aspectRatio: RacePhotoCropScreen.aspects[aspect].$2,
-                    interactive: true,
-                    fixCropRect: RacePhotoCropScreen.aspects[aspect].$2 != null,
-                    baseColor: Colors.black,
-                    maskColor: Colors.black.withValues(alpha: 0.6),
-                    onCropped: cropped,
-                  )
-                : InteractiveViewer(
-                    key: const Key('photo-zoom-viewer'),
-                    transformationController: controller,
-                    minScale: minScale,
-                    maxScale: maxScale,
-                    onInteractionEnd: (_) => setState(() {}),
-                    child: Center(
-                      child: Image.memory(widget.image, fit: BoxFit.contain),
-                    ),
-                  ),
-          ),
-          if (cropping)
-            CropAspectBar(
-              selected: aspect,
-              onSelected: busy
-                  ? null
-                  : (index) => setState(() => aspect = index),
-            )
-          else
+          Expanded(child: area()),
+          if (format == shelfFormat)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Arraste, pince para o zoom e gire com dois dedos. Essa área aparece na prateleira.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ),
+          if (format == whole)
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -691,12 +866,14 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
                 ),
               ],
             ),
+          if (showFormats) formats(),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
             child: Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
+                    key: const Key('crop-cancel'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
                     ),
@@ -711,15 +888,7 @@ class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
                     style: FilledButton.styleFrom(
                       backgroundColor: runPassOrange,
                     ),
-                    onPressed: busy
-                        ? null
-                        : cropping
-                        ? () {
-                            setState(() => busy = true);
-                            crop.crop();
-                          }
-                        // Sem recorte: a foto original, inteira.
-                        : () => Navigator.pop(context, widget.image),
+                    onPressed: busy ? null : use,
                     child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
                   ),
                 ),

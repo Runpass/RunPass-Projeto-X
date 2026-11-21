@@ -100,6 +100,22 @@ class CatalogImportTests(unittest.TestCase):
         found = self.listed(distanceKm="5")
         self.assertIn(edition_id, [i["id"] for i in found])
 
+    def test_runner_distance_with_dynamodb_decimal_version(self):
+        # No DynamoDB a versao volta como Decimal; antes isso virava 422 INVALID_VERSION ao informar o km.
+        from decimal import Decimal
+
+        edition_id = self._sem_distancia()
+        original = self.catalog.detail
+
+        def detail(actor, ident):
+            body = original(actor, ident)
+            body["version"] = Decimal(body["version"])
+            return body
+
+        self.catalog.detail = detail
+        body = self.catalog.add_runner_distance(self.actor, edition_id, "5")
+        self.assertEqual([d["kilometers"] for d in body["distances"]], [5])
+
     def test_runner_cannot_touch_source_distances_or_send_bad_values(self):
         with self.assertRaises(Problem) as caught:
             self.catalog.add_runner_distance(self.actor, "synthetic-sp-2025", "7")

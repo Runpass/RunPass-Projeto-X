@@ -522,3 +522,45 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 - **Para caber sem rolagem com a ficha maior** (a tela de genero/nascimento, a mais cheia de conteudo, precisou de mais ajuste): tema global `contentPadding` dos campos reduzido (todo campo de texto do app fica um pouco mais compacto, nao so o cadastro); botoes de genero perderam a area de toque minima de 48dp do Material (`tapTargetSize: shrinkWrap`, que antes reservava espaco mesmo com a altura visivel menor — o mesmo valia pros botoes de genero, so nao tinha sido notado antes); aviso "não é pública" sobre a data de nascimento virou um icone com tooltip em vez de uma linha de texto a parte; espacamentos do cabecalho (progresso/titulo/ficha) comprimidos; avatar da tela de foto reduzido de raio 56 para 48 (a fita do MedalAvatar, que pinta acima do proprio circulo, precisa de menos folga num avatar menor).
 - Validado com teste automatizado medindo o espaco de rolagem restante (`maxScrollExtent`) nas 4 telas do cadastro, em duas alturas de aparelho: **360x740 (o tamanho usado em toda esta sessao, confirmado pelo usuario) fica em zero rolagem em todas as 4 telas**; um aparelho extremo de 360x660 (tipo iPhone SE) ainda precisa de uma rolagem pequena (9px na tela de genero/nascimento, 59px na tela de foto) — aceito como limite conhecido, nao perseguido mais a fundo por falta de ganho proporcional ao esforco. Teste removido do repositorio apos confirmar.
 - `flutter analyze` sem apontamentos e `flutter test` (413 testes) verdes. **Nao** verificado ainda com usuario real nesta rodada; depende de novo `.apk`.
+
+## Deploy de várias fotos no post e do km de corrida sem distância no DEV - 20/11/2026
+
+- Autorizado pelo usuario ("publique o backend do DEV"). Change set `fotos-km-155342` da stack `runpass-dev-app` (UPDATE), pacote `lambda/runpass-5606d792cb647e2c.zip` (commit `84698c7`, PRs #118 e #119). Anterior: `lambda/runpass-a19e2672bac890d3.zip` (volta por troca da chave `ArtifactKey`).
+- Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- O que entrou: `POST /editions/{id}/distances` aceita o km como numero ou texto (antes recusava todo pedido com 422); publicacao com ate 5 fotos (`morePostImageReferences`, `postImageCount`, `?index=N` em `/participations/{id}/post-image` e `/posts/{id}/image`).
+- Verificacao feita: `GET /me`, `POST /editions/x/distances` e `GET /participations/x/post-image?index=1` respondem 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: informar o km de corrida sem distancia, publicar e editar com varias fotos, carrossel no feed.
+
+
+## Deploys do conserto do km e da foto de quem avaliou no DEV - 20/11/2026
+
+- **`km-versao-200029`** (UPDATE, `runpass-dev-app`): autorizado pelo usuario ("publique o backend do DEV"). Pacote `lambda/runpass-6ca226f887615fbd.zip` (commit `341a9a2`, PRs #126 a #128). Anterior: `lambda/runpass-5606d792cb647e2c.zip`. Entrou: informar o km de corrida sem distancia deixa de dar 422 `INVALID_VERSION` (a versao vinda do DynamoDB como Decimal e convertida para inteiro; o mesmo na atualizacao de descobertas do portal).
+- **`avaliacao-autor-200654`** (UPDATE, `runpass-dev-app`): publicado apos o merge do PR #129, com o pedido do usuario de fazer o merge e instalar. Pacote `lambda/runpass-f35ec59d14a479cf.zip` (commit `6123376`). Anterior: `lambda/runpass-6ca226f887615fbd.zip`. Entrou: a lista de avaliacoes da corrida traz o cartao publico de quem avaliou (o app mostra a foto do perfil).
+- Mudancas nos dois: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem recursos novos, sem IAM, sem tabelas. Resultado: `UPDATE_COMPLETE` nos dois.
+- Verificacao feita: `POST /editions/x/distances` e `GET /editions/x/reviews` respondem 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: informar o km e a foto de quem avaliou.
+
+## Deploy da permissao do km e da busca de amigos no DEV - 20/11/2026
+
+- **`km-amigos-205055`** (UPDATE, `runpass-dev-app`): autorizado pelo usuario ("publique o backend do DEV"). Pacote `lambda/runpass-9b89311641fad6e4.zip` (commit `e2c39e1`, PRs #131 e #132). Anterior: `lambda/runpass-f35ec59d14a479cf.zip`. **Template novo** (nao `--use-previous-template`): o diff contra o template no ar era so a declaracao `RunnerInformedDistance`.
+- Causa do erro: informar o km pelo "Ja corri" grava uma nova versao da edicao no catalogo, mas o papel da Lambda da API so lia a tabela do catalogo; o DynamoDB negava e o app recebia 503 `DEPENDENCY_UNAVAILABLE`.
+- Entrou: `dynamodb:PutItem` na tabela do catalogo para `ApiFunctionRole` (sem `DeleteItem`); busca de pessoas e sugestoes ordenadas por amigos, amigos de amigos (com `mutualFriends`), seguidos dos seguidos e proximidade (`nearby`), com leituras em paralelo.
+- Mudancas: `ApiFunctionRole` (politica inline, sem substituicao) e codigo das Lambdas com re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem recursos novos e sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- Verificacao feita: `GET /me` responde 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: informar o km na corrida sem distancia e a busca de amigos nova.
+
+## Deploy das correcoes da busca geral de bugs no DEV - 20/11/2026
+
+- **`bugs-geral-223712`** (UPDATE, `runpass-dev-app`): autorizado pelo usuario ("ok pode seguir", apos o pedido de merge do PR #135, instalacao e publicacao do backend do DEV). Pacote `lambda/runpass-d36ee4d5c6cb4730.zip` (commit `c04a9ec`, PR #135). Anterior: `lambda/runpass-9b89311641fad6e4.zip`. `--use-previous-template`: o template no ar so difere do repositorio por uma linha em branco no fim.
+- Entrou: trocar a distancia de participacao concluida sem avaliacao deixa de dar 503 `PARTICIPATION_INTEGRITY_FAILURE`; sugestao de banner em corrida sem distancia deixa de dar 500; a varredura de pedidos do portal converte a versao (Decimal do DynamoDB) para inteiro; o reparo do indice de inscritos roda em lotes de 20.
+- Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem IAM, sem recursos novos, sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- Verificacao feita: `GET /me` responde 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: nenhuma das correcoes acima nem as do app do PR #135.
+
+## Deploy do feedback do app no DEV - 21/11/2026
+
+- **`feedback-013341`** (UPDATE, `runpass-dev-app`): autorizado pelo usuario ("publique o backend do DEV"). Pacote `lambda/runpass-7504960b0c51788d.zip` (commit `b87b4f8`, PR #143). Anterior: `lambda/runpass-d36ee4d5c6cb4730.zip`. `--use-previous-template`: o template no ar so difere do repositorio por uma linha em branco no fim.
+- Entrou: `POST /feedback` (Configuracoes > Enviar feedback no app): grava em `history / FEEDBACK#ALL`, ate 10 por dia por pessoa, com a linha em `sharedKeys` para o apagamento da conta.
+- Mudancas: apenas codigo das Lambdas e re-vinculo da integracao/regra/permissao (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem IAM, sem recursos novos, sem tabelas. Resultado: `UPDATE_COMPLETE`.
+- Verificacao feita: `GET /me` e `POST /feedback` respondem 401 sem token; rota inexistente 404. **Nao** verificado com usuarios reais: o envio de um feedback pelo app.
+- Pendente: `GET /admin/feedback` (leitura pela equipe) so vale depois de publicar a Lambda do portal, e ainda nao ha tela no portal para ler os feedbacks.
+
+## Nota de fechamento: a sobrescrita do deploy do gender foi o deploy do feedback
+
+- Ao mesclar com `dev` para este PR, ficou claro o que tinha sobrescrito o deploy do `gender`/codigo de inscricao sem ninguem perceber (ver "Deploy concorrente em DEV derrubou o gender de novo", acima): nao foi um agente ou processo misterioso, foi o **deploy legitimo do feedback do app** (`feedback-013341`, pacote `lambda/runpass-7504960b0c51788d.zip`, commit `b87b4f8`, PR #143 — ver secao acima), feito a partir da `dev` por quem estava cuidando daquela entrega, enquanto o trabalho do cadastro ainda vivia so nesta branch, sem PR aberto. Nao e culpa de ninguem: so o resultado normal de duas pessoas implantarem o mesmo Lambda compartilhado a partir de branches diferentes, sem avisar uma a outra. Mesclar este PR evita que isso se repita, ja que o proximo deploy a partir da `dev` vai incluir as duas mudancas.

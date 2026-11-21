@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:runpass/edition_cards.dart' show PlanRow;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:runpass/agenda.dart';
 import 'package:runpass/catalog_screen.dart';
@@ -474,73 +475,66 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a home mostra a agenda ao lado de Minha Cidade e abre a agenda',
-    (tester) async {
-      tester.view.physicalSize = const Size(390, 844); // largura de iPhone
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final gateway = await signed((uri, method, headers, body) async {
-        if (uri.path == '/me') {
-          return const JsonReply(200, {
-            'id': 'me',
-            'displayName': 'Eu',
-            'username': 'eu',
-            'version': 1,
-          });
-        }
-        return const JsonReply(200, {'items': []});
-      });
-      await tester.pumpWidget(
-        MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
-      );
-      await tester.pumpAndSettle();
-      final icon = find.byKey(const Key('home-agenda-chip'));
-      // Todos os cinco atalhos ficam inteiros dentro da tela, sem rolar.
-      for (final label in [
-        'Todos',
-        'Amigos',
-        'Seguindo',
-        'Minha Cidade',
-        'Agenda',
-      ]) {
-        final r = tester.getRect(find.text(label));
-        expect(
-          r.left >= 0 && r.right <= 390,
-          isTrue,
-          reason: '$label dentro da tela',
-        );
+  testWidgets('a home mostra a agenda ao lado de Pra você e abre a agenda', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844); // largura de iPhone
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = await signed((uri, method, headers, body) async {
+      if (uri.path == '/me') {
+        return const JsonReply(200, {
+          'id': 'me',
+          'displayName': 'Eu',
+          'username': 'eu',
+          'version': 1,
+        });
       }
-      // Na fonte larga dos testes o último círculo fica além da borda; rola o carrossel até ele.
-      await tester.dragUntilVisible(
-        icon,
-        find.text('Todos'),
-        const Offset(-120, 0),
-      );
-      await tester.pumpAndSettle();
-      expect(icon, findsOneWidget);
+      return const JsonReply(200, {'items': []});
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: RunPassHomeScreen(gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    final icon = find.byKey(const Key('home-agenda-chip'));
+    // Todos os cinco atalhos ficam inteiros dentro da tela, sem rolar.
+    for (final label in ['Todos', 'Amigos', 'Seguindo', 'Pra você', 'Agenda']) {
+      final r = tester.getRect(find.text(label));
       expect(
-        find.byKey(const Key('home-agenda')),
-        findsNothing,
-      ); // saiu da barra do topo
-      final cidade = tester.getRect(find.text('Minha Cidade'));
-      expect(
-        tester.getRect(icon).left > cidade.right - 1,
+        r.left >= 0 && r.right <= 390,
         isTrue,
-        reason: 'depois de Minha Cidade',
+        reason: '$label dentro da tela',
       );
-      final rect = tester.getRect(icon);
-      expect(
-        rect.left >= 0 && rect.right <= 390,
-        isTrue,
-        reason: 'ícone visível na largura do iPhone',
-      );
-      await tester.tap(icon);
-      await tester.pumpAndSettle();
-      expect(find.byType(AgendaScreen), findsOneWidget);
-      expect(find.text('Minha agenda'), findsOneWidget);
-    },
-  );
+    }
+    // Na fonte larga dos testes o último círculo fica além da borda; rola o carrossel até ele.
+    await tester.dragUntilVisible(
+      icon,
+      find.text('Todos'),
+      const Offset(-120, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(icon, findsOneWidget);
+    expect(
+      find.byKey(const Key('home-agenda')),
+      findsNothing,
+    ); // a agenda não fica na barra do topo do Início
+    final cidade = tester.getRect(find.text('Pra você'));
+    expect(
+      tester.getRect(icon).left > cidade.right - 1,
+      isTrue,
+      reason: 'depois de Pra você',
+    );
+    final rect = tester.getRect(icon);
+    expect(
+      rect.left >= 0 && rect.right <= 390,
+      isTrue,
+      reason: 'ícone visível na largura do iPhone',
+    );
+    await tester.tap(icon);
+    await tester.pumpAndSettle();
+    expect(find.byType(AgendaScreen), findsOneWidget);
+    expect(find.text('Minha agenda'), findsOneWidget);
+  });
 }
 
 void participantsTests() {
@@ -644,8 +638,10 @@ void bannerTests() {
     return paths;
   }
 
-  testWidgets('banner aprovado aparece com o crédito', (tester) async {
-    await openEdition(
+  testWidgets('banner da prova não aparece: sempre a foto da cidade', (
+    tester,
+  ) async {
+    final paths = await openEdition(
       tester,
       {
         ...upcoming('A'),
@@ -659,8 +655,10 @@ void bannerTests() {
         'credit': 'Divulgação: Org',
       }),
     );
-    expect(find.byKey(const Key('hero-image')), findsOneWidget);
-    expect(find.text('Foto: Divulgação: Org'), findsOneWidget);
+    expect(paths.contains('/editions/EA/banner'), isFalse);
+    expect(find.byKey(const Key('hero-image')), findsNothing);
+    expect(find.text('Foto: Divulgação: Org'), findsNothing);
+    expect(find.byKey(const Key('race-art-photo')), findsOneWidget);
     expect(find.textContaining('Corrida A com um nome'), findsOneWidget);
   });
 
@@ -718,7 +716,7 @@ void homeWidthsTests() {
         'Todos',
         'Amigos',
         'Seguindo',
-        'Minha Cidade',
+        'Pra você',
         'Agenda',
       ]) {
         final r = tester.getRect(find.text(label));
@@ -805,7 +803,7 @@ void searchTests() {
   );
 
   testWidgets(
-    'a lista mostra a imagem aprovada e só pede link de quem tem imagem',
+    'a lista não pede nem mostra o banner da prova: toda corrida tem a foto da cidade',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -835,10 +833,10 @@ void searchTests() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      expect(banners, ['/editions/EA/banner']);
-      expect(find.byKey(const Key('edition-cover-image')), findsOneWidget);
-      // A outra corrida segue com o ícone, sem imagem.
+      expect(banners, isEmpty);
+      expect(find.byKey(const Key('edition-cover-image')), findsNothing);
       expect(find.byType(EditionCover), findsNWidgets(2));
+      expect(find.byKey(const Key('race-art-photo')), findsNWidgets(2));
       // Sem imagem, a distância da arte fica no canto superior esquerdo do cartão.
       expect(
         tester.widget<RaceArt>(find.byType(RaceArt).first).labelAtLeft,
@@ -896,7 +894,7 @@ void raceArtTests() {
   });
 
   testWidgets(
-    'a agenda mostra as corridas no mesmo cartão compacto da tela Corridas, só em lista',
+    'a agenda mostra as corridas na mesma linha de Quero correr do perfil',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -924,7 +922,9 @@ void raceArtTests() {
         await tester.tap(find.byKey(const Key('agenda-layout-toggle')));
         await tester.pumpAndSettle();
       }
-      expect(find.byKey(const Key('compact-card-EA')), findsOneWidget);
+      // A mesma linha de "Quero correr" do perfil.
+      expect(find.byKey(const Key('agenda-EA')), findsOneWidget);
+      expect(find.byType(PlanRow), findsOneWidget);
       expect(find.byKey(const Key('catalog-view-mode')), findsNothing);
     },
   );

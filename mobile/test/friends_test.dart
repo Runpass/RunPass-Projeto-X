@@ -175,6 +175,61 @@ void main() {
     expect(find.byKey(const Key('friend-suggestions-title')), findsNothing);
   });
 
+  testWidgets(
+    'busca enquanto digita, mostra amigos em comum e quem está perto, e apagar volta às sugestões',
+    (tester) async {
+      final queries = <String>[];
+      final gateway = await gatewayWith((uri, method, headers, body) async {
+        if (uri.path == '/profiles/suggestions') {
+          return JsonReply(200, {
+            'items': [
+              {...person('bia'), 'mutualFriends': 2, 'nearby': true},
+            ],
+          });
+        }
+        if (uri.path == '/profiles') {
+          queries.add(uri.queryParameters['q']!);
+          return JsonReply(200, {
+            'items': [
+              {...person('ana'), 'mutualFriends': 1},
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: FriendSearchScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('2 amigos em comum · Perto de você'),
+        findsOneWidget,
+      );
+      await tester.enterText(find.byKey(const Key('friend-search-field')), 'a');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(queries, isEmpty); // 1 letra não busca
+      await tester.enterText(
+        find.byKey(const Key('friend-search-field')),
+        'an',
+      );
+      await tester.enterText(
+        find.byKey(const Key('friend-search-field')),
+        'ana',
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(queries, [
+        'ana',
+      ]); // só a última, depois da pausa, sem tocar na lupa
+      expect(find.byKey(const Key('friend-ana')), findsOneWidget);
+      expect(find.textContaining('1 amigo em comum'), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('friend-search-field')), '');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('friend-bia')), findsOneWidget);
+      expect(find.byKey(const Key('friend-ana')), findsNothing);
+    },
+  );
+
   testWidgets('sugestões: avisa quando falha, permite tentar de novo e avisa '
       'quando não há ninguém', (tester) async {
     var calls = 0;
@@ -367,17 +422,85 @@ void main() {
     expect(comments, hasLength(1));
   });
 
-  testWidgets('sair da tela com uma exclusão pendente apaga de verdade', (
-    tester,
+  /// Abre os comentários por cima de outra tela (como no app), para poder voltar com o aviso ainda aberto.
+  Future<List<String>> openCommentsOver(
+    WidgetTester tester,
+    List<Map<String, dynamic>> comments,
   ) async {
-    final comments = [mine('c1', 'Meu comentário')];
-    final calls = await openComments(tester, comments);
-    await tester.tap(find.byKey(const Key('delete-comment-c1')));
-    await tester.pump();
-    await tester.pumpWidget(const SizedBox.shrink()); // fecha a tela
-    await tester.pump();
-    expect(calls, contains('DELETE /comments/c1'));
-  });
+    final calls = <String>[];
+    final gateway = await gatewayWith((uri, method, headers, body) async {
+      calls.add('$method ${uri.path}');
+      if (method == 'DELETE') {
+        comments.removeWhere((c) => c['id'] == uri.pathSegments.last);
+        return const JsonReply(200, {'deleted': true});
+      }
+      return JsonReply(200, {'items': List.of(comments)});
+    });
+    tester.view.physicalSize = const Size(800, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => CommentsScreen(
+                    gateway: gateway,
+                    postId: 'p1',
+                    title: 'Corrida X',
+                    myId: 'eu',
+                  ),
+                ),
+              ),
+              child: const Text('abrir'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('abrir'));
+    await tester.pumpAndSettle();
+    return calls;
+  }
+
+  testWidgets(
+    'sair da tela com uma exclusão pendente: apaga uma vez, quando o aviso fecha',
+    (tester) async {
+      final calls = await openCommentsOver(tester, [
+        mine('c1', 'Meu comentário'),
+      ]);
+      await tester.tap(find.byKey(const Key('delete-comment-c1')));
+      await tester.pump();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(
+        calls,
+        isNot(contains('DELETE /comments/c1')),
+      ); // ainda dá para desfazer
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pumpAndSettle();
+      expect(calls.where((c) => c == 'DELETE /comments/c1'), hasLength(1));
+    },
+  );
+
+  testWidgets(
+    '"Desfazer" depois de sair da tela ainda desfaz: nada é apagado',
+    (tester) async {
+      final calls = await openCommentsOver(tester, [
+        mine('c1', 'Meu comentário'),
+      ]);
+      await tester.tap(find.byKey(const Key('delete-comment-c1')));
+      await tester.pump();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('undo-delete-comment')));
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pumpAndSettle();
+      expect(calls, isNot(contains('DELETE /comments/c1')));
+    },
+  );
 
   testWidgets(
     'editar o próprio comentário: o campo vira edição e salva (editado)',
