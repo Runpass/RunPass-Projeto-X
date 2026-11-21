@@ -214,9 +214,20 @@ class MedalBibFrame extends StatelessWidget {
     child: LayoutBuilder(
       builder: (context, box) {
         final u = box.maxWidth / 100;
+        // No tema escuro a moldura preta sumia no fundo do app: lá ela é grafite, com um filete claro.
+        final dark = Theme.of(context).brightness == Brightness.dark;
         return Container(
           decoration: BoxDecoration(
-            color: const Color(0xff141414),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: dark
+                  ? const [Color(0xff5a5f67), Color(0xff3a3e45)]
+                  : const [Color(0xff2a2a2a), Color(0xff141414)],
+            ),
+            border: dark
+                ? Border.all(color: const Color(0xff7b818a), width: .35 * u)
+                : null,
             borderRadius: BorderRadius.circular(1.2 * u),
             boxShadow: const [
               BoxShadow(
