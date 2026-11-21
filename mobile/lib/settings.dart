@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'biometrics.dart';
 import 'catalog_screen.dart';
 import 'city_photos.dart';
+import 'feedback_screen.dart';
 import 'friends.dart';
 import 'identity_gateway.dart';
 import 'main.dart' show IdentityScreen;
@@ -163,6 +164,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               value: dark,
               onChanged: ThemeController.set,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            key: const Key('send-feedback'),
+            leading: const Icon(Icons.rate_review_outlined),
+            title: const Text('Enviar feedback'),
+            subtitle: const Text(
+              'Sugestão, problema ou elogio: conte para a equipe.',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => FeedbackScreen(gateway: widget.gateway),
+              ),
             ),
           ),
         ),

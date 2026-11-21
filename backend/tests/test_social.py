@@ -163,6 +163,35 @@ class SocialTests(unittest.TestCase):
         found = [p["username"] for p in self.social.search(self.bia, "caio")["items"]]
         self.assertEqual(found, ["caio", "caio_alves"])
 
+    # ---- feedback ----
+    def test_feedback_is_stored_for_the_team_and_limited_per_day(self):
+        from runpass.social import list_feedback_for_team
+
+        out = self.social.send_feedback(
+            self.bia, "f1", "suggestion", "  Quero ver o pace medio  ", "1.0"
+        )
+        self.assertTrue(out["received"])
+        again = self.social.send_feedback(
+            self.bia, "f1", "suggestion", "  Quero ver o pace medio  ", "1.0"
+        )
+        self.assertEqual(again["id"], out["id"])  # mesma chave: nao duplica
+        self.social.send_feedback(self.ana, "f2", "problem", "A foto nao abriu")
+        items = list_feedback_for_team(self.store)
+        self.assertEqual(len(items), 2)
+        mine = next(i for i in items if i["id"] == out["id"])
+        self.assertEqual(mine["text"], "Quero ver o pace medio")
+        self.assertEqual(mine["authorUsername"], "bia_lima")
+        self.assertEqual(mine["appVersion"], "1.0")
+        # A linha da fila fica registrada na particao da pessoa, para o apagamento da conta.
+        refs = self.store.query("identity", "USER#bia", prefix="FEEDBACKREF#", limit=10)[0]
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0][1]["sharedKeys"][0][1], "FEEDBACK#ALL")
+        for n in range(self.social.FEEDBACK_PER_DAY - 1):
+            self.social.send_feedback(self.bia, f"more-{n}", "praise", f"Gostei {n}")
+        with self.assertRaises(Problem) as error:
+            self.social.send_feedback(self.bia, "over", "praise", "Mais um")
+        self.assertEqual(error.exception.code, "FEEDBACK_LIMIT_REACHED")
+
     # ---- search ----
     def test_search_by_username_and_by_name_ignoring_accents_and_excluding_self(self):
         self.assertEqual(

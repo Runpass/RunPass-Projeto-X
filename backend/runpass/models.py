@@ -276,6 +276,21 @@ class CreateEditionComment(Input):
         return value
 
 
+class CreateFeedback(Input):
+    """Feedback sobre o app (sugestao, problema ou elogio), lido so pela equipe."""
+
+    kind: Literal["suggestion", "problem", "praise"]
+    text: Annotated[str, Field(min_length=1, max_length=2000)]
+    appVersion: Annotated[str, Field(max_length=40)] | None = None
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Feedback vazio")
+        return value
+
+
 class CreateComment(Input):
     text: Annotated[str, Field(min_length=1, max_length=1000)]
     # Resposta a um comentario (um nivel: responder a uma resposta vira resposta ao comentario raiz).

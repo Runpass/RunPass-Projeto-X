@@ -2923,17 +2923,20 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                     ),
                   ),
                 ),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      chip('Todas', MedalGrouping.all),
-                      chip('Por ano', MedalGrouping.year),
-                      chip('Por distância', MedalGrouping.distance),
-                      chip('Por cidade', MedalGrouping.city),
-                    ],
+                // Os filtros de agrupar valem para a prateleira; em Quadros não aparecem.
+                if (!framesView)
+                  SingleChildScrollView(
+                    key: const Key('medal-grouping'),
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        chip('Todas', MedalGrouping.all),
+                        chip('Por ano', MedalGrouping.year),
+                        chip('Por distância', MedalGrouping.distance),
+                        chip('Por cidade', MedalGrouping.city),
+                      ],
+                    ),
                   ),
-                ),
                 const SizedBox(height: 6),
                 Card(
                   child: Padding(
