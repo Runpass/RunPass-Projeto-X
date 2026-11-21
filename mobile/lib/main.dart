@@ -1223,78 +1223,96 @@ class _IdentityScreenState extends State<IdentityScreen> {
                 ),
                 const SizedBox(height: 18),
                 Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        RegistrationCard(
-                          displayName: displayName,
-                          username: username.text.trim().isEmpty
-                              ? null
-                              : username.text.trim(),
-                          cityLabel: selectedUf == null || selectedCity == null
-                              ? null
-                              : '$selectedCity, $selectedUf',
-                          birthDate: birthDate,
-                          gender: gender,
-                          registrationCode: registrationCode,
-                          photo: chosenPhoto == null
-                              ? null
-                              : Uint8List.fromList(chosenPhoto!),
-                          inscriptionDate: DateTime.now(),
-                          onTapPhoto: () => setState(() => step = Step.photo),
-                          onTapProfile: () => setState(() {
-                            // Ja tem usuario definido: a sugestao automatica por nome e so para
-                            // quem ainda nao escolheu um, no cadastro original.
-                            usernameTouched = true;
-                            editingFromCelebration = true;
-                            step = Step.profile;
-                          }),
-                          onTapBirth: () => setState(() {
-                            editingFromCelebration = true;
-                            step = Step.admission;
-                          }),
-                          onTapCity: () => setState(() {
-                            editingFromCelebration = true;
-                            step = Step.location;
-                          }),
+                  // LayoutBuilder+ConstrainedBox(minHeight)+Center (sem Spacer, que
+                  // da erro de altura indefinida dentro de scroll): ficha e "Bem-
+                  // vindo" ficam centralizados no espaco disponivel quando sobra
+                  // espaco, e a tela ainda rola se precisar (telas baixas).
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
                         ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Toque em qualquer valor da ficha para alterar.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: runPassNavy.withValues(alpha: .6),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              RegistrationCard(
+                                displayName: displayName,
+                                username: username.text.trim().isEmpty
+                                    ? null
+                                    : username.text.trim(),
+                                cityLabel:
+                                    selectedUf == null || selectedCity == null
+                                    ? null
+                                    : '$selectedCity, $selectedUf',
+                                birthDate: birthDate,
+                                gender: gender,
+                                registrationCode: registrationCode,
+                                photo: chosenPhoto == null
+                                    ? null
+                                    : Uint8List.fromList(chosenPhoto!),
+                                inscriptionDate: DateTime.now(),
+                                onTapPhoto: () =>
+                                    setState(() => step = Step.photo),
+                                onTapProfile: () => setState(() {
+                                  // Ja tem usuario definido: a sugestao automatica por nome e so para
+                                  // quem ainda nao escolheu um, no cadastro original.
+                                  usernameTouched = true;
+                                  editingFromCelebration = true;
+                                  step = Step.profile;
+                                }),
+                                onTapBirth: () => setState(() {
+                                  editingFromCelebration = true;
+                                  step = Step.admission;
+                                }),
+                                onTapCity: () => setState(() {
+                                  editingFromCelebration = true;
+                                  step = Step.location;
+                                }),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Toque em qualquer valor da ficha para alterar.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: runPassNavy.withValues(alpha: .6),
+                                ),
+                              ),
+                              const SizedBox(height: 28),
+                              Text(
+                                firstName == null
+                                    ? 'Bem-vindo!'
+                                    : 'Bem-vindo\n$firstName!',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1.25,
+                                  color: runPassNavy,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 28),
-                        Text(
-                          firstName == null
-                              ? 'Bem-vindo!'
-                              : 'Bem-vindo\n$firstName!',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            height: 1.25,
-                            color: runPassNavy,
-                          ),
-                        ),
-                        const SizedBox(height: 28),
-                        Text(
-                          'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            color: runPassNavy.withValues(alpha: .75),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
+                const SizedBox(height: 20),
+                Text(
+                  // Fora da area que rola, sempre visivel logo acima do botao.
+                  'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    color: runPassNavy.withValues(alpha: .75),
+                  ),
+                ),
                 Padding(
-                  padding: const EdgeInsets.only(top: 8),
+                  padding: const EdgeInsets.only(top: 20),
                   child: FilledButton(
                     style: FilledButton.styleFrom(
                       backgroundColor: runPassNavy,
@@ -1743,6 +1761,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
                     const SizedBox(height: 18),
                     Expanded(
                       child: SingleChildScrollView(
+                        // Folga embaixo do conteudo: sem ela, o campo focado encosta
+                        // bem na borda da area rolavel quando o teclado aparece,
+                        // ficando colado (quase escondido) no botao "Continuar" logo
+                        // abaixo, fora da area que rola.
+                        padding: const EdgeInsets.only(bottom: 24),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
