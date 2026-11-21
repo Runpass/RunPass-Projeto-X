@@ -26,6 +26,11 @@ void main() {
   testWidgets(
     'clearly labelled local demo goes from login through profile and admission to catalog',
     (tester) async {
+      // Tamanho real de aparelho (o padrao do teste, 800x600, e mais baixo que
+      // qualquer celular de verdade e nao cabe nem a faixa de demonstracao).
+      tester.view.physicalSize = const Size(360, 740);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final gateway = demoGateway(DemoTransport());
       await tester.pumpWidget(
         MainApp(
