@@ -75,7 +75,9 @@ class ProfileAvatar extends StatelessWidget {
   }
 }
 
-/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child].
+/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro em volta do [child]. Tudo em tons neutros
+/// (prata no tema escuro, grafite no claro), para acompanhar o preto e branco do app: sem dourado nem fita
+/// de duas cores.
 class MedalAvatar extends StatelessWidget {
   final double radius;
   final Widget child;
@@ -88,6 +90,12 @@ class MedalAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final size = radius * 2;
     final ribbonHeight = radius * (radius < 24 ? 0.7 : 0.9);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    // Aro: do claro para o escuro, na diagonal, como metal escovado.
+    final ring = dark
+        ? const [Color(0xFFFFFFFF), Color(0xFFC4C7CC), Color(0xFF8B9096)]
+        : const [Color(0xFF6B7078), Color(0xFF2E3238), Color(0xFF14171B)];
+    final rim = dark ? const Color(0xFFF2F3F5) : const Color(0xFF8B9096);
     return SizedBox(
       key: const Key('medal-avatar'),
       width: size,
@@ -100,25 +108,25 @@ class MedalAvatar extends StatelessWidget {
             top: -ribbonHeight * 0.75,
             child: CustomPaint(
               size: Size(radius * 1.15, ribbonHeight),
-              painter: _RibbonPainter(),
+              painter: _RibbonPainter(
+                // Duas faixas do mesmo tom (uma mais clara), só para dar o volume da fita.
+                left: dark ? const Color(0xFF8B9096) : const Color(0xFF2E3238),
+                right: dark ? const Color(0xFFC4C7CC) : const Color(0xFF6B7078),
+              ),
             ),
           ),
           Container(
             width: size,
             height: size,
             padding: EdgeInsets.all(radius * 0.09),
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFFFFE08A),
-                  Color(0xFFD4A017),
-                  Color(0xFF9C7412),
-                ],
+                colors: ring,
               ),
-              boxShadow: [
+              boxShadow: const [
                 BoxShadow(
                   color: Colors.black26,
                   blurRadius: 6,
@@ -129,7 +137,7 @@ class MedalAvatar extends StatelessWidget {
             child: Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: const Color(0xFFFFF3C4), width: 1.5),
+                border: Border.all(color: rim, width: 1.5),
               ),
               child: Center(child: child),
             ),
@@ -266,6 +274,9 @@ class ProfilePhotoViewer extends StatelessWidget {
 
 /// Fita da medalha em V, nas cores do app (laranja e azul-marinho).
 class _RibbonPainter extends CustomPainter {
+  final Color left, right;
+  const _RibbonPainter({required this.left, required this.right});
+
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width, h = size.height;
@@ -281,12 +292,13 @@ class _RibbonPainter extends CustomPainter {
       ..lineTo(w * 0.38, h)
       ..lineTo(w * 0.8, h)
       ..close();
-    canvas.drawPath(left, Paint()..color = runPassNavy);
-    canvas.drawPath(right, Paint()..color = runPassOrange);
+    canvas.drawPath(left, Paint()..color = this.left);
+    canvas.drawPath(right, Paint()..color = this.right);
   }
 
   @override
-  bool shouldRepaint(_RibbonPainter oldDelegate) => false;
+  bool shouldRepaint(_RibbonPainter oldDelegate) =>
+      oldDelegate.left != left || oldDelegate.right != right;
 }
 
 /// Últimas sugestões de pessoas de cada sessão: reabrir a busca mostra na hora e atualiza por trás.
