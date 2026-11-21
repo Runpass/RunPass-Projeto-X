@@ -231,9 +231,16 @@ class _IdentityScreenState extends State<IdentityScreen> {
       if (mounted && step == Step.profile) setState(() {});
     });
     loadSavedAccount();
-    if (widget.autoRestore && (widget.gateway?.canRestore ?? false)) {
-      restoreSession();
-    }
+    // Le "manter conectado" antes de decidir se restaura a sessao guardada: desligado
+    // em Configuracoes, a sessao nao deve voltar sozinha ao abrir o app de novo.
+    KeepSignedInPrefs.enabled().then((value) {
+      if (mounted) keepSignedIn = value;
+      if (value &&
+          widget.autoRestore &&
+          (widget.gateway?.canRestore ?? false)) {
+        restoreSession();
+      }
+    });
   }
 
   /// E-mail lembrado deste aparelho e se da para entrar so com o rosto (biometria ligada
@@ -853,7 +860,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
         await gateway.confirm(email.text.trim(), code.text.trim());
         code.clear();
         step = Step.setPassword;
-        message = 'E-mail confirmado. Agora crie sua senha.';
       case Step.setPassword:
         final weakReason = weakPasswordReason(password.text, email.text.trim());
         if (weakReason != null) {
@@ -1140,11 +1146,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
             ? runPassOrange
             : (context.isDark ? Colors.white : runPassNavy),
         // Pilula, mesma altura nas tres opcoes: igual ao prototipo, menor e uniforme.
-        // shrinkWrap: sem isso, o botao reserva a area de toque minima do Material
-        // (48dp) mesmo com minimumSize menor, e a altura visivel nao diminui.
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        minimumSize: const Size(0, 28),
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        minimumSize: const Size(0, 34),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
         shape: const StadiumBorder(),
       ),
       child: Text(
@@ -1176,12 +1179,14 @@ class _IdentityScreenState extends State<IdentityScreen> {
       // o LayoutBuilder da a altura real disponivel para o ConstrainedBox exigir
       // pelo menos essa altura, e o Center usa a sobra pra centralizar; telas
       // mais altas que o conteudo deixam de ter espaco morto, e ainda rola se
-      // precisar (telas baixas).
+      // precisar (telas baixas). O botao "Começar minha jornada" fica perto do
+      // rodape por um espaco fixo generoso antes dele (nao por Spacer: um Spacer
+      // aqui dá erro de altura indefinida dentro do SingleChildScrollView).
       child: LayoutBuilder(
         builder: (context, constraints) => SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
+          padding: const EdgeInsets.fromLTRB(24, 32, 24, 16),
           child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight - 64),
+            constraints: BoxConstraints(minHeight: constraints.maxHeight - 48),
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 480),
@@ -1273,7 +1278,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                         color: runPassNavy,
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 20),
                     Text(
                       'A partir de agora, cada corrida que você registrar entra no seu Pódio de medalhas e vira parte da sua história.',
                       textAlign: TextAlign.center,
@@ -1282,7 +1287,10 @@ class _IdentityScreenState extends State<IdentityScreen> {
                         color: runPassNavy.withValues(alpha: .75),
                       ),
                     ),
-                    const SizedBox(height: 32),
+                    // Espaco fixo generoso antes do botao: deixa "Começar minha
+                    // jornada" perto do rodape, mesma orientacao do "Continuar" das
+                    // telas de cadastro.
+                    const SizedBox(height: 72),
                     FilledButton(
                       style: FilledButton.styleFrom(
                         backgroundColor: runPassNavy,
@@ -1418,17 +1426,21 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             ),
                           if (step == Step.signIn || step == Step.signUp)
                             const SizedBox(height: 24),
-                          Text(
-                            title,
-                            style: Theme.of(context).textTheme.headlineSmall
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w800,
-                                  color: context.isDark
-                                      ? Colors.white
-                                      : runPassNavy,
-                                ),
-                          ),
-                          const SizedBox(height: 24),
+                          // Tela de entrada mais limpa e leve: sem titulo, so os campos
+                          // (decisao de produto de 21/11/2026).
+                          if (step != Step.signIn) ...[
+                            Text(
+                              title,
+                              style: Theme.of(context).textTheme.headlineSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    color: context.isDark
+                                        ? Colors.white
+                                        : runPassNavy,
+                                  ),
+                            ),
+                            const SizedBox(height: 24),
+                          ],
                           if (initial) field(email, 'E-mail'),
                           if ([
                             Step.signIn,
@@ -1470,19 +1482,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     )
                                   : null,
                             ),
-                          if (step == Step.signIn)
-                            CheckboxListTile(
-                              key: const Key('keep-signed-in'),
-                              contentPadding: EdgeInsets.zero,
-                              controlAffinity: ListTileControlAffinity.leading,
-                              value: keepSignedIn,
-                              onChanged: busy
-                                  ? null
-                                  : (value) => setState(
-                                      () => keepSignedIn = value ?? true,
-                                    ),
-                              title: const Text('Manter conectado'),
-                            ),
                           if ([Step.confirm, Step.reset].contains(step))
                             field(code, 'Código recebido'),
                           if (step == Step.ready)
@@ -1513,6 +1512,13 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     : 'Continuar',
                               ),
                             ),
+                          if (step == Step.signIn)
+                            TextButton(
+                              onPressed: busy
+                                  ? null
+                                  : () => change(Step.forgot),
+                              child: const Text('Esqueceu a senha?'),
+                            ),
                           if (step == Step.signIn &&
                               (biometricLocked || (faceReady && emailIsSaved)))
                             OutlinedButton.icon(
@@ -1522,17 +1528,25 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               label: const Text('Entrar com biometria'),
                             ),
                           if (step == Step.signIn) ...[
-                            TextButton(
+                            // Espacamento maior: "Criar conta" e uma acao secundaria, bem
+                            // separada do fluxo de entrar.
+                            const SizedBox(height: 32),
+                            OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(52),
+                                side: const BorderSide(
+                                  color: runPassOrange,
+                                  width: 1.5,
+                                ),
+                                foregroundColor: runPassOrange,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(15),
+                                ),
+                              ),
                               onPressed: busy
                                   ? null
                                   : () => change(Step.signUp),
                               child: const Text('Criar conta'),
-                            ),
-                            TextButton(
-                              onPressed: busy
-                                  ? null
-                                  : () => change(Step.forgot),
-                              child: const Text('Esqueci minha senha'),
                             ),
                           ],
                           if (step == Step.confirm)
@@ -1609,7 +1623,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 6, 24, 2),
+              // Recuo do topo e mais distancia embaixo: o cabecalho ficava no limite
+              // da tela, e o botao "Continuar" quase colado na borda inferior.
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
               child: Form(
                 key: form,
                 child: Column(
@@ -1617,42 +1633,47 @@ class _IdentityScreenState extends State<IdentityScreen> {
                   children: [
                     Row(
                       children: [
-                        if (step != Step.profile || editingFromCelebration)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 14),
-                            child: InkWell(
-                              key: const Key('signup-back'),
-                              onTap: busy
-                                  ? null
-                                  : () => setState(() {
-                                      if (editingFromCelebration) {
-                                        editingFromCelebration = false;
-                                        step = Step.celebration;
-                                      } else {
-                                        step = _previousSignupStep(step);
-                                      }
-                                    }),
-                              customBorder: const CircleBorder(),
-                              child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Theme.of(context).cardColor,
-                                  border: Border.all(
-                                    color: context.panelStrong,
+                        Padding(
+                          padding: const EdgeInsets.only(right: 14),
+                          // Espaco sempre reservado (visivel ou nao): sem isso, a linha do
+                          // topo fica mais baixa so no passo do perfil (sem seta de voltar),
+                          // e a ficha de inscricao muda de altura entre as telas.
+                          child:
+                              (step != Step.profile || editingFromCelebration)
+                              ? InkWell(
+                                  key: const Key('signup-back'),
+                                  onTap: busy
+                                      ? null
+                                      : () => setState(() {
+                                          if (editingFromCelebration) {
+                                            editingFromCelebration = false;
+                                            step = Step.celebration;
+                                          } else {
+                                            step = _previousSignupStep(step);
+                                          }
+                                        }),
+                                  customBorder: const CircleBorder(),
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Theme.of(context).cardColor,
+                                      border: Border.all(
+                                        color: context.panelStrong,
+                                      ),
+                                    ),
+                                    child: Icon(
+                                      Icons.arrow_back,
+                                      size: 18,
+                                      color: context.isDark
+                                          ? Colors.white
+                                          : runPassNavy,
+                                    ),
                                   ),
-                                ),
-                                child: Icon(
-                                  Icons.arrow_back,
-                                  size: 18,
-                                  color: context.isDark
-                                      ? Colors.white
-                                      : runPassNavy,
-                                ),
-                              ),
-                            ),
-                          ),
+                                )
+                              : const SizedBox(width: 40, height: 40),
+                        ),
                         Expanded(
                           child: RegistrationProgress(
                             step: _signupSteps.indexOf(step) + 1,
@@ -1660,7 +1681,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 14),
                     Text(
                       'SUA FICHA DE INSCRIÇÃO',
                       style: TextStyle(
@@ -1670,16 +1691,31 @@ class _IdentityScreenState extends State<IdentityScreen> {
                         color: runPassOrange,
                       ),
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 19,
-                        color: runPassNavy,
-                      ).copyWith(color: context.isDark ? Colors.white : null),
+                    const SizedBox(height: 4),
+                    // Altura fixa pro titulo (2 linhas): alguns titulos quebram em duas
+                    // linhas em telas estreitas e outros nao, o que mudava a altura do
+                    // cabecalho e empurrava a ficha de inscricao pra uma posicao diferente
+                    // em cada tela do cadastro.
+                    SizedBox(
+                      height: 52,
+                      child: Align(
+                        alignment: Alignment.topLeft,
+                        child: Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style:
+                              const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 21,
+                                color: runPassNavy,
+                              ).copyWith(
+                                color: context.isDark ? Colors.white : null,
+                              ),
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 12),
                     RegistrationCard(
                       displayName: name.text.trim().isEmpty
                           ? displayName
@@ -1698,16 +1734,20 @@ class _IdentityScreenState extends State<IdentityScreen> {
                           : Uint8List.fromList(chosenPhoto!),
                       inscriptionDate: DateTime.now(),
                     ),
-                    const SizedBox(height: 4),
+                    // Distancia uniforme da ficha em todas as telas do cadastro: antes so
+                    // o perfil tinha folga extra, e as outras (genero/nascimento,
+                    // localizacao) ficavam coladas na ficha.
+                    const SizedBox(height: 18),
                     Expanded(
                       child: SingleChildScrollView(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             if (step == Step.profile) ...[
-                              // So aqui, um pouco mais de distancia da ficha: os campos
-                              // ficavam colados nela.
-                              const SizedBox(height: 20),
+                              // Rotulo sempre visivel (floatingLabelBehavior.always) deixa o
+                              // campo com texto logo no topo; um pouco mais de distancia
+                              // evita a sensacao de que o campo esta colado na ficha.
+                              const SizedBox(height: 10),
                               field(
                                 name,
                                 'Nome e sobrenome',
@@ -1823,7 +1863,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(height: 4),
+                              const SizedBox(height: 6),
                               Row(
                                 children: [
                                   Expanded(
@@ -1850,28 +1890,17 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                 'Prefiro não me identificar',
                                 fullWidth: true,
                               ),
-                              const SizedBox(height: 6),
+                              // Espaco visivel entre o bloco de genero e a data de
+                              // nascimento: antes ficavam colados.
+                              const SizedBox(height: 26),
                               Padding(
-                                padding: const EdgeInsets.only(bottom: 2),
+                                padding: const EdgeInsets.only(bottom: 6),
                                 child: InkWell(
                                   key: const Key('birth-date-field'),
                                   onTap: busy ? null : pickBirthDate,
                                   child: InputDecorator(
-                                    // Visivel so para o proprio titular (perfil); nunca publica
-                                    // (tooltip no icone, em vez de uma linha de texto a parte,
-                                    // pra ficha maior continuar cabendo sem rolagem).
-                                    decoration: InputDecoration(
+                                    decoration: const InputDecoration(
                                       labelText: 'Data de nascimento',
-                                      suffixIcon: Tooltip(
-                                        message:
-                                            'Não é pública; você pode vê-la '
-                                            'depois no seu perfil.',
-                                        child: Icon(
-                                          Icons.info_outline,
-                                          size: 18,
-                                          color: context.muted,
-                                        ),
-                                      ),
                                     ),
                                     child: birthDate == null
                                         ? Text(
@@ -1889,10 +1918,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                 dense: true,
                                 contentPadding: EdgeInsets.zero,
                                 minVerticalPadding: 0,
-                                visualDensity: const VisualDensity(
-                                  horizontal: -4,
-                                  vertical: -4,
-                                ),
+                                visualDensity: VisualDensity.compact,
                                 controlAffinity:
                                     ListTileControlAffinity.leading,
                                 value: adult,
@@ -1920,12 +1946,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   color: context.muted,
                                 ),
                               ),
-                              // A fita do MedalAvatar pinta acima do proprio circulo (Clip.none,
-                              // de proposito, para nao ser cortada); esse espaco extra evita que
-                              // ela sobreponha o texto logo acima, com folga confortavel (a
-                              // ficha maior nesta tela exige um avatar um pouco menor pra
-                              // tudo continuar cabendo sem rolar).
-                              const SizedBox(height: 44),
+                              // A fita do MedalAvatar (redesenhada em tons neutros) pinta
+                              // acima do proprio circulo, fora da caixa (Clip.none, de
+                              // proposito, pra nao cortar a fita); esse espaco evita que
+                              // ela sobreponha o texto acima, com uma distancia mais
+                              // harmonica do que o minimo necessario.
+                              const SizedBox(height: 56),
                               Center(
                                 child: InkWell(
                                   key: const Key('choose-photo'),
@@ -1938,9 +1964,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                             ? choosePhoto
                                             : repositionChosenPhoto),
                                   child: MedalAvatar(
-                                    radius: 48,
+                                    radius: 56,
                                     child: CircleAvatar(
-                                      radius: MedalAvatar.innerRadius(48),
+                                      radius: MedalAvatar.innerRadius(56),
                                       backgroundColor: context.softFill,
                                       backgroundImage: chosenPhoto == null
                                           ? null
@@ -1959,14 +1985,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                 ),
                               ),
                               TextButton(
-                                style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                  ),
-                                  minimumSize: const Size(0, 32),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                ),
                                 onPressed: busy ? null : choosePhoto,
                                 child: Text(
                                   chosenPhoto == null

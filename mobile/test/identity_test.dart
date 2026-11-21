@@ -259,8 +259,8 @@ void main() {
         },
       );
       await tester.pumpWidget(MainApp(gateway: gateway));
-      await tester.ensureVisible(find.text('Esqueci minha senha'));
-      await tester.tap(find.text('Esqueci minha senha'));
+      await tester.ensureVisible(find.text('Esqueceu a senha?'));
+      await tester.tap(find.text('Esqueceu a senha?'));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextFormField, 'E-mail'),
@@ -299,7 +299,7 @@ void main() {
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
       expect(operations, ['ForgotPassword', 'ConfirmForgotPassword']);
-      expect(find.text('Entre no +1Pódio'), findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'E-mail'), findsOneWidget);
     },
   );
 
