@@ -223,6 +223,8 @@ Future<Uint8List> buildShareCard({
     Color color = Colors.black,
     int maxLines = 2,
     String? family,
+    // Altura da faixa em que o texto fica centralizado na vertical (a partir de [y]); sem ela, começa em [y].
+    double? centerIn,
   }) {
     final painter = TextPainter(
       text: TextSpan(
@@ -239,12 +241,14 @@ Future<Uint8List> buildShareCard({
       maxLines: maxLines,
       ellipsis: '…',
     )..layout(maxWidth: _cardSide - 160);
-    painter.paint(canvas, Offset((_cardSide - painter.width) / 2, y));
+    final top = centerIn == null ? y : y + (centerIn - painter.height) / 2;
+    painter.paint(canvas, Offset((_cardSide - painter.width) / 2, top));
   }
 
   // Cabeçalho: só o nome da corrida.
   bg(const Rect.fromLTWH(0, 0, _cardSide, _cardHeaderHeight));
-  text(title, 34, 56, weight: FontWeight.w900);
+  // Centralizado na faixa do cabeçalho, na horizontal e na vertical (com uma ou duas linhas).
+  text(title, 0, 56, weight: FontWeight.w900, centerIn: _cardHeaderHeight);
 
   // Foto de ponta a ponta; sem foto, usa um marcador no lugar.
   final photoRect = Rect.fromLTWH(0, _cardHeaderHeight, _cardSide, photoHeight);
