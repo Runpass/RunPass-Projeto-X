@@ -1519,7 +1519,7 @@
       },
       "patch": {
         "operationId": "patchOwnProfile",
-        "description": "Owner changes profile fields, not age eligibility or operational roles. No birth date changes or role management through this route.",
+        "description": "Owner changes profile fields, not operational roles or admission eligibility itself (birthDate/gender here only correct a value already captured at admission; they never (re)admit). Exception (decision 21/11/2026): displayName/username alone may be patched before beta admission too, so a person mid-signup can fix a typo before finishing; every other field still requires admission.",
         "responses": {
           "200": {
             "description": "Authorized result",

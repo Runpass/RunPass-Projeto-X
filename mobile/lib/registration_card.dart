@@ -11,6 +11,23 @@ String? genderLetter(String? gender) => switch (gender) {
   _ => null,
 };
 
+/// Faixa etaria em intervalos de 5 anos (mesma regra do protótipo), cobrindo todas as idades.
+String? ageBucket(DateTime? birthDate) {
+  if (birthDate == null) return null;
+  final now = DateTime.now();
+  var age = now.year - birthDate.year;
+  if (now.month < birthDate.month ||
+      (now.month == birthDate.month && now.day < birthDate.day)) {
+    age -= 1;
+  }
+  if (age < 18) return 'Menor de 18';
+  if (age < 80) {
+    final start = (age ~/ 5) * 5;
+    return '$start-${start + 4}';
+  }
+  return '80+';
+}
+
 String _pad2(int n) => n.toString().padLeft(2, '0');
 
 String formatBirthLabel(DateTime? birthDate) {
@@ -95,6 +112,10 @@ class RegistrationCard extends StatelessWidget {
     final name = displayName?.trim();
     final hasName = name != null && name.isNotEmpty;
     final letter = genderLetter(gender);
+    final bucket = ageBucket(birthDate);
+    // Formato do prototipo aprovado: letra e faixa etaria juntas, so com espaco
+    // ("M 35-39"), sem traco entre elas.
+    final category = [?letter, ?bucket].join(' ');
     final initials = hasName
         ? name
               .split(RegExp(r'\s+'))
@@ -106,9 +127,11 @@ class RegistrationCard extends StatelessWidget {
         '${inscriptionDate.day.toString().padLeft(2, '0')} '
         '${_monthAbbr[inscriptionDate.month - 1]} ${inscriptionDate.year}';
 
-    Widget tappable(Widget child, VoidCallback? onTap) => onTap == null
+    Widget tappable(Widget child, VoidCallback? onTap, {Key? key}) =>
+        onTap == null
         ? child
         : InkWell(
+            key: key,
             onTap: onTap,
             borderRadius: BorderRadius.circular(14),
             child: child,
@@ -117,7 +140,7 @@ class RegistrationCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(30),
+        borderRadius: BorderRadius.circular(32),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: .1),
@@ -132,8 +155,8 @@ class RegistrationCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
-              width: 128,
-              padding: const EdgeInsets.symmetric(vertical: 24),
+              width: 150,
+              padding: const EdgeInsets.symmetric(vertical: 26),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
@@ -146,7 +169,7 @@ class RegistrationCard extends StatelessWidget {
                 children: [
                   tappable(
                     CircleAvatar(
-                      radius: 30,
+                      radius: 36,
                       backgroundColor: Colors.white.withValues(alpha: .2),
                       backgroundImage: photo == null
                           ? null
@@ -159,15 +182,17 @@ class RegistrationCard extends StatelessWidget {
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.w800,
-                                      fontSize: 20,
+                                      fontSize: 23,
                                     ),
                                   )
                                 : const Icon(
                                     Icons.person_outline,
                                     color: Colors.white,
+                                    size: 28,
                                   )),
                     ),
                     onTapPhoto,
+                    key: const Key('registration-card-photo'),
                   ),
                   Column(
                     children: [
@@ -175,17 +200,17 @@ class RegistrationCard extends StatelessWidget {
                         'Nº INSCRIÇÃO',
                         style: TextStyle(
                           color: Colors.white70,
-                          fontSize: 10.5,
+                          fontSize: 11.5,
                           fontWeight: FontWeight.w800,
                           letterSpacing: .5,
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 4),
                       Text(
                         registrationCode ?? '00000',
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 23,
+                          fontSize: 26,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -196,12 +221,11 @@ class RegistrationCard extends StatelessWidget {
             ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 20, 16, 20),
+                padding: const EdgeInsets.fromLTRB(20, 22, 18, 22),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Opacity(
@@ -210,36 +234,45 @@ class RegistrationCard extends StatelessWidget {
                             context.isDark
                                 ? 'assets/brand/logo-dark.png'
                                 : 'assets/brand/logo-light.png',
-                            height: 20,
+                            height: 23,
                             fit: BoxFit.contain,
                           ),
                         ),
-                        tappable(
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                dateText,
-                                style: TextStyle(
-                                  fontSize: 10.5,
-                                  color: context.muted,
+                        const Spacer(),
+                        Flexible(
+                          child: tappable(
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  dateText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: context.muted,
+                                  ),
                                 ),
-                              ),
-                              Text(
-                                (cityLabel ?? '— cidade').toUpperCase(),
-                                style: const TextStyle(
-                                  fontSize: 7,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: .3,
+                                Text(
+                                  (cityLabel ?? '— cidade').toUpperCase(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: .3,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
+                            onTapCity,
+                            key: const Key('registration-card-city'),
                           ),
-                          onTapCity,
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 11),
                     tappable(
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -249,7 +282,7 @@ class RegistrationCard extends StatelessWidget {
                             maxLines: 2,
                             overflow: TextOverflow.visible,
                             style: TextStyle(
-                              fontSize: 21,
+                              fontSize: 24,
                               fontWeight: FontWeight.w800,
                               color: hasName ? null : context.muted,
                             ),
@@ -259,26 +292,28 @@ class RegistrationCard extends StatelessWidget {
                                 ? '@$username'
                                 : '@usuario',
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 11.5,
                               color: context.muted,
                             ),
                           ),
                         ],
                       ),
                       onTapProfile,
+                      key: const Key('registration-card-profile'),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 11),
                     tappable(
                       Row(
                         children: [
                           Expanded(
+                            flex: 3,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
                                   'NASCIMENTO',
                                   style: TextStyle(
-                                    fontSize: 8.5,
+                                    fontSize: 9.5,
                                     fontWeight: FontWeight.w800,
                                     color: context.archivedText,
                                   ),
@@ -288,36 +323,30 @@ class RegistrationCard extends StatelessWidget {
                                       ? '—'
                                       : formatBirthLabel(birthDate),
                                   style: const TextStyle(
-                                    fontSize: 12,
+                                    fontSize: 13.5,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                'GÊNERO',
-                                style: TextStyle(
-                                  fontSize: 8.5,
-                                  fontWeight: FontWeight.w800,
-                                  color: context.archivedText,
-                                ),
+                          Expanded(
+                            flex: 2,
+                            child: Text(
+                              category.isEmpty ? '—' : category,
+                              textAlign: TextAlign.right,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
                               ),
-                              Text(
-                                letter ?? '—',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ],
                       ),
                       onTapBirth,
+                      key: const Key('registration-card-birth'),
                     ),
                   ],
                 ),

@@ -123,7 +123,7 @@ void main() {
       // Perfil (nome/usuario).
       expect(find.text('Como você quer ser chamado?'), findsOneWidget);
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Nome e Sobrenome'),
+        find.widgetWithText(TextFormField, 'Nome e sobrenome'),
         'Corredora Teste',
       );
       await tester.enterText(

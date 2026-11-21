@@ -100,6 +100,33 @@ class ServiceTests(unittest.TestCase):
         )
         self.assertIs(self.service.profile(minor)["isPrivate"], False)
 
+    def test_patch_profile_allows_name_and_username_before_admission_not_other_fields(
+        self,
+    ):
+        # Decisao de produto de 21/11/2026: quem ainda esta no meio do cadastro (perfil
+        # criado, nao admitido ainda) pode corrigir nome/usuario sem precisar esperar a
+        # admissao; qualquer outro campo continua exigindo conta admitida, como sempre.
+        actor = self.create("u1", "primeiro_nome")
+        with self.assertRaises(Problem) as e:
+            self.service.authorize(actor, admitted=True)
+        self.assertEqual(e.exception.code, "BETA_ADMISSION_REQUIRED")
+        changed = self.service.patch_profile(
+            actor,
+            "corrige-nome",
+            {
+                "expectedVersion": 1,
+                "displayName": "Nome Corrigido",
+                "username": "nome_corrigido",
+            },
+        )
+        self.assertEqual(changed["displayName"], "Nome Corrigido")
+        self.assertEqual(changed["username"], "nome_corrigido")
+        with self.assertRaises(Problem) as e:
+            self.service.patch_profile(
+                actor, "tenta-bio", {"expectedVersion": 2, "bio": "ainda nao admitido"}
+            )
+        self.assertEqual(e.exception.code, "BETA_ADMISSION_REQUIRED")
+
     def test_same_username_concurrently_casefolds_without_partial_account(self):
         def attempt(i):
             try:

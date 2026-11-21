@@ -239,6 +239,15 @@ class IdentityService:
 
     def patch_profile(self, principal, key, payload):
         pk = "USER#" + principal.subject
+        # Decisao de produto de 21/11/2026: so nome/usuario podem ser corrigidos
+        # antes da admissao (a pessoa ainda esta no meio do cadastro); qualquer
+        # outro campo (foto, genero, nascimento, localizacao etc) continua exigindo
+        # conta ja admitida, como sempre.
+        only_profile_identity = set(payload) <= {
+            "expectedVersion",
+            "displayName",
+            "username",
+        }
 
         def work(read, write, account, now, replay):
             pkey = ("identity", pk, "PROFILE")
@@ -291,7 +300,14 @@ class IdentityService:
             self._sync_index(read, write, principal.subject, profile)
             return self.public_profile(profile), {}
 
-        return self.transact(principal, "patchOwnProfile", key, payload, work, admitted=True)
+        return self.transact(
+            principal,
+            "patchOwnProfile",
+            key,
+            payload,
+            work,
+            admitted=not only_profile_identity,
+        )
 
     def status(self, principal):
         def work(read, write, account, now, replay):
