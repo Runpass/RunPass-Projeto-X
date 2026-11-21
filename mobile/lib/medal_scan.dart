@@ -263,6 +263,9 @@ class MedalScanScreen extends StatefulWidget {
   /// Postar foto: a mesma escolha de corrida, começando pelas fotos da PUBLICAÇÃO (até 5; a primeira é a capa;
   /// sem ler texto). A lista abre com as minhas corridas e tocar numa corrida segue para o mesmo cadastro.
   final List<List<int>>? postPhotos;
+
+  /// Ajuste da medalha no círculo antes do cadastro (o mesmo da edição). Só os testes trocam.
+  final MedalCropOpener? shelfCropper;
   const MedalScanScreen({
     super.key,
     required this.gateway,
@@ -270,6 +273,7 @@ class MedalScanScreen extends StatefulWidget {
     this.reader = const PlatformMedalTextReader(),
     this.draftPhotoSelector,
     this.postPhotos,
+    this.shelfCropper = openMedalCropScreen,
   });
 
   bool get forPost => postPhotos != null && postPhotos!.isNotEmpty;
@@ -505,6 +509,9 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
             gateway: widget.gateway,
             initial: draft,
             initialPhoto: photo,
+            // Um editor só: a foto oficial vai inteira e a pessoa ajusta a medalha no círculo.
+            initialPhotoCropper: (context, bytes) async => bytes,
+            initialShelfCropper: widget.shelfCropper,
             photoSelector: widget.draftPhotoSelector,
           ),
         ),
@@ -535,6 +542,8 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                     initial: existing,
                     // A foto da medalha tirada agora segue para o rascunho que já existia.
                     initialPhoto: existing['state'] == 'draft' ? photo : null,
+                    initialPhotoCropper: (context, bytes) async => bytes,
+                    initialShelfCropper: widget.shelfCropper,
                     photoSelector: widget.draftPhotoSelector,
                   ),
           ),

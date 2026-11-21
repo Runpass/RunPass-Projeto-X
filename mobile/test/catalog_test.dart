@@ -179,6 +179,7 @@ void main() {
     );
     expect(requestStatusLabel('outro'), 'Situação desconhecida');
   });
+  signupOpenListTests();
   priorityOrderTests();
   defaultOrderTests();
   test('query parameters preserve stage and encode filters without leaking into path', () async {
@@ -1772,7 +1773,12 @@ void main() {
         // Limpar a busca volta à lista padrão.
         await tester.tap(find.byKey(const Key('catalog-search-clear')));
         await tester.pumpAndSettle();
-        expect(calls.last['dateFrom'], upcomingRange().from);
+        // A lista começa depois de amanhã: só corridas em que ainda dá para se inscrever.
+        final start = DateTime.now().add(const Duration(days: signupMinDays));
+        expect(
+          calls.last['dateFrom'],
+          '${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')}',
+        );
         expect(calls.last.containsKey('q'), isFalse);
       },
     );
@@ -2258,6 +2264,42 @@ void main() {
       expect(calls.last, 'DELETE EA ');
       // Sem abrir a corrida: nenhuma tela de detalhe foi aberta.
       expect(find.byType(EditionScreen), findsNothing);
+    },
+  );
+}
+
+void signupOpenListTests() {
+  testWidgets(
+    'Corridas lista só o que ainda dá para se inscrever; a busca por nome acha todas',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final queries = <Map<String, String>>[];
+      final gateway = await signed((uri, method, headers, body) async {
+        if (uri.path == '/editions') {
+          queries.add(uri.queryParameters);
+          return JsonReply(200, {
+            'items': [
+              {...entry('A'), 'id': 'EA', 'registrationStatus': 'open'},
+              {...entry('B'), 'id': 'EB', 'registrationStatus': 'closed'},
+              {...entry('C'), 'id': 'EC', 'registrationStatus': 'sold_out'},
+              {...entry('D'), 'id': 'ED'}, // situação não informada: fica
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: CatalogScreen(gateway: gateway)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('quick-ran-EA')), findsOneWidget);
+      expect(find.byKey(const Key('quick-ran-ED')), findsOneWidget);
+      expect(find.byKey(const Key('quick-ran-EB')), findsNothing);
+      expect(find.byKey(const Key('quick-ran-EC')), findsNothing);
+      expect(signupNotClosed({'registrationStatus': 'closed'}), isFalse);
+      expect(signupNotClosed({}), isTrue);
     },
   );
 }
