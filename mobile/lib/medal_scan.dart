@@ -530,23 +530,42 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
       );
       return;
     }
-    final options = await editionDistances(widget.gateway, id, edition);
+    var options = await editionDistances(widget.gateway, id, edition);
     if (!mounted) return;
     setState(() => working = false);
-    final picked = await chooseDistance(context, options, km: km);
-    if (!mounted) return;
-    if (picked == null) {
-      if (options.isEmpty) {
-        // Corrida sem distâncias no cadastro: a tela da corrida é o caminho.
-        await navigator.push(
-          MaterialPageRoute<void>(
-            builder: (_) =>
-                EditionScreen(gateway: widget.gateway, editionId: id),
-          ),
+    if (options.isEmpty) {
+      // Corrida sem distância no cadastro: pede o km aqui mesmo (já com o que a medalha mostrou) e segue para a
+      // participação, sem passar pela tela da corrida.
+      try {
+        final added = await askRunnerDistance(
+          context,
+          widget.gateway,
+          id,
+          initialKm: km,
         );
+        if (added == null || !mounted) return; // desistiu de informar o km
+        options = added;
+      } on IdentityIssue catch (issue) {
+        if (mounted) {
+          setState(
+            () => note = issue.code == 'INVALID_DISTANCE'
+                ? 'Informe a distância em km, por exemplo 10 ou 21,1.'
+                : catalogError(issue),
+          );
+        }
+        return;
+      } on Exception {
+        if (mounted) {
+          setState(
+            () => note = 'Sem conexão com o servidor. Verifique a internet e tente de novo.',
+          );
+        }
+        return;
       }
-      return; // desistiu de escolher a distância
     }
+    if (!mounted) return;
+    final picked = await chooseDistance(context, options, km: km);
+    if (!mounted || picked == null) return; // desistiu de escolher a distância
     setState(() => working = true);
     List<int>? photo;
     try {
@@ -685,8 +704,28 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     }
   }
 
-  /// Não achou: pede o cadastro da corrida, já com o nome lido da medalha no formulário.
-  Future<void> requestRace() async {
+  /// Não achou: copia os dados de uma corrida do catálogo (ex.: a edição do ano passado) e segue para o mesmo
+  /// cadastro da corrida. A data e o km lidos na medalha valem sobre os da corrida copiada.
+  Future<void> copyRace() async {
+    final copied = await pickRaceToCopy(
+      context,
+      widget.gateway,
+      initialQuery: name.text.trim(),
+    );
+    if (copied == null || !mounted) return;
+    final read = editedDetails();
+    await requestRace(
+      prefill: {
+        ...copied,
+        'date': ?read['date'],
+        'distanceKm': ?(read['distanceKm'] ?? copied['distanceKm']),
+      },
+    );
+  }
+
+  /// Não achou: pede o cadastro da corrida, já com o nome lido da medalha no formulário ([prefill] troca esse
+  /// preenchimento, como na cópia de outra corrida).
+  Future<void> requestRace({Map<String, String>? prefill}) async {
     // A foto segue junto: a medalha fica provisória em Medalhas até a equipe confirmar a corrida.
     List<int>? photo;
     try {
@@ -700,7 +739,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
       MaterialPageRoute(
         builder: (_) => EditionRequestFormScreen(
           gateway: widget.gateway,
-          prefill: editedDetails(),
+          prefill: prefill ?? editedDetails(),
           medalPhoto: photo,
         ),
       ),
@@ -721,6 +760,55 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
       postPhotos: widget.postPhotos,
     );
     if (mounted && navigator.canPop()) navigator.pop(true);
+  }
+
+  /// Não achou a corrida (ou ela não está na lista): cadastrar uma corrida nova (leva a foto da medalha), copiar
+  /// os dados de uma corrida parecida do catálogo ou procurar o nome na internet. Discretos e sempre à mão.
+  Widget missingRaceActions() {
+    final style = TextButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      textStyle: const TextStyle(fontSize: 12.5),
+    );
+    return Column(
+      key: const Key('medal-scan-missing'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (matches.isNotEmpty)
+          Text(
+            'Não está na lista?',
+            style: TextStyle(color: context.muted, fontSize: 12.5),
+          ),
+        Wrap(
+          spacing: 4,
+          children: [
+            TextButton.icon(
+              key: const Key('medal-scan-request'),
+              onPressed: () => requestRace(),
+              style: style,
+              icon: const Icon(Icons.add_location_alt_outlined, size: 16),
+              label: const Text('Cadastrar esta corrida'),
+            ),
+            TextButton.icon(
+              key: const Key('medal-scan-copy'),
+              onPressed: copyRace,
+              style: style,
+              icon: const Icon(Icons.copy_rounded, size: 16),
+              label: const Text('Copiar de outra corrida'),
+            ),
+            ListenableBuilder(
+              listenable: name,
+              builder: (context, _) => TextButton.icon(
+                key: const Key('medal-scan-web-search'),
+                onPressed: name.text.trim().isEmpty ? null : searchWeb,
+                style: style,
+                icon: const Icon(Icons.public_rounded, size: 16),
+                label: const Text('Procurar na internet'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   @override
@@ -800,7 +888,21 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(note!, key: const Key('medal-scan-note')),
             ),
+          if (matches.isEmpty)
+            // Não achou: sugere cadastrar a corrida, já com o que foi lido na medalha.
+            Padding(
+              key: const Key('medal-scan-suggest'),
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                'Esta corrida ainda não está no catálogo. Corrija o nome e busque de novo, '
+                'cadastre a corrida ou copie os dados de uma corrida parecida.',
+                style: TextStyle(color: context.muted),
+              ),
+            ),
+          // Antes da lista (que pode ser longa): não achou a sua, cadastra ou copia de outra corrida.
+          missingRaceActions(),
           if (matches.isNotEmpty) ...[
+            const SizedBox(height: 8),
             const Padding(
               padding: EdgeInsets.only(bottom: 8),
               child: Text(
@@ -833,46 +935,7 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
                         },
                 ),
               ),
-          ] else
-            // Não achou: sugere cadastrar a corrida, já com o que foi lido na medalha.
-            Padding(
-              key: const Key('medal-scan-suggest'),
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                'Esta corrida ainda não está no catálogo. Corrija o nome e busque de novo, ou cadastre a corrida.',
-                style: TextStyle(color: context.muted),
-              ),
-            ),
-          const SizedBox(height: 4),
-          // Sempre à mão e discretos: cadastrar a corrida (leva a foto da medalha) e procurar o nome na internet.
-          Wrap(
-            spacing: 4,
-            children: [
-              TextButton.icon(
-                key: const Key('medal-scan-request'),
-                onPressed: requestRace,
-                style: TextButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  textStyle: const TextStyle(fontSize: 12.5),
-                ),
-                icon: const Icon(Icons.add_location_alt_outlined, size: 16),
-                label: const Text('Cadastrar esta corrida'),
-              ),
-              ListenableBuilder(
-                listenable: name,
-                builder: (context, _) => TextButton.icon(
-                  key: const Key('medal-scan-web-search'),
-                  onPressed: name.text.trim().isEmpty ? null : searchWeb,
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    textStyle: const TextStyle(fontSize: 12.5),
-                  ),
-                  icon: const Icon(Icons.public_rounded, size: 16),
-                  label: const Text('Procurar na internet'),
-                ),
-              ),
-            ],
-          ),
+          ],
         ],
       ],
     ),
