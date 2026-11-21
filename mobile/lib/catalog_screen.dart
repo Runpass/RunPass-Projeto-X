@@ -273,7 +273,9 @@ Future<Map<String, Map<String, dynamic>>> loadMyEditions(
       for (final item in (page['items'] as List? ?? const [])) {
         final map = Map<String, dynamic>.from(item as Map);
         final id = map['editionId'];
+        // Exclusão em espera (janela do "Desfazer"): já some daqui, mesmo ainda existindo no servidor.
         if (id is String &&
+            !pendingDeletions.contains(map['id']) &&
             (map['state'] == 'draft' || map['state'] == 'completed')) {
           mine[id] = map;
         }
@@ -5616,10 +5618,13 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         );
       },
       perform: () async {
+        // A versão atual, lida na hora: o rascunho pode ter sido salvo depois que a tela abriu.
+        final path = '/participations/${Uri.encodeComponent(id)}';
+        final current = await gateway.request(path);
         await gateway.request(
-          '/participations/${Uri.encodeComponent(id)}',
+          path,
           method: 'DELETE',
-          query: {'expectedVersion': '$version'},
+          query: {'expectedVersion': '${current['version'] ?? version}'},
         );
         forgetDraftForm(id);
       },

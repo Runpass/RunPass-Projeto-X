@@ -204,4 +204,74 @@ void main() {
     expect(raceIsInFuture({'date': '2026-11-21'}, now), isTrue);
     expect(raceIsInFuture({'date': ''}, now), isFalse);
   });
+
+  testWidgets(
+    'excluir o rascunho pela tela dele: sai de Corridas na hora e apaga com a versão atual',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <String>[];
+      var deleted = false;
+      final draft = {
+        'id': 'D1',
+        'editionId': 'EA',
+        'distanceId': '10k',
+        'state': 'draft',
+        'version': 1,
+      };
+      final gateway = await signed((uri, method, headers, body) async {
+        calls.add('$method ${uri.path}?${uri.query}');
+        if (uri.path == '/me/participations') {
+          return JsonReply(200, {
+            'items': deleted ? [] : [draft],
+          });
+        }
+        if (uri.path == '/participations/D1' && method == 'GET') {
+          // Salvo depois que a tela abriu: a versão no servidor já é outra.
+          return JsonReply(200, {...draft, 'version': 3});
+        }
+        if (uri.path == '/participations/D1' && method == 'DELETE') {
+          deleted = true;
+          return const JsonReply(202, {});
+        }
+        if (uri.path == '/editions') {
+          return JsonReply(200, {
+            'items': [
+              {
+                ...entry('A'),
+                'id': 'EA',
+                'status': 'past',
+                'date': '2026-01-10',
+              },
+            ],
+          });
+        }
+        return const JsonReply(200, {'items': []});
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ParticipationDraftScreen(gateway: gateway, initial: draft),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Excluir rascunho'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Excluir rascunho'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Excluir rascunho').last);
+      await tester.pumpAndSettle();
+      // Durante a janela do "Desfazer": Corridas já não mostra "Meu registro" nesta corrida.
+      expect(find.byType(CatalogScreen), findsOneWidget);
+      expect(find.text('Meu registro'), findsNothing);
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pumpAndSettle();
+      expect(calls.where((c) => c.startsWith('DELETE /participations/D1')), [
+        'DELETE /participations/D1?expectedVersion=3',
+      ]);
+    },
+  );
 }
