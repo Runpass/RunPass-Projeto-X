@@ -75,9 +75,8 @@ class ProfileAvatar extends StatelessWidget {
   }
 }
 
-/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child]. A fita é
-/// neutra (dois tons de cinza, conforme o tema), para acompanhar o preto e branco do app: sem fita de duas
-/// cores.
+/// Foto do perfil no formato de medalha: fita no topo (atrás) e aro dourado em volta do [child]. O cordão
+/// tem um lado laranja (a cor da marca) e o outro conforme o tema: branco no escuro, azul-marinho no claro.
 class MedalAvatar extends StatelessWidget {
   final double radius;
   final Widget child;
