@@ -207,7 +207,7 @@ class RunPassBottomNav extends StatelessWidget {
   );
 }
 
-/// Medalha da aba "Medalhas", seguindo o contorno de assets/icons/gold-medal.png
+/// Medalha da aba "Medalhas" e das estatísticas do perfil
 /// (fita em V + disco) - sem cor propria como os demais icones do menu, mas
 /// com o disco preenchido (em vez de so contorno) para ler como medalha, nao
 /// como mira/alvo, no tamanho pequeno do menu.
@@ -224,6 +224,25 @@ class _MedalIcon extends StatelessWidget {
       child: CustomPaint(painter: _MedalIconPainter(color)),
     );
   }
+}
+
+/// A mesma medalha do menu (fita em V e disco), numa cor só, para usar fora do menu: segue o preto e branco
+/// do app (sem fita colorida).
+class MedalGlyph extends StatelessWidget {
+  final double size;
+  final Color? color;
+  const MedalGlyph({super.key, this.size = 24, this.color});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: size,
+    height: size,
+    child: CustomPaint(
+      painter: _MedalIconPainter(
+        color ?? Theme.of(context).colorScheme.onSurface,
+      ),
+    ),
+  );
 }
 
 class _MedalIconPainter extends CustomPainter {

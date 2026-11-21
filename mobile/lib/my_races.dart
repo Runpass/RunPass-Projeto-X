@@ -2887,10 +2887,11 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
                             color: context.panelStrong,
                           ),
                           bigStat(
-                            Image.asset(
-                              'assets/icons/gold-medal.png',
-                              width: 22,
-                              height: 22,
+                            // Medalha numa cor só (a do texto): sem fita colorida, acompanha o preto e
+                            // branco do app.
+                            const MedalGlyph(
+                              key: Key('profile-medal-icon'),
+                              size: 22,
                             ),
                             '${stats.completed}',
                             'medalhas',
