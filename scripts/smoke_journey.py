@@ -116,7 +116,9 @@ def run(journey, delete_account, max_image_seconds):
 
     def admission():
         code, _, t, _ = j.call(
-            "POST", "/beta/admissions", {"birthDate": "1990-01-01", "declaresAdult": True}
+            "POST",
+            "/beta/admissions",
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
         )
         return j.expect("admissao (repeticao idempotente aceita)", code, (200, 201), t)
 
@@ -174,7 +176,11 @@ def run(journey, delete_account, max_image_seconds):
                 "/me",
                 {"displayName": "Corredor Outro", "username": "outro_" + uuid.uuid4().hex[:8]},
             ),
-            ("POST", "/beta/admissions", {"birthDate": "1990-01-01", "declaresAdult": True}),
+            (
+                "POST",
+                "/beta/admissions",
+                {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+            ),
         ):
             code, _, _, _ = j.call(method, path, body, token=other)
             if code not in (200, 201):
