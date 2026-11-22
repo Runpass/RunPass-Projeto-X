@@ -37,7 +37,7 @@ from .models import (
     WebLookupRequest,
 )
 from .nl_search import MAX_PHRASE, text_fallback
-from .service import Problem
+from .service import REQUEST_MEMO, Problem
 from .store import Unavailable
 
 IdempotencyKey = Annotated[
@@ -61,6 +61,24 @@ def create_app(
     app = FastAPI(
         title="RunPass S03", version="0.8.0", docs_url=None, redoc_url=None, openapi_url=None
     )
+
+    class RequestMemo:
+        """Abre a memoria da requisicao (ver `service.REQUEST_MEMO`): a conferencia da conta vale uma vez
+        por requisicao, em vez de repetir as mesmas leituras em cada servico chamado."""
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                return await self.inner(scope, receive, send)
+            token = REQUEST_MEMO.set(set())
+            try:
+                await self.inner(scope, receive, send)
+            finally:
+                REQUEST_MEMO.reset(token)
+
+    app.add_middleware(RequestMemo)
 
     @app.exception_handler(Problem)
     async def problem(request, error):

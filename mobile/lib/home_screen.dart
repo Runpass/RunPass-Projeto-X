@@ -147,13 +147,31 @@ Future<FeedLoad> loadFeed(
   FeedFilter filter = FeedFilter.all,
   String? cursor,
 }) async {
-  Map<String, dynamic>? profile;
-  try {
-    profile = await gateway.request('/me');
-    rememberNavProfile(gateway, profile);
-  } on Exception {
-    profile = null;
-  }
+  // O perfil, o feed e as minhas corridas não dependem um do outro: saem juntos, em vez de um esperar o
+  // outro (o tempo de abrir o Início passa a ser o da chamada mais lenta, não a soma das três). Cada um
+  // trata a própria falha, para nenhum erro ficar solto enquanto os outros terminam.
+  final profileCall = gateway
+      .request('/me')
+      .then<Map<String, dynamic>?>((value) => value)
+      .catchError((Object _) => null, test: (e) => e is Exception);
+  final feedCall = gateway
+      .request(
+        '/feed',
+        query: {
+          'limit': '20',
+          'scope': feedScopeFor(filter),
+          'cursor': ?cursor,
+        },
+      )
+      .then<Map<String, dynamic>?>((value) => value)
+      .catchError((Object _) => null, test: (e) => e is Exception);
+  // As minhas corridas só entram na primeira página de "Todos".
+  final mineCall = cursor == null && filter == FeedFilter.all
+      ? loadMyRaces(gateway).catchError((_) => <RaceRecord>[])
+      : Future.value(const <RaceRecord>[]);
+
+  var profile = await profileCall;
+  if (profile != null) rememberNavProfile(gateway, profile);
   final myId = profile?['id'] as String?;
   final myName = profile?['displayName'] as String? ?? 'Você';
   final myUser = profile?['username'] as String? ?? '';
@@ -173,24 +191,12 @@ Future<FeedLoad> loadFeed(
     }
   }
 
-  var posts = <Map<String, dynamic>>[];
-  var failed = false;
-  String? nextCursor;
-  try {
-    final page = await gateway.request(
-      '/feed',
-      query: {'limit': '20', 'scope': feedScopeFor(filter), 'cursor': ?cursor},
-    );
-    posts = (page['items'] as List? ?? const []).cast<Map<String, dynamic>>();
-    nextCursor = page['nextCursor'] as String?;
-  } on Exception {
-    posts = const [];
-    failed = true;
-  }
-  // As minhas corridas só entram na primeira página de "Todos".
-  final mine = cursor == null && filter == FeedFilter.all
-      ? await loadMyRaces(gateway).catchError((_) => <RaceRecord>[])
-      : const <RaceRecord>[];
+  final page = await feedCall;
+  final failed = page == null;
+  final posts = (page?['items'] as List? ?? const [])
+      .cast<Map<String, dynamic>>();
+  final nextCursor = page?['nextCursor'] as String?;
+  final mine = await mineCall;
   final editions = await loadEditions(
     gateway,
     [

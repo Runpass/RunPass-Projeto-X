@@ -120,13 +120,16 @@ class CatalogTests(unittest.TestCase):
         filters = CatalogFilters(limit=20)
         first = self.catalog.list(self.actor, filters)["items"]
         self.assertTrue(first)
-        # 1 chamada em lote para HEAD, 1 para versoes novas e 1 para notas: nao cresce com o numero de corridas.
-        self.assertLessEqual(calls["batch"], 3)
+        # Conferir a conta custa 1 lote (conta + marca de exclusao) e, fora de uma requisicao HTTP, acontece
+        # no comeco e no fim da listagem (2). Mais 1 para HEAD, 1 para versoes novas e 1 para notas: nao
+        # cresce com o numero de corridas.
+        self.assertLessEqual(calls["batch"], 5)
         self.assertEqual(calls["commit"], 0)  # leitura sem transacao
         calls["batch"] = 0
         again = self.catalog.list(self.actor, filters)["items"]
         self.assertEqual(again, first)
-        self.assertLessEqual(calls["batch"], 2)  # versoes ja estao na memoria: so HEAD e notas
+        # versoes ja estao na memoria: so a conta (2), HEAD e notas
+        self.assertLessEqual(calls["batch"], 4)
 
     def admit(self, sub):
         actor = Principal(sub, True)

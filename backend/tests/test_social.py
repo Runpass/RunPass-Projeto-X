@@ -196,6 +196,64 @@ class SocialTests(unittest.TestCase):
             self.social.send_feedback(self.bia, "over", "praise", "Mais um")
         self.assertEqual(error.exception.code, "FEEDBACK_LIMIT_REACHED")
 
+    # ---- desempenho: idas ao banco ----
+    def reads(self):
+        """Liga um registro das chaves lidas uma a uma no banco de verdade (por baixo da memoria de leituras)."""
+        seen = []
+        real = self.store.get
+        self.store.get = lambda key: (seen.append(key), real(key))[1]
+        self.addCleanup(setattr, self.store, "get", real)
+        return seen
+
+    def test_feed_reads_only_the_posts_it_returns_not_every_post(self):
+        for n in range(60):
+            self.complete(
+                self.ana if n % 2 else self.caio,
+                f"p{n:02d}",
+                f"2026-10-{n % 28 + 1:02d}T10:{n:02d}:00Z",
+            )
+        expected = [p["id"] for p in self.social.feed(self.bia, limit=5)["items"]]
+        seen = self.reads()
+        page = self.social.feed(self.bia, limit=5)
+        self.assertEqual([p["id"] for p in page["items"]], expected)
+        self.assertEqual(len(page["items"]), 5)
+        self.assertIn("nextCursor", page)
+        parts = {k for k in seen if k[2].endswith("#PART")}
+        # Antes lia as 60 participacoes para devolver 5; agora so o primeiro lote (pagina + folga).
+        self.assertLessEqual(len(parts), 12)
+        # E cada item e lido uma vez so, mesmo com o mesmo autor em varias publicacoes.
+        self.assertEqual(len(seen), len(set(seen)))
+
+    def test_feed_pages_cover_every_post_once_in_order(self):
+        for n in range(23):
+            self.complete(self.ana, f"q{n:02d}", f"2026-10-{n + 1:02d}T10:00:00Z")
+        ids, cursor = [], None
+        for _ in range(10):
+            page = self.social.feed(self.bia, limit=5, cursor=cursor)
+            ids += [p["id"] for p in page["items"]]
+            cursor = page.get("nextCursor")
+            if not cursor:
+                break
+        self.assertEqual(ids, [f"q{n:02d}" for n in range(22, -1, -1)])
+
+    def test_read_scope_reads_each_item_once_and_only_inside_the_scope(self):
+        store = self.social.store
+        key = ("identity", "USER#ana", "PROFILE")
+        seen = self.reads()
+        store.get(key)
+        store.get(key)
+        self.assertEqual(len(seen), 2)  # fora do scope: sempre o banco
+        del seen[:]
+        with store.scope():
+            first = store.get(key)
+            first["displayName"] = "mexido"  # quem recebe pode alterar: a memoria nao muda
+            self.assertEqual(store.get(key)["displayName"], "Ana Paula Souza")
+            store.warm([key, ("identity", "USER#bia", "PROFILE")])
+            store.get(("identity", "USER#bia", "PROFILE"))
+            self.assertEqual(len(seen), 2)  # ana e bia, uma vez cada
+        store.get(key)
+        self.assertEqual(len(seen), 3)  # saiu do scope: volta a ler
+
     # ---- search ----
     def test_search_by_username_and_by_name_ignoring_accents_and_excluding_self(self):
         self.assertEqual(

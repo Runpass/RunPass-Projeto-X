@@ -17,6 +17,9 @@ import re
 import string
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from uuid import uuid4
 
 from .catalog import haversine_km
@@ -44,9 +47,78 @@ def _cursor_decode(text):
     raise Problem(422, "INVALID_CURSOR")
 
 
+class ReadScope:
+    """Store com memoria de leituras por requisicao (so leitura).
+
+    Fora de um `scope()` repassa tudo ao store de verdade. Dentro, cada item e lido do banco uma vez so
+    (`get` repetido vira consulta a memoria) e `warm` busca varios de uma vez, em paralelo. Na Lambda cada
+    `get` e uma ida ao DynamoDB; montar o feed lia o mesmo perfil dezenas de vezes, uma ida por vez.
+    A memoria vale so dentro do `scope()` e na thread que o abriu; `commit` a esvazia."""
+
+    def __init__(self, store):
+        self._store = store
+        self._memo = ContextVar("runpass_read_scope", default=None)
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+    @contextmanager
+    def scope(self):
+        if self._memo.get() is not None:  # ja dentro de um: reaproveita
+            yield
+            return
+        token = self._memo.set({})
+        try:
+            yield
+        finally:
+            self._memo.reset(token)
+
+    def get(self, key):
+        memo = self._memo.get()
+        if memo is None:
+            return self._store.get(key)
+        if key not in memo:
+            memo[key] = self._store.get(key)
+        return deepcopy(memo[key])
+
+    def batch_get(self, keys):
+        memo = self._memo.get()
+        if memo is None:
+            return self._store.batch_get(keys)
+        self.warm(keys)
+        return {key: deepcopy(memo[key]) for key in dict.fromkeys(keys)}
+
+    def warm(self, keys):
+        """Busca de uma vez (em paralelo) o que ainda nao esta na memoria. Fora de um scope nao faz nada."""
+        memo = self._memo.get()
+        if memo is None:
+            return
+        missing = [key for key in dict.fromkeys(keys) if key not in memo]
+        if missing:
+            memo.update(self._store.batch_get(missing))
+
+    def remember(self, key, value):
+        memo = self._memo.get()
+        if memo is not None:
+            memo[key] = value
+
+    def recall(self, key):
+        memo = self._memo.get()
+        return None if memo is None else memo.get(key)
+
+    def query(self, table, pk, **kw):
+        return self._store.query(table, pk, **kw)
+
+    def commit(self, expected, writes):
+        memo = self._memo.get()
+        if memo is not None:
+            memo.clear()
+        return self._store.commit(expected, writes)
+
+
 class SocialService:
     def __init__(self, identity):
-        self.identity, self.store = identity, identity.store
+        self.identity, self.store = identity, ReadScope(identity.store)
 
     # ---- reads shared by every operation -------------------------------------------------
 
@@ -355,7 +427,15 @@ class SocialService:
             consider(subject)
         for subject in self._relation_subjects(me, "FOLLOWER#", "active"):
             consider(subject)
-        if len(order) < self.SUGGESTION_POOL:
+        if len(order) < limit:
+            # Quem publicou ha pouco (uma consulta so), antes de varrer o indice de busca.
+            for _, pointer in reversed(self._list("history", "FEED#PUBLIC", "T#", 300)):
+                consider(pointer["owner"])
+                if len(order) >= self.SUGGESTION_POOL:
+                    break
+        # A varredura do indice (centenas de consultas, guardada por 1 h) fica so para quando ainda faltam
+        # sugestoes para encher a lista.
+        if len(order) < limit:
             for prefix in self._index_partitions():
                 for sk, _ in self._list("identity", "PIDX#" + prefix, None, 20):
                     consider(sk.split("#", 1)[1])
@@ -369,27 +449,28 @@ class SocialService:
 
     def profile_view(self, actor, subject):
         self.identity.authorize(actor, admitted=True)
-        profile = self._active_profile(self.store.get, subject)
-        if not profile:
-            raise Problem(404, "PROFILE_NOT_FOUND")
-        card = self._card(profile, actor.subject)
-        # Seguidores/seguindo sao sempre publicos (decisao de produto de 08/11/2026); so o
-        # resumo de corridas (contagem e lista) fica atras de canView.
-        card["followersCount"] = sum(
-            1
-            for _, row in self._list("identity", "USER#" + subject, "FOLLOWER#")
-            if row["state"] == "active"
-        )
-        card["followingCount"] = sum(
-            1
-            for _, row in self._list("identity", "USER#" + subject, "FOLLOWING#")
-            if row["state"] == "active"
-        )
-        card["friendsCount"] = len(self._friend_ids(subject))
-        card["canView"] = self.can_view(self.store.get, actor.subject, subject)
-        if card["canView"]:
-            card["participationCount"] = len(self._completed(subject))
-        return card
+        with self.store.scope():
+            # Conta, perfil e a relacao comigo num lote; as tres listas (seguidores, seguindo, amigos) em
+            # paralelo. Antes eram umas dez idas ao banco em fila.
+            self.store.warm(self._person_keys(actor.subject, subject))
+            profile = self._active_profile(self.store.get, subject)
+            if not profile:
+                raise Problem(404, "PROFILE_NOT_FOUND")
+            card = self._card(profile, actor.subject)
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                followers, following, friends = pool.map(
+                    lambda prefix: self._list("identity", "USER#" + subject, prefix),
+                    ("FOLLOWER#", "FOLLOWING#", "FRIEND#"),
+                )
+            # Seguidores/seguindo sao sempre publicos (decisao de produto de 08/11/2026); so o
+            # resumo de corridas (contagem e lista) fica atras de canView.
+            card["followersCount"] = sum(1 for _, row in followers if row["state"] == "active")
+            card["followingCount"] = sum(1 for _, row in following if row["state"] == "active")
+            card["friendsCount"] = sum(1 for _, row in friends if row["state"] == "active")
+            card["canView"] = self.can_view(self.store.get, actor.subject, subject)
+            if card["canView"]:
+                card["participationCount"] = len(self._completed(subject))
+            return card
 
     def _relation_subjects(self, subject, prefix, state="active"):
         """Ids under `prefix` (FOLLOWER#/FOLLOWING#/FRIEND#) in `state`, sorted for stable
@@ -405,10 +486,15 @@ class SocialService:
         after = next((i for i, v in enumerate(ids) if v == cursor), -1) + 1 if cursor else 0
         page = ids[after : after + limit]
         items = []
-        for target in page:
-            profile = self._active_profile(self.store.get, target)
-            if profile:
-                items.append(self._card(profile, actor.subject))
+        with self.store.scope():
+            # Conta, perfil e relacao de todos da pagina num lote so (antes, 4 leituras por pessoa em fila).
+            self.store.warm(
+                [k for target in page for k in self._person_keys(actor.subject, target)]
+            )
+            for target in page:
+                profile = self._active_profile(self.store.get, target)
+                if profile:
+                    items.append(self._card(profile, actor.subject))
         result = {"items": items}
         if after + limit < len(ids):
             result["nextCursor"] = page[-1]
@@ -635,10 +721,61 @@ class SocialService:
     # ---- posts, feed, comments -----------------------------------------------------------
 
     def _comment_rows(self, post_id):
-        return self._list("history", "POST#" + post_id, "COMMENT#", 1000)
+        rows = self.store.recall(("rows", post_id, "COMMENT#"))
+        return (
+            rows if rows is not None else self._list("history", "POST#" + post_id, "COMMENT#", 1000)
+        )
 
     def _like_rows(self, post_id):
-        return self._list("history", "POST#" + post_id, "LIKE#", 1000)
+        rows = self.store.recall(("rows", post_id, "LIKE#"))
+        return rows if rows is not None else self._list("history", "POST#" + post_id, "LIKE#", 1000)
+
+    def _person_keys(self, viewer, subject):
+        """O que `_active_profile` + `_card` leem de uma pessoa: conta, perfil e a relacao com quem ve."""
+        return [
+            ("identity", "USER#" + subject, "ACCOUNT"),
+            ("identity", "USER#" + subject, "PROFILE"),
+            ("identity", "USER#" + subject, "FOLLOWER#" + viewer),
+            ("identity", "USER#" + viewer, "FRIEND#" + subject),
+        ]
+
+    def _prefetch_post_rows(self, post_ids):
+        """Comentarios e curtidas de varias publicacoes, consultados em paralelo e guardados na memoria."""
+        wanted = [
+            (post_id, prefix)
+            for post_id in dict.fromkeys(post_ids)
+            for prefix in ("COMMENT#", "LIKE#")
+            if self.store.recall(("rows", post_id, prefix)) is None
+        ]
+        if not wanted:
+            return
+        with ThreadPoolExecutor(max_workers=min(16, len(wanted))) as pool:
+            found = list(
+                pool.map(lambda w: self._list("history", "POST#" + w[0], w[1], 1000), wanted)
+            )
+        for (post_id, prefix), rows in zip(wanted, found):
+            self.store.remember(("rows", post_id, prefix), rows)
+
+    def _post_views(self, parts, viewer):
+        """`_post_view` de varias publicacoes com poucas idas ao banco: um lote para autores, avaliacoes e
+        marcados; comentarios e curtidas em paralelo; e mais um lote para quem fez o ultimo comentario."""
+        with self.store.scope():
+            keys = []
+            for part in parts:
+                keys += self._person_keys(viewer, part["owner"])
+                if not part.get("extra"):
+                    keys.append(("history", "USER#" + part["owner"], "P#" + part["id"] + "#REVIEW"))
+                for subject in part.get("taggedUserIds") or []:
+                    keys += self._person_keys(viewer, subject)
+            self.store.warm(keys)
+            self._prefetch_post_rows([part["id"] for part in parts])
+            last = []
+            for part in parts:
+                comments = self._comment_rows(part["id"])
+                if comments:
+                    last += self._person_keys(viewer, comments[-1][1]["author"])
+            self.store.warm(last)
+            return [self._post_view(part, viewer) for part in parts]
 
     def _post_view(self, part, viewer):
         author = self._active_profile(self.store.get, part["owner"])
@@ -723,7 +860,7 @@ class SocialService:
             {**p, "owner": me} for p in self._completed(me) if p.get("publishToFeed")
         ] + self._extra_posts(me)
         parts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
-        return {"items": [self._post_view(p, me) for p in parts]}
+        return {"items": self._post_views(parts, me)}
 
     def _friend_ids(self, subject):
         return [
@@ -739,19 +876,28 @@ class SocialService:
         """Posts publicados pelos `authors` indicados (decisão de 08/11/2026: não inclui o
         próprio ator — "Amigos" e "Seguindo" mostram só quem está na lista; as minhas
         publicações aparecem em "Todos")."""
-        posts = []
-        for author in authors[:MAX_FEED_AUTHORS]:
+
+        # Cada autor pede 2 leituras e 2 consultas: em paralelo, o tempo deixa de crescer com a lista.
+        def load(author):
             if not self._author_active(self.store.get, author):
-                continue
-            for part in self._completed(author):
-                if part.get("publishToFeed"):
-                    key = (part.get("completedAt", ""), part["id"])
-                    if after is None or key < tuple(after):
-                        posts.append({**part, "owner": author})
-            for part in self._extra_posts(author):
-                key = (part.get("completedAt", ""), part["id"])
-                if after is None or key < tuple(after):
-                    posts.append(part)
+                return []
+            return [
+                {**part, "owner": author}
+                for part in self._completed(author)
+                if part.get("publishToFeed")
+            ] + self._extra_posts(author)
+
+        chosen = authors[:MAX_FEED_AUTHORS]
+        if not chosen:
+            return []
+        with ThreadPoolExecutor(max_workers=min(12, len(chosen))) as pool:
+            found = list(pool.map(load, chosen))
+        posts = [
+            part
+            for parts in found
+            for part in parts
+            if after is None or (part.get("completedAt", ""), part["id"]) < tuple(after)
+        ]
         posts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
         return posts
 
@@ -764,25 +910,68 @@ class SocialService:
         sempre reconferida na leitura, então uma conta apagada some do feed de todo mundo.
         Como `_completed`, assume volume pequeno de publicações na beta (sem paginação reversa
         no Store); crescer além disso pede um índice por tempo de verdade."""
-        posts, seen_owners = [], {}
-        for _, pointer in self._list("history", "FEED#PUBLIC", "T#", self.PUBLIC_FEED_SCAN):
-            key = (pointer.get("completedAt", ""), pointer["id"])
-            if after is not None and key >= tuple(after):
-                continue
-            owner = pointer["owner"]
-            if owner not in seen_owners:
-                seen_owners[owner] = self._author_active(self.store.get, owner)
-            if not seen_owners[owner]:
-                continue
-            if pointer.get("extra"):
-                item = self.store.get(("history", "USER#" + owner, "XP#" + pointer["id"]))
-                part = self._extra_part(self.store.get, owner, item)
-                if part:
-                    posts.append(part)
-                continue
-            part = self.store.get(("history", "USER#" + owner, "P#" + pointer["id"] + "#PART"))
-            if part and part.get("state") == "completed" and part.get("publishToFeed"):
-                posts.append({**part, "owner": owner})
+        pointers = [
+            pointer
+            for _, pointer in self._list("history", "FEED#PUBLIC", "T#", self.PUBLIC_FEED_SCAN)
+            if after is None or (pointer.get("completedAt", ""), pointer["id"]) < tuple(after)
+        ]
+        pointers.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
+        # Do mais novo para o mais antigo, em lotes, so ate encher a pagina (mais uma, para saber se ha
+        # proxima): antes lia TODAS as publicacoes, uma por vez, para devolver 20.
+        posts, seen_owners, step = [], {}, limit + 5
+        with self.store.scope():
+            for start in range(0, len(pointers), step):
+                batch = pointers[start : start + step]
+                keys = []
+                for pointer in batch:
+                    owner = pointer["owner"]
+                    keys += [
+                        ("identity", "USER#" + owner, "ACCOUNT"),
+                        ("identity", "USER#" + owner, "PROFILE"),
+                        (
+                            "history",
+                            "USER#" + owner,
+                            ("XP#" if pointer.get("extra") else "P#")
+                            + pointer["id"]
+                            + ("" if pointer.get("extra") else "#PART"),
+                        ),
+                    ]
+                self.store.warm(keys)
+                # Publicacao extra: a participacao a que ela pertence, tambem de uma vez.
+                parents = []
+                for pointer in batch:
+                    if pointer.get("extra"):
+                        item = self.store.get(
+                            ("history", "USER#" + pointer["owner"], "XP#" + pointer["id"])
+                        )
+                        if item:
+                            parents.append(
+                                (
+                                    "history",
+                                    "USER#" + pointer["owner"],
+                                    "P#" + item["participationId"] + "#PART",
+                                )
+                            )
+                self.store.warm(parents)
+                for pointer in batch:
+                    owner = pointer["owner"]
+                    if owner not in seen_owners:
+                        seen_owners[owner] = self._author_active(self.store.get, owner)
+                    if not seen_owners[owner]:
+                        continue
+                    if pointer.get("extra"):
+                        item = self.store.get(("history", "USER#" + owner, "XP#" + pointer["id"]))
+                        part = self._extra_part(self.store.get, owner, item)
+                        if part:
+                            posts.append(part)
+                        continue
+                    part = self.store.get(
+                        ("history", "USER#" + owner, "P#" + pointer["id"] + "#PART")
+                    )
+                    if part and part.get("state") == "completed" and part.get("publishToFeed"):
+                        posts.append({**part, "owner": owner})
+                if len(posts) > limit:
+                    break
         posts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
         return posts
 
@@ -796,19 +985,22 @@ class SocialService:
         """
         self.identity.authorize(actor, admitted=True)
         after = _cursor_decode(cursor) if cursor else None
-        if scope == "friends":
-            posts = self._authors_feed(actor, after, self._friends_of(actor))
-        elif scope == "network":
-            following = [
-                sk.split("#", 1)[1]
-                for sk, row in self._list("identity", "USER#" + actor.subject, "FOLLOWING#")
-                if row["state"] == "active"
-            ]
-            posts = self._authors_feed(actor, after, following)
-        else:
-            posts = self._public_feed(actor, after, limit)
-        page = posts[:limit]
-        result = {"items": [self._post_view(p, actor.subject) for p in page]}
+        # Uma memoria de leituras para a requisicao inteira: quem foi lido ao montar a lista nao e lido de
+        # novo ao montar cada publicacao.
+        with self.store.scope():
+            if scope == "friends":
+                posts = self._authors_feed(actor, after, self._friends_of(actor))
+            elif scope == "network":
+                following = [
+                    sk.split("#", 1)[1]
+                    for sk, row in self._list("identity", "USER#" + actor.subject, "FOLLOWING#")
+                    if row["state"] == "active"
+                ]
+                posts = self._authors_feed(actor, after, following)
+            else:
+                posts = self._public_feed(actor, after, limit)
+            page = posts[:limit]
+            result = {"items": self._post_views(page, actor.subject)}
         if len(posts) > limit:
             result["nextCursor"] = _cursor_encode([page[-1].get("completedAt", ""), page[-1]["id"]])
         return result
@@ -1157,15 +1349,37 @@ class SocialService:
                 item.update(extra)
             items.append(item)
 
-        for sk, row in self._list("identity", "USER#" + me, "FOLLOWER#"):
+        followers = self._list("identity", "USER#" + me, "FOLLOWER#")
+        friends = self._list("identity", "USER#" + me, "FRIEND#")
+        self.store.warm(
+            [
+                k
+                for sk, row in [*followers, *friends]
+                if row.get("at", "") >= since or row.get("state") == "pending"
+                for k in self._person_keys(me, sk.split("#", 1)[1])
+            ]
+        )
+        for sk, row in followers:
             add("follow", row["at"], sk.split("#", 1)[1])
-        for sk, row in self._list("identity", "USER#" + me, "FRIEND#"):
+        for sk, row in friends:
             who = sk.split("#", 1)[1]
             pending = row["state"] == "pending" and row.get("requestedBy") != me
             if row["state"] == "active" or pending:
                 add("friend_request" if pending else "friend", row["at"], who, pinned=pending)
         mine = [p for p in self._completed(me) if p.get("publishToFeed")] + self._extra_posts(me)
         mine.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
+        # Curtidas e comentarios das minhas publicacoes: consultados em paralelo, e quem aparece neles
+        # (dentro do periodo) lido num lote so.
+        recent = mine[: self.NOTIFICATION_POSTS]
+        self._prefetch_post_rows([part["id"] for part in recent])
+        people = {
+            row["author"]
+            for part in recent
+            for rows in (self._like_rows(part["id"]), self._comment_rows(part["id"]))
+            for _, row in rows
+            if row["author"] != me and row.get("createdAt", "") >= since
+        }
+        self.store.warm([k for who in people for k in self._person_keys(me, who)])
         for part in mine[: self.NOTIFICATION_POSTS]:
             for sk, row in self._like_rows(part["id"]):
                 if row["author"] != me:
@@ -1185,7 +1399,16 @@ class SocialService:
             for sk, row in self._list("identity", "USER#" + me, "FOLLOWING#")
             if row["state"] == "active"
         ]
-        for part in self._authors_feed(actor, None, following)[: self.NOTIFICATION_POSTS]:
+        followed_posts = self._authors_feed(actor, None, following)[: self.NOTIFICATION_POSTS]
+        self.store.warm(
+            [
+                k
+                for part in followed_posts
+                if part.get("completedAt", "") >= since
+                for k in self._person_keys(me, part["owner"])
+            ]
+        )
+        for part in followed_posts:
             if part["owner"] != me:
                 add("post", part.get("completedAt", ""), part["owner"], part)
         self._request_result_notifications(me, since, items)
@@ -1234,7 +1457,10 @@ class SocialService:
         """Curtidas e respostas nos meus comentarios (dos ultimos que fiz)."""
         me = actor.subject
         by_post = {}
-        for sk, ref in self._list("identity", "USER#" + me, "COMMENTREF#", 100):
+        refs = self._list("identity", "USER#" + me, "COMMENTREF#", 100)
+        # Os meus comentarios, lidos de uma vez (antes, um por um).
+        self.store.warm([tuple(ref["sharedKeys"][0]) for _, ref in refs if ref.get("sharedKeys")])
+        for sk, ref in refs:
             keys = ref.get("sharedKeys") or []
             row = self.store.get(tuple(keys[0])) if keys else None
             if row:
@@ -1270,7 +1496,9 @@ class SocialService:
         since = stamp(now - timedelta(days=self.NOTIFICATION_DAYS))
         state = self.store.get(("identity", "USER#" + actor.subject, "NOTIFSTATE")) or {}
         read_at = state.get("readAt", "")
-        items = self._notification_items(actor, since, set(state.get("dismissed", [])))
+        # Os avisos citam as mesmas pessoas muitas vezes: com a memoria de leituras cada uma e lida uma vez.
+        with self.store.scope():
+            items = self._notification_items(actor, since, set(state.get("dismissed", [])))
         for item in items:
             item["unread"] = item["createdAt"] > read_at
         return {"items": items, "unreadCount": sum(1 for i in items if i["unread"])}
