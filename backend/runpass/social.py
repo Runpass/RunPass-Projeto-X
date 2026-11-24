@@ -129,6 +129,12 @@ class SocialService:
             return None
         return profile
 
+    @staticmethod
+    def removed_author(subject):
+        """Conta excluida/indisponivel no app: anonima. O nome e o usuario ficam so no registro de
+        auditoria do back (DELETEDUSER#), que nenhuma rota do app le."""
+        return {"id": subject, "displayName": "Usuário removido", "removed": True}
+
     def _follow_state(self, read, viewer, target):
         if viewer == target:
             return "self"
@@ -261,9 +267,10 @@ class SocialService:
         lead = max(seeds, key=len)
         rows = self._list("identity", "PIDX#" + lead[:MIN_TOKEN], lead, SEARCH_SCAN)
         subjects = []
+        blocked = self._blocked_ids(actor.subject)
         for sk, _ in rows:
             subject = sk.split("#", 1)[1]
-            if subject != actor.subject and subject not in subjects:
+            if subject != actor.subject and subject not in subjects and subject not in blocked:
                 subjects.append(subject)
         found = []
         for profile in self._profiles(subjects).values():
@@ -411,7 +418,7 @@ class SocialService:
         self.identity.authorize(actor, admitted=True)
         me = actor.subject
         ctx = self._closeness(me)
-        known = {me} | ctx["friends"]
+        known = {me} | ctx["friends"] | self._blocked_ids(me)
         known.update(self._relation_subjects(me, "FOLLOWING#", "active"))
         known.update(self._relation_subjects(me, "FOLLOWING#", "pending"))
         order, seen = [], set()
@@ -454,7 +461,7 @@ class SocialService:
             # paralelo. Antes eram umas dez idas ao banco em fila.
             self.store.warm(self._person_keys(actor.subject, subject))
             profile = self._active_profile(self.store.get, subject)
-            if not profile:
+            if not profile or self._is_blocked(self.store.get, actor.subject, subject):
                 raise Problem(404, "PROFILE_NOT_FOUND")
             card = self._card(profile, actor.subject)
             with ThreadPoolExecutor(max_workers=3) as pool:
@@ -573,7 +580,7 @@ class SocialService:
 
         def work(read, write, account, now, replay):
             profile = self._active_profile(read, target)
-            if not profile:
+            if not profile or self._is_blocked(read, actor.subject, target):
                 raise Problem(404, "PROFILE_NOT_FOUND")
             mine = ("identity", "USER#" + actor.subject, "FOLLOWING#" + target)
             theirs = ("identity", "USER#" + target, "FOLLOWER#" + actor.subject)
@@ -617,7 +624,7 @@ class SocialService:
 
         def work(read, write, account, now, replay):
             profile = self._active_profile(read, target)
-            if not profile:
+            if not profile or self._is_blocked(read, actor.subject, target):
                 raise Problem(404, "PROFILE_NOT_FOUND")
             mine = ("identity", "USER#" + actor.subject, "FRIEND#" + target)
             theirs = ("identity", "USER#" + target, "FRIEND#" + actor.subject)
@@ -830,7 +837,11 @@ class SocialService:
             pointer = read(("history", "XPOST#" + post_id, "OWNER"))
             item = pointer and read(("history", "USER#" + pointer["owner"], "XP#" + post_id))
             part = item and self._extra_part(read, pointer["owner"], item)
-            if not part or not self._author_active(read, pointer["owner"]):
+            if (
+                not part
+                or not self._author_active(read, pointer["owner"])
+                or self._is_blocked(read, viewer, pointer["owner"])
+            ):
                 raise Problem(404, "POST_NOT_FOUND")
             return part
         owner = read(("history", "PARTICIPATION#" + post_id, "OWNER"))
@@ -842,6 +853,7 @@ class SocialService:
             or part.get("state") != "completed"
             or not part.get("publishToFeed")
             or not self._author_active(read, owner["owner"])
+            or self._is_blocked(read, viewer, owner["owner"])
         ):
             raise Problem(404, "POST_NOT_FOUND")
         return {**part, "owner": owner["owner"]}
@@ -879,7 +891,7 @@ class SocialService:
 
         # Cada autor pede 2 leituras e 2 consultas: em paralelo, o tempo deixa de crescer com a lista.
         def load(author):
-            if not self._author_active(self.store.get, author):
+            if author in blocked or not self._author_active(self.store.get, author):
                 return []
             return [
                 {**part, "owner": author}
@@ -887,7 +899,8 @@ class SocialService:
                 if part.get("publishToFeed")
             ] + self._extra_posts(author)
 
-        chosen = authors[:MAX_FEED_AUTHORS]
+        blocked = self._blocked_ids(actor.subject)
+        chosen = [a for a in authors if a not in blocked][:MAX_FEED_AUTHORS]
         if not chosen:
             return []
         with ThreadPoolExecutor(max_workers=min(12, len(chosen))) as pool:
@@ -919,6 +932,8 @@ class SocialService:
         # Do mais novo para o mais antigo, em lotes, so ate encher a pagina (mais uma, para saber se ha
         # proxima): antes lia TODAS as publicacoes, uma por vez, para devolver 20.
         posts, seen_owners, step = [], {}, limit + 5
+        blocked = self._blocked_ids(actor.subject)
+        pointers = [p for p in pointers if p["owner"] not in blocked]
         with self.store.scope():
             for start in range(0, len(pointers), step):
                 batch = pointers[start : start + step]
@@ -1240,6 +1255,8 @@ class SocialService:
         self._authorized_post(self.store.get, actor.subject, post_id)
         rows = [r for _, r in self._comment_rows(post_id)]
         likes = self._comment_likes(post_id)
+        blocked = self._blocked_ids(actor.subject)
+        rows = [r for r in rows if r["author"] not in blocked]
         replies = {}
         for row in rows:
             if row.get("parentId"):
@@ -1329,9 +1346,10 @@ class SocialService:
     def _notification_items(self, actor, since, dismissed=()):
         me = actor.subject
         items = []
+        blocked = self._blocked_ids(me)
 
         def add(kind, at, who, post=None, extra=None, pinned=False):
-            if at < since and not pinned:
+            if (at < since and not pinned) or who in blocked:
                 return
             profile = self._active_profile(self.store.get, who)
             if not profile:
@@ -1620,7 +1638,9 @@ class SocialService:
             "likeCount": 0,
             "likedByMe": False,
             **{k: v for k, v in row.items() if k != "author"},
-            "author": self._card(profile, viewer) if profile else {"id": row["author"]},
+            "author": self._card(profile, viewer)
+            if profile
+            else self.removed_author(row["author"]),
         }
 
     def edit_comment(self, actor, comment_id, key, text, expected_version=None):
@@ -1698,6 +1718,145 @@ class SocialService:
 
     # ---- comentarios na corrida (qualquer pessoa admitida comenta; independe de participacao) ---------------
 
+    # ---- bloquear e denunciar (exigencia da App Store para conteudo de usuario) -----------------
+    MAX_BLOCKS = 200
+    REPORT_QUEUE = "REPORT#ALL"
+    REPORT_PER_DAY = 20
+    REPORT_REASONS = ("spam", "offensive", "nudity", "violence", "fake", "other")
+
+    def _blocked_ids(self, viewer):
+        """Quem eu bloqueei e quem me bloqueou (nos dois sentidos o conteudo some)."""
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            mine, theirs = pool.map(
+                lambda prefix: self._list(
+                    "identity", "USER#" + viewer, prefix, self.MAX_BLOCKS * 2
+                ),
+                ("BLOCK#", "BLOCKEDBY#"),
+            )
+        return {sk.split("#", 1)[1] for sk, _ in [*mine, *theirs]}
+
+    @staticmethod
+    def _is_blocked(read, viewer, other):
+        return bool(
+            read(("identity", "USER#" + viewer, "BLOCK#" + other))
+            or read(("identity", "USER#" + viewer, "BLOCKEDBY#" + other))
+        )
+
+    def block(self, actor, target, key):
+        """Bloqueia uma pessoa: some de feed, busca, comentarios e avisos nos dois sentidos, e as relacoes
+        (seguir e amizade) acabam. A linha do outro lado entra em `sharedKeys` (a limpeza da conta leva)."""
+        if target == actor.subject:
+            raise Problem(422, "CANNOT_BLOCK_SELF")
+
+        def work(read, write, account, now, replay):
+            if not read(("identity", "USER#" + target, "PROFILE")):
+                raise Problem(404, "PROFILE_NOT_FOUND")
+            me = "USER#" + actor.subject
+            other = "USER#" + target
+            mine = ("identity", me, "BLOCK#" + target)
+            if read(mine):
+                return {"id": target, "blocked": True}, {}
+            if len(self._list("identity", me, "BLOCK#", self.MAX_BLOCKS)) >= self.MAX_BLOCKS:
+                raise Problem(409, "BLOCK_LIMIT_REACHED")
+            theirs = ("identity", other, "BLOCKEDBY#" + actor.subject)
+            write(mine, {"at": stamp(now), "sharedKeys": [list(theirs)]})
+            write(theirs, {"at": stamp(now), "sharedKeys": [list(mine)]})
+            for first, second in ((me, other), (other, me)):
+                for prefix, owner_of_first in (("FOLLOWING#", "FOLLOWER#"), ("FRIEND#", "FRIEND#")):
+                    a = ("identity", first, prefix + second.split("#", 1)[1])
+                    b = ("identity", second, owner_of_first + first.split("#", 1)[1])
+                    if read(a):
+                        write(a, None)
+                    if read(b):
+                        write(b, None)
+            return {"id": target, "blocked": True}, {}
+
+        return self.identity.transact(actor, "putBlock", key, {"id": target}, work, admitted=True)
+
+    def unblock(self, actor, target, key):
+        def work(read, write, account, now, replay):
+            mine = ("identity", "USER#" + actor.subject, "BLOCK#" + target)
+            theirs = ("identity", "USER#" + target, "BLOCKEDBY#" + actor.subject)
+            if read(mine):
+                write(mine, None)
+            if read(theirs):
+                write(theirs, None)
+            return {"id": target, "blocked": False}, {}
+
+        return self.identity.transact(
+            actor, "deleteBlock", key, {"id": target}, work, admitted=True
+        )
+
+    def blocks(self, actor):
+        """Pessoas que eu bloqueei (para a tela de gerenciar bloqueios)."""
+        self.identity.authorize(actor, admitted=True)
+        rows = self._list("identity", "USER#" + actor.subject, "BLOCK#", self.MAX_BLOCKS)
+        subjects = [sk.split("#", 1)[1] for sk, _ in rows]
+        profiles = self._profiles(subjects)
+        items = [
+            {
+                **(
+                    {
+                        k: profiles[s][k]
+                        for k in ("id", "displayName", "username", "photoReference")
+                        if k in profiles[s]
+                    }
+                    if s in profiles
+                    else self.removed_author(s)
+                ),
+            }
+            for s in subjects
+        ]
+        return {"items": items}
+
+    def report(self, actor, key, target_type, target_id, reason, text=None):
+        """Denuncia de uma publicacao, comentario ou pessoa. So a equipe le (fila unica, no portal).
+        Nao some com o conteudo na hora: a equipe analisa. Quem denuncia pode bloquear em seguida."""
+        text = (text or "").strip()
+        if len(text) > 1000:
+            raise Problem(422, "INVALID_REPORT")
+        if reason not in self.REPORT_REASONS:
+            raise Problem(422, "INVALID_REPORT")
+        self.identity.authorize(actor, admitted=True)
+
+        def work(read, write, account, now, replay):
+            if replay is not None:
+                return {"id": replay["id"], "received": True}, replay
+            created = stamp(now)
+            today = [
+                sk
+                for sk, _ in self._list(
+                    "identity", "USER#" + actor.subject, "REPORTREF#" + created[:10]
+                )
+            ]
+            if len(today) >= self.REPORT_PER_DAY:
+                raise Problem(429, "REPORT_LIMIT_REACHED")
+            report_id = str(uuid4())
+            row = {
+                "id": report_id,
+                "reporter": actor.subject,
+                "targetType": target_type,
+                "targetId": target_id,
+                "reason": reason,
+                "createdAt": created,
+            }
+            if text:
+                row["text"] = text
+            write(("history", self.REPORT_QUEUE, f"R#{created}#{report_id}"), row)
+            # So um marcador de limite na particao da pessoa; a denuncia em si fica para a equipe mesmo se
+            # a conta de quem denunciou for apagada (registro de moderacao).
+            write(("identity", "USER#" + actor.subject, f"REPORTREF#{created}#{report_id}"), {})
+            return {"id": report_id, "received": True}, {"id": report_id}
+
+        return self.identity.transact(
+            actor,
+            "sendReport",
+            key,
+            {"targetType": target_type, "targetId": target_id, "reason": reason, "text": text},
+            work,
+            admitted=True,
+        )
+
     # ---- feedback sobre o app ---------------------------------------------------------------
     FEEDBACK_QUEUE = "FEEDBACK#ALL"
     FEEDBACK_PER_DAY = 10
@@ -1766,7 +1925,9 @@ class SocialService:
             "text": row["text"],
             "createdAt": row["createdAt"],
             "mine": row["author"] == viewer,
-            "author": self._card(profile, viewer) if profile else {"id": row["author"]},
+            "author": self._card(profile, viewer)
+            if profile
+            else self.removed_author(row["author"]),
         }
 
     def edition_comment(self, actor, edition_id, key, text):
@@ -1918,3 +2079,47 @@ def list_feedback_for_team(store, limit=100):
 
 
 __all__ = ["SocialService", "Unavailable"]
+
+
+def list_reports_for_team(store, limit=100):
+    """Denuncias para a equipe analisar, da mais nova para a mais antiga, com quem denunciou e o alvo."""
+    rows, after = [], None
+    while len(rows) < 1000:
+        page, after = store.query(
+            "history", SocialService.REPORT_QUEUE, prefix="R#", after=after, limit=100
+        )
+        rows.extend(r for _, r in page)
+        if after is None:
+            break
+    rows.sort(key=lambda r: (r["createdAt"], r["id"]), reverse=True)
+    items = []
+    for row in rows[:limit]:
+        who = store.get(("identity", "USER#" + row["reporter"], "PROFILE")) or {}
+        item = {
+            k: row[k]
+            for k in ("id", "targetType", "targetId", "reason", "text", "createdAt")
+            if k in row
+        }
+        item["reporterName"] = who.get("displayName") or "Conta removida"
+        item["reporterUsername"] = who.get("username")
+        if row["targetType"] == "user":
+            target = store.get(("identity", "USER#" + row["targetId"], "PROFILE")) or {}
+            item["targetName"] = target.get("displayName") or "Conta removida"
+            item["targetUsername"] = target.get("username")
+        items.append(item)
+    return items
+
+
+def list_deleted_accounts(store, limit=100):
+    """Registro de auditoria das contas excluidas (o app as trata como anonimas), da mais nova para a mais antiga."""
+    rows, after = [], None
+    while len(rows) < 2000:
+        page, after = store.query("identity", "DELETEDUSERS", after=after, limit=100)
+        rows.extend(r for _, r in page)
+        if after is None:
+            break
+    rows.sort(key=lambda r: r.get("deletedAt", ""), reverse=True)
+    return [
+        {k: r.get(k) for k in ("subject", "username", "displayName", "deletedAt", "operationId")}
+        for r in rows[:limit]
+    ]

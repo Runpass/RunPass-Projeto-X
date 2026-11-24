@@ -502,6 +502,18 @@ class IdentityService:
             work_pk = "WORK#erase_account#pending#" + str(int(operation[:2], 16) % 16)
             work_sk = stamp(now) + "#" + operation
             write(("identity", pk, "ACCOUNT"), {**(account or {}), "state": "deleting"})
+            # Registro de auditoria: o app trata a conta como anonima (some de busca, feed e perfis), mas o
+            # back guarda quem era, para apuracoes futuras. So o minimo (id, usuario, nome, datas): sem
+            # e-mail, nascimento, cidade, fotos nem textos. Fica fora de USER#, entao a limpeza nao o apaga.
+            tombstone = {
+                "subject": principal.subject,
+                "username": profile.get("username") if profile else None,
+                "displayName": profile.get("displayName") if profile else None,
+                "deletedAt": stamp(now),
+                "operationId": operation,
+            }
+            write(("identity", "DELETEDUSER#" + principal.subject, "TOMBSTONE"), tombstone)
+            write(("identity", "DELETEDUSERS", stamp(now) + "#" + principal.subject), tombstone)
             write(
                 self.erasure(principal.subject),
                 {

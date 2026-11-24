@@ -933,6 +933,27 @@ class AdminApiTests(unittest.TestCase):
             self.client.get("/admin/feedback", headers=self.auth(token("mod"))).status_code, 403
         )
 
+    def test_equipe_le_denuncias_e_contas_excluidas(self):
+        ana = self.pessoa("rep1")
+        bia = self.pessoa("rep2")
+        social = SocialService(self.identity)
+        social.report(ana, "kr1", "user", bia.subject, "spam", "manda propaganda")
+        r = self.client.get("/admin/reports", headers=self.auth())
+        self.assertEqual(r.status_code, 200, r.text)
+        item = r.json()["items"][0]
+        self.assertEqual((item["reason"], item["targetType"]), ("spam", "user"))
+        self.assertIn("reporterName", item)
+        self.assertEqual(
+            self.client.get("/admin/reports", headers=self.auth(token("mod"))).status_code, 403
+        )
+        self.identity.delete_account(bia, "kdel")
+        self.assertEqual(
+            self.client.get("/admin/deleted-accounts", headers=self.auth()).status_code, 403
+        )  # operador de catalogo nao le dados de pessoas
+        r = self.client.get("/admin/deleted-accounts", headers=self.auth(token("adm")))
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual([i["subject"] for i in r.json()["items"]], [bia.subject])
+
     def test_equipe_ve_e_remove_comentario_da_corrida_com_auditoria(self):
         person = self.pessoa("tom")
         head = ("catalog", "EDITION#synthetic-sp-2026", "HEAD")

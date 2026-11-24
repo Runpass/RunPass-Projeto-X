@@ -345,3 +345,14 @@ test('feedbacks do app: aba, tipos e resumo', async () => {
     '3 feedbacks: 1 sugestão, 2 problemas.',
   );
 });
+
+test('denúncias e contas excluídas: abas, motivos e resumo', async () => {
+  const { ABAS, MOTIVOS_DENUNCIA, ALVOS_DENUNCIA, resumoDenuncias } = await import('./lib.js');
+  assert.deepEqual(ABAS.denuncias, ['Denúncias', 'catalog_admin']);
+  assert.deepEqual(ABAS.excluidas, ['Contas excluídas', 'user_admin']);
+  assert.equal(MOTIVOS_DENUNCIA.nudity, 'Nudez ou conteúdo sexual');
+  assert.equal(ALVOS_DENUNCIA.user, 'Pessoa');
+  assert.equal(resumoDenuncias([]), 'Nenhuma denúncia recebida.');
+  assert.equal(resumoDenuncias([{}]), '1 denúncia.');
+  assert.equal(resumoDenuncias([{}, {}]), '2 denúncias.');
+});

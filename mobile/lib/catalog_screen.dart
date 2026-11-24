@@ -164,6 +164,8 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   'EDITION_ARCHIVED' => 'Esta edição está arquivada e não aceita novos registros. Escolha outra corrida.',
   'EDITION_CHANGED' => 'O cadastro desta corrida foi atualizado depois que você abriu a tela. Volte à lista e abra a corrida de novo.',
   'INVALID_DISTANCE' => 'Informe uma distância entre 0,1 e 1000 km.',
+  'INVALID_DISTANCE_PRECISION' =>
+    'Use até 4 casas depois da vírgula, por exemplo 21,0975.',
   'DISTANCE_NOT_ADDABLE' =>
     'Esta corrida já tem distâncias oficiais. Escolha uma delas.',
   'DISTANCE_LIMIT_REACHED' =>
@@ -186,6 +188,7 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   'REQUEST_NOT_EDITABLE' || 'REQUEST_NOT_REJECTED' => 'Este pedido não pode mais ser corrigido (ele já foi analisado ou reenviado). Atualize a lista.',
   'EDITION_REQUEST_NOT_FOUND' =>
     'Não encontramos este pedido. Volte à lista de solicitações.',
+  'PARTICIPATION_NOT_COMPLETED' => 'Isto só pode ser alterado depois que a corrida é concluída. Conclua o registro e tente de novo.',
   'PARTICIPATION_NOT_DRAFT' => 'Esta participação já foi concluída ou excluída, então não pode mais ser alterada como rascunho.',
   _ => 'Não foi possível concluir agora. Pode ser falta de conexão ou instabilidade do serviço. Tente novamente em instantes.',
 };
@@ -3927,13 +3930,15 @@ Future<List<Map>?> askRunnerDistance(
     ),
   );
   if (text == null || text.isEmpty) return null;
-  final km = double.tryParse(
-    text
-        .replaceAll(RegExp(r'\s*km$', caseSensitive: false), '')
-        .replaceAll(',', '.'),
-  );
+  final cleaned = text
+      .replaceAll(RegExp(r'\s*km$', caseSensitive: false), '')
+      .replaceAll(',', '.');
+  final km = double.tryParse(cleaned);
   if (km == null || km <= 0 || km > 1000) {
     throw const IdentityIssue('INVALID_DISTANCE');
+  }
+  if (kmHasTooManyDecimals(cleaned)) {
+    throw const IdentityIssue('INVALID_DISTANCE_PRECISION');
   }
   // Vai como número (o servidor guarda a distância como decimal).
   final result = await gateway.request(
@@ -4661,42 +4666,15 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     );
   }
 
-  /// "Salvar como rascunho": grava no servidor o tempo, a colocação, o peito e a foto da medalha já validada,
-  /// e leva para Medalhas. Nada é publicado e a participação não é concluída; o resto (notas, comentário)
-  /// fica guardado no aparelho e volta quando o rascunho é aberto de novo.
+  /// "Salvar como rascunho": grava no servidor o tempo, a colocação e o peito e leva para Medalhas. Nada é
+  /// publicado e a participação não é concluída; a foto da medalha, as notas e o comentário ficam guardados
+  /// no aparelho e voltam quando o rascunho é aberto de novo.
   Future<void> saveAsDraft() async {
     final saved = await saveData(announce: false);
     if (!saved || !mounted) return;
-    final reference = imageReference;
-    if (reference != null && reference != draft['medalImageReference']) {
-      setState(() {
-        saving = true;
-        message = null;
-      });
-      try {
-        draft = await widget.gateway.request(
-          '/participations/${Uri.encodeComponent(draft['id'] as String)}',
-          method: 'PATCH',
-          body: {
-            'expectedVersion': draft['version'],
-            'medalImageReference': reference,
-          },
-        );
-      } on IdentityIssue catch (issue) {
-        if (mounted) setState(() => message = catalogError(issue));
-        return;
-      } on Exception {
-        if (mounted) {
-          setState(
-            () => message =
-                'Não foi possível salvar o rascunho agora. Tente de novo.',
-          );
-        }
-        return;
-      } finally {
-        if (mounted) setState(() => saving = false);
-      }
-    }
+    // A foto da medalha NÃO vai ao servidor aqui: ele só aceita trocá-la depois que a corrida é concluída
+    // (PARTICIPATION_NOT_COMPLETED). A referência (já validada e enviada) fica no formulário guardado e
+    // volta quando o rascunho é aberto de novo.
     if (!mounted) return;
     // Notas, comentário e o resto do formulário ficam guardados neste aparelho.
     final snapshot = formSnapshot();
@@ -4704,7 +4682,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     await persistDraftForm(draft['id'] as String, snapshot);
     if (mounted) {
       toMedals(
-        'Rascunho salvo. As notas e o comentário ficam neste aparelho. Nada foi publicado.',
+        'Rascunho salvo. A foto, as notas e o comentário ficam neste aparelho. Nada foi publicado.',
       );
     }
   }

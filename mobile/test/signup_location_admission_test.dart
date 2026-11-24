@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:runpass/identity_gateway.dart';
@@ -140,6 +141,9 @@ void main() {
       await tester.tap(find.text('Feminino'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('birth-date-field')));
+      await tester.pumpAndSettle();
+      // O "Concluído" só vale depois de girar uma roda (a pessoa escolhe a data, não a aceita sem olhar).
+      await tester.drag(find.byType(CupertinoPicker).last, const Offset(0, 80));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('birth-date-done')));
       await tester.pumpAndSettle();

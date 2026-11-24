@@ -17,6 +17,7 @@ import 'tagged_people.dart';
 import 'undo_delete.dart' show deleteWithUndo, pendingDeletions;
 import 'post_stats.dart';
 import 'runpass_theme.dart';
+import 'safety.dart';
 
 /// Um cartao do Inicio. Vem de uma publicacao (`/feed`, `/posts/{id}`) ou de uma corrida
 /// concluida da propria pessoa que ainda nao esta no feed.
@@ -501,6 +502,53 @@ class _PostCardState extends State<PostCard> {
   /// exclui a participação e a medalha dela. A publicação extra sai sozinha (a corrida, a medalha e a outra
   /// publicação continuam). O cartão some na hora; a exclusão só vai ao servidor quando a janela do
   /// "Desfazer" fecha.
+  /// Denuncia esta publicação (e oferece bloquear quem publicou).
+  Future<void> reportPost() async {
+    final authorId = entry.authorProfile?['id'] as String?;
+    final postId = entry.postId;
+    if (postId == null) return;
+    final sent = await reportContent(
+      context,
+      widget.gateway,
+      targetType: 'post',
+      targetId: postId,
+      blockUserId: authorId,
+      blockUserName: entry.author,
+    );
+    if (sent && mounted && authorId != null) await hideIfBlocked(authorId);
+  }
+
+  Future<void> blockAuthor() async {
+    final authorId = entry.authorProfile?['id'] as String?;
+    if (authorId == null) return;
+    final done = await blockPerson(
+      context,
+      widget.gateway,
+      authorId,
+      entry.author,
+    );
+    if (done && mounted) hideBlocked();
+  }
+
+  /// Depois de denunciar e bloquear, a publicação some desta tela.
+  Future<void> hideIfBlocked(String authorId) async {
+    try {
+      final result = await widget.gateway.request('/me/blocks');
+      final blocked = ((result['items'] as List?) ?? const []).any(
+        (b) => (b as Map)['id'] == authorId,
+      );
+      if (blocked && mounted) hideBlocked();
+    } on Exception {
+      // Sem a lista, a publicação some na próxima recarga.
+    }
+  }
+
+  void hideBlocked() {
+    setState(() => removed = true);
+    widget.onRemoved?.call();
+    widget.onChanged?.call();
+  }
+
   Future<void> removeMine() async {
     final participation = entry.race.participation;
     final participationId = participation['id'] as String?;
@@ -861,7 +909,25 @@ class _PostCardState extends State<PostCard> {
                     ],
                   )
                 else
-                  const Icon(Icons.more_horiz),
+                  PopupMenuButton<String>(
+                    key: Key('post-menu-${entry.postId}'),
+                    tooltip: 'Opções da publicação',
+                    icon: const Icon(Icons.more_horiz),
+                    onSelected: (value) =>
+                        value == 'report' ? reportPost() : blockAuthor(),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        key: Key('post-menu-report'),
+                        value: 'report',
+                        child: Text('Denunciar publicação'),
+                      ),
+                      PopupMenuItem(
+                        key: const Key('post-menu-block'),
+                        value: 'block',
+                        child: Text('Bloquear ${entry.author}'),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),

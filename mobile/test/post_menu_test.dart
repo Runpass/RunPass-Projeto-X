@@ -84,7 +84,7 @@ Future<IdentityGateway> gateway(
 
 void main() {
   testWidgets('no início, os três pontinhos da minha publicação têm Editar e '
-      'Remover; a de outra pessoa não tem menu', (tester) async {
+      'Remover; a de outra pessoa tem Denunciar e Bloquear', (tester) async {
     tester.view.physicalSize = const Size(900, 4000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -94,11 +94,20 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('post-menu-p-minha')), findsOneWidget);
-    expect(find.byKey(const Key('post-menu-p-amiga')), findsNothing);
     await tester.tap(find.byKey(const Key('post-menu-p-minha')));
     await tester.pumpAndSettle();
     expect(find.text('Editar'), findsOneWidget);
     expect(find.text('Remover'), findsOneWidget);
+    expect(find.text('Denunciar publicação'), findsNothing);
+    await tester.tapAt(const Offset(5, 5)); // fecha o menu
+    await tester.pumpAndSettle();
+    // A de outra pessoa não edita nem remove: só denuncia e bloqueia.
+    await tester.tap(find.byKey(const Key('post-menu-p-amiga')));
+    await tester.pumpAndSettle();
+    expect(find.text('Denunciar publicação'), findsOneWidget);
+    expect(find.textContaining('Bloquear'), findsOneWidget);
+    expect(find.text('Editar'), findsNothing);
+    expect(find.text('Remover'), findsNothing);
   });
 
   testWidgets(
@@ -159,10 +168,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(home: RunPassHomeScreen(gateway: g)));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('post-menu-p-minha')), findsNothing);
-      expect(
-        find.byKey(const Key('post-menu-p-amiga')),
-        findsNothing,
-      ); // a da amiga não tem menu
+      expect(find.text('Remover'), findsNothing); // a da amiga não remove
       expect(find.text('Amiga'), findsWidgets);
     },
   );

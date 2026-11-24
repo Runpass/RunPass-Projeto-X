@@ -1,7 +1,7 @@
 import cfg from './config.js';
 import { concluirAutenticador, confirmarMfa, definirSenha, entrar, iniciarAutenticador } from './cognito.js';
 import {
-  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, quandoMensal, listaDiasMes, montarAprovacao, montarRenomear, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros, resumoFeedbacks, TIPOS_FEEDBACK,
+  dataBr, motivoOpenAi, RESULTADO_CONFERENCIA, taxa, DIAS_SEMANA, TIPOS_AGENDAMENTO, TIPO_DIVERGENCIA, textoRevocacao, ABAS, TEMAS, lerPrefs, abaInicial, listaKm, validarDecisao, MAX_PROVAS_POR_EXECUCAO, TIPOS_FONTE, NIVEIS_FONTE, VERIFICACAO_FONTE, idFonte, validarFonte, quandoTexto, validarAgendamento, quandoMensal, listaDiasMes, montarAprovacao, montarRenomear, textoAprovacao, montarPublicacaoBanner, MODOS_CATALOGO, PERMISSOES, dataHojeIso, notaDireitosPadrao, permissoesDe, situacaoOperador, barras, compacto, mesBr, percentual, usd, ativa, dataHoraBr, descreverAgendamento, duracao, situacaoExecucao, emailValido, linkSeguro, mensagem, montarDecisao, resumoCadastros, resumoFeedbacks, TIPOS_FEEDBACK, MOTIVOS_DENUNCIA, ALVOS_DENUNCIA, resumoDenuncias,
   resumoPedido, segundosAteExpirar, statusCadastro, montarBannerArquivo, dimensoesEnvio, resumoImporte,
 } from './lib.js';
 
@@ -67,6 +67,8 @@ function sair(motivo) {
   $('segredo').textContent = '';
   $('cadastros').replaceChildren();
   $('feedbacks').replaceChildren();
+  $('denuncias').replaceChildren();
+  $('excluidas').replaceChildren();
   $('custos').replaceChildren();
   $('operadores').replaceChildren();
   $('banners-candidatas').replaceChildren();
@@ -1361,6 +1363,8 @@ function mostrarAba(nome) {
   if (nome === 'descobertas') carregarDescobertas();
   if (nome === 'cadastros') carregarCadastros();
   if (nome === 'feedbacks') carregarFeedbacks();
+  if (nome === 'denuncias') carregarDenuncias();
+  if (nome === 'excluidas') carregarExcluidas();
   if (nome === 'qualidade') carregarQualidade();
   if (nome === 'custos') carregarCustos();
   if (nome === 'banners') carregarBanners();
@@ -1382,6 +1386,90 @@ async function carregarCadastros() {
             el('tbody', {}, r.items.map((u) => el('tr', {}, el('td', {}, u.id), el('td', {}, u.username ? '@' + u.username : '—'), el('td', {}, u.email), el('td', {}, statusCadastro(u.status) + (u.enabled ? '' : ' (desativado)')), el('td', {}, (u.createdAt || '').slice(0, 10).split('-').reverse().join('/'))))),
           )
         : el('p', { class: 'vazio' }, 'Nenhum cadastro ainda.'),
+    );
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+/** Denúncias feitas no app: quando, alvo, motivo, quem denunciou e o texto livre. */
+async function carregarDenuncias() {
+  const alvo = $('denuncias');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/reports?limit=200');
+    $('resumo-denuncias').textContent = resumoDenuncias(r.items);
+    alvo.replaceChildren(
+      r.items.length
+        ? el(
+            'table',
+            { class: 'tabela' },
+            el('thead', {}, el('tr', {}, el('th', {}, 'Quando'), el('th', {}, 'O quê'), el('th', {}, 'Motivo'), el('th', {}, 'Quem denunciou'), el('th', {}, 'Detalhe'))),
+            el(
+              'tbody',
+              {},
+              r.items.map((d) =>
+                el(
+                  'tr',
+                  {},
+                  el('td', {}, dataHoraBr(d.createdAt)),
+                  el(
+                    'td',
+                    {},
+                    (ALVOS_DENUNCIA[d.targetType] || d.targetType) +
+                      (d.targetName ? `: ${d.targetName}${d.targetUsername ? ` (@${d.targetUsername})` : ''}` : ` ${d.targetId}`),
+                  ),
+                  el('td', {}, MOTIVOS_DENUNCIA[d.reason] || d.reason),
+                  el('td', {}, d.reporterName + (d.reporterUsername ? ` (@${d.reporterUsername})` : '')),
+                  el('td', { style: 'white-space: pre-wrap' }, d.text || ''),
+                ),
+              ),
+            ),
+          )
+        : el('p', { class: 'vazio' }, 'Nenhuma denúncia recebida.'),
+    );
+  } catch (erro) {
+    if (token) {
+      alvo.replaceChildren();
+      aviso(mensagem(erro.codigo), 'erro');
+    }
+  }
+}
+
+/** Auditoria das contas que o corredor excluiu (anônimas no app). */
+async function carregarExcluidas() {
+  const alvo = $('excluidas');
+  alvo.replaceChildren(el('p', { class: 'vazio' }, 'Carregando...'));
+  try {
+    const r = await api('/admin/deleted-accounts?limit=200');
+    $('resumo-excluidas').textContent = r.items.length
+      ? `${r.items.length} ${r.items.length === 1 ? 'conta excluída' : 'contas excluídas'}.`
+      : 'Nenhuma conta excluída.';
+    alvo.replaceChildren(
+      r.items.length
+        ? el(
+            'table',
+            { class: 'tabela' },
+            el('thead', {}, el('tr', {}, el('th', {}, 'Excluída em'), el('th', {}, 'Nome'), el('th', {}, 'Usuário'), el('th', {}, 'Identificador'))),
+            el(
+              'tbody',
+              {},
+              r.items.map((c) =>
+                el(
+                  'tr',
+                  {},
+                  el('td', {}, dataHoraBr(c.deletedAt)),
+                  el('td', {}, c.displayName || ''),
+                  el('td', {}, c.username ? `@${c.username}` : ''),
+                  el('td', {}, c.subject),
+                ),
+              ),
+            ),
+          )
+        : el('p', { class: 'vazio' }, 'Nenhuma conta excluída.'),
     );
   } catch (erro) {
     if (token) {
@@ -1999,6 +2087,8 @@ $('pref-padrao').addEventListener('click', () => {
 $('atualizar').addEventListener('click', carregarPedidos);
 $('atualizar-cadastros').addEventListener('click', carregarCadastros);
 $('atualizar-feedbacks').addEventListener('click', carregarFeedbacks);
+$('atualizar-denuncias').addEventListener('click', carregarDenuncias);
+$('atualizar-excluidas').addEventListener('click', carregarExcluidas);
 $('atualizar-banners').addEventListener('click', carregarBanners);
 $('atualizar-operadores').addEventListener('click', carregarOperadores);
 $('atualizar-custos').addEventListener('click', carregarCustos);

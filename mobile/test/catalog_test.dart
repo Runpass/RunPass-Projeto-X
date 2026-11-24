@@ -1126,6 +1126,10 @@ void main() {
     }
     if (uri.path == '/participations/d1' && method == 'PATCH') {
       patches.add(Map<String, dynamic>.from(body! as Map));
+      // Como o servidor de verdade: a foto da medalha só troca depois de concluída.
+      if (patches.last.containsKey('medalImageReference')) {
+        return const JsonReply(409, {'code': 'PARTICIPATION_NOT_COMPLETED'});
+      }
       return JsonReply(200, {
         'id': 'd1',
         'editionId': 'A',
@@ -1189,7 +1193,7 @@ void main() {
   );
 
   testWidgets(
-    'Sair e continuar depois grava os dados e a foto da medalha, não conclui e volta para Medalhas',
+    'Sair e continuar depois grava os dados, guarda a foto da medalha no aparelho, não conclui e volta para Medalhas',
     (tester) async {
       final patches = <Map<String, dynamic>>[];
       final gateway = await draftPhotoGateway(patches);
@@ -1206,13 +1210,13 @@ void main() {
       await tester.tap(find.byKey(const Key('save-draft')));
       await tester.pumpAndSettle();
       expect(patches.first['placement'], 12);
-      expect(patches.last['medalImageReference'], 'img-valid');
+      expect(patches.any((p) => p.containsKey('medalImageReference')), isFalse);
       expect(patches.every((p) => !p.containsKey('declaredCompleted')), isTrue);
       expect(find.byType(MedalCollectionScreen), findsOneWidget);
       expect(find.byType(ParticipationDraftScreen), findsNothing);
       expect(
         find.text(
-          'Rascunho salvo. As notas e o comentário ficam neste aparelho. Nada foi publicado.',
+          'Rascunho salvo. A foto, as notas e o comentário ficam neste aparelho. Nada foi publicado.',
         ),
         findsOneWidget,
       );
