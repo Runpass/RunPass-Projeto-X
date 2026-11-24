@@ -170,8 +170,14 @@ class Journey:
         catalog = self.catalog = CatalogService(self.identity, Fernet.generate_key())
         participations = ParticipationService(self.identity, catalog, Fernet.generate_key())
         self.blobs = MemoryBlobStore()
-        uploads = UploadService(self.identity, self.blobs)
         self.social = SocialService(self.identity)
+        # Mesma montagem da composicao de producao (composition.create_aws_app).
+        uploads = UploadService(
+            self.identity,
+            self.blobs,
+            may_view=self.social.may_view_photo,
+            may_view_profile=self.social.may_view_profile_photo,
+        )
         self.seed(catalog)
         self.app = create_app(
             self.identity,
@@ -180,7 +186,9 @@ class Journey:
             participations,
             uploads,
             self.social,
-            edition_requests=EditionRequestService(self.identity, Fernet.generate_key(), catalog),
+            edition_requests=EditionRequestService(
+                self.identity, Fernet.generate_key(), catalog, self.blobs
+            ),
         )
         self.http = TestClient(self.app)
         self.client_db.enforce = True  # a partir daqui vale o papel da Lambda da API
@@ -508,6 +516,26 @@ class Journey:
             )
         )
         c("friend", "GET", f"/posts/{pid}")
+        # As fotos que o feed mostra para o amigo (a regra de quem pode ver vem do modulo social).
+        c(
+            "friend",
+            "GET",
+            f"/participations/{pid}/post-image",
+            label="o amigo ve a foto da publicacao",
+        )
+        c(
+            "friend",
+            "GET",
+            f"/participations/{pid}/post-image?index=1",
+            label="o amigo ve a segunda foto do carrossel",
+        )
+        c("friend", "GET", f"/participations/{pid}/image", label="o amigo ve a foto da medalha")
+        c(
+            "stranger",
+            "GET",
+            f"/participations/{pid}/post-image",
+            label="quem nao segue tambem ve a foto da publicacao (posts sao publicos)",
+        )
         c("friend", "PUT", f"/posts/{pid}/like")
         comment = c(
             "friend",
@@ -575,6 +603,84 @@ class Journey:
             label="PATCH participacao concluida",
         )
 
+        # 5a. perfil com foto e banner, marcar amigo, e "Cadastrar medalha" de prova fora do catalogo
+        avatar = self.upload("newbie", 5)
+        banner = self.upload("newbie", 6)
+        profile = c("newbie", "GET", "/me", label="GET /me (antes da foto)")
+        c(
+            "newbie",
+            "PATCH",
+            "/me",
+            {
+                "expectedVersion": profile.get("version", 1),
+                "photoReference": avatar,
+                "bannerReference": banner,
+            },
+            label="PATCH /me com foto e banner",
+        )
+        c(
+            "friend",
+            "GET",
+            f"/profiles/{self.subjects['newbie']}/photo",
+            expect=(200,),
+            label="o amigo ve a foto de perfil",
+        )
+        c(
+            "friend",
+            "GET",
+            f"/profiles/{self.subjects['newbie']}/banner",
+            expect=(200,),
+            label="o amigo ve o banner",
+        )
+        tagged_photo = self.upload("newbie", 7)
+        tagged = c(
+            "newbie",
+            "POST",
+            "/posts",
+            {
+                "participationId": pid,
+                "postImageReference": tagged_photo,
+                "postText": "Com o Fabio",
+                "taggedUserIds": [self.subjects["friend"]],
+            },
+            expect=201,
+            label="publicar marcando um amigo",
+        )
+        c("friend", "GET", "/me/notifications", label="o amigo marcado recebe aviso")
+        medal_request = self.upload("newbie", 8)
+        c(
+            "newbie",
+            "POST",
+            "/edition-requests",
+            {
+                "name": "[FICTICIA] Prova fora do catalogo",
+                "date": "2026-03-15",
+                "city": "Campinas",
+                "state": "SP",
+                "distanceKm": 10,
+                "medalImageReference": medal_request,
+            },
+            expect=201,
+            label="pedir cadastro de prova nova com a foto da medalha",
+        )
+        mine = c("newbie", "GET", "/me/edition-requests", label="GET /me/edition-requests")
+        first_request = (mine.get("items") or [{}])[0].get("id")
+        if first_request:
+            c(
+                "newbie",
+                "GET",
+                f"/edition-requests/{first_request}/medal-image",
+                expect=(200,),
+                label="ver a foto da medalha do pedido",
+            )
+        if tagged.get("id"):
+            c(
+                "newbie",
+                "DELETE",
+                f"/posts/{tagged['id']}",
+                expect=(200, 202, 204),
+                label="apagar a publicacao marcada",
+            )
         # 5b. bordas: corrida sem distancia, repeticao de pedido e erros esperados
         self.add_edition_without_distance()
         c(
@@ -846,6 +952,14 @@ def main():
     print(
         "\nPermissoes negadas pelo papel da API:",
         sorted(set(journey.client_db.denied)) or "nenhuma",
+    )
+    subject = journey.subjects["newbie"]
+    derived = sum(1 for v in journey.blobs.derived.values() if v["owner"] == subject)
+    originals = sum(
+        1 for rows in journey.blobs.versions.values() for r in rows if r["owner"] == subject
+    )
+    print(
+        f"\nImagens da pessoa excluida ainda guardadas: tratadas={derived}, originais={originals}"
     )
     orphans = journey.orphans()
     print("\nLinhas de publicacoes que nao existem mais (orfas):", orphans or "nenhuma")
