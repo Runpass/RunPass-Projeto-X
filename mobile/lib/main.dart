@@ -203,6 +203,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
   // Id da conta (de `/me`), so pra marcar em `WelcomeSeenPrefs` quando a
   // celebracao for de fato concluida.
   String? welcomeAccountId;
+  // A foto ja esta confirmada no servidor (`photoReference` em `/me`): a
+  // ficha da celebracao pode mostrar via `SignedPhoto` quando `chosenPhoto`
+  // (so em memoria) ja se perdeu por ter fechado o app depois do envio mas
+  // antes de "Começar minha jornada" (bug real, reportado em 24/11/2026).
+  bool hasServerPhoto = false;
   // "Manter conectado": guarda so o token de renovacao, nunca a senha.
   bool keepSignedIn = true;
   // Entrando com a sessao guardada: mostra um indicador em vez do formulario.
@@ -742,6 +747,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
           chosenPhoto = bytes;
           message = null;
         });
+        final id = welcomeAccountId;
+        if (id != null) unawaited(ChosenPhotoDraftPrefs.save(id, bytes));
       }
     } on Exception catch (error) {
       if (mounted) setState(() => message = photoError(error));
@@ -765,6 +772,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
         chosenPhoto = cropped;
         message = null;
       });
+      final id = welcomeAccountId;
+      if (id != null) unawaited(ChosenPhotoDraftPrefs.save(id, cropped));
     }
   }
 
@@ -811,6 +820,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
       // quem ja usa o app ha tempo.
       final stillOnboarding = (profile['version'] as int? ?? 999) <= 4;
       needsPhoto = profile['photoReference'] == null && stillOnboarding;
+      hasServerPhoto = profile['photoReference'] != null;
       // Mesmo sinal da foto, mas pra localizacao: sem isso, reabrir o app depois da
       // admissao mas antes de escolher estado/cidade pulava `Step.location` pra
       // sempre (essa etapa, sozinha, nao tinha nenhum sinal vindo do backend).
@@ -868,6 +878,14 @@ class _IdentityScreenState extends State<IdentityScreen> {
           selectedLat = await OnboardingDraftPrefs.loadLat(draftId);
           selectedLon = await OnboardingDraftPrefs.loadLon(draftId);
         }
+      }
+      // A foto escolhida (e ja recortada) na tela de foto so e enviada ao
+      // servidor quando a pessoa toca em "Continuar" ali; antes disso fica
+      // so em memoria, e fechar o app nessa etapa perdia a foto, mesmo a
+      // etapa certa voltando a aparecer (24/11/2026). Restaura o rascunho em
+      // arquivo so quando `status()` de fato decidiu `Step.photo`.
+      if (draftId != null && step == Step.photo && chosenPhoto == null) {
+        chosenPhoto = await ChosenPhotoDraftPrefs.load(draftId);
       }
     } on IdentityIssue catch (error) {
       if (error.code == 'PROFILE_NOT_FOUND') {
@@ -1267,10 +1285,15 @@ class _IdentityScreenState extends State<IdentityScreen> {
               'photoReference': reference,
             },
           );
+          hasServerPhoto = true;
         }
         needsPhoto = false;
         // Nao limpa chosenPhoto aqui: a ficha da celebracao reaproveita o mesmo
         // bytes para mostrar a foto escolhida (sumia antes, por causa disso).
+        // So limpa o RASCUNHO EM ARQUIVO: a foto ja esta confirmada no
+        // servidor (photoReference), nao precisa mais do arquivo local.
+        final id = welcomeAccountId;
+        if (id != null) unawaited(ChosenPhotoDraftPrefs.clear(id));
         step = freshSignup ? Step.celebration : Step.ready;
       case Step.ready || Step.waiting || Step.closed || Step.celebration:
         break;
@@ -1480,6 +1503,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   photo: chosenPhoto == null
                                       ? null
                                       : Uint8List.fromList(chosenPhoto!),
+                                  gateway: widget.gateway,
+                                  accountId: welcomeAccountId,
+                                  hasServerPhoto: hasServerPhoto,
                                   inscriptionDate: DateTime.now(),
                                   onTapPhoto: () =>
                                       setState(() => step = Step.photo),
@@ -2005,6 +2031,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               photo: chosenPhoto == null
                                   ? null
                                   : Uint8List.fromList(chosenPhoto!),
+                              gateway: widget.gateway,
+                              accountId: welcomeAccountId,
+                              hasServerPhoto: hasServerPhoto,
                               inscriptionDate: DateTime.now(),
                             ),
                             // Distancia uniforme da ficha em todas as telas do cadastro: antes so
@@ -2222,7 +2251,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   fit: BoxFit.scaleDown,
                                   alignment: Alignment.centerLeft,
                                   child: Text(
-                                    'Opcional, foto para ser adicionada depois no menu do perfil',
+                                    'Foto opcional, pode ser adicionada depois no menu do perfil',
                                     maxLines: 1,
                                     style: TextStyle(
                                       fontSize: 13,

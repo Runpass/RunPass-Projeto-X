@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const runPassOrange = Color(0xfffc5426);
+// Igualado a cor real do logo "+1Pódio" (medida nos pixels de
+// assets/brand/icon-1024.png e mark-light.png: ~#ff5620, não o #fc5426
+// anterior, levemente puxado pro vermelho/rosa em vez do âmbar do logo).
+const runPassOrange = Color(0xffff5620);
 const runPassGold = Color(0xffe8b23a);
 const runPassNavy = Color(0xff101b2b);
 const runPassMist = Color(0xfff5f7fa);

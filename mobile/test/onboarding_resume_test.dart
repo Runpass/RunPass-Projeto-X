@@ -1,9 +1,34 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:runpass/home_screen.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/main.dart';
+import 'package:runpass/my_races.dart' show SignedPhoto;
 import 'package:runpass/registration_card.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// PNG valido de 1x1 pixel, so pra simular uma foto de verdade escolhida.
+final _onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
+
+/// `ChosenPhotoDraftPrefs` guarda o rascunho em arquivo (nao
+/// SharedPreferences); precisa de um diretorio "temporario" de verdade pro
+/// teste, que persiste entre os dois gateways simulando "fechar e reabrir o
+/// app" no MESMO aparelho.
+class _FakePathProviderPlatform extends PathProviderPlatform
+    with MockPlatformInterfaceMixin {
+  _FakePathProviderPlatform(this.path);
+  final String path;
+
+  @override
+  Future<String?> getTemporaryPath() async => path;
+}
 
 /// Backend sintetico compartilhado entre varias instancias de gateway, pra
 /// simular "fechar e reabrir o app" (gateway novo) sem perder o que ja tinha
@@ -25,6 +50,7 @@ IdentityGateway _gatewayFor(_FakeBackend backend) => IdentityGateway(
   cognito: Uri.parse('https://cognito.example'),
   api: Uri.parse('https://api.example'),
   clientId: 'synthetic',
+  byteTransport: (uri, method, headers, bytes) async => 200,
   transport: (uri, method, headers, body) async {
     if (uri.host == 'cognito.example') {
       return const JsonReply(200, {
@@ -102,9 +128,10 @@ IdentityGateway _gatewayFor(_FakeBackend backend) => IdentityGateway(
       });
     }
     if (uri.path.endsWith('/finalize')) {
-      backend.photoReference = 'foto-sintetica';
-      backend.version += 1;
-      return const JsonReply(200, {'state': 'ready'});
+      return const JsonReply(200, {
+        'state': 'valid',
+        'imageReference': 'foto-sintetica',
+      });
     }
     return const JsonReply(200, {'items': []});
   },
@@ -197,9 +224,133 @@ Future<void> _reopenAndLogIn(
   await tester.ensureVisible(find.text('Entrar'));
   await tester.tap(find.text('Entrar'));
   await tester.pumpAndSettle();
+  // `resume()` pode tentar restaurar o rascunho da foto de um arquivo de
+  // verdade (dart:io); isso precisa de tempo real passando, nao so do
+  // relogio falso do `pump`/`pumpAndSettle`, senao fica pendente pra sempre.
+  await tester.runAsync(() async {
+    for (var i = 0; i < 10; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await tester.pump();
+    }
+  });
+  await tester.pumpAndSettle();
 }
 
 void main() {
+  late Directory tempDir;
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    tempDir = Directory.systemTemp.createTempSync('runpass-photo-draft-');
+    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir.path);
+  });
+  tearDown(() {
+    // No Windows um handle pode levar um instante pra soltar o arquivo;
+    // limpar o diretorio temporario e so conveniencia, nao faz o teste falhar.
+    try {
+      tempDir.deleteSync(recursive: true);
+    } on Object {
+      // Ignora: o SO limpa o temp dir de todo jeito.
+    }
+  });
+
+  testWidgets(
+    'escolhe a foto de perfil mas fecha o app ANTES de tocar em '
+    '"Continuar" na tela de foto: reabrir mantém a foto já escolhida, não '
+    'precisa escolher de novo (bug real de 24/11/2026: a foto só ficava em '
+    'memória, nunca persistida, diferente dos outros campos do rascunho)',
+    (tester) async {
+      final backend = _FakeBackend();
+      final firstGateway = _gatewayFor(backend);
+      await tester.pumpWidget(
+        MainApp(
+          gateway: firstGateway,
+          photoPicker: (context, choice) async => _onePixelPng,
+        ),
+      );
+      await _signUpAndCreateProfile(tester, firstGateway);
+      await _fillAdmission(tester);
+      await _fillLocation(tester);
+      expect(find.text('Sua foto de perfil'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('choose-photo')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('photo-gallery')));
+      await tester.pumpAndSettle();
+      // Fecha o app aqui — a foto nunca foi enviada ao servidor.
+      expect(backend.photoReference, isNull);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      final secondGateway = _gatewayFor(backend);
+      await tester.pumpWidget(
+        MainApp(
+          gateway: secondGateway,
+          photoPicker: (context, choice) async => _onePixelPng,
+        ),
+      );
+      await _reopenAndLogIn(tester);
+
+      // Ainda na tela de foto (nunca foi enviada), mas sem precisar escolher
+      // de novo: "Continuar" ja envia a foto restaurada do rascunho.
+      expect(find.text('Sua foto de perfil'), findsOneWidget);
+      await tester.ensureVisible(find.text('Continuar'));
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      expect(backend.photoReference, isNotNull);
+    },
+  );
+
+  testWidgets(
+    'escolhe a foto, envia (toca "Continuar" na tela de foto) e fecha o '
+    'app ANTES de tocar em "Começar minha jornada" na celebração: reabrir '
+    'ainda mostra a foto na ficha, buscando do servidor (bug real de '
+    '24/11/2026: a ficha so mostrava a foto a partir da memoria, que se '
+    'perdia ao reabrir, mesmo a foto ja estando confirmada no servidor)',
+    (tester) async {
+      final backend = _FakeBackend();
+      final firstGateway = _gatewayFor(backend);
+      await tester.pumpWidget(
+        MainApp(
+          gateway: firstGateway,
+          photoPicker: (context, choice) async => _onePixelPng,
+        ),
+      );
+      await _signUpAndCreateProfile(tester, firstGateway);
+      await _fillAdmission(tester);
+      await _fillLocation(tester);
+      await tester.tap(find.byKey(const Key('choose-photo')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('photo-gallery')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Continuar'));
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      // Foto ja confirmada no servidor; ainda na celebracao (nao tocou
+      // "Começar minha jornada" ainda) — fecha o app aqui.
+      expect(backend.photoReference, isNotNull);
+      expect(find.text('Começar minha jornada'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      final secondGateway = _gatewayFor(backend);
+      await tester.pumpWidget(
+        MainApp(
+          gateway: secondGateway,
+          photoPicker: (context, choice) async => _onePixelPng,
+        ),
+      );
+      await _reopenAndLogIn(tester);
+
+      // Ainda na celebracao, sem a foto em memoria (sessao nova) — a ficha
+      // busca a foto do servidor pelo mesmo canal que o resto do app usa.
+      expect(find.text('Começar minha jornada'), findsOneWidget);
+      final signedPhoto = tester.widget<SignedPhoto>(
+        find.byType(SignedPhoto),
+      );
+      expect(signedPhoto.endpoint, '/profiles/u1/photo');
+    },
+  );
+
   testWidgets(
     'fecha o app depois da admissão mas antes de escolher a cidade: '
     'reabrir (gateway novo) retoma em "Qual a sua cidade?", não pula pra '
@@ -264,7 +415,7 @@ void main() {
       expect(find.text('Pular por enquanto'), findsNothing);
       expect(find.text('Continuar'), findsOneWidget);
       expect(
-        find.text('Opcional, foto para ser adicionada depois no menu do perfil'),
+        find.text('Foto opcional, pode ser adicionada depois no menu do perfil'),
         findsOneWidget,
       );
 

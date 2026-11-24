@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import 'identity_gateway.dart';
+import 'my_races.dart' show SignedPhoto;
 import 'runpass_theme.dart';
 
 /// Letra do genero para a ficha ('F'/'M'); 'undisclosed' e sem genero nao aparecem.
@@ -70,6 +72,14 @@ class RegistrationCard extends StatelessWidget {
   final String? gender;
   final String? registrationCode;
   final Uint8List? photo;
+  // Quando `photo` (so em memoria) ainda nao foi escolhido nesta sessao mas
+  // a foto ja esta confirmada no servidor, busca pelo mesmo canal que o
+  // resto do app usa (`SignedPhoto`) em vez de ficar sem foto — sem isso, a
+  // ficha da celebracao perdia a foto ao fechar o app depois do envio mas
+  // antes de "Começar minha jornada" (bug real, reportado em 24/11/2026).
+  final IdentityGateway? gateway;
+  final String? accountId;
+  final bool hasServerPhoto;
   final DateTime inscriptionDate;
   // So preenchidos na celebracao: tocar no bloco volta para o passo que o edita.
   final VoidCallback? onTapPhoto;
@@ -85,6 +95,9 @@ class RegistrationCard extends StatelessWidget {
     this.gender,
     this.registrationCode,
     this.photo,
+    this.gateway,
+    this.accountId,
+    this.hasServerPhoto = false,
     required this.inscriptionDate,
     this.onTapPhoto,
     this.onTapProfile,
@@ -168,28 +181,51 @@ class RegistrationCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   tappable(
-                    CircleAvatar(
-                      radius: 30,
-                      backgroundColor: Colors.white.withValues(alpha: .2),
-                      backgroundImage: photo == null
-                          ? null
-                          : MemoryImage(photo!),
-                      child: photo != null
-                          ? null
-                          : (initials.isNotEmpty
-                                ? Text(
-                                    initials,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 20,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.person_outline,
-                                    color: Colors.white,
-                                  )),
-                    ),
+                    () {
+                      final placeholder = initials.isNotEmpty
+                          ? Text(
+                              initials,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 20,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.person_outline,
+                              color: Colors.white,
+                            );
+                      final networkFallback =
+                          photo == null &&
+                          hasServerPhoto &&
+                          gateway != null &&
+                          accountId != null;
+                      return CircleAvatar(
+                        radius: 30,
+                        backgroundColor: Colors.white.withValues(alpha: .2),
+                        backgroundImage: photo == null
+                            ? null
+                            : MemoryImage(photo!),
+                        child: photo != null
+                            ? null
+                            : (networkFallback
+                                  ? ClipOval(
+                                      child: SizedBox(
+                                        width: 60,
+                                        height: 60,
+                                        child: SignedPhoto(
+                                          gateway: gateway!,
+                                          endpoint:
+                                              '/profiles/${Uri.encodeComponent(accountId!)}/photo',
+                                          fallback: Center(
+                                            child: placeholder,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : placeholder),
+                      );
+                    }(),
                     onTapPhoto,
                     key: const Key('registration-card-photo'),
                   ),
@@ -311,6 +347,10 @@ class RegistrationCard extends StatelessWidget {
                     const SizedBox(height: 10),
                     tappable(
                       Row(
+                        // Sem isso, a categoria (1 linha) ficava centralizada no
+                        // cruzamento com o bloco "NASCIMENTO" (2 linhas) em vez de
+                        // alinhada com a linha da data de nascimento.
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Expanded(
                             flex: 3,
