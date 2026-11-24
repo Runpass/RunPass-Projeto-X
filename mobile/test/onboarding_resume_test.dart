@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -179,6 +180,15 @@ Future<void> _signUpAndCreateProfile(
   await tester.pumpAndSettle();
 }
 
+/// "Concluído" na roda de nascimento so fica habilitado depois que a pessoa
+/// gira alguma roda (mudanca de dev, 24/11/2026: antes valia tocar direto,
+/// confirmando uma data que ninguem escolheu) — arrasta a roda do dia uma
+/// posicao, como um toque de verdade faria.
+Future<void> _spinBirthDateWheel(WidgetTester tester) async {
+  await tester.drag(find.byType(CupertinoPicker).last, const Offset(0, 80));
+  await tester.pumpAndSettle();
+}
+
 Future<void> _fillAdmission(WidgetTester tester) async {
   expect(find.text('Em qual categoria você corre?'), findsOneWidget);
   await tester.ensureVisible(find.text('Feminino'));
@@ -186,6 +196,7 @@ Future<void> _fillAdmission(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(const Key('birth-date-field')));
   await tester.pumpAndSettle();
+  await _spinBirthDateWheel(tester);
   await tester.tap(find.byKey(const Key('birth-date-done')));
   await tester.pumpAndSettle();
   await tester.ensureVisible(find.byType(CheckboxListTile));
@@ -467,6 +478,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('birth-date-field')));
       await tester.pumpAndSettle();
+      await _spinBirthDateWheel(tester);
       await tester.tap(find.byKey(const Key('birth-date-done')));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byType(CheckboxListTile));
