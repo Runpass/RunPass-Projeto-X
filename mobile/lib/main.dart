@@ -182,20 +182,36 @@ class _IdentityScreenState extends State<IdentityScreen> {
   // que a admissao acontece (selectedUf/selectedCity continuam preenchidos, para a
   // ficha mostrar a cidade nas telas seguintes).
   bool locationSynced = false;
+  // true so depois que a pessoa toca em "Continuar" na tela "Qual a sua
+  // cidade?" nesta sessao — e a UNICA coisa que autoriza `status()` a enviar
+  // a localizacao ao servidor. `selectedUf`/`selectedCity` sozinhos NAO
+  // bastam: eles tambem ficam preenchidos por um rascunho local restaurado
+  // ou pela deteccao automatica por GPS, nenhum dos dois e uma confirmacao
+  // de verdade da pessoa.
+  bool locationConfirmed = false;
   // So para o botao manual de localizacao mostrar um indicador de carregamento.
   bool detectingLocation = false;
   String? message;
   String? displayName;
-  // Cadastro novo ainda sem foto: a foto de perfil e obrigatoria antes de entrar.
+  // Cadastro novo ainda sem foto: oferece a tela de foto antes de entrar (ela e
+  // opcional — "Continuar" sem escolher nenhuma avanca normalmente).
   bool needsPhoto = false;
+  // Cadastro novo ainda sem localizacao: diferente da foto, estado/cidade sao
+  // obrigatorios — sem este sinal, reabrir o app depois da admissao mas antes
+  // de escolher a cidade pulava `Step.location` pra sempre.
+  bool needsLocation = false;
+  // Id da conta (de `/me`), so pra marcar em `WelcomeSeenPrefs` quando a
+  // celebracao for de fato concluida.
+  String? welcomeAccountId;
   // "Manter conectado": guarda so o token de renovacao, nunca a senha.
   bool keepSignedIn = true;
   // Entrando com a sessao guardada: mostra um indicador em vez do formulario.
   bool restoring = false;
   List<int>? chosenPhoto;
-  // "Ver senha": independente por tela, nao deve seguir marcado entre uma tela e outra.
-  bool showPasswordSignIn = false;
-  bool showPasswordSetPassword = false;
+  // "Ver senha": vale pra qualquer tela com campo de senha (entrar, criar conta,
+  // definir/redefinir senha — so uma fica ativa por vez, nao precisa de uma flag
+  // por tela) e deve estar sempre disponivel, nunca escondida em alguma etapa.
+  bool showPassword = false;
   // Enquanto false, o campo de usuario e sugerido a partir do nome; vira true assim
   // que a pessoa digita nele por conta propria, e a sugestao automatica para.
   bool usernameTouched = false;
@@ -321,6 +337,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
   }
 
   void change(Step next) {
+    // Troca manual de etapa (Criar conta / Esqueceu a senha / Voltar): campo
+    // de codigo e de senha sempre vazios na etapa de destino, nunca com o que
+    // sobrou de uma tentativa anterior (outro fluxo, ou o mesmo abandonado).
+    code.clear();
+    password.clear();
     setState(() {
       step = next;
       message = null;
@@ -334,8 +355,14 @@ class _IdentityScreenState extends State<IdentityScreen> {
     // admissao: PATCH /me exige conta admitida. Enviar aqui, na primeira vez que o status
     // acusar admissao, cobre tanto o caso comum (admissao imediata) quanto quem ficou na
     // lista de espera e foi admitido depois, numa checagem de status futura.
+    // `locationConfirmed` exige que a pessoa tenha tocado "Continuar" na tela
+    // de localizacao NESTA sessao: sem isso, um rascunho local restaurado ou
+    // a deteccao automatica por GPS (que tambem preenchem selectedUf/selectedCity,
+    // sem a pessoa ter visto essa tela) enviavam a localizacao sozinhos e
+    // pulavam a etapa pra sempre (bug real, reportado mais de uma vez).
     if (response['myStatus'] == 'admitted' &&
         !locationSynced &&
+        locationConfirmed &&
         selectedUf != null &&
         selectedCity != null) {
       final current = await widget.gateway!.request('/me');
@@ -356,6 +383,14 @@ class _IdentityScreenState extends State<IdentityScreen> {
       // mesmos campos para mostrar a cidade nas telas seguintes (foto, celebracao).
       // O proprio flag evita reenviar o mesmo PATCH numa chamada futura a status().
       locationSynced = true;
+      // Sem isso, o switch abaixo mandava de volta pra Step.location de novo,
+      // mesmo location acabando de ser salva com sucesso (needsLocation so e
+      // recalculada em resume(), nunca aqui).
+      needsLocation = false;
+      final syncedId = welcomeAccountId;
+      if (syncedId != null) {
+        unawaited(OnboardingDraftPrefs.clearLocation(syncedId));
+      }
     }
     step = switch (response['myStatus']) {
       'admitted' => Step.ready,
@@ -363,6 +398,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
       'closed' => Step.closed,
       _ => Step.admission,
     };
+    // Localizacao e obrigatoria e vem antes da foto (que e opcional) na ordem
+    // do cadastro.
+    if (step == Step.ready && needsLocation) step = Step.location;
     if (step == Step.ready && needsPhoto) step = Step.photo;
     if (step == Step.ready && freshSignup) step = Step.celebration;
   }
@@ -427,6 +465,16 @@ class _IdentityScreenState extends State<IdentityScreen> {
         selectedLat = coordinate.lat;
         selectedLon = coordinate.lon;
       });
+      final id = welcomeAccountId;
+      if (id != null) {
+        OnboardingDraftPrefs.saveLocation(
+          id,
+          parts[0],
+          parts[1],
+          lat: coordinate.lat,
+          lon: coordinate.lon,
+        );
+      }
     } on Object {
       // Sem permissao, localizacao desligada ou qualquer outra falha: segue so
       // com a escolha manual, sem mostrar erro quando automatico (e so uma
@@ -679,6 +727,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
         birthDate = chosen.isAfter(now) ? now : chosen;
         message = null;
       });
+      final id = welcomeAccountId;
+      if (id != null) OnboardingDraftPrefs.saveBirthDate(id, birthDate!);
     }
   }
 
@@ -733,22 +783,92 @@ class _IdentityScreenState extends State<IdentityScreen> {
       if (savedUsername != null) username.text = savedUsername;
       // Ja tem usuario salvo: a sugestao automatica por nome nao deve mais mexer nele.
       usernameTouched = true;
-      // Sem foto e com poucas edicoes no perfil: o cadastro provavelmente nao foi
-      // concluido (so a criacao, mais talvez uma correcao de nome/usuario antes da
-      // admissao ou o patch de localizacao, nunca mais que isso nesta fase). Quem
-      // apagou a foto depois de usar o app por um tempo tem muito mais edicoes
-      // acumuladas (posts, legendas, perfil etc) e nao cai aqui. Nao e um sinal
-      // perfeito (um numero exato de edicoes concluidas nunca foi guardado), mas e
-      // bem mais seguro do que exigir a versao 1 exata, que quebrava so de corrigir
-      // o nome antes de terminar o cadastro.
+      // Mesma logica de nome/usuario, agora pra genero/nascimento: depois que a
+      // admissao e aceita, esses dois ficam salvos no servidor (o rascunho local
+      // ja foi apagado, de proposito, por nao fazer mais falta) — sem repopular
+      // aqui, reabrir o app depois da admissao (ja em Step.location ou mais
+      // adiante) mostrava a ficha de inscricao sem genero nem nascimento.
+      final savedGender = profile['gender'] as String?;
+      if (savedGender != null) gender = savedGender;
+      final savedBirthDate = profile['birthDate'] as String?;
+      if (savedBirthDate != null) {
+        try {
+          birthDate = DateTime.parse(savedBirthDate);
+        } on FormatException {
+          // Ignora: mantem o que ja estava (rascunho local ou nenhum).
+        }
+      }
+      // Poucas edicoes no perfil: o cadastro provavelmente nao foi concluido (so a
+      // criacao, mais talvez uma correcao de nome/usuario antes da admissao, o patch
+      // de localizacao ou o da foto, nunca mais que isso nesta fase). Quem edita o
+      // perfil depois de usar o app por um tempo tem muito mais edicoes acumuladas
+      // (posts, legendas, perfil etc) e nao cai aqui. Nao e um sinal perfeito (um
+      // numero exato de edicoes concluidas nunca foi guardado), mas e bem mais seguro
+      // do que exigir a versao exata de cada etapa.
       // Versao ausente na resposta (nao deveria acontecer num backend real, mas
       // alguns testes simulam respostas minimas): trata como "nao fresco", igual
-      // ao comportamento anterior, em vez de arriscar mostrar a tela de foto a
-      // toa pra quem ja usa o app ha tempo.
-      needsPhoto =
-          profile['photoReference'] == null &&
-          (profile['version'] as int? ?? 999) <= 4;
+      // ao comportamento anterior, em vez de arriscar mostrar essas telas a toa pra
+      // quem ja usa o app ha tempo.
+      final stillOnboarding = (profile['version'] as int? ?? 999) <= 4;
+      needsPhoto = profile['photoReference'] == null && stillOnboarding;
+      // Mesmo sinal da foto, mas pra localizacao: sem isso, reabrir o app depois da
+      // admissao mas antes de escolher estado/cidade pulava `Step.location` pra
+      // sempre (essa etapa, sozinha, nao tinha nenhum sinal vindo do backend).
+      needsLocation = profile['state'] == null && stillOnboarding;
+      final savedState = profile['state'] as String?;
+      final savedCity = profile['city'] as String?;
+      if (savedState != null && savedCity != null) {
+        selectedUf = savedState;
+        selectedCity = savedCity;
+        locationSynced = true;
+      }
+      // Antes, "freshSignup" so virava true dentro da MESMA sessao em que o perfil
+      // era criado (Step.profile); fechar o app entre a admissao e a foto/celebracao
+      // zerava essa flag na proxima sessao, e a pessoa nunca mais via a tela de
+      // "Boas-vindas" — ela e a ultima etapa do cadastro e nao pode ser pulada.
+      // `PendingCelebrationPrefs` persiste essa pendencia no aparelho desde a
+      // criacao do perfil (ver Step.profile) ate a celebracao de fato ser
+      // concluida; diferente de usar a versao do perfil, nao marca como
+      // "fresca" uma conta antiga de verdade que so nunca editou o perfil.
+      welcomeAccountId = profile['id'] as String?;
+      freshSignup =
+          welcomeAccountId != null &&
+          await PendingCelebrationPrefs.isPending(welcomeAccountId!);
+      // Restaura o rascunho da admissao (genero/nascimento/maioridade) ainda
+      // nao confirmado no servidor quando o app fechou antes de tocar
+      // "Continuar" naquela tela — sem sobrescrever o que ja estiver
+      // preenchido nesta mesma sessao. So a admissao: ela nunca e enviada
+      // sozinha, so quando a pessoa toca "Continuar" na tela de admissao, por
+      // isso e seguro repopular antes de `status()`. O rascunho e apagado
+      // assim que a admissao de fato for aceita no servidor.
+      final draftId = welcomeAccountId;
+      if (draftId != null) {
+        gender ??= await OnboardingDraftPrefs.loadGender(draftId);
+        birthDate ??= await OnboardingDraftPrefs.loadBirthDate(draftId);
+        if (!adult) {
+          adult = await OnboardingDraftPrefs.loadAdult(draftId) ?? false;
+        }
+      }
       await status();
+      // O rascunho de LOCALIZACAO so pode ser restaurado depois de `status()`
+      // decidir a etapa, e so quando ela de fato for `Step.location` — nunca
+      // antes. `status()` envia a localizacao ao servidor automaticamente na
+      // primeira vez que ve a conta admitida, so checando se
+      // `selectedUf`/`selectedCity` nao sao nulos; preencher esses campos
+      // ANTES dessa checagem (com um rascunho de uma tentativa anterior, ou
+      // so de uma deteccao de GPS em segundo plano) enviava a localizacao
+      // sem a pessoa nunca ter visto essa tela, pulando-a de vez (bug real,
+      // reportado em 24/11/2026).
+      if (draftId != null && step == Step.location) {
+        final draftUf = await OnboardingDraftPrefs.loadUf(draftId);
+        final draftCity = await OnboardingDraftPrefs.loadCity(draftId);
+        if (draftUf != null && draftCity != null) {
+          selectedUf = draftUf;
+          selectedCity = draftCity;
+          selectedLat = await OnboardingDraftPrefs.loadLat(draftId);
+          selectedLon = await OnboardingDraftPrefs.loadLon(draftId);
+        }
+      }
     } on IdentityIssue catch (error) {
       if (error.code == 'PROFILE_NOT_FOUND') {
         step = Step.profile;
@@ -770,18 +890,42 @@ class _IdentityScreenState extends State<IdentityScreen> {
     try {
       await action();
     } on IdentityIssue catch (error) {
-      if (error.code == 'UserNotConfirmedException') step = Step.confirm;
+      if (error.code == 'UserNotConfirmedException') {
+        // Campo de codigo sempre vazio ao entrar numa tela que o usa, nunca
+        // com um valor de uma tentativa anterior (usada ou nao).
+        code.clear();
+        step = Step.confirm;
+        // Reenvia o codigo sozinho: a pessoa tentou logar sem saber que
+        // ainda faltava confirmar o e-mail, nao devia precisar tocar em
+        // "Reenviar código" na tela seguinte so pra receber o primeiro.
+        try {
+          await widget.gateway?.resendConfirmation(email.text.trim());
+        } on IdentityIssue {
+          // Falhou por outro motivo (limite de tentativas etc.): o botao de
+          // reenviar continua disponivel na tela de confirmacao.
+        }
+      }
       if (error.code == 'INVALID_TOKEN' ||
           error.code == 'ACCOUNT_UNAVAILABLE') {
         step = Step.signIn;
       }
       message = switch (error.code) {
+        // Mensagem unica de proposito: o Cognito recusa (PreventUserExistenceErrors)
+        // dizer se o e-mail nao existe ou se so a senha esta errada, pra nao dar
+        // pra descobrir quais e-mails tem conta so testando no login.
         'NotAuthorizedException' ||
-        'INVALID_TOKEN' => 'Entre novamente e confira seu e-mail e senha.',
+        'INVALID_TOKEN' =>
+          'E-mail ou senha incorretos. Se ainda não tem conta, toque em Criar conta.',
         'UserNotConfirmedException' =>
-          'Confirme seu e-mail com o código recebido.',
+          'Confirme seu e-mail. Enviamos um novo código de confirmação.',
         'UsernameExistsException' =>
           'Já existe uma conta com esse e-mail. Entre ou recupere sua senha.',
+        // O Cognito recusa "esqueci minha senha" com esse código quando a conta
+        // existe mas ainda não foi confirmada; mandar pra tela de cadastro de
+        // novo com o mesmo e-mail reenvia o código de confirmação pendente
+        // (ver signUp()/resumedSignUp), em vez de travar aqui.
+        'InvalidParameterException' =>
+          'Esse cadastro ainda não foi confirmado. Toque em "Criar conta" com o mesmo e-mail para receber um novo código.',
         'USERNAME_TAKEN' => 'Esse nome de usuário já está em uso.',
         'InvalidPasswordException' =>
           'Use pelo menos $minimumPasswordLength caracteres.',
@@ -854,11 +998,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
         await SavedAccount.save(email.text.trim());
         await resume();
       case Step.signUp:
-        await gateway.signUp(email.text.trim());
-        step = Step.confirm;
-      case Step.confirm:
-        await gateway.confirm(email.text.trim(), code.text.trim());
+        // So coleta o e-mail aqui; a senha e o SignUp de verdade acontecem na
+        // proxima etapa (ver Step.setPassword), nessa ordem de proposito: sem
+        // isso, um fechar o app bem ali deixava um e-mail registrado no
+        // Cognito sem senha nenhuma, numa zona cinzenta dificil de recuperar.
         code.clear();
+        password.clear();
         step = Step.setPassword;
       case Step.setPassword:
         final weakReason = weakPasswordReason(password.text, email.text.trim());
@@ -866,12 +1011,48 @@ class _IdentityScreenState extends State<IdentityScreen> {
           message = weakReason;
           return;
         }
-        await gateway.setPassword(email.text.trim(), password.text);
-        password.clear();
-        showPasswordSetPassword = false;
-        await resume();
+        await gateway.signUp(email.text.trim(), password.text);
+        code.clear();
+        step = Step.confirm;
+        if (gateway.resumedSignUp) {
+          // E-mail ja tinha um cadastro pendente, so sem confirmar: a senha
+          // dessa tentativa NAO vale (a conta ja tem a senha definida na
+          // primeira vez, e nao ha como troca-la antes de confirmar). Avisa
+          // e nao usa o valor digitado.
+          password.clear();
+          message =
+              'Encontramos um cadastro não finalizado com esse e-mail. '
+              'Enviamos um novo código de confirmação — a senha continua '
+              'sendo a que você já tinha criado.';
+        }
+      case Step.confirm:
+        await gateway.confirm(email.text.trim(), code.text.trim());
+        code.clear();
+        if (gateway.resumedSignUp) {
+          // Senha pode ser de uma tentativa anterior (perdida ao fechar o
+          // app); sem como saber qual das duas digitadas e a que vale, pede
+          // login normal em vez de entrar direto.
+          password.clear();
+          step = Step.signIn;
+          message =
+              'E-mail confirmado! Entre com sua senha (ou toque em '
+              '"Esqueceu a senha?" se não lembrar).';
+        } else {
+          // Mesma sessao, senha digitada ha pouco e a senha real da conta.
+          await gateway.signIn(
+            email.text.trim(),
+            password.text,
+            keepSignedIn: keepSignedIn,
+          );
+          password.clear();
+          showPassword = false;
+          await SavedAccount.save(email.text.trim());
+          await resume();
+        }
       case Step.forgot:
         await gateway.forgot(email.text.trim());
+        code.clear();
+        password.clear();
         step = Step.reset;
       case Step.reset:
         final weakResetReason = weakPasswordReason(
@@ -965,6 +1146,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
               profile['photoReference'] == null && profile['version'] == 1;
         }
         freshSignup = true;
+        welcomeAccountId = profile['id'] as String?;
+        // Persiste a pendencia da celebracao no aparelho desde ja: fechar o
+        // app em qualquer etapa seguinte (admissao, localizacao, foto) nao
+        // deve fazer a pessoa perder a tela de "Boas-vindas" no fim.
+        final id = welcomeAccountId;
+        if (id != null) PendingCelebrationPrefs.markPending(id);
         step = Step.admission;
       case Step.admission:
         if (gender == null) {
@@ -1018,6 +1205,12 @@ class _IdentityScreenState extends State<IdentityScreen> {
             rethrow;
           }
         }
+        // Admitido de verdade: o rascunho local de genero/nascimento/maioridade
+        // nao faz mais falta.
+        final admittedId = welcomeAccountId;
+        if (admittedId != null) {
+          unawaited(OnboardingDraftPrefs.clearAdmission(admittedId));
+        }
         // O codigo de inscricao so existe a partir da admissao (sorteado no servidor);
         // GET /me e a unica rota que devolve o campo (PUT/PATCH nao), entao busca aqui
         // para a ficha parar de mostrar "00000" dali em diante. So uma conveniencia:
@@ -1051,6 +1244,14 @@ class _IdentityScreenState extends State<IdentityScreen> {
           );
           return;
         }
+        // So aqui a pessoa de fato CONFIRMOU a localizacao, tocando em
+        // "Continuar" nesta tela — e a UNICA coisa que autoriza `status()` a
+        // enviar isso ao servidor (ver locationConfirmed). Nunca inferir
+        // essa confirmacao so pelo campo estar preenchido: um rascunho local
+        // restaurado ou a deteccao automatica por GPS tambem preenchem
+        // selectedUf/selectedCity, sem a pessoa ter visto ou aceitado essa
+        // tela (bug real, reportado mais de uma vez, em 23-24/11/2026).
+        locationConfirmed = true;
         // So fica guardado aqui; o envio ao servidor espera a admissao (ver status()).
         await status();
       case Step.photo:
@@ -1135,7 +1336,13 @@ class _IdentityScreenState extends State<IdentityScreen> {
   }) {
     final selected = gender == value;
     final button = OutlinedButton(
-      onPressed: busy ? null : () => setState(() => gender = value),
+      onPressed: busy
+          ? null
+          : () => setState(() {
+              gender = value;
+              final id = welcomeAccountId;
+              if (id != null) OnboardingDraftPrefs.saveGender(id, value);
+            }),
       style: OutlinedButton.styleFrom(
         backgroundColor: selected ? context.softFill : context.panel,
         side: BorderSide(
@@ -1338,7 +1545,14 @@ class _IdentityScreenState extends State<IdentityScreen> {
                       backgroundColor: runPassNavy,
                       minimumSize: const Size.fromHeight(54),
                     ),
-                    onPressed: openHome,
+                    onPressed: () {
+                      // So limpa a pendencia aqui, quando a pessoa de fato
+                      // concluiu a celebracao — fechar o app antes disso deve
+                      // mostrar a mesma tela de novo, nunca pular pra Home.
+                      final id = welcomeAccountId;
+                      if (id != null) PendingCelebrationPrefs.clearPending(id);
+                      openHome();
+                    },
                     child: const Text('Começar minha jornada'),
                   ),
                 ),
@@ -1493,35 +1707,19 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               step == Step.setPassword
                                   ? 'Crie uma senha'
                                   : 'Senha',
-                              // Sem campo de confirmacao: o olho mostra/oculta a senha digitada.
-                              // Cada tela tem seu proprio estado de visibilidade.
-                              secret: step == Step.setPassword
-                                  ? !showPasswordSetPassword
-                                  : step == Step.signIn
-                                  ? !showPasswordSignIn
-                                  : true,
-                              suffixIcon:
-                                  step == Step.setPassword ||
-                                      step == Step.signIn
-                                  ? IconButton(
-                                      icon: Icon(
-                                        (step == Step.setPassword
-                                                ? showPasswordSetPassword
-                                                : showPasswordSignIn)
-                                            ? Icons.visibility_off
-                                            : Icons.visibility,
-                                      ),
-                                      onPressed: () => setState(() {
-                                        if (step == Step.setPassword) {
-                                          showPasswordSetPassword =
-                                              !showPasswordSetPassword;
-                                        } else {
-                                          showPasswordSignIn =
-                                              !showPasswordSignIn;
-                                        }
-                                      }),
-                                    )
-                                  : null,
+                              // Sem campo de confirmacao: o olho mostra/oculta a senha digitada,
+                              // sempre disponivel em qualquer tela com campo de senha.
+                              secret: !showPassword,
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  showPassword
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                ),
+                                onPressed: () => setState(() {
+                                  showPassword = !showPassword;
+                                }),
+                              ),
                             ),
                           if ([Step.confirm, Step.reset].contains(step))
                             field(code, 'Código recebido'),
@@ -1747,39 +1945,49 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             Text(
                               'SUA FICHA DE INSCRIÇÃO',
                               style: TextStyle(
-                                fontSize: 10.5,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 1,
                                 color: runPassOrange,
                               ),
                             ),
                             const SizedBox(height: 4),
-                            // Altura fixa pro titulo (2 linhas): alguns titulos quebram em duas
-                            // linhas em telas estreitas e outros nao, o que mudava a altura do
-                            // cabecalho e empurrava a ficha de inscricao pra uma posicao diferente
-                            // em cada tela do cadastro.
+                            // Altura fixa (1 linha sempre, nunca quebra): alguns
+                            // titulos sao bem mais longos que outros ("Em qual
+                            // categoria você corre?" vs "Crie sua senha"), entao o
+                            // FittedBox encolhe so os titulos longos o quanto for
+                            // preciso pra caber numa linha so, sem quebrar nem
+                            // cortar texto, com uma unica altura de cabecalho em
+                            // todas as etapas do cadastro.
                             SizedBox(
-                              height: 52,
+                              height: 32,
                               child: Align(
-                                alignment: Alignment.topLeft,
-                                child: Text(
-                                  title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style:
-                                      const TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 21,
-                                        color: runPassNavy,
-                                      ).copyWith(
-                                        color: context.isDark
-                                            ? Colors.white
-                                            : null,
-                                      ),
+                                alignment: Alignment.centerLeft,
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    title,
+                                    maxLines: 1,
+                                    style:
+                                        const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 24,
+                                          color: runPassNavy,
+                                        ).copyWith(
+                                          color: context.isDark
+                                              ? Colors.white
+                                              : null,
+                                        ),
+                                  ),
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 12),
+                            // Texto mais proximo da ficha (decisao de produto de
+                            // 24/11/2026): so o espaco minimo pro titulo nao colar
+                            // visualmente na ficha, sem a folga de antes. A ficha em
+                            // si (RegistrationCard) nao muda.
+                            const SizedBox(height: 4),
                             RegistrationCard(
                               displayName: name.text.trim().isEmpty
                                   ? displayName
@@ -1839,16 +2047,6 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               ),
                             ],
                             if (step == Step.location) ...[
-                              Text(
-                                'Ajuda a conectar você com corredores perto.',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12.5,
-                                  color: context.muted,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
                               InkWell(
                                 key: const Key('location-field'),
                                 onTap: busy
@@ -1867,6 +2065,16 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                             selectedLon = picked.$4;
                                             message = null;
                                           });
+                                          final id = welcomeAccountId;
+                                          if (id != null) {
+                                            OnboardingDraftPrefs.saveLocation(
+                                              id,
+                                              picked.$1,
+                                              picked.$2,
+                                              lat: picked.$3,
+                                              lon: picked.$4,
+                                            );
+                                          }
                                         }
                                       },
                                 child: InputDecorator(
@@ -1984,9 +2192,18 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                 value: adult,
                                 onChanged: busy
                                     ? null
-                                    : (value) => setState(
-                                        () => adult = value ?? false,
-                                      ),
+                                    : (value) {
+                                        setState(
+                                          () => adult = value ?? false,
+                                        );
+                                        final id = welcomeAccountId;
+                                        if (id != null) {
+                                          OnboardingDraftPrefs.saveAdult(
+                                            id,
+                                            adult,
+                                          );
+                                        }
+                                      },
                                 title: Text(
                                   'Declaro ter 13 anos completos ou mais.',
                                   style: TextStyle(
@@ -1999,11 +2216,19 @@ class _IdentityScreenState extends State<IdentityScreen> {
                               ),
                             ],
                             if (step == Step.photo) ...[
-                              Text(
-                                'Para seus amigos reconhecerem você. Você pode pular e adicionar depois, no perfil.',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: context.muted,
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Opcional, foto para ser adicionada depois no menu do perfil',
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: context.muted,
+                                    ),
+                                  ),
                                 ),
                               ),
                               // A fita do MedalAvatar (redesenhada em tons neutros) pinta
@@ -2079,8 +2304,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     full &&
                                     !editingFromCelebration
                               ? 'Entrar na lista de espera'
-                              : step == Step.photo && chosenPhoto == null
-                              ? 'Pular por enquanto'
+                              // A foto e a unica etapa opcional do cadastro; mesmo sem
+                              // foto escolhida, o botao e sempre "Continuar" — nunca um
+                              // "Pular" separado (decisao de produto de 23/11/2026).
                               : 'Continuar',
                         ),
                       ),

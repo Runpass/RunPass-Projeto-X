@@ -357,38 +357,46 @@ class IdentityGateway {
     return result.body;
   }
 
-  // Senha gerada na conta no momento do SignUp, nunca mostrada; a pessoa define a senha real
-  // so depois de confirmar o e-mail (tela de senha separada), trocada com ChangePassword.
-  String? _temporaryPassword;
+  /// true quando este SignUp foi retomado: o e-mail ja existia no Cognito,
+  /// ainda sem confirmar (fechou o app antes de digitar o codigo), em vez de
+  /// criado agora mesmo. A senha que a pessoa definiu nesta tentativa NAO vale
+  /// nesse caso — a conta ja tem a senha definida na primeira tentativa, e nao
+  /// ha como troca-la antes de confirmar o e-mail (o Cognito recusa
+  /// `ForgotPassword` num cadastro ainda nao confirmado). A tela avisa isso e,
+  /// depois de `confirm()`, manda pro login normal em vez de entrar direto —
+  /// nao da pra saber qual das senhas digitadas (desta vez ou da primeira) e
+  /// a que vale.
+  bool resumedSignUp = false;
 
-  String _generateTemporaryPassword() {
-    final random = Random.secure();
-    const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-    const lower = 'abcdefghijkmnopqrstuvwxyz';
-    const digits = '23456789';
-    const symbols = '!@#%^&*-_=+?';
-    String pick(String chars, int count) =>
-        List.generate(count, (_) => chars[random.nextInt(chars.length)]).join();
-    final parts = [
-      pick(upper, 5),
-      pick(lower, 5),
-      pick(digits, 5),
-      pick(symbols, 5),
-    ];
-    parts.shuffle(random);
-    return parts.join();
-  }
-
-  Future<void> signUp(String email) async {
-    final password = _generateTemporaryPassword();
-    await _cognito('SignUp', {
-      'Username': email,
-      'Password': password,
-      'UserAttributes': [
-        {'Name': 'email', 'Value': email},
-      ],
-    });
-    _temporaryPassword = password;
+  /// A senha entra no proprio SignUp (nunca uma temporaria trocada depois):
+  /// elimina o estado "e-mail confirmado mas sem senha nenhuma" por completo,
+  /// que era a causa real dos e-mails travados no meio do cadastro.
+  Future<void> signUp(String email, String password) async {
+    try {
+      await _cognito('SignUp', {
+        'Username': email,
+        'Password': password,
+        'UserAttributes': [
+          {'Name': 'email', 'Value': email},
+        ],
+      });
+      resumedSignUp = false;
+    } on IdentityIssue catch (issue) {
+      if (issue.code != 'UsernameExistsException') rethrow;
+      // SignUp nao diz se o username existente ja foi confirmado ou nao. Em vez de
+      // travar a pessoa, tenta reenviar o codigo de confirmacao: o Cognito so
+      // recusa esse reenvio quando a conta JA esta confirmada
+      // (InvalidParameterException) — e, como a senha agora sempre entra junto
+      // do SignUp, uma conta confirmada SEMPRE tem uma senha de verdade, entao
+      // o erro original ("ja existe conta, entre ou recupere senha") e o certo
+      // pra tela nesse caso, sem mais nenhuma excecao a tratar.
+      try {
+        await resendConfirmation(email);
+      } on IdentityIssue {
+        throw issue;
+      }
+      resumedSignUp = true;
+    }
   }
 
   Future<void> confirm(String email, String code) async {
@@ -396,20 +404,6 @@ class IdentityGateway {
       'Username': email,
       'ConfirmationCode': code,
     });
-  }
-
-  /// So depois do e-mail confirmado: entra com a senha temporaria do SignUp e troca pela
-  /// senha escolhida pela pessoa. Ao final a sessao fica autenticada, como num signIn comum.
-  Future<void> setPassword(String email, String newPassword) async {
-    final temporary = _temporaryPassword;
-    if (temporary == null) throw const IdentityIssue('INVALID_INPUT');
-    await signIn(email, temporary);
-    await _cognitoCall('ChangePassword', {
-      'AccessToken': _accessToken,
-      'PreviousPassword': temporary,
-      'ProposedPassword': newPassword,
-    });
-    _temporaryPassword = null;
   }
 
   Future<void> resendConfirmation(String email) async {

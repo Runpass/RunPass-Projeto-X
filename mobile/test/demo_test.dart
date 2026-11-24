@@ -128,11 +128,11 @@ void main() {
     'demo signup and confirmation never contact a network service',
     () async {
       final gateway = demoGateway(DemoTransport());
-      await gateway.signUp('new@runpass.test');
+      await gateway.signUp('new@runpass.test', 'RunpassDemo123!');
       await gateway.confirm('new@runpass.test', '123456');
-      // setPassword ja entra com a senha temporaria e troca pela senha real; a sessao
-      // segue autenticada, como num signIn comum.
-      await gateway.setPassword('new@runpass.test', 'RunpassDemo123!');
+      // A senha ja foi definida no SignUp; so falta entrar com ela, como um
+      // signIn comum.
+      await gateway.signIn('new@runpass.test', 'RunpassDemo123!');
       expect(gateway.signedIn, true);
       expect(
         (await gateway.request('/beta/status'))['myStatus'],

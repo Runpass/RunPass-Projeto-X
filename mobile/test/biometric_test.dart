@@ -38,6 +38,8 @@ IdentityGateway gateway(MemoryTokenStore store) => IdentityGateway(
         'username': 'eu',
         'version': 3,
         'photoReference': 'img',
+        'state': 'SP',
+        'city': 'São Paulo',
       });
     }
     if (uri.path == '/beta/status') {
