@@ -224,10 +224,7 @@ Future<void> _reopenAndLogIn(
   WidgetTester tester, [
   String email = 'nova@runpass.test',
 ]) async {
-  await tester.enterText(
-    find.widgetWithText(TextFormField, 'E-mail'),
-    email,
-  );
+  await tester.enterText(find.widgetWithText(TextFormField, 'E-mail'), email);
   await tester.enterText(
     find.widgetWithText(TextFormField, 'Senha'),
     'qualquer-coisa',
@@ -264,52 +261,51 @@ void main() {
     }
   });
 
-  testWidgets(
-    'escolhe a foto de perfil mas fecha o app ANTES de tocar em '
-    '"Continuar" na tela de foto: reabrir mantém a foto já escolhida, não '
-    'precisa escolher de novo (bug real de 24/11/2026: a foto só ficava em '
-    'memória, nunca persistida, diferente dos outros campos do rascunho)',
-    (tester) async {
-      final backend = _FakeBackend();
-      final firstGateway = _gatewayFor(backend);
-      await tester.pumpWidget(
-        MainApp(
-          gateway: firstGateway,
-          photoPicker: (context, choice) async => _onePixelPng,
-        ),
-      );
-      await _signUpAndCreateProfile(tester, firstGateway);
-      await _fillAdmission(tester);
-      await _fillLocation(tester);
-      expect(find.text('Sua foto de perfil'), findsOneWidget);
+  testWidgets('escolhe a foto de perfil mas fecha o app ANTES de tocar em '
+      '"Continuar" na tela de foto: reabrir mantém a foto já escolhida, não '
+      'precisa escolher de novo (bug real de 24/11/2026: a foto só ficava em '
+      'memória, nunca persistida, diferente dos outros campos do rascunho)', (
+    tester,
+  ) async {
+    final backend = _FakeBackend();
+    final firstGateway = _gatewayFor(backend);
+    await tester.pumpWidget(
+      MainApp(
+        gateway: firstGateway,
+        photoPicker: (context, choice) async => _onePixelPng,
+      ),
+    );
+    await _signUpAndCreateProfile(tester, firstGateway);
+    await _fillAdmission(tester);
+    await _fillLocation(tester);
+    expect(find.text('Sua foto de perfil'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('choose-photo')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('photo-gallery')));
-      await tester.pumpAndSettle();
-      // Fecha o app aqui — a foto nunca foi enviada ao servidor.
-      expect(backend.photoReference, isNull);
+    await tester.tap(find.byKey(const Key('choose-photo')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('photo-gallery')));
+    await tester.pumpAndSettle();
+    // Fecha o app aqui — a foto nunca foi enviada ao servidor.
+    expect(backend.photoReference, isNull);
 
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump();
-      final secondGateway = _gatewayFor(backend);
-      await tester.pumpWidget(
-        MainApp(
-          gateway: secondGateway,
-          photoPicker: (context, choice) async => _onePixelPng,
-        ),
-      );
-      await _reopenAndLogIn(tester);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    final secondGateway = _gatewayFor(backend);
+    await tester.pumpWidget(
+      MainApp(
+        gateway: secondGateway,
+        photoPicker: (context, choice) async => _onePixelPng,
+      ),
+    );
+    await _reopenAndLogIn(tester);
 
-      // Ainda na tela de foto (nunca foi enviada), mas sem precisar escolher
-      // de novo: "Continuar" ja envia a foto restaurada do rascunho.
-      expect(find.text('Sua foto de perfil'), findsOneWidget);
-      await tester.ensureVisible(find.text('Continuar'));
-      await tester.tap(find.text('Continuar'));
-      await tester.pumpAndSettle();
-      expect(backend.photoReference, isNotNull);
-    },
-  );
+    // Ainda na tela de foto (nunca foi enviada), mas sem precisar escolher
+    // de novo: "Continuar" ja envia a foto restaurada do rascunho.
+    expect(find.text('Sua foto de perfil'), findsOneWidget);
+    await tester.ensureVisible(find.text('Continuar'));
+    await tester.tap(find.text('Continuar'));
+    await tester.pumpAndSettle();
+    expect(backend.photoReference, isNotNull);
+  });
 
   testWidgets(
     'escolhe a foto, envia (toca "Continuar" na tela de foto) e fecha o '
@@ -355,49 +351,42 @@ void main() {
       // Ainda na celebracao, sem a foto em memoria (sessao nova) — a ficha
       // busca a foto do servidor pelo mesmo canal que o resto do app usa.
       expect(find.text('Começar minha jornada'), findsOneWidget);
-      final signedPhoto = tester.widget<SignedPhoto>(
-        find.byType(SignedPhoto),
-      );
+      final signedPhoto = tester.widget<SignedPhoto>(find.byType(SignedPhoto));
       expect(signedPhoto.endpoint, '/profiles/u1/photo');
     },
   );
 
-  testWidgets(
-    'fecha o app depois da admissão mas antes de escolher a cidade: '
-    'reabrir (gateway novo) retoma em "Qual a sua cidade?", não pula pra '
-    'foto',
-    (tester) async {
-      final backend = _FakeBackend();
-      final firstGateway = _gatewayFor(backend);
-      await tester.pumpWidget(MainApp(gateway: firstGateway));
-      await _signUpAndCreateProfile(tester, firstGateway);
-      await _fillAdmission(tester);
-      // Agora admitido no backend; fecha antes de escolher a cidade.
-      expect(backend.myStatus, 'admitted');
-      expect(backend.state, isNull);
+  testWidgets('fecha o app depois da admissão mas antes de escolher a cidade: '
+      'reabrir (gateway novo) retoma em "Qual a sua cidade?", não pula pra '
+      'foto', (tester) async {
+    final backend = _FakeBackend();
+    final firstGateway = _gatewayFor(backend);
+    await tester.pumpWidget(MainApp(gateway: firstGateway));
+    await _signUpAndCreateProfile(tester, firstGateway);
+    await _fillAdmission(tester);
+    // Agora admitido no backend; fecha antes de escolher a cidade.
+    expect(backend.myStatus, 'admitted');
+    expect(backend.state, isNull);
 
-      // Derruba a arvore de widgets por completo (inclusive o Navigator com
-      // chave global) antes de montar o "app reaberto" — senao o Flutter
-      // reaproveita o mesmo Navigator preso na rota anterior.
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump();
-      final secondGateway = _gatewayFor(backend);
-      await tester.pumpWidget(MainApp(gateway: secondGateway));
-      await _reopenAndLogIn(tester);
-      expect(find.text('Qual a sua cidade?'), findsOneWidget);
-      expect(find.byType(RunPassHomeScreen), findsNothing);
+    // Derruba a arvore de widgets por completo (inclusive o Navigator com
+    // chave global) antes de montar o "app reaberto" — senao o Flutter
+    // reaproveita o mesmo Navigator preso na rota anterior.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    final secondGateway = _gatewayFor(backend);
+    await tester.pumpWidget(MainApp(gateway: secondGateway));
+    await _reopenAndLogIn(tester);
+    expect(find.text('Qual a sua cidade?'), findsOneWidget);
+    expect(find.byType(RunPassHomeScreen), findsNothing);
 
-      // A admissao ja foi aceita no servidor: a ficha de inscricao precisa
-      // mostrar genero e data de nascimento de novo, lidos do proprio /me
-      // (nao ha mais rascunho local pra genero/nascimento depois que a
-      // admissao e aceita — ele e apagado de proposito).
-      final card = tester.widget<RegistrationCard>(
-        find.byType(RegistrationCard),
-      );
-      expect(card.gender, 'female');
-      expect(card.birthDate, isNotNull);
-    },
-  );
+    // A admissao ja foi aceita no servidor: a ficha de inscricao precisa
+    // mostrar genero e data de nascimento de novo, lidos do proprio /me
+    // (nao ha mais rascunho local pra genero/nascimento depois que a
+    // admissao e aceita — ele e apagado de proposito).
+    final card = tester.widget<RegistrationCard>(find.byType(RegistrationCard));
+    expect(card.gender, 'female');
+    expect(card.birthDate, isNotNull);
+  });
 
   testWidgets(
     'fecha o app depois de escolher a cidade mas antes da foto/celebração: '
@@ -426,7 +415,9 @@ void main() {
       expect(find.text('Pular por enquanto'), findsNothing);
       expect(find.text('Continuar'), findsOneWidget);
       expect(
-        find.text('Foto opcional, pode ser adicionada depois no menu do perfil'),
+        find.text(
+          'Foto opcional, pode ser adicionada depois no menu do perfil',
+        ),
         findsOneWidget,
       );
 
@@ -443,25 +434,24 @@ void main() {
     },
   );
 
-  testWidgets(
-    'usuário antigo de verdade (poucas edições de perfil, mas já com '
-    'localização e foto salvas) não vê a celebração ao restaurar a sessão',
-    (tester) async {
-      final backend = _FakeBackend()
-        ..displayName = 'Quem Já Usa'
-        ..username = 'quem_ja_usa'
-        ..version = 2
-        ..photoReference = 'avatar-antigo'
-        ..state = 'RJ'
-        ..city = 'Rio de Janeiro'
-        ..myStatus = 'admitted';
-      final gateway = _gatewayFor(backend);
-      await tester.pumpWidget(MainApp(gateway: gateway));
-      await _reopenAndLogIn(tester, 'quem-ja-usa@runpass.test');
-      expect(find.byType(RunPassHomeScreen), findsOneWidget);
-      expect(find.text('Começar minha jornada'), findsNothing);
-    },
-  );
+  testWidgets('usuário antigo de verdade (poucas edições de perfil, mas já com '
+      'localização e foto salvas) não vê a celebração ao restaurar a sessão', (
+    tester,
+  ) async {
+    final backend = _FakeBackend()
+      ..displayName = 'Quem Já Usa'
+      ..username = 'quem_ja_usa'
+      ..version = 2
+      ..photoReference = 'avatar-antigo'
+      ..state = 'RJ'
+      ..city = 'Rio de Janeiro'
+      ..myStatus = 'admitted';
+    final gateway = _gatewayFor(backend);
+    await tester.pumpWidget(MainApp(gateway: gateway));
+    await _reopenAndLogIn(tester, 'quem-ja-usa@runpass.test');
+    expect(find.byType(RunPassHomeScreen), findsOneWidget);
+    expect(find.text('Começar minha jornada'), findsNothing);
+  });
 
   testWidgets(
     'fecha o app no meio do preenchimento da admissão (antes de tocar '
@@ -505,39 +495,38 @@ void main() {
     },
   );
 
-  testWidgets(
-    'escolhe a cidade no seletor mas fecha o app ANTES de tocar em '
-    '"Continuar" na tela de localização: reabrir mostra a mesma tela de '
-    'novo, não envia a localização sozinho e não pula pra foto (bug real '
-    'de 24/11/2026: o rascunho de localização virou gatilho do envio '
-    'automático dentro de status(), sem a pessoa nunca confirmar a tela)',
-    (tester) async {
-      final backend = _FakeBackend();
-      final firstGateway = _gatewayFor(backend);
-      await tester.pumpWidget(MainApp(gateway: firstGateway));
-      await _signUpAndCreateProfile(tester, firstGateway);
-      await _fillAdmission(tester);
-      expect(find.text('Qual a sua cidade?'), findsOneWidget);
+  testWidgets('escolhe a cidade no seletor mas fecha o app ANTES de tocar em '
+      '"Continuar" na tela de localização: reabrir mostra a mesma tela de '
+      'novo, não envia a localização sozinho e não pula pra foto (bug real '
+      'de 24/11/2026: o rascunho de localização virou gatilho do envio '
+      'automático dentro de status(), sem a pessoa nunca confirmar a tela)', (
+    tester,
+  ) async {
+    final backend = _FakeBackend();
+    final firstGateway = _gatewayFor(backend);
+    await tester.pumpWidget(MainApp(gateway: firstGateway));
+    await _signUpAndCreateProfile(tester, firstGateway);
+    await _fillAdmission(tester);
+    expect(find.text('Qual a sua cidade?'), findsOneWidget);
 
-      // Escolhe a cidade no seletor (como o auto-detect por GPS faria em
-      // segundo plano), mas NAO toca em "Continuar" — fecha o app aqui.
-      await tester.tap(find.byKey(const Key('location-field')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('location-done')));
-      await tester.pumpAndSettle();
-      expect(backend.state, isNull);
+    // Escolhe a cidade no seletor (como o auto-detect por GPS faria em
+    // segundo plano), mas NAO toca em "Continuar" — fecha o app aqui.
+    await tester.tap(find.byKey(const Key('location-field')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('location-done')));
+    await tester.pumpAndSettle();
+    expect(backend.state, isNull);
 
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump();
-      final secondGateway = _gatewayFor(backend);
-      await tester.pumpWidget(MainApp(gateway: secondGateway));
-      await _reopenAndLogIn(tester);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    final secondGateway = _gatewayFor(backend);
+    await tester.pumpWidget(MainApp(gateway: secondGateway));
+    await _reopenAndLogIn(tester);
 
-      // Continua pedindo pra confirmar a cidade — nao envia sozinho, nem
-      // pula pra foto.
-      expect(find.text('Qual a sua cidade?'), findsOneWidget);
-      expect(backend.state, isNull);
-      expect(find.text('Sua foto de perfil'), findsNothing);
-    },
-  );
+    // Continua pedindo pra confirmar a cidade — nao envia sozinho, nem
+    // pula pra foto.
+    expect(find.text('Qual a sua cidade?'), findsOneWidget);
+    expect(backend.state, isNull);
+    expect(find.text('Sua foto de perfil'), findsNothing);
+  });
 }

@@ -239,7 +239,8 @@ class OnboardingDraftPrefs {
     }
   }
 
-  static Future<String?> loadUf(String accountId) => _getString('$_uf$accountId');
+  static Future<String?> loadUf(String accountId) =>
+      _getString('$_uf$accountId');
   static Future<String?> loadCity(String accountId) =>
       _getString('$_city$accountId');
 

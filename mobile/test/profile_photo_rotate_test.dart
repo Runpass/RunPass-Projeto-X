@@ -81,7 +81,9 @@ void main() {
       // tela mostra um `CircularProgressIndicator` (giro indeterminado, sem
       // fim) — `pumpAndSettle` esperaria essa animacao "parar" pra sempre.
       await tester.pump(); // agenda o frame da transicao de rota
-      await tester.pump(const Duration(milliseconds: 300)); // a transicao termina
+      await tester.pump(
+        const Duration(milliseconds: 300),
+      ); // a transicao termina
 
       // Decodificar a imagem (dart:ui) e um Future de verdade, fora do
       // relogio falso do `pump`: precisa de tempo real passando.
@@ -97,7 +99,11 @@ void main() {
       );
       touchArea.onScaleStart!(ScaleStartDetails());
       touchArea.onScaleUpdate!(
-        ScaleUpdateDetails(rotation: pi / 2, scale: 1, focalPointDelta: Offset.zero),
+        ScaleUpdateDetails(
+          rotation: pi / 2,
+          scale: 1,
+          focalPointDelta: Offset.zero,
+        ),
       );
       await tester.pump();
 
@@ -119,22 +125,42 @@ void main() {
       // topo-direita; baixo-esquerda (azul) vai pro topo-esquerda; e assim
       // por diante — uma permutacao dos quadrantes, nao mais a identidade.
       expect(
-        _closeTo(rotated.getPixel((w * 0.25).round(), (h * 0.25).round()), 0, 0, 255),
+        _closeTo(
+          rotated.getPixel((w * 0.25).round(), (h * 0.25).round()),
+          0,
+          0,
+          255,
+        ),
         isTrue,
         reason: 'topo-esquerda devia ser azul (vinha do baixo-esquerda)',
       );
       expect(
-        _closeTo(rotated.getPixel((w * 0.75).round(), (h * 0.25).round()), 255, 0, 0),
+        _closeTo(
+          rotated.getPixel((w * 0.75).round(), (h * 0.25).round()),
+          255,
+          0,
+          0,
+        ),
         isTrue,
         reason: 'topo-direita devia ser vermelho (vinha do topo-esquerda)',
       );
       expect(
-        _closeTo(rotated.getPixel((w * 0.25).round(), (h * 0.75).round()), 255, 255, 0),
+        _closeTo(
+          rotated.getPixel((w * 0.25).round(), (h * 0.75).round()),
+          255,
+          255,
+          0,
+        ),
         isTrue,
         reason: 'baixo-esquerda devia ser amarelo (vinha do baixo-direita)',
       );
       expect(
-        _closeTo(rotated.getPixel((w * 0.75).round(), (h * 0.75).round()), 0, 255, 0),
+        _closeTo(
+          rotated.getPixel((w * 0.75).round(), (h * 0.75).round()),
+          0,
+          255,
+          0,
+        ),
         isTrue,
         reason: 'baixo-direita devia ser verde (vinha do topo-direita)',
       );

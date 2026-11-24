@@ -85,8 +85,7 @@ class _FakeCognito {
         u.resetCode = null;
         return const JsonReply(200, {});
       case 'InitiateAuth':
-        final params =
-            (body!['AuthParameters'] as Map).cast<String, dynamic>();
+        final params = (body!['AuthParameters'] as Map).cast<String, dynamic>();
         final authUser = params['USERNAME'] as String;
         final password = params['PASSWORD'] as String;
         final u = users[authUser];
@@ -125,7 +124,10 @@ Future<JsonReply> _readyApi(
     });
   }
   if (uri.path == '/beta/status') {
-    return const JsonReply(200, {'myStatus': 'admitted', 'admissionsOpen': true});
+    return const JsonReply(200, {
+      'myStatus': 'admitted',
+      'admissionsOpen': true,
+    });
   }
   return const JsonReply(200, {'items': []});
 }
@@ -183,25 +185,24 @@ void main() {
   const email = 'interrompido@runpass.test';
   const password = 'uma-senha-boa-e-forte';
 
-  testWidgets(
-    'cadastro completo do zero: e-mail, senha (já entra no SignUp) e '
-    'código de confirmação — entra direto no app ao final, sem pedir login',
-    (tester) async {
-      final cognito = _FakeCognito();
-      final gateway = _gatewayFor(cognito);
-      await tester.pumpWidget(MainApp(gateway: gateway));
-      await _goToSignUpWithPassword(tester, email, password);
-      expect(find.text('Confirme seu e-mail'), findsOneWidget);
-      await _typeAndContinue(
-        tester,
-        'Código recebido',
-        cognito.users[email]!.confirmationCode!,
-      );
-      expect(gateway.signedIn, true);
-      expect(find.text('Entrar'), findsNothing);
-      expect(cognito.users[email]!.password, password);
-    },
-  );
+  testWidgets('cadastro completo do zero: e-mail, senha (já entra no SignUp) e '
+      'código de confirmação — entra direto no app ao final, sem pedir login', (
+    tester,
+  ) async {
+    final cognito = _FakeCognito();
+    final gateway = _gatewayFor(cognito);
+    await tester.pumpWidget(MainApp(gateway: gateway));
+    await _goToSignUpWithPassword(tester, email, password);
+    expect(find.text('Confirme seu e-mail'), findsOneWidget);
+    await _typeAndContinue(
+      tester,
+      'Código recebido',
+      cognito.users[email]!.confirmationCode!,
+    );
+    expect(gateway.signedIn, true);
+    expect(find.text('Entrar'), findsNothing);
+    expect(cognito.users[email]!.password, password);
+  });
 
   testWidgets(
     'fecha o app logo depois de criar a senha (nunca confirma): reabrir e '
@@ -262,38 +263,37 @@ void main() {
     },
   );
 
-  testWidgets(
-    'cadastro já completo (confirmado antes, com senha de verdade): '
-    'repetir com o mesmo e-mail bloqueia com "já existe conta" — toda conta '
-    'confirmada agora tem senha de verdade, nada a "retomar" aqui',
-    (tester) async {
-      final cognito = _FakeCognito();
-      final setup = _gatewayFor(cognito);
-      await setup.signUp(email, 'Senha_original1!');
-      await setup.confirm(email, cognito.users[email]!.confirmationCode!);
-      expect(cognito.users[email]!.confirmed, true);
+  testWidgets('cadastro já completo (confirmado antes, com senha de verdade): '
+      'repetir com o mesmo e-mail bloqueia com "já existe conta" — toda conta '
+      'confirmada agora tem senha de verdade, nada a "retomar" aqui', (
+    tester,
+  ) async {
+    final cognito = _FakeCognito();
+    final setup = _gatewayFor(cognito);
+    await setup.signUp(email, 'Senha_original1!');
+    await setup.confirm(email, cognito.users[email]!.confirmationCode!);
+    expect(cognito.users[email]!.confirmed, true);
 
-      final gateway = _gatewayFor(cognito);
-      await tester.pumpWidget(MainApp(gateway: gateway));
-      await _goToSignUpWithPassword(tester, email, 'Outra_tentativa1!');
+    final gateway = _gatewayFor(cognito);
+    await tester.pumpWidget(MainApp(gateway: gateway));
+    await _goToSignUpWithPassword(tester, email, 'Outra_tentativa1!');
 
-      expect(find.textContaining('Já existe uma conta'), findsOneWidget);
-      expect(gateway.resumedSignUp, false);
-      // A senha digitada agora nunca chega a ser usada; a conta continua
-      // com a senha original.
-      expect(cognito.users[email]!.password, 'Senha_original1!');
+    expect(find.textContaining('Já existe uma conta'), findsOneWidget);
+    expect(gateway.resumedSignUp, false);
+    // A senha digitada agora nunca chega a ser usada; a conta continua
+    // com a senha original.
+    expect(cognito.users[email]!.password, 'Senha_original1!');
 
-      // Caminho de saida: recuperar senha normalmente.
-      await tester.ensureVisible(find.text('Voltar'));
-      await tester.tap(find.text('Voltar'));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Esqueceu a senha?'));
-      await tester.tap(find.text('Esqueceu a senha?'));
-      await tester.pumpAndSettle();
-      await _typeAndContinue(tester, 'E-mail', email);
-      expect(find.text('Defina uma nova senha'), findsOneWidget);
-    },
-  );
+    // Caminho de saida: recuperar senha normalmente.
+    await tester.ensureVisible(find.text('Voltar'));
+    await tester.tap(find.text('Voltar'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Esqueceu a senha?'));
+    await tester.tap(find.text('Esqueceu a senha?'));
+    await tester.pumpAndSettle();
+    await _typeAndContinue(tester, 'E-mail', email);
+    expect(find.text('Defina uma nova senha'), findsOneWidget);
+  });
 
   testWidgets(
     'digita o código antigo por engano, depois de já ter pedido um novo: '
@@ -375,7 +375,9 @@ void main() {
 
       expect(find.text('Confirme seu e-mail'), findsOneWidget);
       expect(
-        find.text('Confirme seu e-mail. Enviamos um novo código de confirmação.'),
+        find.text(
+          'Confirme seu e-mail. Enviamos um novo código de confirmação.',
+        ),
         findsOneWidget,
       );
       // Reenviou de verdade: o codigo mudou, sem a pessoa tocar em nada.
@@ -387,14 +389,13 @@ void main() {
     },
   );
 
-  testWidgets(
-    '"ver senha" (olho) está disponível na tela de login',
-    (tester) async {
-      final gateway = _gatewayFor(_FakeCognito());
-      await tester.pumpWidget(MainApp(gateway: gateway));
-      expect(find.byIcon(Icons.visibility), findsOneWidget);
-    },
-  );
+  testWidgets('"ver senha" (olho) está disponível na tela de login', (
+    tester,
+  ) async {
+    final gateway = _gatewayFor(_FakeCognito());
+    await tester.pumpWidget(MainApp(gateway: gateway));
+    expect(find.byIcon(Icons.visibility), findsOneWidget);
+  });
 
   testWidgets(
     '"ver senha" (olho) está disponível na tela de criar senha (logo depois '
@@ -409,25 +410,22 @@ void main() {
     },
   );
 
-  testWidgets(
-    '"ver senha" (olho) está disponível na tela de redefinir senha '
-    '("esqueci minha senha")',
-    (tester) async {
-      final cognito = _FakeCognito();
-      final setup = _gatewayFor(cognito);
-      await setup.signUp(email, 'Senha_original1!');
-      await setup.confirm(email, cognito.users[email]!.confirmationCode!);
+  testWidgets('"ver senha" (olho) está disponível na tela de redefinir senha '
+      '("esqueci minha senha")', (tester) async {
+    final cognito = _FakeCognito();
+    final setup = _gatewayFor(cognito);
+    await setup.signUp(email, 'Senha_original1!');
+    await setup.confirm(email, cognito.users[email]!.confirmationCode!);
 
-      final gateway = _gatewayFor(cognito);
-      await tester.pumpWidget(MainApp(gateway: gateway));
-      await tester.ensureVisible(find.text('Esqueceu a senha?'));
-      await tester.tap(find.text('Esqueceu a senha?'));
-      await tester.pumpAndSettle();
-      await _typeAndContinue(tester, 'E-mail', email);
-      expect(find.text('Defina uma nova senha'), findsOneWidget);
-      expect(find.byIcon(Icons.visibility), findsOneWidget);
-    },
-  );
+    final gateway = _gatewayFor(cognito);
+    await tester.pumpWidget(MainApp(gateway: gateway));
+    await tester.ensureVisible(find.text('Esqueceu a senha?'));
+    await tester.tap(find.text('Esqueceu a senha?'));
+    await tester.pumpAndSettle();
+    await _typeAndContinue(tester, 'E-mail', email);
+    expect(find.text('Defina uma nova senha'), findsOneWidget);
+    expect(find.byIcon(Icons.visibility), findsOneWidget);
+  });
 
   testWidgets(
     'campo de código recebido nunca mantém o valor de uma tentativa '

@@ -337,7 +337,6 @@ String photoError(Object error) => error is IdentityIssue
       }
     : 'Não foi possível usar a câmera ou a galeria. Confira a permissão do app nos Ajustes do celular.';
 
-
 class ProfilePhotoCropScreen extends StatefulWidget {
   final Uint8List image;
   final bool banner;

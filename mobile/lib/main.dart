@@ -943,9 +943,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
         // Mensagem unica de proposito: o Cognito recusa (PreventUserExistenceErrors)
         // dizer se o e-mail nao existe ou se so a senha esta errada, pra nao dar
         // pra descobrir quais e-mails tem conta so testando no login.
-        'NotAuthorizedException' ||
-        'INVALID_TOKEN' =>
-          'E-mail ou senha incorretos. Se ainda não tem conta, toque em Criar conta.',
+        'NotAuthorizedException' || 'INVALID_TOKEN' => 'E-mail ou senha incorretos. Se ainda não tem conta, toque em Criar conta.',
         'UserNotConfirmedException' =>
           'Confirme seu e-mail. Enviamos um novo código de confirmação.',
         'UsernameExistsException' =>
@@ -954,8 +952,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
         // existe mas ainda não foi confirmada; mandar pra tela de cadastro de
         // novo com o mesmo e-mail reenvia o código de confirmação pendente
         // (ver signUp()/resumedSignUp), em vez de travar aqui.
-        'InvalidParameterException' =>
-          'Esse cadastro ainda não foi confirmado. Toque em "Criar conta" com o mesmo e-mail para receber um novo código.',
+        'InvalidParameterException' => 'Esse cadastro ainda não foi confirmado. Toque em "Criar conta" com o mesmo e-mail para receber um novo código.',
         'USERNAME_TAKEN' => 'Esse nome de usuário já está em uso.',
         'InvalidPasswordException' =>
           'Use pelo menos $minimumPasswordLength caracteres.',
@@ -2238,9 +2235,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                 onChanged: busy
                                     ? null
                                     : (value) {
-                                        setState(
-                                          () => adult = value ?? false,
-                                        );
+                                        setState(() => adult = value ?? false);
                                         final id = welcomeAccountId;
                                         if (id != null) {
                                           OnboardingDraftPrefs.saveAdult(

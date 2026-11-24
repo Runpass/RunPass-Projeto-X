@@ -217,9 +217,7 @@ class RegistrationCard extends StatelessWidget {
                                           gateway: gateway!,
                                           endpoint:
                                               '/profiles/${Uri.encodeComponent(accountId!)}/photo',
-                                          fallback: Center(
-                                            child: placeholder,
-                                          ),
+                                          fallback: Center(child: placeholder),
                                         ),
                                       ),
                                     )
