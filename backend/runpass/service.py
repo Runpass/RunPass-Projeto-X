@@ -4,13 +4,18 @@ import hashlib
 import hmac
 import json
 import secrets
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from .profile_index import index_keys, shared_keys
+from .profile_index import PIDX_REGISTRY, index_keys, shared_keys
 from .store import Conflict, Unavailable
+
+# Memoria da requisicao HTTP em curso (um conjunto novo por requisicao, criado pelo middleware da API).
+# Fora de uma requisicao e None e nada e lembrado.
+REQUEST_MEMO = ContextVar("runpass_request_memo", default=None)
 
 
 class Problem(Exception):
@@ -86,6 +91,14 @@ class IdentityService:
 
             now = self.clock()
             account_key = ("identity", pk, "ACCOUNT")
+            # Conta, marca de exclusao e a chave de repeticao: lidas de uma vez (em paralelo no DynamoDB).
+            # Toda rota passa por aqui; em fila eram 2 a 3 idas ao banco antes de comecar o trabalho.
+            first = [account_key, self.erasure(principal.subject), *([cmd] if cmd else [])]
+            # `batch_get` do DynamoDB devolve "ausente" para tabela nao configurada. Aqui isso nao pode passar
+            # em silencio (a marca de exclusao seria ignorada): nesse caso segue a leitura uma a uma, que acusa.
+            tables = getattr(self.store, "tables", None)
+            if tables is None or all(k[0] in tables for k in first):
+                expected.update(self.store.batch_get(first))
             account = read(account_key)
             erased = read(self.erasure(principal.subject))
             if (erased and erased["expiresAt"] > int(now.timestamp())) or (
@@ -176,9 +189,30 @@ class IdentityService:
             write(key, None)
         for key in new - old:
             write(key, {"owner": subject})
+        # Registro das particoes do indice que existem (uma linha por prefixo, compartilhada entre
+        # pessoas e nunca apagada junto com a conta): as sugestoes leem esta lista em vez de sondar
+        # as ~1.400 particoes possiveis (5 s na primeira chamada). Fora do `sharedKeys` de proposito.
+        for prefix in sorted({key[1].split("#", 1)[1] for key in new - old}):
+            registry = ("identity", PIDX_REGISTRY, prefix)
+            if not read(registry):
+                write(registry, {})
         write(pointer, {"sharedKeys": shared_keys(new)})
 
     def authorize(self, principal, admitted=False):
+        # Dentro de uma mesma requisicao HTTP a conferencia vale uma vez: a entrada da API confere e cada
+        # servico conferia de novo (ate 3 vezes as mesmas leituras). So o sucesso e lembrado, e so ate a
+        # requisicao acabar (ver REQUEST_MEMO); fora de uma requisicao, confere sempre.
+        memo = REQUEST_MEMO.get()
+        seen = (id(self), principal.subject, principal.audience, bool(admitted))
+        if memo is not None and seen in memo:
+            return
+        self._authorize(principal, admitted)
+        if memo is not None:
+            memo.add(seen)
+            if admitted:  # quem passou como admitido tambem passa na conferencia simples
+                memo.add((id(self), principal.subject, principal.audience, False))
+
+    def _authorize(self, principal, admitted=False):
         # Conferencia de leitura (conta ativa, sem exclusao em curso, admissao): leituras consistentes, sem
         # transacao, para chamadas simultaneas da mesma pessoa nao entrarem em conflito entre si.
         def check(read, write, account, now, replay):
@@ -475,6 +509,18 @@ class IdentityService:
             work_pk = "WORK#erase_account#pending#" + str(int(operation[:2], 16) % 16)
             work_sk = stamp(now) + "#" + operation
             write(("identity", pk, "ACCOUNT"), {**(account or {}), "state": "deleting"})
+            # Registro de auditoria: o app trata a conta como anonima (some de busca, feed e perfis), mas o
+            # back guarda quem era, para apuracoes futuras. So o minimo (id, usuario, nome, datas): sem
+            # e-mail, nascimento, cidade, fotos nem textos. Fica fora de USER#, entao a limpeza nao o apaga.
+            tombstone = {
+                "subject": principal.subject,
+                "username": profile.get("username") if profile else None,
+                "displayName": profile.get("displayName") if profile else None,
+                "deletedAt": stamp(now),
+                "operationId": operation,
+            }
+            write(("identity", "DELETEDUSER#" + principal.subject, "TOMBSTONE"), tombstone)
+            write(("identity", "DELETEDUSERS", stamp(now) + "#" + principal.subject), tombstone)
             write(
                 self.erasure(principal.subject),
                 {

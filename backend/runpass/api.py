@@ -1,5 +1,7 @@
 """Identity and catalog HTTP surface. Dependencies must be injected; default app fails closed."""
 
+import json
+import time
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -22,6 +24,7 @@ from .models import (
     CreateFeedback,
     CreateParticipation,
     CreateProfile,
+    CreateReport,
     EditComment,
     EditionRequestFields,
     Eligibility,
@@ -37,13 +40,20 @@ from .models import (
     WebLookupRequest,
 )
 from .nl_search import MAX_PHRASE, text_fallback
-from .service import Problem
+from .service import REQUEST_MEMO, Problem
 from .store import Unavailable
 
 IdempotencyKey = Annotated[
     str,
     Header(alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
 ]
+
+
+# Requisicoes que passam deste tempo (ms) deixam uma linha no log da Lambda: metodo, MODELO da rota (por
+# exemplo `/editions/{id}`, nunca o caminho com ids nem os filtros), status e tempo. So as lentas, para
+# o log nao crescer com cada requisicao: o registro de acesso da API nao guarda a rota, e sem ela nao da
+# para saber quais telas demoram.
+SLOW_REQUEST_MS = 400
 
 
 def create_app(
@@ -61,6 +71,47 @@ def create_app(
     app = FastAPI(
         title="RunPass S03", version="0.8.0", docs_url=None, redoc_url=None, openapi_url=None
     )
+
+    class RequestMemo:
+        """Abre a memoria da requisicao (ver `service.REQUEST_MEMO`): a conferencia da conta vale uma vez
+        por requisicao, em vez de repetir as mesmas leituras em cada servico chamado. Tambem registra as
+        requisicoes lentas (ver `SLOW_REQUEST_MS`)."""
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                return await self.inner(scope, receive, send)
+            began, status = time.perf_counter(), [0]
+
+            async def watch(message):
+                if message["type"] == "http.response.start":
+                    status[0] = message["status"]
+                await send(message)
+
+            token = REQUEST_MEMO.set(set())
+            try:
+                await self.inner(scope, receive, watch)
+            finally:
+                REQUEST_MEMO.reset(token)
+                took = (time.perf_counter() - began) * 1000
+                if took >= SLOW_REQUEST_MS:
+                    route = scope.get("route")
+                    print(
+                        json.dumps(
+                            {
+                                "slow": True,
+                                "method": scope.get("method"),
+                                "route": getattr(route, "path", None) or "(sem rota)",
+                                "status": status[0],
+                                "ms": round(took),
+                            }
+                        ),
+                        flush=True,
+                    )
+
+    app.add_middleware(RequestMemo)
 
     @app.exception_handler(Problem)
     async def problem(request, error):
@@ -738,6 +789,24 @@ def create_app(
         return friends().send_feedback(
             actor, idempotency_key, body.kind, body.text, body.appVersion
         )
+
+    @app.post("/reports", status_code=201, operation_id="sendReport")
+    def send_report(body: CreateReport, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().report(
+            actor, idempotency_key, body.targetType, body.targetId, body.reason, body.text
+        )
+
+    @app.put("/profiles/{id}/block", operation_id="putBlock")
+    def put_block(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().block(actor, id, idempotency_key)
+
+    @app.delete("/profiles/{id}/block", operation_id="deleteBlock")
+    def delete_block(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().unblock(actor, id, idempotency_key)
+
+    @app.get("/me/blocks", operation_id="listMyBlocks")
+    def my_blocks(actor: Actor):
+        return friends().blocks(actor)
 
     @app.delete("/edition-comments/{id}", operation_id="deleteEditionComment")
     def delete_edition_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):

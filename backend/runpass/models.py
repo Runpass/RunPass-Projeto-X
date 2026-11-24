@@ -296,6 +296,15 @@ class CreateFeedback(Input):
         return value
 
 
+class CreateReport(Input):
+    """Denuncia de publicacao, comentario ou pessoa, lida so pela equipe."""
+
+    targetType: Literal["post", "comment", "user"]
+    targetId: Annotated[str, Field(min_length=1, max_length=128)]
+    reason: Literal["spam", "offensive", "nudity", "violence", "fake", "other"]
+    text: Annotated[str, Field(max_length=1000)] | None = None
+
+
 class CreateComment(Input):
     text: Annotated[str, Field(min_length=1, max_length=1000)]
     # Resposta a um comentario (um nivel: responder a uma resposta vira resposta ao comentario raiz).

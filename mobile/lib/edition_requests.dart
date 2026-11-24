@@ -81,8 +81,22 @@ class DateMaskFormatter extends TextInputFormatter {
   }
 }
 
+/// O servidor guarda a distância com até 4 casas decimais.
+bool kmHasTooManyDecimals(String value) {
+  final text = value.trim().replaceAll(',', '.');
+  final dot = text.indexOf('.');
+  return dot >= 0 && text.length - dot - 1 > 4;
+}
+
 String? requestDistanceError(String value) {
   final km = double.tryParse(value.replaceAll(',', '.'));
+  if (km != null &&
+      km.isFinite &&
+      km > 0 &&
+      km <= 1000 &&
+      kmHasTooManyDecimals(value)) {
+    return 'Use até 4 casas depois da vírgula, por exemplo 21,0975.';
+  }
   return km != null && km.isFinite && km > 0 && km <= 1000
       ? null
       : 'Informe a distância em km (até 1000), por exemplo 10 ou 21,1.';

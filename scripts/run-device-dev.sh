@@ -13,8 +13,13 @@ output() {
 api="$(output runpass-dev-app ApiUrl)"
 client="$(output runpass-dev-identity RunnerClient)"
 [[ "$api" == https://* && -n "$client" && "$client" != None ]] || { echo "Saidas das stacks nao encontradas" >&2; exit 1; }
+# Paginas legais (opcionais no DEV; obrigatorias no build da loja): so entram se as variaveis existirem.
+legal=()
+[[ -z "${RUNPASS_PRIVACY_URL:-}" ]] || legal+=("--dart-define=RUNPASS_PRIVACY_URL=$RUNPASS_PRIVACY_URL")
+[[ -z "${RUNPASS_TERMS_URL:-}" ]] || legal+=("--dart-define=RUNPASS_TERMS_URL=$RUNPASS_TERMS_URL")
 cd -- "$repo/mobile"
 exec "${FLUTTER:-flutter}" run -d "$device" --release \
   --dart-define=RUNPASS_API_URL="$api" \
   --dart-define=RUNPASS_COGNITO_URL="https://cognito-idp.${region}.amazonaws.com/" \
-  --dart-define=RUNPASS_COGNITO_CLIENT_ID="$client"
+  --dart-define=RUNPASS_COGNITO_CLIENT_ID="$client" \
+  ${legal[@]+"${legal[@]}"}

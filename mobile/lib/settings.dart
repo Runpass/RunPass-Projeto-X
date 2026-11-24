@@ -9,6 +9,7 @@ import 'identity_gateway.dart';
 import 'main.dart' show IdentityScreen;
 import 'notifications.dart';
 import 'runpass_theme.dart';
+import 'safety.dart';
 
 /// Configuracoes da conta (engrenagem do Perfil): privacidade, avisos, sair e excluir conta.
 class SettingsScreen extends StatefulWidget {
@@ -67,7 +68,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } on Exception {
       // A sessão local já foi encerrada; falha de rede não impede sair.
     }
-    if (mounted) toSignIn();
+    if (mounted) {
+      // Avisos da tela anterior (ex.: "Feedback enviado") não ficam por cima do login.
+      ScaffoldMessenger.of(context).clearSnackBars();
+      toSignIn();
+    }
   }
 
   Future<void> deleteAccount() async {
@@ -76,7 +81,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Excluir sua conta?'),
         content: const Text(
-          'O acesso será bloqueado imediatamente e a limpeza dos seus dados (perfil, participações, avaliações e fotos) será agendada. Isso não pode ser desfeito.',
+          'O acesso será bloqueado imediatamente e a limpeza dos seus dados (perfil, participações, avaliações e fotos) será agendada. Para a equipe poder apurar problemas no futuro, guardamos só um registro mínimo (identificador, nome de usuário, nome e a data da exclusão). Para as outras pessoas você some do app. Isso não pode ser desfeito.',
         ),
         actions: [
           // Ação sem volta: o botão de destaque é o que mantém a conta; excluir fica em vermelho, discreto.
@@ -113,6 +118,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // autoRestore: false — a conta acabou de ser excluida, a sessao nao deve
       // voltar sozinha. Sem mensagem: volta para a tela inicial normal, como um
       // primeiro acesso (decisao de produto de 21/11/2026).
+      ScaffoldMessenger.of(context).clearSnackBars();
       toSignIn(null, false);
     }
   }
@@ -170,6 +176,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: dark,
               onChanged: ThemeController.set,
             ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Column(
+            children: [
+              ListTile(
+                key: const Key('blocked-people'),
+                leading: const Icon(Icons.person_off_outlined),
+                title: const Text('Pessoas bloqueadas'),
+                subtitle: const Text('Ver e desbloquear quem você bloqueou.'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        BlockedPeopleScreen(gateway: widget.gateway),
+                  ),
+                ),
+              ),
+              ListTile(
+                key: const Key('privacy-policy'),
+                leading: const Icon(Icons.privacy_tip_outlined),
+                title: const Text('Política de privacidade'),
+                trailing: const Icon(Icons.open_in_new, size: 18),
+                onTap: () => openLegalPage(
+                  context,
+                  privacyPolicyUrl,
+                  name: 'A política de privacidade',
+                ),
+              ),
+              ListTile(
+                key: const Key('terms-of-use'),
+                leading: const Icon(Icons.description_outlined),
+                title: const Text('Termos de uso'),
+                trailing: const Icon(Icons.open_in_new, size: 18),
+                onTap: () => openLegalPage(
+                  context,
+                  termsOfUseUrl,
+                  name: 'Os termos de uso',
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 12),

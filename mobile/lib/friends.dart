@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'catalog_screen.dart';
 import 'identity_gateway.dart';
 import 'runpass_theme.dart';
+import 'safety.dart';
 
 String friendsError(IdentityIssue issue) => switch (issue.code) {
   'QUERY_TOO_SHORT' => 'Digite pelo menos 2 letras do nome ou do usuário.',
@@ -621,6 +622,21 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   bool busy = false;
   bool busyFriend = false;
 
+  /// Depois de denunciar e bloquear, o perfil deixa de abrir: volta para a tela anterior.
+  Future<void> leaveIfBlocked() async {
+    try {
+      await widget.gateway.request(
+        '/profiles/${Uri.encodeComponent(widget.profileId)}',
+      );
+    } on IdentityIssue catch (issue) {
+      if (issue.code == 'PROFILE_NOT_FOUND' && mounted) {
+        Navigator.of(context).pop();
+      }
+    } on Exception {
+      // Segue no perfil.
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -715,7 +731,50 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     final friendState = p?['friendState'] as String? ?? 'none';
     final canView = p?['canView'] == true;
     return Scaffold(
-      appBar: AppBar(title: Text(p == null ? 'Perfil' : '@${p['username']}')),
+      appBar: AppBar(
+        title: Text(p == null ? 'Perfil' : '@${p['username']}'),
+        actions: [
+          if (p != null && p['followState'] != 'self')
+            PopupMenuButton<String>(
+              key: const Key('profile-menu'),
+              tooltip: 'Mais opções',
+              onSelected: (value) async {
+                final name = '${p['displayName'] ?? p['username']}';
+                if (value == 'report') {
+                  final sent = await reportContent(
+                    context,
+                    widget.gateway,
+                    targetType: 'user',
+                    targetId: widget.profileId,
+                    blockUserId: widget.profileId,
+                    blockUserName: name,
+                  );
+                  if (sent && context.mounted) await leaveIfBlocked();
+                } else {
+                  final done = await blockPerson(
+                    context,
+                    widget.gateway,
+                    widget.profileId,
+                    name,
+                  );
+                  if (done && context.mounted) Navigator.of(context).pop();
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  key: Key('profile-menu-report'),
+                  value: 'report',
+                  child: Text('Denunciar'),
+                ),
+                PopupMenuItem(
+                  key: Key('profile-menu-block'),
+                  value: 'block',
+                  child: Text('Bloquear'),
+                ),
+              ],
+            ),
+        ],
+      ),
       body: p == null
           ? Center(
               child: error == null
@@ -1566,6 +1625,12 @@ class _CommentsScreenState extends State<CommentsScreen> {
   Future<void> openProfile(Map author) async {
     final id = author['id'] as String?;
     if (id == null) return;
+    if (author['removed'] == true) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Esta conta foi removida.')));
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => id == widget.myId
@@ -1577,6 +1642,20 @@ class _CommentsScreenState extends State<CommentsScreen> {
               ),
       ),
     );
+  }
+
+  /// Denuncia um comentário de outra pessoa; se a pessoa for bloqueada em seguida, recarrega a lista.
+  Future<void> reportComment(Map<String, dynamic> c) async {
+    final author = c['author'] as Map;
+    final sent = await reportContent(
+      context,
+      widget.gateway,
+      targetType: 'comment',
+      targetId: c['id'] as String,
+      blockUserId: author['id'] as String?,
+      blockUserName: author['displayName'] as String?,
+    );
+    if (sent && mounted) await load();
   }
 
   Widget commentTile(Map<String, dynamic> c, {Map<String, dynamic>? root}) {
@@ -1642,6 +1721,14 @@ class _CommentsScreenState extends State<CommentsScreen> {
                         visualDensity: VisualDensity.compact,
                         icon: const Icon(Icons.edit_outlined, size: 20),
                         onPressed: () => startEdit(c),
+                      ),
+                    if (author['id'] != widget.myId)
+                      IconButton(
+                        key: Key('report-comment-${c['id']}'),
+                        tooltip: 'Denunciar comentário',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.flag_outlined, size: 20),
+                        onPressed: () => reportComment(c),
                       ),
                     if (canDelete)
                       IconButton(

@@ -196,6 +196,208 @@ class SocialTests(unittest.TestCase):
             self.social.send_feedback(self.bia, "over", "praise", "Mais um")
         self.assertEqual(error.exception.code, "FEEDBACK_LIMIT_REACHED")
 
+    # ---- sugestoes: registro das particoes do indice ----
+    def test_index_partitions_come_from_a_registry_not_from_probing_every_prefix(self):
+        from runpass.profile_index import PIDX_REGISTRY, PIDX_REGISTRY_READY
+
+        # Contas criadas depois da publicacao ja registram os prefixos; falta so a marca de pronto.
+        rows = self.store.query("identity", PIDX_REGISTRY, limit=100)[0]
+        prefixes = {sk for sk, _ in rows}
+        self.assertTrue({"an", "ana", "bi"} & prefixes or {"an", "bi", "ca"} <= prefixes)
+        self.assertNotIn(PIDX_REGISTRY_READY, prefixes)
+
+        queries = []
+        real = self.store.query
+        self.store.query = lambda table, pk, **kw: (queries.append(pk), real(table, pk, **kw))[1]
+        self.addCleanup(setattr, self.store, "query", real)
+        first = self.social._index_partitions()
+        probed = [q for q in queries if q.startswith("PIDX#")]
+        self.assertGreater(len(probed), 1000)  # primeira vez: sonda tudo e preenche o registro
+        self.assertEqual(set(first), {p for p in first})
+        # Segunda instancia (sem a memoria local): le o registro, sem sondar.
+        queries.clear()
+        other = SocialService(self.identity)
+        again = other._index_partitions()
+        self.assertEqual(sorted(again), sorted(first))
+        self.assertEqual([q for q in queries if q.startswith("PIDX#")], [])
+        self.assertEqual(queries.count(PIDX_REGISTRY) >= 1, True)
+
+    def test_new_profile_is_registered_and_erasure_keeps_the_shared_registry(self):
+        from runpass.profile_index import PIDX_REGISTRY
+
+        self.person("zed", "Zeca Zorro", "zeca_z")
+        keys = {sk for sk, _ in self.store.query("identity", PIDX_REGISTRY, limit=100)[0]}
+        self.assertIn("ze", keys)
+        self.identity.delete_account(Principal("zed", True), "del-zed")
+        ErasureProcessor(self.identity).run_pending()
+        keys_after = {sk for sk, _ in self.store.query("identity", PIDX_REGISTRY, limit=100)[0]}
+        self.assertIn("ze", keys_after)  # linha compartilhada: nao some com a conta
+
+    # ---- bloquear e denunciar ----
+    def test_block_hides_both_ways_ends_relations_and_can_be_undone(self):
+        self.complete(self.ana, "b1", "2026-11-05T10:00:00Z")
+        self.complete(self.bia, "b2", "2026-11-05T11:00:00Z")
+        self.befriend(self.bia, self.ana, "bf")
+        self.social.follow(self.bia, "ana", "bfol")
+        comment = self.social.comment(self.ana, "b2", "bc", "oi bia")
+        self.assertEqual(len(self.social.comments(self.bia, "b2")["items"]), 1)
+
+        self.social.block(self.bia, "ana", "blk")
+        self.social.block(self.bia, "ana", "blk2")  # repetir nao quebra
+
+        feed_ids = [p["id"] for p in self.social.feed(self.bia)["items"]]
+        self.assertNotIn("b1", feed_ids)
+        self.assertEqual(
+            [p["id"] for p in self.social.feed(self.ana)["items"]].count("b2"), 0
+        )  # nos dois sentidos
+        self.assertEqual(self.social.comments(self.bia, "b2")["items"], [])
+        self.assertEqual(comment["author"]["id"], "ana")
+        for who, other in ((self.bia, "ana"), (self.ana, "bia")):
+            with self.assertRaises(Problem) as error:
+                self.social.profile_view(who, other)
+            self.assertEqual(error.exception.code, "PROFILE_NOT_FOUND")
+        with self.assertRaises(Problem):
+            self.social.post(self.bia, "b1")
+        with self.assertRaises(Problem):
+            self.social.like(self.bia, "b1", "blike")
+        with self.assertRaises(Problem):
+            self.social.follow(self.ana, "bia", "again")
+        with self.assertRaises(Problem):
+            self.social.add_friend(self.ana, "bia", "again2")
+        self.assertNotIn(
+            "ana_runs", [p["username"] for p in self.social.search(self.bia, "ana")["items"]]
+        )
+        self.assertEqual(
+            [b["username"] for b in self.social.blocks(self.bia)["items"]], ["ana_runs"]
+        )
+        self.assertEqual(self.social.blocks(self.ana)["items"], [])
+        # amizade e seguir acabaram nos dois lados
+        self.assertIsNone(self.store.get(("identity", "USER#ana", "FRIEND#bia")))
+        self.assertIsNone(self.store.get(("identity", "USER#bia", "FOLLOWING#ana")))
+
+        self.social.unblock(self.bia, "ana", "unb")
+        self.assertIn("b1", [p["id"] for p in self.social.feed(self.bia)["items"]])
+        self.assertEqual(self.social.profile_view(self.bia, "ana")["username"], "ana_runs")
+
+    def test_cannot_block_yourself_or_a_missing_profile(self):
+        with self.assertRaises(Problem) as error:
+            self.social.block(self.bia, "bia", "k1")
+        self.assertEqual(error.exception.code, "CANNOT_BLOCK_SELF")
+        with self.assertRaises(Problem) as error:
+            self.social.block(self.bia, "ninguem", "k2")
+        self.assertEqual(error.exception.code, "PROFILE_NOT_FOUND")
+
+    def test_report_is_stored_for_the_team_with_reasons_and_a_daily_limit(self):
+        from runpass.social import list_reports_for_team
+
+        out = self.social.report(self.bia, "r1", "post", "b1", "offensive", "  texto ofensivo  ")
+        again = self.social.report(self.bia, "r1", "post", "b1", "offensive", "  texto ofensivo  ")
+        self.assertEqual(again["id"], out["id"])
+        self.social.report(self.caio, "r2", "user", "ana", "spam")
+        items = list_reports_for_team(self.store)
+        self.assertEqual(len(items), 2)
+        mine = next(i for i in items if i["id"] == out["id"])
+        self.assertEqual(mine["text"], "texto ofensivo")
+        self.assertEqual(mine["reporterUsername"], "bia_lima")
+        user = next(i for i in items if i["targetType"] == "user")
+        self.assertEqual(user["targetUsername"], "ana_runs")
+        with self.assertRaises(Problem) as error:
+            self.social.report(self.bia, "r3", "post", "b1", "inventado")
+        self.assertEqual(error.exception.code, "INVALID_REPORT")
+        for n in range(self.social.REPORT_PER_DAY - 1):
+            self.social.report(self.bia, f"more-{n}", "post", f"p{n}", "spam")
+        with self.assertRaises(Problem) as error:
+            self.social.report(self.bia, "over", "post", "px", "spam")
+        self.assertEqual(error.exception.code, "REPORT_LIMIT_REACHED")
+
+    # ---- conta excluida: anonima no app, registrada para auditoria ----
+    def test_deleted_account_is_anonymous_in_the_app_but_kept_for_audit(self):
+        from runpass.social import list_deleted_accounts
+
+        self.complete(self.bia, "d1", "2026-11-05T10:00:00Z")
+        self.social.comment(self.ana, "d1", "dc", "oi")
+        self.identity.delete_account(self.ana, "del-ana")
+        ErasureProcessor(self.identity).run_pending()
+
+        # No app: o comentario dela some e o perfil nao abre.
+        self.assertEqual(self.social.comments(self.bia, "d1")["items"], [])
+        with self.assertRaises(Problem):
+            self.social.profile_view(self.bia, "ana")
+        self.assertEqual(
+            SocialService.removed_author("ana"),
+            {"id": "ana", "displayName": "Usuário removido", "removed": True},
+        )
+        # No back: o registro de auditoria sobrevive a limpeza, so com o minimo.
+        audit = list_deleted_accounts(self.store)
+        self.assertEqual(len(audit), 1)
+        self.assertEqual(audit[0]["subject"], "ana")
+        self.assertEqual(audit[0]["username"], "ana_runs")
+        self.assertEqual(audit[0]["displayName"], "Ana Paula Souza")
+        self.assertTrue(audit[0]["deletedAt"])
+        tomb = self.store.get(("identity", "DELETEDUSER#ana", "TOMBSTONE"))
+        self.assertEqual(
+            sorted(k for k in tomb if k != "_rev"),
+            ["deletedAt", "displayName", "operationId", "subject", "username"],
+        )
+
+    # ---- desempenho: idas ao banco ----
+    def reads(self):
+        """Liga um registro das chaves lidas uma a uma no banco de verdade (por baixo da memoria de leituras)."""
+        seen = []
+        real = self.store.get
+        self.store.get = lambda key: (seen.append(key), real(key))[1]
+        self.addCleanup(setattr, self.store, "get", real)
+        return seen
+
+    def test_feed_reads_only_the_posts_it_returns_not_every_post(self):
+        for n in range(60):
+            self.complete(
+                self.ana if n % 2 else self.caio,
+                f"p{n:02d}",
+                f"2026-10-{n % 28 + 1:02d}T10:{n:02d}:00Z",
+            )
+        expected = [p["id"] for p in self.social.feed(self.bia, limit=5)["items"]]
+        seen = self.reads()
+        page = self.social.feed(self.bia, limit=5)
+        self.assertEqual([p["id"] for p in page["items"]], expected)
+        self.assertEqual(len(page["items"]), 5)
+        self.assertIn("nextCursor", page)
+        parts = {k for k in seen if k[2].endswith("#PART")}
+        # Antes lia as 60 participacoes para devolver 5; agora so o primeiro lote (pagina + folga).
+        self.assertLessEqual(len(parts), 12)
+        # E cada item e lido uma vez so, mesmo com o mesmo autor em varias publicacoes.
+        self.assertEqual(len(seen), len(set(seen)))
+
+    def test_feed_pages_cover_every_post_once_in_order(self):
+        for n in range(23):
+            self.complete(self.ana, f"q{n:02d}", f"2026-10-{n + 1:02d}T10:00:00Z")
+        ids, cursor = [], None
+        for _ in range(10):
+            page = self.social.feed(self.bia, limit=5, cursor=cursor)
+            ids += [p["id"] for p in page["items"]]
+            cursor = page.get("nextCursor")
+            if not cursor:
+                break
+        self.assertEqual(ids, [f"q{n:02d}" for n in range(22, -1, -1)])
+
+    def test_read_scope_reads_each_item_once_and_only_inside_the_scope(self):
+        store = self.social.store
+        key = ("identity", "USER#ana", "PROFILE")
+        seen = self.reads()
+        store.get(key)
+        store.get(key)
+        self.assertEqual(len(seen), 2)  # fora do scope: sempre o banco
+        del seen[:]
+        with store.scope():
+            first = store.get(key)
+            first["displayName"] = "mexido"  # quem recebe pode alterar: a memoria nao muda
+            self.assertEqual(store.get(key)["displayName"], "Ana Paula Souza")
+            store.warm([key, ("identity", "USER#bia", "PROFILE")])
+            store.get(("identity", "USER#bia", "PROFILE"))
+            self.assertEqual(len(seen), 2)  # ana e bia, uma vez cada
+        store.get(key)
+        self.assertEqual(len(seen), 3)  # saiu do scope: volta a ler
+
     # ---- search ----
     def test_search_by_username_and_by_name_ignoring_accents_and_excluding_self(self):
         self.assertEqual(

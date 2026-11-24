@@ -473,3 +473,19 @@ class CatalogImportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DistanceLabelTests(unittest.TestCase):
+    def test_labels_keep_zeros_of_whole_numbers(self):
+        from decimal import Decimal
+
+        from runpass.catalog_import import distance_entry
+
+        got = {
+            k: distance_entry(Decimal(k))["label"] for k in ("5", "10", "20", "100", "7.50", "10.5")
+        }
+        self.assertEqual(
+            got,
+            {"5": "5K", "10": "10K", "20": "20K", "100": "100K", "7.50": "7.5K", "10.5": "10.5K"},
+        )
+        self.assertEqual(distance_entry(Decimal("100"))["id"], "100k")

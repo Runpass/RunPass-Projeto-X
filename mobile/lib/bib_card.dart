@@ -11,16 +11,8 @@ String? bibNumberOf(Map participation) {
 }
 
 /// Distância no jeito do número de peito: "42K", "21K", "7,5K".
-String? bibDistanceLabel(double? km) {
-  if (km == null || km <= 0) return null;
-  if ((km - 42.195).abs() < 0.3) return '42K';
-  if ((km - 21.0975).abs() < 0.2) return '21K';
-  final rounded = (km * 10).round() / 10;
-  final text = rounded == rounded.roundToDouble()
-      ? rounded.round().toString()
-      : rounded.toStringAsFixed(1).replaceAll('.', ',');
-  return '${text}K';
-}
+String? bibDistanceLabel(double? km) =>
+    km == null || km <= 0 ? null : distanceLabel(km);
 
 /// "12º LUGAR", ou nulo sem colocação.
 String? bibPlacementLabel(num? placement) =>
