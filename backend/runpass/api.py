@@ -1,5 +1,7 @@
 """Identity and catalog HTTP surface. Dependencies must be injected; default app fails closed."""
 
+import json
+import time
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -46,6 +48,13 @@ IdempotencyKey = Annotated[
 ]
 
 
+# Requisicoes que passam deste tempo (ms) deixam uma linha no log da Lambda: metodo, MODELO da rota (por
+# exemplo `/editions/{id}`, nunca o caminho com ids nem os filtros), status e tempo. So as lentas, para
+# o log nao crescer com cada requisicao: o registro de acesso da API nao guarda a rota, e sem ela nao da
+# para saber quais telas demoram.
+SLOW_REQUEST_MS = 400
+
+
 def create_app(
     service=None,
     verifier=None,
@@ -64,7 +73,8 @@ def create_app(
 
     class RequestMemo:
         """Abre a memoria da requisicao (ver `service.REQUEST_MEMO`): a conferencia da conta vale uma vez
-        por requisicao, em vez de repetir as mesmas leituras em cada servico chamado."""
+        por requisicao, em vez de repetir as mesmas leituras em cada servico chamado. Tambem registra as
+        requisicoes lentas (ver `SLOW_REQUEST_MS`)."""
 
         def __init__(self, inner):
             self.inner = inner
@@ -72,11 +82,33 @@ def create_app(
         async def __call__(self, scope, receive, send):
             if scope["type"] != "http":
                 return await self.inner(scope, receive, send)
+            began, status = time.perf_counter(), [0]
+
+            async def watch(message):
+                if message["type"] == "http.response.start":
+                    status[0] = message["status"]
+                await send(message)
+
             token = REQUEST_MEMO.set(set())
             try:
-                await self.inner(scope, receive, send)
+                await self.inner(scope, receive, watch)
             finally:
                 REQUEST_MEMO.reset(token)
+                took = (time.perf_counter() - began) * 1000
+                if took >= SLOW_REQUEST_MS:
+                    route = scope.get("route")
+                    print(
+                        json.dumps(
+                            {
+                                "slow": True,
+                                "method": scope.get("method"),
+                                "route": getattr(route, "path", None) or "(sem rota)",
+                                "status": status[0],
+                                "ms": round(took),
+                            }
+                        ),
+                        flush=True,
+                    )
 
     app.add_middleware(RequestMemo)
 
