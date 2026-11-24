@@ -69,7 +69,9 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(title_case("MEIA MARATONA SP 21K"), "Meia Maratona SP 21K")
         self.assertEqual(title_case("CORRIDA DE SAO PAULO"), "Corrida de Sao Paulo")
         self.assertEqual(title_case("Corrida XV de Novembro"), "Corrida XV de Novembro")
-        self.assertEqual(title_case("corrida sp run"), "Corrida Sp Run")  # tudo minusculo: nao da para saber
+        self.assertEqual(
+            title_case("corrida sp run"), "Corrida Sp Run"
+        )  # tudo minusculo: nao da para saber
         self.assertEqual(title_case("corrida d'água"), "Corrida D'Água")
         # Toda entrada no catalogo passa pelo padrao.
         self.put(edition("ed-caixa", name="CORRIDA DO SOLDADO", date="2026-12-06"))
