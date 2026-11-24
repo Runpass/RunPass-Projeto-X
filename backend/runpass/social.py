@@ -24,9 +24,16 @@ from uuid import uuid4
 
 from .catalog import haversine_km
 from .participation import post_image_count
-from .profile_index import MIN_TOKEN, fold, profile_tokens, tokens
+from .profile_index import (
+    MIN_TOKEN,
+    PIDX_REGISTRY,
+    PIDX_REGISTRY_READY,
+    fold,
+    profile_tokens,
+    tokens,
+)
 from .service import IdentityService, Problem, stamp
-from .store import Unavailable
+from .store import Conflict, Unavailable
 
 MAX_FOLLOWING = 500
 MAX_FEED_AUTHORS = 100
@@ -392,10 +399,23 @@ class SocialService:
     PARTITION_TTL = 3600
 
     def _index_partitions(self):
+        """Prefixos de `PIDX#` que tem gente. Vem do registro (`PIDXREG`, uma consulta); so na primeira vez
+        depois da publicacao, sem a marca de pronto, sonda as ~1.400 particoes e preenche o registro."""
         cached = getattr(self, "_pidx_cache", None)
         now = time.monotonic()
         if cached and cached[0] > now:
             return cached[1]
+        rows = self._list("identity", PIDX_REGISTRY, None, 2000)
+        names = {sk for sk, _ in rows}
+        if PIDX_REGISTRY_READY in names:
+            found = sorted(names - {PIDX_REGISTRY_READY})
+        else:
+            found = self._probe_index_partitions()
+            self._fill_registry(found, names)
+        self._pidx_cache = (now + self.PARTITION_TTL, found)
+        return found
+
+    def _probe_index_partitions(self):
         first = string.ascii_lowercase + string.digits
         candidates = [a + b for a in first for b in first + "_"]
 
@@ -404,9 +424,21 @@ class SocialService:
             return prefix if rows else None
 
         with ThreadPoolExecutor(max_workers=16) as pool:
-            found = [p for p in pool.map(has_rows, candidates) if p]
-        self._pidx_cache = (now + self.PARTITION_TTL, found)
-        return found
+            return [p for p in pool.map(has_rows, candidates) if p]
+
+    def _fill_registry(self, found, present):
+        """Grava no registro o que a sondagem achou e, por ultimo, a marca de pronto. Melhor esforco: se
+        falhar, a proxima sugestao sonda de novo."""
+        todo = [p for p in [*found, PIDX_REGISTRY_READY] if p not in present]
+        try:
+            for start in range(0, len(todo), 50):
+                keys = [("identity", PIDX_REGISTRY, p) for p in todo[start : start + 50]]
+                current = self.store.batch_get(keys)
+                fresh = [k for k in keys if not current.get(k)]
+                if fresh:
+                    self.store.commit({k: None for k in fresh}, {k: {} for k in fresh})
+        except (Conflict, Unavailable):
+            pass
 
     SUGGESTION_POOL = 60
 

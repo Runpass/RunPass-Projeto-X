@@ -9,6 +9,10 @@ import re
 import unicodedata
 
 MIN_TOKEN = 2
+# Particao com uma linha por prefixo de `PIDX#` existente (sk = o prefixo) e a marca "~PRONTO" de que o
+# registro ja cobre as particoes antigas (preenchido na primeira sugestao depois da publicacao).
+PIDX_REGISTRY = "PIDXREG"
+PIDX_REGISTRY_READY = "~PRONTO"
 
 
 def fold(text):

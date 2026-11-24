@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from .profile_index import index_keys, shared_keys
+from .profile_index import PIDX_REGISTRY, index_keys, shared_keys
 from .store import Conflict, Unavailable
 
 # Memoria da requisicao HTTP em curso (um conjunto novo por requisicao, criado pelo middleware da API).
@@ -189,6 +189,13 @@ class IdentityService:
             write(key, None)
         for key in new - old:
             write(key, {"owner": subject})
+        # Registro das particoes do indice que existem (uma linha por prefixo, compartilhada entre
+        # pessoas e nunca apagada junto com a conta): as sugestoes leem esta lista em vez de sondar
+        # as ~1.400 particoes possiveis (5 s na primeira chamada). Fora do `sharedKeys` de proposito.
+        for prefix in sorted({key[1].split("#", 1)[1] for key in new - old}):
+            registry = ("identity", PIDX_REGISTRY, prefix)
+            if not read(registry):
+                write(registry, {})
         write(pointer, {"sharedKeys": shared_keys(new)})
 
     def authorize(self, principal, admitted=False):
