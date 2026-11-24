@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import secrets
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -11,6 +12,10 @@ from zoneinfo import ZoneInfo
 
 from .profile_index import index_keys, shared_keys
 from .store import Conflict, Unavailable
+
+# Memoria da requisicao HTTP em curso (um conjunto novo por requisicao, criado pelo middleware da API).
+# Fora de uma requisicao e None e nada e lembrado.
+REQUEST_MEMO = ContextVar("runpass_request_memo", default=None)
 
 
 class Problem(Exception):
@@ -86,6 +91,14 @@ class IdentityService:
 
             now = self.clock()
             account_key = ("identity", pk, "ACCOUNT")
+            # Conta, marca de exclusao e a chave de repeticao: lidas de uma vez (em paralelo no DynamoDB).
+            # Toda rota passa por aqui; em fila eram 2 a 3 idas ao banco antes de comecar o trabalho.
+            first = [account_key, self.erasure(principal.subject), *([cmd] if cmd else [])]
+            # `batch_get` do DynamoDB devolve "ausente" para tabela nao configurada. Aqui isso nao pode passar
+            # em silencio (a marca de exclusao seria ignorada): nesse caso segue a leitura uma a uma, que acusa.
+            tables = getattr(self.store, "tables", None)
+            if tables is None or all(k[0] in tables for k in first):
+                expected.update(self.store.batch_get(first))
             account = read(account_key)
             erased = read(self.erasure(principal.subject))
             if (erased and erased["expiresAt"] > int(now.timestamp())) or (
@@ -179,6 +192,20 @@ class IdentityService:
         write(pointer, {"sharedKeys": shared_keys(new)})
 
     def authorize(self, principal, admitted=False):
+        # Dentro de uma mesma requisicao HTTP a conferencia vale uma vez: a entrada da API confere e cada
+        # servico conferia de novo (ate 3 vezes as mesmas leituras). So o sucesso e lembrado, e so ate a
+        # requisicao acabar (ver REQUEST_MEMO); fora de uma requisicao, confere sempre.
+        memo = REQUEST_MEMO.get()
+        seen = (id(self), principal.subject, principal.audience, bool(admitted))
+        if memo is not None and seen in memo:
+            return
+        self._authorize(principal, admitted)
+        if memo is not None:
+            memo.add(seen)
+            if admitted:  # quem passou como admitido tambem passa na conferencia simples
+                memo.add((id(self), principal.subject, principal.audience, False))
+
+    def _authorize(self, principal, admitted=False):
         # Conferencia de leitura (conta ativa, sem exclusao em curso, admissao): leituras consistentes, sem
         # transacao, para chamadas simultaneas da mesma pessoa nao entrarem em conflito entre si.
         def check(read, write, account, now, replay):
