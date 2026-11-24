@@ -52,6 +52,8 @@ cd mobile
 flutter run --dart-define=RUNPASS_API_URL=https://api.example.test --dart-define=RUNPASS_COGNITO_URL=https://cognito-idp.sa-east-1.amazonaws.com --dart-define=RUNPASS_COGNITO_CLIENT_ID=CLIENT_PUBLICO
 ```
 
+Páginas legais (exigência da loja): `RUNPASS_PRIVACY_URL` e `RUNPASS_TERMS_URL` também são `--dart-define`, com endereço **https** da política de privacidade e dos termos de uso (textos do jurídico, publicados pelo time). Sem elas, os links em Configurações e nas telas de entrar/criar conta avisam que a página ainda não está disponível; **o build para a loja só vale com as duas definidas**.
+
 Os endereços acima são exemplos, não serviços disponíveis. Backend: consulte `backend/README.md` para factory/configuração explícita e comando que falha fechado por padrão. O template Cognito pode ser verificado com `make infra-check` sem aplicar. Principal/substituto e recuperação de operadores: `docs/operadores.md`.
 
 Se o ambiente virtual sob Documents apresentar lentidão ao ler dependências, crie outro fora dessa pasta com os mesmos requisitos: `make setup VENV=~/.cache/runpass/venv` e `make check VENV=~/.cache/runpass/venv`. Registrar caminho e resultados; não confundir troca de diretório com mudança de versões.

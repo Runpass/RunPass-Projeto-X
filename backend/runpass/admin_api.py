@@ -35,8 +35,10 @@ from .operator_admin import rename_edition, set_social_links
 from .quality_report import REPORT as QUALITY_REPORT
 from .service import Problem
 from .social import (
+    list_deleted_accounts,
     list_edition_comments_for_team,
     list_feedback_for_team,
+    list_reports_for_team,
     remove_edition_comment_as_team,
 )
 from .store import Conflict, Unavailable
@@ -391,6 +393,18 @@ def create_admin_app(
     def edition_comments_team(edition_id: str, op: Operator):
         need(op, "catalog_admin")
         return {"items": list_edition_comments_for_team(store, edition_id)}
+
+    @app.get("/admin/reports")
+    def reports_team(op: Operator, limit: int = Query(100, ge=1, le=200)):
+        """Denuncias de publicacoes, comentarios e pessoas feitas pelos corredores."""
+        need(op, "catalog_admin")
+        return {"items": list_reports_for_team(store, limit)}
+
+    @app.get("/admin/deleted-accounts")
+    def deleted_accounts_team(op: Operator, limit: int = Query(100, ge=1, le=200)):
+        """Auditoria: contas que o corredor excluiu (anonimas no app). So id, usuario, nome e data."""
+        need(op, "user_admin")
+        return {"items": list_deleted_accounts(store, limit)}
 
     @app.get("/admin/feedback")
     def feedback_team(op: Operator, limit: int = Query(100, ge=1, le=200)):

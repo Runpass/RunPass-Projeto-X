@@ -425,11 +425,31 @@ export const ABAS = {
   descobertas: ['Provas descobertas', 'catalog_admin'],
   cadastros: ['Cadastros no app', 'user_admin'],
   feedbacks: ['Feedbacks do app', 'catalog_admin'],
+  denuncias: ['Denúncias', 'catalog_admin'],
+  excluidas: ['Contas excluídas', 'user_admin'],
   banners: ['Banners', 'catalog_admin'],
   qualidade: ['Qualidade da busca', 'catalog_admin'],
   custos: ['Custos', 'cost_read'],
   operadores: ['Operadores', 'user_admin'],
 };
+
+/** Motivo e alvo da denúncia enviada pelo app. */
+export const MOTIVOS_DENUNCIA = {
+  spam: 'Spam',
+  offensive: 'Ofensivo ou assédio',
+  nudity: 'Nudez ou conteúdo sexual',
+  violence: 'Violência',
+  fake: 'Perfil falso',
+  other: 'Outro motivo',
+};
+export const ALVOS_DENUNCIA = { post: 'Publicação', comment: 'Comentário', user: 'Pessoa' };
+
+/** "2 denúncias: 1 spam, 1 ofensivo..." para o topo da lista. */
+export function resumoDenuncias(itens) {
+  const total = itens.length;
+  if (!total) return 'Nenhuma denúncia recebida.';
+  return `${total} ${total === 1 ? 'denúncia' : 'denúncias'}.`;
+}
 
 /** Tipo do feedback enviado pelo app (Configurações > Enviar feedback). */
 export const TIPOS_FEEDBACK = { suggestion: 'Sugestão', problem: 'Problema', praise: 'Elogio' };

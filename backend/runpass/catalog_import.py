@@ -64,7 +64,9 @@ def parse_km(text):
 
 def distance_entry(km):
     plain = format(km.normalize(), "f")
-    label = KNOWN_LABELS.get(km.normalize()) or f"{plain.rstrip('0').rstrip('.')}K"
+    # So tira zeros depois da virgula: "10" segue "10" (antes virava "1K").
+    short = plain.rstrip("0").rstrip(".") if "." in plain else plain
+    label = KNOWN_LABELS.get(km.normalize()) or f"{short}K"
     return {"id": plain.replace(".", "_") + "k", "kilometers": plain, "label": label}
 
 

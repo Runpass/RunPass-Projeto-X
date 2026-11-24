@@ -196,6 +196,113 @@ class SocialTests(unittest.TestCase):
             self.social.send_feedback(self.bia, "over", "praise", "Mais um")
         self.assertEqual(error.exception.code, "FEEDBACK_LIMIT_REACHED")
 
+    # ---- bloquear e denunciar ----
+    def test_block_hides_both_ways_ends_relations_and_can_be_undone(self):
+        self.complete(self.ana, "b1", "2026-11-05T10:00:00Z")
+        self.complete(self.bia, "b2", "2026-11-05T11:00:00Z")
+        self.befriend(self.bia, self.ana, "bf")
+        self.social.follow(self.bia, "ana", "bfol")
+        comment = self.social.comment(self.ana, "b2", "bc", "oi bia")
+        self.assertEqual(len(self.social.comments(self.bia, "b2")["items"]), 1)
+
+        self.social.block(self.bia, "ana", "blk")
+        self.social.block(self.bia, "ana", "blk2")  # repetir nao quebra
+
+        feed_ids = [p["id"] for p in self.social.feed(self.bia)["items"]]
+        self.assertNotIn("b1", feed_ids)
+        self.assertEqual(
+            [p["id"] for p in self.social.feed(self.ana)["items"]].count("b2"), 0
+        )  # nos dois sentidos
+        self.assertEqual(self.social.comments(self.bia, "b2")["items"], [])
+        self.assertEqual(comment["author"]["id"], "ana")
+        for who, other in ((self.bia, "ana"), (self.ana, "bia")):
+            with self.assertRaises(Problem) as error:
+                self.social.profile_view(who, other)
+            self.assertEqual(error.exception.code, "PROFILE_NOT_FOUND")
+        with self.assertRaises(Problem):
+            self.social.post(self.bia, "b1")
+        with self.assertRaises(Problem):
+            self.social.like(self.bia, "b1", "blike")
+        with self.assertRaises(Problem):
+            self.social.follow(self.ana, "bia", "again")
+        with self.assertRaises(Problem):
+            self.social.add_friend(self.ana, "bia", "again2")
+        self.assertNotIn(
+            "ana_runs", [p["username"] for p in self.social.search(self.bia, "ana")["items"]]
+        )
+        self.assertEqual(
+            [b["username"] for b in self.social.blocks(self.bia)["items"]], ["ana_runs"]
+        )
+        self.assertEqual(self.social.blocks(self.ana)["items"], [])
+        # amizade e seguir acabaram nos dois lados
+        self.assertIsNone(self.store.get(("identity", "USER#ana", "FRIEND#bia")))
+        self.assertIsNone(self.store.get(("identity", "USER#bia", "FOLLOWING#ana")))
+
+        self.social.unblock(self.bia, "ana", "unb")
+        self.assertIn("b1", [p["id"] for p in self.social.feed(self.bia)["items"]])
+        self.assertEqual(self.social.profile_view(self.bia, "ana")["username"], "ana_runs")
+
+    def test_cannot_block_yourself_or_a_missing_profile(self):
+        with self.assertRaises(Problem) as error:
+            self.social.block(self.bia, "bia", "k1")
+        self.assertEqual(error.exception.code, "CANNOT_BLOCK_SELF")
+        with self.assertRaises(Problem) as error:
+            self.social.block(self.bia, "ninguem", "k2")
+        self.assertEqual(error.exception.code, "PROFILE_NOT_FOUND")
+
+    def test_report_is_stored_for_the_team_with_reasons_and_a_daily_limit(self):
+        from runpass.social import list_reports_for_team
+
+        out = self.social.report(self.bia, "r1", "post", "b1", "offensive", "  texto ofensivo  ")
+        again = self.social.report(self.bia, "r1", "post", "b1", "offensive", "  texto ofensivo  ")
+        self.assertEqual(again["id"], out["id"])
+        self.social.report(self.caio, "r2", "user", "ana", "spam")
+        items = list_reports_for_team(self.store)
+        self.assertEqual(len(items), 2)
+        mine = next(i for i in items if i["id"] == out["id"])
+        self.assertEqual(mine["text"], "texto ofensivo")
+        self.assertEqual(mine["reporterUsername"], "bia_lima")
+        user = next(i for i in items if i["targetType"] == "user")
+        self.assertEqual(user["targetUsername"], "ana_runs")
+        with self.assertRaises(Problem) as error:
+            self.social.report(self.bia, "r3", "post", "b1", "inventado")
+        self.assertEqual(error.exception.code, "INVALID_REPORT")
+        for n in range(self.social.REPORT_PER_DAY - 1):
+            self.social.report(self.bia, f"more-{n}", "post", f"p{n}", "spam")
+        with self.assertRaises(Problem) as error:
+            self.social.report(self.bia, "over", "post", "px", "spam")
+        self.assertEqual(error.exception.code, "REPORT_LIMIT_REACHED")
+
+    # ---- conta excluida: anonima no app, registrada para auditoria ----
+    def test_deleted_account_is_anonymous_in_the_app_but_kept_for_audit(self):
+        from runpass.social import list_deleted_accounts
+
+        self.complete(self.bia, "d1", "2026-11-05T10:00:00Z")
+        self.social.comment(self.ana, "d1", "dc", "oi")
+        self.identity.delete_account(self.ana, "del-ana")
+        ErasureProcessor(self.identity).run_pending()
+
+        # No app: o comentario dela some e o perfil nao abre.
+        self.assertEqual(self.social.comments(self.bia, "d1")["items"], [])
+        with self.assertRaises(Problem):
+            self.social.profile_view(self.bia, "ana")
+        self.assertEqual(
+            SocialService.removed_author("ana"),
+            {"id": "ana", "displayName": "Usuário removido", "removed": True},
+        )
+        # No back: o registro de auditoria sobrevive a limpeza, so com o minimo.
+        audit = list_deleted_accounts(self.store)
+        self.assertEqual(len(audit), 1)
+        self.assertEqual(audit[0]["subject"], "ana")
+        self.assertEqual(audit[0]["username"], "ana_runs")
+        self.assertEqual(audit[0]["displayName"], "Ana Paula Souza")
+        self.assertTrue(audit[0]["deletedAt"])
+        tomb = self.store.get(("identity", "DELETEDUSER#ana", "TOMBSTONE"))
+        self.assertEqual(
+            sorted(k for k in tomb if k != "_rev"),
+            ["deletedAt", "displayName", "operationId", "subject", "username"],
+        )
+
     # ---- desempenho: idas ao banco ----
     def reads(self):
         """Liga um registro das chaves lidas uma a uma no banco de verdade (por baixo da memoria de leituras)."""

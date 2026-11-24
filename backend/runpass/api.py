@@ -24,6 +24,7 @@ from .models import (
     CreateFeedback,
     CreateParticipation,
     CreateProfile,
+    CreateReport,
     EditComment,
     EditionRequestFields,
     Eligibility,
@@ -788,6 +789,24 @@ def create_app(
         return friends().send_feedback(
             actor, idempotency_key, body.kind, body.text, body.appVersion
         )
+
+    @app.post("/reports", status_code=201, operation_id="sendReport")
+    def send_report(body: CreateReport, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().report(
+            actor, idempotency_key, body.targetType, body.targetId, body.reason, body.text
+        )
+
+    @app.put("/profiles/{id}/block", operation_id="putBlock")
+    def put_block(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().block(actor, id, idempotency_key)
+
+    @app.delete("/profiles/{id}/block", operation_id="deleteBlock")
+    def delete_block(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().unblock(actor, id, idempotency_key)
+
+    @app.get("/me/blocks", operation_id="listMyBlocks")
+    def my_blocks(actor: Actor):
+        return friends().blocks(actor)
 
     @app.delete("/edition-comments/{id}", operation_id="deleteEditionComment")
     def delete_edition_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):

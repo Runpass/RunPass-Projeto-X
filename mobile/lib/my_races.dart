@@ -574,7 +574,17 @@ String formatKilometers(double km) => km == km.roundToDouble()
     ? '${km.toInt()} km'
     : '${km.toStringAsFixed(1)} km';
 
-String distanceLabel(double km) => '${km.round()}K';
+/// "5K", "10K", "10,5K"; a meia e a maratona oficiais (21,0975 e 42,195 km) saem "21K" e "42K". Não
+/// arredonda para inteiro: 10,5 km não pode virar "11K".
+String distanceLabel(double km) {
+  if ((km - 42.195).abs() < 0.3) return '42K';
+  if ((km - 21.0975).abs() < 0.2) return '21K';
+  final rounded = (km * 10).round() / 10;
+  final text = rounded == rounded.roundToDouble()
+      ? rounded.round().toString()
+      : rounded.toStringAsFixed(1).replaceAll('.', ',');
+  return '${text}K';
+}
 
 /// Limita quantas chamadas rodam ao mesmo tempo. A conta do DEV aceita poucas execucoes simultaneas
 /// (cota de 10 para todas as funcoes): uma chamada por medalha, todas juntas, faz parte falhar e a

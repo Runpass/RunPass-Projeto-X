@@ -20,6 +20,7 @@ import 'password_policy.dart';
 import 'profile_photo.dart';
 import 'registration_card.dart';
 import 'runpass_theme.dart';
+import 'safety.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -505,7 +506,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
   /// BetaAdmissionInput).
   Future<void> pickBirthDate() async {
     final now = DateTime.now();
-    final initial = birthDate ?? DateTime(now.year - 13, now.month, now.day);
+    // Sem data anterior, a roda abre em ~25 anos atrás (uma idade qualquer, nunca a mínima) e o
+    // "Concluído" só vale depois de a pessoa girar alguma roda: tocar direto nele não confirma uma data
+    // que ela não escolheu.
+    final initial = birthDate ?? DateTime(now.year - 25, now.month, now.day);
+    var touched = birthDate != null;
     var day = initial.day;
     var month = initial.month;
     var year = initial.year;
@@ -623,7 +628,9 @@ class _IdentityScreenState extends State<IdentityScreen> {
                       ),
                       TextButton(
                         key: const Key('birth-date-done'),
-                        onPressed: () => Navigator.pop(sheetContext, true),
+                        onPressed: touched
+                            ? () => Navigator.pop(sheetContext, true)
+                            : null,
                         child: const Text('Concluído'),
                       ),
                     ],
@@ -638,7 +645,10 @@ class _IdentityScreenState extends State<IdentityScreen> {
                           controller: dayController,
                           itemCount: _daysInMonth(year, month),
                           text: (i) => '${i + 1}'.padLeft(2, '0'),
-                          onChanged: (i) => day = i + 1,
+                          onChanged: (i) => setSheetState(() {
+                            day = i + 1;
+                            touched = true;
+                          }),
                         ),
                         wheelColumn(
                           label: 'Mês',
@@ -646,6 +656,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                           itemCount: 12,
                           text: (i) => _monthNames[i],
                           onChanged: (i) => setSheetState(() {
+                            touched = true;
                             month = i + 1;
                             clampDay();
                           }),
@@ -656,6 +667,7 @@ class _IdentityScreenState extends State<IdentityScreen> {
                           itemCount: maxYear - minYear + 1,
                           text: (i) => '${maxYear - i}',
                           onChanged: (i) => setSheetState(() {
+                            touched = true;
                             year = maxYear - i;
                             clampDay();
                           }),
@@ -1553,6 +1565,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                     : 'Continuar',
                               ),
                             ),
+                          if (step == Step.signUp)
+                            const LegalLinks(acceptance: true),
                           if (step == Step.signIn)
                             TextButton(
                               onPressed: busy
@@ -1589,6 +1603,8 @@ class _IdentityScreenState extends State<IdentityScreen> {
                                   : () => change(Step.signUp),
                               child: const Text('Criar conta'),
                             ),
+                            const SizedBox(height: 8),
+                            const LegalLinks(),
                           ],
                           if (step == Step.confirm)
                             TextButton(
