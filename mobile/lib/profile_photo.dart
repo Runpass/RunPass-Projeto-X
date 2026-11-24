@@ -7,11 +7,59 @@ import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'identity_gateway.dart';
-import 'my_races.dart' show imageContentType, MedalShelfCropState;
+import 'my_races.dart'
+    show imageContentType, MedalShelfCropState, TouchCropPainter;
 import 'runpass_theme.dart';
+
+/// Rascunho local da foto de perfil ja escolhida (e recortada) mas ainda nao
+/// enviada ao servidor — guardado num arquivo, nao no SharedPreferences
+/// (nao e feito pra blobs binarios grandes), por id da conta. Sem isso,
+/// fechar o app na tela de foto antes de tocar "Continuar" perdia a foto
+/// escolhida, mesmo a etapa certa voltando a aparecer (24/11/2026). Apagado
+/// assim que a foto for de fato enviada ao servidor.
+class ChosenPhotoDraftPrefs {
+  static Future<File?> _file(String accountId) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      return File('${dir.path}/draft-profile-photo-$accountId.jpg');
+    } on Object {
+      return null;
+    }
+  }
+
+  static Future<void> save(String accountId, List<int> bytes) async {
+    try {
+      final file = await _file(accountId);
+      await file?.writeAsBytes(bytes, flush: true);
+    } on Object {
+      // Sem armazenamento: na pior hipotese, a foto escolhida se perde ao
+      // fechar o app antes de confirmar — pior do que hoje, nao melhor.
+    }
+  }
+
+  static Future<Uint8List?> load(String accountId) async {
+    try {
+      final file = await _file(accountId);
+      if (file == null || !await file.exists()) return null;
+      return await file.readAsBytes();
+    } on Object {
+      return null;
+    }
+  }
+
+  static Future<void> clear(String accountId) async {
+    try {
+      final file = await _file(accountId);
+      if (file != null && await file.exists()) await file.delete();
+    } on Object {
+      // Nada a limpar.
+    }
+  }
+}
 
 enum PhotoChoice { camera, gallery, web, remove }
 
@@ -306,22 +354,65 @@ class ProfilePhotoCropScreen extends StatefulWidget {
   State<ProfilePhotoCropScreen> createState() => _ProfilePhotoCropScreenState();
 }
 
+/// Recorte proprio (nao o pacote `crop_your_image`, usado no resto do app
+/// em `PhotoZoomScreen`): so pra foto de perfil e banner, no mesmo padrao do
+/// `MedalShelfCrop` (`my_races.dart`), que ja reconhece pinca (zoom) e giro
+/// de dois dedos juntos no mesmo gesto — algo que o pacote nunca exportou
+/// (so pinca; giro so dava via botao, pedido pelo usuario em 24/11/2026).
 class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
-  final controller = CropController();
+  ui.Image? decoded;
+  double scale = 1;
+  double rotation = 0;
+  Offset offset = Offset.zero;
+  double _baseScale = 1;
+  double _baseRotation = 0;
+  Size viewportSize = const Size(320, 320);
   bool busy = false;
 
-  void done(CropResult result) {
+  @override
+  void initState() {
+    super.initState();
+    _decode();
+  }
+
+  Future<void> _decode() async {
+    final codec = await ui.instantiateImageCodec(widget.image);
+    final frame = await codec.getNextFrame();
     if (!mounted) return;
-    switch (result) {
-      case CropSuccess(:final croppedImage):
-        Navigator.of(context).pop<List<int>>(croppedImage);
-      case CropFailure():
+    setState(() => decoded = frame.image);
+  }
+
+  Future<void> confirm() async {
+    final image = decoded;
+    if (image == null) return;
+    setState(() => busy = true);
+    try {
+      final viewport = viewportSize;
+      final recorder = ui.PictureRecorder();
+      TouchCropPainter(
+        image: image,
+        scale: scale,
+        rotation: rotation,
+        offset: offset,
+      ).paint(Canvas(recorder), viewport);
+      final output = await recorder.endRecording().toImage(
+        viewport.width.round(),
+        viewport.height.round(),
+      );
+      final data = await output.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = data?.buffer.asUint8List();
+      if (!mounted) return;
+      if (bytes == null) throw const FormatException('foto');
+      Navigator.of(context).pop<List<int>>(bytes);
+    } on Object {
+      if (mounted) {
         setState(() => busy = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Não foi possível recortar a foto. Tente de novo.'),
           ),
         );
+      }
     }
   }
 
@@ -343,24 +434,77 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
             child: Text(
               widget.instructions ??
                   (widget.banner
-                      ? 'Arraste e use dois dedos para ampliar. A parte dentro do quadro será o banner.'
-                      : 'Arraste e use dois dedos para ampliar. Deixe só o rosto dentro do círculo.'),
+                      ? 'Arraste, use dois dedos para ampliar e girar. A parte dentro do quadro será o banner.'
+                      : 'Arraste, use dois dedos para ampliar e girar. Deixe só o rosto dentro do círculo.'),
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white70),
             ),
           ),
           Expanded(
-            child: Crop(
-              image: widget.image,
-              controller: controller,
-              aspectRatio: widget.banner ? 16 / 7 : 1,
-              withCircleUi: !widget.banner,
-              interactive: true,
-              fixCropRect: true,
-              baseColor: Colors.black,
-              maskColor: Colors.black.withValues(alpha: 0.6),
-              onCropped: done,
-            ),
+            child: decoded == null
+                ? const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  )
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final aspect = widget.banner ? 16 / 7 : 1.0;
+                      final available = constraints.biggest;
+                      var viewport = Size(
+                        available.width,
+                        available.width / aspect,
+                      );
+                      if (viewport.height > available.height) {
+                        viewport = Size(
+                          available.height * aspect,
+                          available.height,
+                        );
+                      }
+                      viewportSize = viewport;
+                      return Center(
+                        child: ClipRect(
+                          child: GestureDetector(
+                            key: const Key('crop-touch-area'),
+                            onScaleStart: (_) {
+                              _baseScale = scale;
+                              _baseRotation = rotation;
+                            },
+                            onScaleUpdate: (details) => setState(() {
+                              scale = (_baseScale * details.scale).clamp(
+                                0.2,
+                                8,
+                              );
+                              rotation = _baseRotation + details.rotation;
+                              offset += details.focalPointDelta;
+                            }),
+                            child: SizedBox(
+                              width: viewport.width,
+                              height: viewport.height,
+                              child: Stack(
+                                children: [
+                                  CustomPaint(
+                                    size: viewport,
+                                    painter: TouchCropPainter(
+                                      image: decoded!,
+                                      scale: scale,
+                                      rotation: rotation,
+                                      offset: offset,
+                                    ),
+                                  ),
+                                  if (!widget.banner)
+                                    IgnorePointer(
+                                      child: CustomPaint(
+                                        size: viewport,
+                                        painter: const _CircleGuidePainter(),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
           ),
           Padding(
             padding: const EdgeInsets.all(16),
@@ -383,12 +527,7 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
                     style: FilledButton.styleFrom(
                       backgroundColor: runPassOrange,
                     ),
-                    onPressed: busy
-                        ? null
-                        : () {
-                            setState(() => busy = true);
-                            controller.crop();
-                          },
+                    onPressed: busy ? null : confirm,
                     child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
                   ),
                 ),
@@ -399,6 +538,49 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
       ),
     ),
   );
+}
+
+/// Guia visual do circulo (foto de perfil): mascara escura fora do circulo,
+/// contorno branco por cima de uma linha preta mais larga (visivel sobre
+/// fotos claras ou escuras) — so orientacao, nao afeta o que e exportado.
+/// Mesmo estilo do `_FrameGuidePainter` da medalha, sem depender dele (so
+/// um circulo, nao os formatos variados do furo da medalha).
+class _CircleGuidePainter extends CustomPainter {
+  const _CircleGuidePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final circle = Path()
+      ..addOval(
+        Rect.fromCircle(
+          center: size.center(Offset.zero),
+          radius: size.shortestSide / 2,
+        ),
+      );
+    final mask = Path.combine(
+      PathOperation.difference,
+      Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height)),
+      circle,
+    );
+    canvas.drawPath(mask, Paint()..color = const Color(0x99000000));
+    canvas.drawPath(
+      circle,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4
+        ..color = const Color(0xaa000000),
+    );
+    canvas.drawPath(
+      circle,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..color = Colors.white,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CircleGuidePainter oldDelegate) => false;
 }
 
 /// Formatos do editor de foto: a foto inteira (padrão), o recorte livre e as proporções fixas

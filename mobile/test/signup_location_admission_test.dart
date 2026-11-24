@@ -94,8 +94,8 @@ void main() {
 
       await tester.pumpWidget(MainApp(gateway: gateway));
 
-      // Entra no cadastro (Step.signUp -> confirm -> setPassword), ate chegar no
-      // perfil, igual a um usuario novo de verdade.
+      // Entra no cadastro (Step.signUp -> setPassword -> confirm), ate chegar
+      // no perfil, igual a um usuario novo de verdade.
       await tester.ensureVisible(find.text('Criar conta'));
       await tester.tap(find.text('Criar conta'));
       await tester.pumpAndSettle();
@@ -107,15 +107,15 @@ void main() {
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Código recebido'),
-        '123456',
+        find.widgetWithText(TextFormField, 'Crie uma senha'),
+        'uma-senha-boa-e-forte',
       );
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Crie uma senha'),
-        'uma-senha-boa-e-forte',
+        find.widgetWithText(TextFormField, 'Código recebido'),
+        '123456',
       );
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));

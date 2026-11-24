@@ -5,7 +5,7 @@ import 'package:runpass/home_screen.dart';
 import 'package:runpass/main.dart';
 
 void main() {
-  test('sign-up confirmation and recovery use Cognito, without backend password endpoints', () async {
+  test('sign-up, confirmation and password recovery use Cognito, without backend password endpoints', () async {
     final operations = <String>[];
     final gateway = IdentityGateway(
       cognito: Uri.parse('https://cognito.example'),
@@ -18,7 +18,7 @@ void main() {
         return const JsonReply(200, {});
       },
     );
-    await gateway.signUp('synthetic@example.test');
+    await gateway.signUp('synthetic@example.test', 'Synthetic_password1!');
     await gateway.confirm('synthetic@example.test', '123456');
     await gateway.forgot('synthetic@example.test');
     await gateway.reset(
@@ -35,7 +35,9 @@ void main() {
     expect(gateway.signedIn, false);
   });
 
-  test('sign-up asks for a password only after the e-mail is confirmed, via a hidden temporary password', () async {
+  test('the password chosen by the person goes straight into SignUp — no '
+      'temporary password, no separate ChangePassword step — so it already '
+      'works for sign-in right after confirming', () async {
     final operations = <String>[];
     final bodies = <String, Map<String, dynamic>>{};
     final gateway = IdentityGateway(
@@ -54,34 +56,78 @@ void main() {
         return const JsonReply(200, {});
       },
     );
-    await gateway.signUp('synthetic@example.test');
+    await gateway.signUp('synthetic@example.test', 'Synthetic_password1!');
     expect(gateway.signedIn, false);
     await gateway.confirm('synthetic@example.test', '123456');
     expect(gateway.signedIn, false);
-    await gateway.setPassword('synthetic@example.test', 'Synthetic_password1!');
-    expect(operations, [
-      'SignUp',
-      'ConfirmSignUp',
-      'InitiateAuth',
-      'ChangePassword',
-    ]);
-    // A senha temporaria nunca aparece fora do gateway; so a pessoa define a senha real.
-    expect(bodies['SignUp']!['Password'], isNot('Synthetic_password1!'));
+    await gateway.signIn('synthetic@example.test', 'Synthetic_password1!');
+    expect(operations, ['SignUp', 'ConfirmSignUp', 'InitiateAuth']);
+    expect(bodies['SignUp']!['Password'], 'Synthetic_password1!');
     expect(
       bodies['InitiateAuth']!['AuthParameters']['PASSWORD'],
-      bodies['SignUp']!['Password'],
-    );
-    expect(
-      bodies['ChangePassword']!['PreviousPassword'],
-      bodies['SignUp']!['Password'],
-    );
-    expect(
-      bodies['ChangePassword']!['ProposedPassword'],
       'Synthetic_password1!',
     );
-    // ChangePassword e autenticado por AccessToken; o Cognito rejeita ClientId nela.
-    expect(bodies['ChangePassword']!.containsKey('ClientId'), false);
     expect(gateway.signedIn, true);
+  });
+
+  test(
+    'sign-up on an e-mail with a pending unconfirmed signup resends the '
+    'code instead of blocking (the password from THIS attempt does not '
+    'matter — the account already has the one from the first attempt)',
+    () async {
+      final operations = <String>[];
+      final gateway = IdentityGateway(
+        cognito: Uri.parse('https://cognito.example'),
+        api: Uri.parse('https://api.example'),
+        clientId: 'synthetic',
+        transport: (uri, method, headers, body) async {
+          final operation = headers['X-Amz-Target']!.split('.').last;
+          operations.add(operation);
+          if (operation == 'SignUp') {
+            throw const IdentityIssue('UsernameExistsException');
+          }
+          return const JsonReply(200, {});
+        },
+      );
+      await gateway.signUp('synthetic@example.test', 'Different_password2!');
+      expect(gateway.resumedSignUp, true);
+      expect(operations, ['SignUp', 'ResendConfirmationCode']);
+      await gateway.confirm('synthetic@example.test', '123456');
+      // So ConfirmSignUp — sem nenhum passo extra de senha, porque ela ja
+      // foi definida (com um valor diferente) na primeira tentativa.
+      expect(operations, ['SignUp', 'ResendConfirmationCode', 'ConfirmSignUp']);
+      expect(gateway.resumedSignUp, true);
+    },
+  );
+
+  test('sign-up on an already-confirmed e-mail (real account, or one abandoned '
+      'after confirming) keeps blocking with the original error — every '
+      'confirmed account now has a real password, since it is set in the '
+      'same SignUp call, so there is nothing left to "resume" there', () async {
+    final gateway = IdentityGateway(
+      cognito: Uri.parse('https://cognito.example'),
+      api: Uri.parse('https://api.example'),
+      clientId: 'synthetic',
+      transport: (uri, method, headers, body) async {
+        final operation = headers['X-Amz-Target']!.split('.').last;
+        if (operation == 'SignUp') {
+          throw const IdentityIssue('UsernameExistsException');
+        }
+        // ResendConfirmationCode so recusa assim quando a conta ja esta confirmada.
+        throw const IdentityIssue('InvalidParameterException');
+      },
+    );
+    await expectLater(
+      gateway.signUp('synthetic@example.test', 'Synthetic_password1!'),
+      throwsA(
+        isA<IdentityIssue>().having(
+          (e) => e.code,
+          'code',
+          'UsernameExistsException',
+        ),
+      ),
+    );
+    expect(gateway.resumedSignUp, false);
   });
 
   test(
