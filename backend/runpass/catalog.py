@@ -35,6 +35,10 @@ NAME_STOPWORDS = frozenset(
     "de da do das dos e a o as os em na no nas nos para por com the of and".split()
 )
 _ROMAN = re.compile(r"^[ivx]{2,6}$", re.IGNORECASE)
+# Siglas de estado sem ambiguidade com palavra comum, mantidas quando o nome veio todo em maiusculas
+# ("MEIA MARATONA SP"). Em nome com maiusculas e minusculas, qualquer palavra de 2 a 5 letras ja escrita
+# toda em maiusculas e sigla ("BTG", "UFRJ") e fica como veio.
+UF_ACRONYMS = frozenset("SP RJ MG RS PR SC BA DF GO".split())
 _LETTERS = re.compile(r"[^\W\d_]+")
 
 
@@ -44,11 +48,24 @@ def title_case(name):
     maiusculos; ordinais (3ª, 2º) e trechos entre colchetes ficam como estao."""
     words = (name or "").split()
     out = []
+    letters = "".join(words)
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    all_caps = bool(letters) and not any(c.islower() for c in letters)
     for index, word in enumerate(words):
         if word.startswith("[") and word.endswith("]"):
             out.append(word)
             continue
         lower = word.lower()
+        bare = re.sub(r"[^\w]", "", word)
+        if (
+            bare.isalpha()
+            and bare.isupper()
+            and 2 <= len(bare) <= 5
+            and lower not in NAME_STOPWORDS
+            and ((mixed and not _ROMAN.match(bare)) or (all_caps and bare in UF_ACRONYMS))
+        ):
+            out.append(word)
+            continue
         if 0 < index < len(words) - 1 and lower in NAME_STOPWORDS:
             out.append(lower)
             continue

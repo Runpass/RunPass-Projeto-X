@@ -196,6 +196,43 @@ class SocialTests(unittest.TestCase):
             self.social.send_feedback(self.bia, "over", "praise", "Mais um")
         self.assertEqual(error.exception.code, "FEEDBACK_LIMIT_REACHED")
 
+    # ---- sugestoes: registro das particoes do indice ----
+    def test_index_partitions_come_from_a_registry_not_from_probing_every_prefix(self):
+        from runpass.profile_index import PIDX_REGISTRY, PIDX_REGISTRY_READY
+
+        # Contas criadas depois da publicacao ja registram os prefixos; falta so a marca de pronto.
+        rows = self.store.query("identity", PIDX_REGISTRY, limit=100)[0]
+        prefixes = {sk for sk, _ in rows}
+        self.assertTrue({"an", "ana", "bi"} & prefixes or {"an", "bi", "ca"} <= prefixes)
+        self.assertNotIn(PIDX_REGISTRY_READY, prefixes)
+
+        queries = []
+        real = self.store.query
+        self.store.query = lambda table, pk, **kw: (queries.append(pk), real(table, pk, **kw))[1]
+        self.addCleanup(setattr, self.store, "query", real)
+        first = self.social._index_partitions()
+        probed = [q for q in queries if q.startswith("PIDX#")]
+        self.assertGreater(len(probed), 1000)  # primeira vez: sonda tudo e preenche o registro
+        self.assertEqual(set(first), {p for p in first})
+        # Segunda instancia (sem a memoria local): le o registro, sem sondar.
+        queries.clear()
+        other = SocialService(self.identity)
+        again = other._index_partitions()
+        self.assertEqual(sorted(again), sorted(first))
+        self.assertEqual([q for q in queries if q.startswith("PIDX#")], [])
+        self.assertEqual(queries.count(PIDX_REGISTRY) >= 1, True)
+
+    def test_new_profile_is_registered_and_erasure_keeps_the_shared_registry(self):
+        from runpass.profile_index import PIDX_REGISTRY
+
+        self.person("zed", "Zeca Zorro", "zeca_z")
+        keys = {sk for sk, _ in self.store.query("identity", PIDX_REGISTRY, limit=100)[0]}
+        self.assertIn("ze", keys)
+        self.identity.delete_account(Principal("zed", True), "del-zed")
+        ErasureProcessor(self.identity).run_pending()
+        keys_after = {sk for sk, _ in self.store.query("identity", PIDX_REGISTRY, limit=100)[0]}
+        self.assertIn("ze", keys_after)  # linha compartilhada: nao some com a conta
+
     # ---- bloquear e denunciar ----
     def test_block_hides_both_ways_ends_relations_and_can_be_undone(self):
         self.complete(self.ana, "b1", "2026-11-05T10:00:00Z")

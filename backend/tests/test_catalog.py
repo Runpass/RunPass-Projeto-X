@@ -63,6 +63,13 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(title_case("2ª pace run - edição 2026"), "2ª Pace Run - Edição 2026")
         self.assertEqual(title_case("[FICTICIA] corrida A"), "[FICTICIA] Corrida A")
         self.assertEqual(title_case("VENUS WOMEN'S HALF"), "Venus Women's Half")
+        # Siglas: mantidas quando o nome mistura maiusculas e minusculas, e as de estado em nome todo maiusculo.
+        self.assertEqual(title_case("Corrida BTG Pactual SP"), "Corrida BTG Pactual SP")
+        self.assertEqual(title_case("meia da UFRJ"), "Meia da UFRJ")
+        self.assertEqual(title_case("MEIA MARATONA SP 21K"), "Meia Maratona SP 21K")
+        self.assertEqual(title_case("CORRIDA DE SAO PAULO"), "Corrida de Sao Paulo")
+        self.assertEqual(title_case("Corrida XV de Novembro"), "Corrida XV de Novembro")
+        self.assertEqual(title_case("corrida sp run"), "Corrida Sp Run")  # tudo minusculo: nao da para saber
         self.assertEqual(title_case("corrida d'água"), "Corrida D'Água")
         # Toda entrada no catalogo passa pelo padrao.
         self.put(edition("ed-caixa", name="CORRIDA DO SOLDADO", date="2026-12-06"))

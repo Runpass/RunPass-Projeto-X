@@ -929,20 +929,26 @@ class Stars extends StatelessWidget {
   const Stars(this.value, {super.key, this.size = 20});
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      for (var i = 1; i <= 5; i++)
-        Icon(
-          value >= i - 0.25
-              ? Icons.star
-              : value >= i - 0.75
-              ? Icons.star_half
-              : Icons.star_border,
-          size: size,
-          color: runPassGold,
-        ),
-    ],
+  Widget build(BuildContext context) => FittedBox(
+    // Em cartão estreito (celular pequeno, texto grande) as cinco estrelas encolhem em vez de estourar a
+    // linha; com espaço de sobra ficam no tamanho normal, à esquerda.
+    fit: BoxFit.scaleDown,
+    alignment: Alignment.centerLeft,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 1; i <= 5; i++)
+          Icon(
+            value >= i - 0.25
+                ? Icons.star
+                : value >= i - 0.75
+                ? Icons.star_half
+                : Icons.star_border,
+            size: size,
+            color: runPassGold,
+          ),
+      ],
+    ),
   );
 }
 
