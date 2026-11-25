@@ -157,8 +157,8 @@ const double _cardFooterHeight = 380;
 // Logo do rodapé, em tamanho de marca (o dobro do que era).
 const double _cardLogoHeight = 112;
 // Na imagem "sobre a foto": logo sobreposto à foto, numa pastilha branca, e informações na horizontal ou na vertical.
-const double _cardOverlayLogoHeight = 96;
-const double _cardPillPad = 18;
+const double _cardWatermarkHeight = 110;
+const double _cardColumnMarkHeight = 84;
 // Medalha e ícone de destaque: tamanhos e margem a partir do canto da foto.
 const double _cardMedalSize = 280;
 const double _cardStickerSize = 170;
@@ -415,49 +415,18 @@ Future<Uint8List> buildShareCard({
           const [Color(0x00000000), Color(0xd9000000)],
         ),
     );
-    const pad = _cardPillPad;
-    const logoH = _cardOverlayLogoHeight;
-    final pillTop = photoHeight - 36 - (logoH + 2 * pad);
-    if (logo != null) {
-      final logoWidth = logo.width * (logoH / logo.height);
-      canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          Rect.fromLTWH(
-            (_cardSide - logoWidth) / 2 - pad,
-            pillTop,
-            logoWidth + 2 * pad,
-            logoH + 2 * pad,
-          ),
-          const Radius.circular(40),
-        ),
-        Paint()..color = Colors.white,
-      );
+    // Marca d'água: o logo em branco e translúcido, sem fundo, como marca sobre a foto.
+    void mark(double centerX, double top, double height) {
+      if (logo == null) return;
+      final width = logo.width * (height / logo.height);
       canvas.drawImageRect(
         logo,
         Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
-        Rect.fromLTWH(
-          (_cardSide - logoWidth) / 2,
-          pillTop + pad,
-          logoWidth,
-          logoH,
-        ),
-        Paint()..filterQuality = FilterQuality.high,
-      );
-    } else {
-      canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          Rect.fromLTWH(_cardSide / 2 - 170, pillTop, 340, logoH + 2 * pad),
-          const Radius.circular(40),
-        ),
-        Paint()..color = Colors.white,
-      );
-      text(
-        '+1Pódio',
-        pillTop + pad,
-        80,
-        weight: FontWeight.w900,
-        color: runPassOrange,
-        maxLines: 1,
+        Rect.fromLTWH(centerX - width / 2, top, width, height),
+        Paint()
+          ..filterQuality = FilterQuality.high
+          ..colorFilter = const ColorFilter.mode(Colors.white, BlendMode.srcIn)
+          ..color = const Color(0xd9ffffff),
       );
     }
 
@@ -479,7 +448,10 @@ Future<Uint8List> buildShareCard({
       final centerX = right
           ? _cardSide - _cardCornerMargin - 150
           : _cardCornerMargin + 150;
-      final columnTop = (photoHeight - 168 - 600) / 2;
+      // A marca entra na coluna, logo abaixo do pace, com as outras informações.
+      const markGap = 40.0;
+      final columnTop =
+          (photoHeight - (600 + markGap + _cardColumnMarkHeight)) / 2;
       stat(
         centerX,
         columnTop,
@@ -490,6 +462,7 @@ Future<Uint8List> buildShareCard({
       );
       stat(centerX, columnTop + 200, statTimeIcon, time, 'Tempo', Colors.white);
       stat(centerX, columnTop + 400, statPaceIcon, pace, 'Pace', Colors.white);
+      mark(centerX, columnTop + 600 + markGap, _cardColumnMarkHeight);
     } else {
       final top = photoHeight - 368;
       stat(
@@ -502,6 +475,12 @@ Future<Uint8List> buildShareCard({
       );
       stat(_cardSide / 2, top, statTimeIcon, time, 'Tempo', Colors.white);
       stat(_cardSide * 5 / 6, top, statPaceIcon, pace, 'Pace', Colors.white);
+      // Marca d'água embaixo, no centro da foto.
+      mark(
+        _cardSide / 2,
+        photoHeight - 40 - _cardWatermarkHeight,
+        _cardWatermarkHeight,
+      );
     }
   } else {
     stat(
