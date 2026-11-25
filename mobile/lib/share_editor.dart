@@ -125,11 +125,6 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            const Text(
-              'Informações',
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
             SegmentedButton<ShareInfoLayout>(
               key: const Key('share-info'),
               segments: const [
@@ -144,6 +139,11 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
               ],
               selected: {info},
               onSelectionChanged: (choice) => change(() => info = choice.first),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Informações',
+              style: TextStyle(fontWeight: FontWeight.w800),
             ),
             if (info == ShareInfoLayout.overlay) ...[
               const SizedBox(height: 12),
