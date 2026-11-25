@@ -157,8 +157,8 @@ const double _cardFooterHeight = 380;
 // Logo do rodapé, em tamanho de marca (o dobro do que era).
 const double _cardLogoHeight = 112;
 // Na imagem "sobre a foto": logo sobreposto à foto, numa pastilha branca, e informações na horizontal ou na vertical.
-const double _cardWatermarkHeight = 110;
-const double _cardColumnMarkHeight = 84;
+const double _cardWatermarkHeight = 80;
+const double _cardColumnMarkHeight = 62;
 // Medalha e ícone de destaque: tamanhos e margem a partir do canto da foto.
 const double _cardMedalSize = 280;
 const double _cardStickerSize = 170;
@@ -415,7 +415,7 @@ Future<Uint8List> buildShareCard({
           const [Color(0x00000000), Color(0xd9000000)],
         ),
     );
-    // Marca d'água: o logo em branco e translúcido, sem fundo, como marca sobre a foto.
+    // Marca d'água: o logo nas cores originais (com o homem correndo), translúcido e sem fundo.
     void mark(double centerX, double top, double height) {
       if (logo == null) return;
       final width = logo.width * (height / logo.height);
@@ -425,8 +425,7 @@ Future<Uint8List> buildShareCard({
         Rect.fromLTWH(centerX - width / 2, top, width, height),
         Paint()
           ..filterQuality = FilterQuality.high
-          ..colorFilter = const ColorFilter.mode(Colors.white, BlendMode.srcIn)
-          ..color = const Color(0xd9ffffff),
+          ..color = const Color(0x99ffffff),
       );
     }
 
