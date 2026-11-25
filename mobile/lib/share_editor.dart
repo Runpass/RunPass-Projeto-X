@@ -208,9 +208,18 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
                     onSelected: (_) =>
                         change(() => titlePlacement = ShareTitlePlacement.left),
                   ),
+                  ChoiceChip(
+                    key: const Key('share-title-bottom'),
+                    label: const Text('Na base'),
+                    selected: titlePlacement == ShareTitlePlacement.bottom,
+                    onSelected: (_) => change(
+                      () => titlePlacement = ShareTitlePlacement.bottom,
+                    ),
+                  ),
                 ],
               ),
-              if (titlePlacement != ShareTitlePlacement.top) ...[
+              if (titlePlacement == ShareTitlePlacement.right ||
+                  titlePlacement == ShareTitlePlacement.left) ...[
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,

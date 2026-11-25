@@ -177,7 +177,8 @@ enum ShareCorner { topLeft, topRight, bottomLeft, bottomRight }
 enum ShareOrientation { horizontal, verticalRight, verticalLeft }
 
 /// Onde fica o título quando a foto tem as informações sobrepostas: no topo, ou numa coluna à direita ou à esquerda.
-enum ShareTitlePlacement { top, right, left }
+/// Onde fica o título: no topo, na base da foto, ou numa coluna lateral (direita ou esquerda).
+enum ShareTitlePlacement { top, bottom, right, left }
 
 /// Sentido do título quando ele fica na lateral, girado 90 graus: de baixo para cima ou de cima para baixo.
 enum ShareTitleDirection { upward, downward }
@@ -443,8 +444,11 @@ Future<Uint8List> buildShareCard({
           const [Color(0xd9000000), Color(0x00000000)],
         ),
     );
+    final titleAtBottom = style.titlePlacement == ShareTitlePlacement.bottom;
     if (style.titlePlacement == ShareTitlePlacement.top) {
       text(title, 40, 54, weight: FontWeight.w900, color: Colors.white);
+    } else if (titleAtBottom) {
+      // Desenhado depois da sombra da base (abaixo), para não ficar escurecido.
     } else {
       // Título na lateral, girado 90 graus e lido de baixo para cima (ou de cima para baixo), ao longo da foto.
       final titleRight = style.titlePlacement == ShareTitlePlacement.right;
@@ -477,7 +481,13 @@ Future<Uint8List> buildShareCard({
     }
 
     final vertical = style.orientation != ShareOrientation.horizontal;
-    final bottomShade = Rect.fromLTWH(0, photoHeight - 460, _cardSide, 460);
+    final shadeHeight = titleAtBottom ? 620.0 : 460.0;
+    final bottomShade = Rect.fromLTWH(
+      0,
+      photoHeight - shadeHeight,
+      _cardSide,
+      shadeHeight,
+    );
     canvas.drawRect(
       bottomShade,
       Paint()
@@ -487,6 +497,16 @@ Future<Uint8List> buildShareCard({
           const [Color(0x00000000), Color(0xd9000000)],
         ),
     );
+    if (titleAtBottom) {
+      // Título na base da foto, centralizado, acima da marca e das informações.
+      text(
+        title,
+        photoHeight - 300,
+        54,
+        weight: FontWeight.w900,
+        color: Colors.white,
+      );
+    }
     // Marca d'água: o logo nas cores originais (com o homem correndo), translúcido e sem fundo.
     // Devolve a altura desenhada, para o layout da coluna.
     double mark(double centerX, double top, double width) {
@@ -544,7 +564,8 @@ Future<Uint8List> buildShareCard({
       stat(centerX, columnTop + 400, statPaceIcon, pace, 'Pace', Colors.white);
       mark(centerX, columnTop + 600 + markGap, _cardColumnMarkWidth);
     } else {
-      final top = photoHeight - 368;
+      // Com o título na base, a linha de informações sobe para não encostar nele.
+      final top = photoHeight - (titleAtBottom ? 524 : 368);
       stat(
         _cardSide / 6,
         top,
