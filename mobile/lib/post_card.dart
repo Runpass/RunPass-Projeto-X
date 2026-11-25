@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -178,6 +179,9 @@ enum ShareOrientation { horizontal, verticalRight, verticalLeft }
 /// Onde fica o título quando a foto tem as informações sobrepostas: no topo, ou numa coluna à direita ou à esquerda.
 enum ShareTitlePlacement { top, right, left }
 
+/// Sentido do título quando ele fica na lateral, girado 90 graus: de baixo para cima ou de cima para baixo.
+enum ShareTitleDirection { upward, downward }
+
 /// Ícone de destaque. É estático: a imagem para compartilhar é um PNG, que não anima.
 enum ShareSticker { none, star, trophy, flag, fire }
 
@@ -189,6 +193,7 @@ class ShareStyle {
   final ShareCorner stickerCorner;
   final ShareOrientation orientation;
   final ShareTitlePlacement titlePlacement;
+  final ShareTitleDirection titleDirection;
   const ShareStyle({
     this.info = ShareInfoLayout.bands,
     this.medalCorner,
@@ -196,6 +201,7 @@ class ShareStyle {
     this.stickerCorner = ShareCorner.topRight,
     this.orientation = ShareOrientation.horizontal,
     this.titlePlacement = ShareTitlePlacement.top,
+    this.titleDirection = ShareTitleDirection.upward,
   });
 }
 
@@ -440,12 +446,8 @@ Future<Uint8List> buildShareCard({
     if (style.titlePlacement == ShareTitlePlacement.top) {
       text(title, 40, 54, weight: FontWeight.w900, color: Colors.white);
     } else {
-      // Título numa coluna ao lado da foto, no alto, com quebra de linha dentro da coluna.
+      // Título na lateral, girado 90 graus e lido de baixo para cima (ou de cima para baixo), ao longo da foto.
       final titleRight = style.titlePlacement == ShareTitlePlacement.right;
-      const columnWidth = 300.0;
-      final titleX = titleRight
-          ? _cardSide - _cardCornerMargin - columnWidth
-          : _cardCornerMargin;
       final painter = TextPainter(
         text: TextSpan(
           text: title,
@@ -458,10 +460,20 @@ Future<Uint8List> buildShareCard({
         ),
         textAlign: TextAlign.center,
         textDirection: TextDirection.ltr,
-        maxLines: 6,
+        maxLines: 2,
         ellipsis: '…',
-      )..layout(maxWidth: columnWidth);
-      painter.paint(canvas, Offset(titleX, 40));
+      )..layout(maxWidth: photoHeight - 160);
+      // Depois de girado, a altura do texto vira a largura da coluna.
+      final thickness = painter.height;
+      final cx = titleRight
+          ? _cardSide - _cardCornerMargin - thickness / 2
+          : _cardCornerMargin + thickness / 2;
+      final upward = style.titleDirection == ShareTitleDirection.upward;
+      canvas.save();
+      canvas.translate(cx, photoHeight / 2);
+      canvas.rotate(upward ? -math.pi / 2 : math.pi / 2);
+      painter.paint(canvas, Offset(-painter.width / 2, -painter.height / 2));
+      canvas.restore();
     }
 
     final vertical = style.orientation != ShareOrientation.horizontal;
