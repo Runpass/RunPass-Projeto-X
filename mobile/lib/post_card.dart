@@ -156,8 +156,9 @@ const double _cardHeaderHeight = 190;
 const double _cardFooterHeight = 380;
 // Logo do rodapé, em tamanho de marca (o dobro do que era).
 const double _cardLogoHeight = 112;
-// Na imagem "sobre a foto", só a faixa da marca embaixo da foto.
-const double _cardLogoBand = 200;
+// Na imagem "sobre a foto": logo sobreposto à foto, numa pastilha branca, e informações na horizontal ou na vertical.
+const double _cardOverlayLogoHeight = 96;
+const double _cardPillPad = 18;
 // Medalha e ícone de destaque: tamanhos e margem a partir do canto da foto.
 const double _cardMedalSize = 280;
 const double _cardStickerSize = 170;
@@ -169,6 +170,9 @@ enum ShareInfoLayout { bands, overlay }
 /// Canto da foto, para a medalha e para o ícone.
 enum ShareCorner { topLeft, topRight, bottomLeft, bottomRight }
 
+/// Informações sobre a foto: uma linha embaixo (horizontal) ou uma coluna na direita ou na esquerda.
+enum ShareOrientation { horizontal, verticalRight, verticalLeft }
+
 /// Ícone de destaque. É estático: a imagem para compartilhar é um PNG, que não anima.
 enum ShareSticker { none, star, trophy, flag, fire }
 
@@ -178,11 +182,13 @@ class ShareStyle {
   final ShareCorner? medalCorner;
   final ShareSticker sticker;
   final ShareCorner stickerCorner;
+  final ShareOrientation orientation;
   const ShareStyle({
     this.info = ShareInfoLayout.bands,
     this.medalCorner,
     this.sticker = ShareSticker.none,
     this.stickerCorner = ShareCorner.topRight,
+    this.orientation = ShareOrientation.horizontal,
   });
 }
 
@@ -262,7 +268,7 @@ Future<Uint8List> buildShareCard({
   final medal = await _decodeImage(medalBytes);
   final overlay = style.info == ShareInfoLayout.overlay;
   final headerH = overlay ? 0.0 : _cardHeaderHeight;
-  final footerH = overlay ? _cardLogoBand : _cardFooterHeight;
+  final footerH = overlay ? 0.0 : _cardFooterHeight;
   // Altura da foto: a da própria proporção (de 4:5 a 1,91:1); sem foto, 4:5.
   final ratio = postPhotoFrameRatio(
     photo == null ? null : photo.width / photo.height,
@@ -335,9 +341,9 @@ Future<Uint8List> buildShareCard({
     );
   }
 
-  // Faixa de baixo: as informações (modo padrão) ou só a marca (modo "sobre a foto").
+  // Faixa de baixo (só no modo padrão): as informações e a marca. No modo "sobre a foto" não há faixa.
   final footerTop = headerH + photoHeight;
-  bg(Rect.fromLTWH(0, footerTop, _cardSide, footerH));
+  if (!overlay) bg(Rect.fromLTWH(0, footerTop, _cardSide, footerH));
 
   // Distância, tempo e pace, cada um com o seu ícone (sempre os três, com "--" quando falta o dado).
   void stat(
@@ -382,36 +388,121 @@ Future<Uint8List> buildShareCard({
     }
   }
 
+  // Logo da marca; sem o asset carregar por algum motivo, cai para o texto "+1Pódio".
+  final logo = await _loadAssetImage('assets/brand/logo-light.png');
   if (overlay) {
-    // Sombra escura na parte de baixo da foto, com o nome da corrida e os números em branco por cima.
-    final shade = Rect.fromLTWH(0, photoHeight - 460, _cardSide, 460);
+    // Título no alto da foto, sobre uma sombra escura, e a marca sobreposta embaixo, numa pastilha branca.
+    final topShade = Rect.fromLTWH(0, 0, _cardSide, 380);
     canvas.drawRect(
-      shade,
+      topShade,
       Paint()
         ..shader = ui.Gradient.linear(
-          shade.topCenter,
-          shade.bottomCenter,
+          topShade.topCenter,
+          topShade.bottomCenter,
+          const [Color(0xd9000000), Color(0x00000000)],
+        ),
+    );
+    text(title, 40, 54, weight: FontWeight.w900, color: Colors.white);
+
+    final vertical = style.orientation != ShareOrientation.horizontal;
+    final bottomShade = Rect.fromLTWH(0, photoHeight - 460, _cardSide, 460);
+    canvas.drawRect(
+      bottomShade,
+      Paint()
+        ..shader = ui.Gradient.linear(
+          bottomShade.topCenter,
+          bottomShade.bottomCenter,
           const [Color(0x00000000), Color(0xd9000000)],
         ),
     );
-    text(
-      title,
-      photoHeight - 430,
-      54,
-      weight: FontWeight.w900,
-      color: Colors.white,
-    );
-    final top = photoHeight - 200;
-    stat(
-      _cardSide / 6,
-      top,
-      statDistanceIcon,
-      distance,
-      'Distância',
-      Colors.white,
-    );
-    stat(_cardSide / 2, top, statTimeIcon, time, 'Tempo', Colors.white);
-    stat(_cardSide * 5 / 6, top, statPaceIcon, pace, 'Pace', Colors.white);
+    const pad = _cardPillPad;
+    const logoH = _cardOverlayLogoHeight;
+    final pillTop = photoHeight - 36 - (logoH + 2 * pad);
+    if (logo != null) {
+      final logoWidth = logo.width * (logoH / logo.height);
+      canvas.drawRRect(
+        ui.RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            (_cardSide - logoWidth) / 2 - pad,
+            pillTop,
+            logoWidth + 2 * pad,
+            logoH + 2 * pad,
+          ),
+          const Radius.circular(40),
+        ),
+        Paint()..color = Colors.white,
+      );
+      canvas.drawImageRect(
+        logo,
+        Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
+        Rect.fromLTWH(
+          (_cardSide - logoWidth) / 2,
+          pillTop + pad,
+          logoWidth,
+          logoH,
+        ),
+        Paint()..filterQuality = FilterQuality.high,
+      );
+    } else {
+      canvas.drawRRect(
+        ui.RRect.fromRectAndRadius(
+          Rect.fromLTWH(_cardSide / 2 - 170, pillTop, 340, logoH + 2 * pad),
+          const Radius.circular(40),
+        ),
+        Paint()..color = Colors.white,
+      );
+      text(
+        '+1Pódio',
+        pillTop + pad,
+        80,
+        weight: FontWeight.w900,
+        color: runPassOrange,
+        maxLines: 1,
+      );
+    }
+
+    if (vertical) {
+      // Coluna de informações na direita ou na esquerda, com a sombra só daquele lado.
+      final right = style.orientation == ShareOrientation.verticalRight;
+      final side = right
+          ? Rect.fromLTWH(_cardSide - 480, 0, 480, photoHeight)
+          : Rect.fromLTWH(0, 0, 480, photoHeight);
+      canvas.drawRect(
+        side,
+        Paint()
+          ..shader = ui.Gradient.linear(
+            right ? side.centerLeft : side.centerRight,
+            right ? side.centerRight : side.centerLeft,
+            const [Color(0x00000000), Color(0xb3000000)],
+          ),
+      );
+      final centerX = right
+          ? _cardSide - _cardCornerMargin - 150
+          : _cardCornerMargin + 150;
+      final columnTop = (photoHeight - 168 - 600) / 2;
+      stat(
+        centerX,
+        columnTop,
+        statDistanceIcon,
+        distance,
+        'Distância',
+        Colors.white,
+      );
+      stat(centerX, columnTop + 200, statTimeIcon, time, 'Tempo', Colors.white);
+      stat(centerX, columnTop + 400, statPaceIcon, pace, 'Pace', Colors.white);
+    } else {
+      final top = photoHeight - 368;
+      stat(
+        _cardSide / 6,
+        top,
+        statDistanceIcon,
+        distance,
+        'Distância',
+        Colors.white,
+      );
+      stat(_cardSide / 2, top, statTimeIcon, time, 'Tempo', Colors.white);
+      stat(_cardSide * 5 / 6, top, statPaceIcon, pace, 'Pace', Colors.white);
+    }
   } else {
     stat(
       _cardSide / 6,
@@ -430,34 +521,30 @@ Future<Uint8List> buildShareCard({
       'Pace',
       Colors.black,
     );
-  }
-
-  // Logo da marca na versão para fundo claro; sem o asset carregar por algum
-  // motivo, cai para o texto "+1Pódio".
-  final logo = await _loadAssetImage('assets/brand/logo-light.png');
-  if (logo != null) {
-    const logoHeight = _cardLogoHeight;
-    final logoWidth = logo.width * (logoHeight / logo.height);
-    canvas.drawImageRect(
-      logo,
-      Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
-      Rect.fromLTWH(
-        (_cardSide - logoWidth) / 2,
-        footerTop + footerH - logoHeight - 34,
-        logoWidth,
-        logoHeight,
-      ),
-      Paint(),
-    );
-  } else {
-    text(
-      '+1Pódio',
-      footerTop + footerH - _cardLogoHeight - 34,
-      88,
-      weight: FontWeight.w900,
-      color: runPassOrange,
-      maxLines: 1,
-    );
+    if (logo != null) {
+      const logoHeight = _cardLogoHeight;
+      final logoWidth = logo.width * (logoHeight / logo.height);
+      canvas.drawImageRect(
+        logo,
+        Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
+        Rect.fromLTWH(
+          (_cardSide - logoWidth) / 2,
+          footerTop + footerH - logoHeight - 34,
+          logoWidth,
+          logoHeight,
+        ),
+        Paint(),
+      );
+    } else {
+      text(
+        '+1Pódio',
+        footerTop + footerH - _cardLogoHeight - 34,
+        88,
+        weight: FontWeight.w900,
+        color: runPassOrange,
+        maxLines: 1,
+      );
+    }
   }
 
   // Medalha (com anel branco) e ícone, por cima da foto, nos cantos escolhidos.
