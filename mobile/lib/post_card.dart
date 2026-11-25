@@ -445,6 +445,27 @@ Future<Uint8List> buildShareCard({
         ),
     );
     final titleAtBottom = style.titlePlacement == ShareTitlePlacement.bottom;
+    // Título na base: colado na borda inferior da foto. A marca d'água fica logo acima dele.
+    final bottomTitle = titleAtBottom
+        ? (TextPainter(
+            text: TextSpan(
+              text: title,
+              style: const TextStyle(
+                fontSize: 54,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                height: 1.15,
+              ),
+            ),
+            textAlign: TextAlign.center,
+            textDirection: TextDirection.ltr,
+            maxLines: 2,
+            ellipsis: '…',
+          )..layout(maxWidth: _cardSide - 160))
+        : null;
+    final bottomTitleTop = bottomTitle == null
+        ? 0.0
+        : photoHeight - 40 - bottomTitle.height;
     if (style.titlePlacement == ShareTitlePlacement.top) {
       text(title, 40, 54, weight: FontWeight.w900, color: Colors.white);
     } else if (titleAtBottom) {
@@ -498,13 +519,10 @@ Future<Uint8List> buildShareCard({
         ),
     );
     if (titleAtBottom) {
-      // Título na base da foto, centralizado, acima da marca e das informações.
-      text(
-        title,
-        photoHeight - 300,
-        54,
-        weight: FontWeight.w900,
-        color: Colors.white,
+      // Título na base da foto, colado na borda inferior.
+      bottomTitle!.paint(
+        canvas,
+        Offset((_cardSide - bottomTitle.width) / 2, bottomTitleTop),
       );
     }
     // Marca d'água: o logo nas cores originais (com o homem correndo), translúcido e sem fundo.
@@ -582,7 +600,8 @@ Future<Uint8List> buildShareCard({
           : _cardWatermarkWidth * markImage.height / markImage.width;
       mark(
         _cardSide / 2,
-        photoHeight - 40 - watermarkHeight,
+        (titleAtBottom ? bottomTitleTop - 30 : photoHeight - 40) -
+            watermarkHeight,
         _cardWatermarkWidth,
       );
     }
