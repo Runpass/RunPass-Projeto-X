@@ -18,6 +18,7 @@ import 'undo_delete.dart' show deleteWithUndo, pendingDeletions;
 import 'post_stats.dart';
 import 'runpass_theme.dart';
 import 'safety.dart';
+import 'share_editor.dart';
 
 /// Um cartao do Inicio. Vem de uma publicacao (`/feed`, `/posts/{id}`) ou de uma corrida
 /// concluida da propria pessoa que ainda nao esta no feed.
@@ -143,6 +144,8 @@ typedef ShareCardBuilder = Future<Uint8List> Function({
   required String time,
   required String pace,
   Uint8List? photoBytes,
+  ShareStyle style,
+  Uint8List? medalBytes,
 });
 ShareCardBuilder shareCardBuilder = buildShareCard;
 
@@ -153,6 +156,69 @@ const double _cardHeaderHeight = 190;
 const double _cardFooterHeight = 380;
 // Logo do rodapé, em tamanho de marca (o dobro do que era).
 const double _cardLogoHeight = 112;
+// Na imagem "sobre a foto", só a faixa da marca embaixo da foto.
+const double _cardLogoBand = 200;
+// Medalha e ícone de destaque: tamanhos e margem a partir do canto da foto.
+const double _cardMedalSize = 280;
+const double _cardStickerSize = 170;
+const double _cardCornerMargin = 40;
+
+/// Onde ficam as informações da corrida: faixas embaixo da foto (o padrão) ou sobre a própria foto.
+enum ShareInfoLayout { bands, overlay }
+
+/// Canto da foto, para a medalha e para o ícone.
+enum ShareCorner { topLeft, topRight, bottomLeft, bottomRight }
+
+/// Ícone de destaque. É estático: a imagem para compartilhar é um PNG, que não anima.
+enum ShareSticker { none, star, trophy, flag, fire }
+
+/// Escolhas da pessoa para a imagem de compartilhar (tela "Compartilhar").
+class ShareStyle {
+  final ShareInfoLayout info;
+  final ShareCorner? medalCorner;
+  final ShareSticker sticker;
+  final ShareCorner stickerCorner;
+  const ShareStyle({
+    this.info = ShareInfoLayout.bands,
+    this.medalCorner,
+    this.sticker = ShareSticker.none,
+    this.stickerCorner = ShareCorner.topRight,
+  });
+}
+
+const _stickerGlyphs = <ShareSticker, IconData>{
+  ShareSticker.star: Icons.star,
+  ShareSticker.trophy: Icons.emoji_events,
+  ShareSticker.flag: Icons.flag,
+  ShareSticker.fire: Icons.local_fire_department,
+};
+
+/// Quadrado de [side] encostado no canto escolhido da foto (que começa em [photoTop]).
+Rect _cornerRect(
+  ShareCorner corner,
+  double side,
+  double photoTop,
+  double photoHeight,
+) {
+  final left =
+      corner == ShareCorner.topLeft || corner == ShareCorner.bottomLeft;
+  final top = corner == ShareCorner.topLeft || corner == ShareCorner.topRight;
+  final x = left ? _cardCornerMargin : _cardSide - _cardCornerMargin - side;
+  final y = top
+      ? photoTop + _cardCornerMargin
+      : photoTop + photoHeight - _cardCornerMargin - side;
+  return Rect.fromLTWH(x, y, side, side);
+}
+
+Future<ui.Image?> _decodeImage(Uint8List? bytes) async {
+  if (bytes == null) return null;
+  try {
+    final codec = await ui.instantiateImageCodec(bytes);
+    return (await codec.getNextFrame()).image;
+  } on Object {
+    return null;
+  }
+}
 
 /// Carrega um asset de imagem (ex. a logo da marca) como ui.Image, para desenhar no canvas.
 Future<ui.Image?> _loadAssetImage(String path) async {
@@ -178,37 +244,35 @@ Rect _coverSrcRect(ui.Image image, Rect dst) {
   return Rect.fromLTWH(0, (image.height - h) / 2, image.width.toDouble(), h);
 }
 
-/// Imagem para compartilhar: o nome da corrida em cima, a foto de ponta a ponta (sem faixas pretas, no
-/// quadro da própria proporção dela, de 4:5 a 1,91:1) e, embaixo, só as informações (km, tempo, pace) e o
-/// logo. Sem curtir, comentar, marcar nem compartilhar, e sem o nome de quem publicou. Garante que o
-/// compartilhamento sempre leve uma imagem, que é o que Instagram e Facebook aceitam.
+/// Imagem para compartilhar. Por padrão: o nome da corrida em cima, a foto de ponta a ponta (sem faixas pretas,
+/// no quadro da própria proporção dela, de 4:5 a 1,91:1) e, embaixo, as informações (km, tempo, pace) e o logo.
+/// Com [style], as informações podem ficar sobre a foto, e a medalha e um ícone vão para um canto dela.
+/// Sem curtir, comentar, marcar nem compartilhar, e sem o nome de quem publicou. Garante que o compartilhamento
+/// sempre leve uma imagem, que é o que Instagram e Facebook aceitam.
 Future<Uint8List> buildShareCard({
   required String title,
   required String distance,
   required String time,
   required String pace,
   Uint8List? photoBytes,
+  ShareStyle style = const ShareStyle(),
+  Uint8List? medalBytes,
 }) async {
-  ui.Image? photo;
-  if (photoBytes != null) {
-    try {
-      final codec = await ui.instantiateImageCodec(photoBytes);
-      photo = (await codec.getNextFrame()).image;
-    } on Object {
-      photo = null;
-    }
-  }
+  final photo = await _decodeImage(photoBytes);
+  final medal = await _decodeImage(medalBytes);
+  final overlay = style.info == ShareInfoLayout.overlay;
+  final headerH = overlay ? 0.0 : _cardHeaderHeight;
+  final footerH = overlay ? _cardLogoBand : _cardFooterHeight;
   // Altura da foto: a da própria proporção (de 4:5 a 1,91:1); sem foto, 4:5.
   final ratio = postPhotoFrameRatio(
     photo == null ? null : photo.width / photo.height,
   );
   final photoHeight = (_cardSide / ratio).roundToDouble();
-  final totalHeight = _cardHeaderHeight + photoHeight + _cardFooterHeight;
+  final totalHeight = headerH + photoHeight + footerH;
 
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _cardSide, totalHeight));
 
-  // Fundo branco com o texto preto: o nome da corrida e os números.
   void bg(Rect rect, {Color color = Colors.white}) =>
       canvas.drawRect(rect, Paint()..color = color);
 
@@ -242,13 +306,15 @@ Future<Uint8List> buildShareCard({
     painter.paint(canvas, Offset((_cardSide - painter.width) / 2, top));
   }
 
-  // Cabeçalho: só o nome da corrida.
-  bg(const Rect.fromLTWH(0, 0, _cardSide, _cardHeaderHeight));
-  // Centralizado na faixa do cabeçalho, na horizontal e na vertical (com uma ou duas linhas).
-  text(title, 0, 56, weight: FontWeight.w900, centerIn: _cardHeaderHeight);
+  // Cabeçalho: só o nome da corrida (no modo "sobre a foto" ele vai para cima da foto).
+  if (!overlay) {
+    bg(const Rect.fromLTWH(0, 0, _cardSide, _cardHeaderHeight));
+    // Centralizado na faixa do cabeçalho, na horizontal e na vertical (com uma ou duas linhas).
+    text(title, 0, 56, weight: FontWeight.w900, centerIn: _cardHeaderHeight);
+  }
 
   // Foto de ponta a ponta; sem foto, usa um marcador no lugar.
-  final photoRect = Rect.fromLTWH(0, _cardHeaderHeight, _cardSide, photoHeight);
+  final photoRect = Rect.fromLTWH(0, headerH, _cardSide, photoHeight);
   if (photo != null) {
     canvas.drawImageRect(
       photo,
@@ -269,11 +335,19 @@ Future<Uint8List> buildShareCard({
     );
   }
 
-  // Rodapé: distância, tempo e pace, cada um com o seu ícone (sempre os três, com "--" quando falta o
-  // dado) e, embaixo, o logo.
-  final footerTop = _cardHeaderHeight + photoHeight;
-  bg(Rect.fromLTWH(0, footerTop, _cardSide, _cardFooterHeight));
-  void stat(double centerX, IconData icon, String value, String label) {
+  // Faixa de baixo: as informações (modo padrão) ou só a marca (modo "sobre a foto").
+  final footerTop = headerH + photoHeight;
+  bg(Rect.fromLTWH(0, footerTop, _cardSide, footerH));
+
+  // Distância, tempo e pace, cada um com o seu ícone (sempre os três, com "--" quando falta o dado).
+  void stat(
+    double centerX,
+    double top,
+    IconData icon,
+    String value,
+    String label,
+    Color ink,
+  ) {
     final iconPainter = TextPainter(
       text: TextSpan(
         text: String.fromCharCode(icon.codePoint),
@@ -288,7 +362,7 @@ Future<Uint8List> buildShareCard({
     )..layout();
     iconPainter.paint(
       canvas,
-      Offset(centerX - iconPainter.width / 2, footerTop + 30),
+      Offset(centerX - iconPainter.width / 2, top + 30),
     );
     for (final (y, size, weight, content) in [
       (100.0, 44.0, FontWeight.w800, value),
@@ -297,24 +371,67 @@ Future<Uint8List> buildShareCard({
       final painter = TextPainter(
         text: TextSpan(
           text: content,
-          style: TextStyle(
-            fontSize: size,
-            fontWeight: weight,
-            color: Colors.black,
-          ),
+          style: TextStyle(fontSize: size, fontWeight: weight, color: ink),
         ),
         textAlign: TextAlign.center,
         textDirection: TextDirection.ltr,
         maxLines: 1,
         ellipsis: '…',
       )..layout(maxWidth: _cardSide / 3 - 40);
-      painter.paint(canvas, Offset(centerX - painter.width / 2, footerTop + y));
+      painter.paint(canvas, Offset(centerX - painter.width / 2, top + y));
     }
   }
 
-  stat(_cardSide / 6, statDistanceIcon, distance, 'Distância');
-  stat(_cardSide / 2, statTimeIcon, time, 'Tempo');
-  stat(_cardSide * 5 / 6, statPaceIcon, pace, 'Pace');
+  if (overlay) {
+    // Sombra escura na parte de baixo da foto, com o nome da corrida e os números em branco por cima.
+    final shade = Rect.fromLTWH(0, photoHeight - 460, _cardSide, 460);
+    canvas.drawRect(
+      shade,
+      Paint()
+        ..shader = ui.Gradient.linear(
+          shade.topCenter,
+          shade.bottomCenter,
+          const [Color(0x00000000), Color(0xd9000000)],
+        ),
+    );
+    text(
+      title,
+      photoHeight - 430,
+      54,
+      weight: FontWeight.w900,
+      color: Colors.white,
+    );
+    final top = photoHeight - 200;
+    stat(
+      _cardSide / 6,
+      top,
+      statDistanceIcon,
+      distance,
+      'Distância',
+      Colors.white,
+    );
+    stat(_cardSide / 2, top, statTimeIcon, time, 'Tempo', Colors.white);
+    stat(_cardSide * 5 / 6, top, statPaceIcon, pace, 'Pace', Colors.white);
+  } else {
+    stat(
+      _cardSide / 6,
+      footerTop,
+      statDistanceIcon,
+      distance,
+      'Distância',
+      Colors.black,
+    );
+    stat(_cardSide / 2, footerTop, statTimeIcon, time, 'Tempo', Colors.black);
+    stat(
+      _cardSide * 5 / 6,
+      footerTop,
+      statPaceIcon,
+      pace,
+      'Pace',
+      Colors.black,
+    );
+  }
+
   // Logo da marca na versão para fundo claro; sem o asset carregar por algum
   // motivo, cai para o texto "+1Pódio".
   final logo = await _loadAssetImage('assets/brand/logo-light.png');
@@ -326,7 +443,7 @@ Future<Uint8List> buildShareCard({
       Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
       Rect.fromLTWH(
         (_cardSide - logoWidth) / 2,
-        footerTop + _cardFooterHeight - logoHeight - 34,
+        footerTop + footerH - logoHeight - 34,
         logoWidth,
         logoHeight,
       ),
@@ -335,11 +452,63 @@ Future<Uint8List> buildShareCard({
   } else {
     text(
       '+1Pódio',
-      footerTop + _cardFooterHeight - _cardLogoHeight - 34,
+      footerTop + footerH - _cardLogoHeight - 34,
       88,
       weight: FontWeight.w900,
       color: runPassOrange,
       maxLines: 1,
+    );
+  }
+
+  // Medalha (com anel branco) e ícone, por cima da foto, nos cantos escolhidos.
+  final medalCorner = style.medalCorner;
+  if (medal != null && medalCorner != null) {
+    final rect = _cornerRect(medalCorner, _cardMedalSize, headerH, photoHeight);
+    canvas.save();
+    canvas.clipPath(Path()..addOval(rect));
+    canvas.drawImageRect(
+      medal,
+      _coverSrcRect(medal, rect),
+      rect,
+      Paint()..filterQuality = FilterQuality.high,
+    );
+    canvas.restore();
+    canvas.drawOval(
+      rect.deflate(5),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 10
+        ..color = Colors.white,
+    );
+  }
+  final glyph = _stickerGlyphs[style.sticker];
+  if (glyph != null) {
+    final rect = _cornerRect(
+      style.stickerCorner,
+      _cardStickerSize,
+      headerH,
+      photoHeight,
+    );
+    canvas.drawCircle(
+      rect.center,
+      _cardStickerSize / 2,
+      Paint()..color = runPassGold,
+    );
+    final painter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(glyph.codePoint),
+        style: TextStyle(
+          fontSize: 110,
+          fontFamily: glyph.fontFamily,
+          package: glyph.fontPackage,
+          color: Colors.white,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(
+      canvas,
+      rect.center - Offset(painter.width / 2, painter.height / 2),
     );
   }
 
@@ -725,23 +894,40 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
-  /// Monta a imagem para compartilhar: a foto, o nome da corrida e as informações, com o logo.
+  String get _shareDistance => entry.race.kilometers == null
+      ? statEmpty
+      : formatKilometers(entry.race.kilometers!);
+  String get _shareTime => entry.race.timeSeconds == null
+      ? statEmpty
+      : formatDuration(entry.race.timeSeconds!);
+  String get _sharePace => entry.race.paceSecondsPerKm == null
+      ? statEmpty
+      : formatPace(entry.race.paceSecondsPerKm!);
+
+  /// Medalha da participação para a imagem (a de exibição, se houver; senão a original). Nulo sem foto.
+  Future<Uint8List?> _fetchMedalBytes() async {
+    final id = entry.race.participation['id'] as String?;
+    if (id == null) return null;
+    final base = '/participations/${Uri.encodeComponent(id)}';
+    return await _fetchBytes('$base/display-image') ??
+        await _fetchBytes('$base/image');
+  }
+
+  /// Monta a imagem para compartilhar no estilo escolhido. Sem a foto e a medalha já baixadas, busca agora.
   /// Nada de curtir, comentar, marcar ou compartilhar na imagem.
-  Future<XFile> shareImage() async {
-    soon('Preparando para compartilhar...');
-    final photoBytes = await _fetchPhotoBytes();
+  Future<XFile> shareImage({
+    ShareStyle style = const ShareStyle(),
+    Uint8List? photoBytes,
+    Uint8List? medalBytes,
+  }) async {
     final card = await shareCardBuilder(
       title: entry.title,
-      distance: entry.race.kilometers == null
-          ? statEmpty
-          : formatKilometers(entry.race.kilometers!),
-      time: entry.race.timeSeconds == null
-          ? statEmpty
-          : formatDuration(entry.race.timeSeconds!),
-      pace: entry.race.paceSecondsPerKm == null
-          ? statEmpty
-          : formatPace(entry.race.paceSecondsPerKm!),
-      photoBytes: photoBytes,
+      distance: _shareDistance,
+      time: _shareTime,
+      pace: _sharePace,
+      photoBytes: photoBytes ?? await _fetchPhotoBytes(),
+      style: style,
+      medalBytes: medalBytes,
     );
     return _writeShareFile(card, 'image/png', 'runpass.png');
   }
@@ -752,8 +938,30 @@ class _PostCardState extends State<PostCard> {
         ? null
         : box.localToGlobal(Offset.zero) & box.size;
     final text = shareText();
+    soon('Preparando para compartilhar...');
+    final photo = await _fetchPhotoBytes();
+    final medal = await _fetchMedalBytes();
+    if (!mounted) return;
+    // A pessoa escolhe o layout (informações, medalha e ícone) antes de a imagem sair.
+    final style = await Navigator.of(context).push<ShareStyle>(
+      MaterialPageRoute<ShareStyle>(
+        builder: (_) => ShareEditorScreen(
+          title: entry.title,
+          distance: _shareDistance,
+          time: _shareTime,
+          pace: _sharePace,
+          photoBytes: photo,
+          medalBytes: medal,
+        ),
+      ),
+    );
+    if (style == null || !mounted) return;
     try {
-      final image = await shareImage();
+      final image = await shareImage(
+        style: style,
+        photoBytes: photo,
+        medalBytes: medal,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       // Sem texto junto da imagem: apps da Meta (Instagram, Facebook) nao
