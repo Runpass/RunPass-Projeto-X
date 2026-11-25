@@ -28,7 +28,7 @@ Future<(int, int)> sizeOf(Uint8List png) async {
 
 void main() {
   testWidgets(
-    'faixas: 1080 x 1920 sem foto; sobre a foto: 1080 x 1550 (sem a faixa de informações)',
+    'faixas: 1080 x 1920 sem foto; sobre a foto: 1080 x 1350 (a foto inteira, sem faixa)',
     (tester) async {
       await tester.runAsync(() async {
         final bands = await buildShareCard(
@@ -45,7 +45,7 @@ void main() {
           style: const ShareStyle(info: ShareInfoLayout.overlay),
         );
         expect(await sizeOf(bands), (1080, 1920));
-        expect(await sizeOf(overlay), (1080, 1550));
+        expect(await sizeOf(overlay), (1080, 1350));
       });
     },
   );
@@ -74,7 +74,7 @@ void main() {
         medalBytes: Uint8List.fromList([1, 2, 3]),
       );
       expect(await sizeOf(decorated), await sizeOf(plain));
-      expect(await sizeOf(decorated), (1080, 1550));
+      expect(await sizeOf(decorated), (1080, 1350));
     });
   });
 
@@ -188,4 +188,53 @@ void main() {
     expect(chip.onSelected, isNull);
     expect(find.text('Esta corrida não tem foto da medalha.'), findsOneWidget);
   });
+
+  testWidgets(
+    'orientação vertical só aparece em "sobre a foto" e vai para o estilo',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final onePixelPng = (await tester.runAsync(_makePng))!;
+      final drawn = <ShareStyle>[];
+      final saved = shareCardBuilder;
+      addTearDown(() => shareCardBuilder = saved);
+      shareCardBuilder =
+          ({
+            required title,
+            required distance,
+            required time,
+            required pace,
+            photoBytes,
+            ShareStyle style = const ShareStyle(),
+            medalBytes,
+          }) async {
+            drawn.add(style);
+            return onePixelPng;
+          };
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: ShareEditorScreen(
+            title: 'Corrida [FICTICIA]',
+            distance: '5 km',
+            time: '30:00',
+            pace: '6:00/km',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('share-orientation-verticalRight')),
+        findsNothing,
+      );
+      await tester.tap(find.text('Sobre a foto'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('share-orientation-verticalRight')),
+      );
+      await tester.pumpAndSettle();
+      expect(drawn.last.orientation, ShareOrientation.verticalRight);
+      expect(drawn.last.info, ShareInfoLayout.overlay);
+    },
+  );
 }

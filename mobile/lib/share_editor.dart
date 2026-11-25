@@ -47,6 +47,7 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
   ShareCorner? medalCorner;
   ShareSticker sticker = ShareSticker.none;
   ShareCorner stickerCorner = ShareCorner.topRight;
+  ShareOrientation orientation = ShareOrientation.horizontal;
   Uint8List? preview;
   int _request = 0;
 
@@ -55,6 +56,7 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
     medalCorner: medalCorner,
     sticker: sticker,
     stickerCorner: stickerCorner,
+    orientation: orientation,
   );
 
   @override
@@ -139,6 +141,38 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
               selected: {info},
               onSelectionChanged: (choice) => change(() => info = choice.first),
             ),
+            if (info == ShareInfoLayout.overlay) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    key: const Key('share-orientation-horizontal'),
+                    label: const Text('Horizontal'),
+                    selected: orientation == ShareOrientation.horizontal,
+                    onSelected: (_) =>
+                        change(() => orientation = ShareOrientation.horizontal),
+                  ),
+                  ChoiceChip(
+                    key: const Key('share-orientation-verticalRight'),
+                    label: const Text('Vertical à direita'),
+                    selected: orientation == ShareOrientation.verticalRight,
+                    onSelected: (_) => change(
+                      () => orientation = ShareOrientation.verticalRight,
+                    ),
+                  ),
+                  ChoiceChip(
+                    key: const Key('share-orientation-verticalLeft'),
+                    label: const Text('Vertical à esquerda'),
+                    selected: orientation == ShareOrientation.verticalLeft,
+                    onSelected: (_) => change(
+                      () => orientation = ShareOrientation.verticalLeft,
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 20),
             const Text(
               'Medalha',
