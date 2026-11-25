@@ -159,7 +159,7 @@ const double _cardFooterHeight = 380;
 const double _cardLogoHeight = 112;
 // Na imagem "sobre a foto": logo sobreposto à foto, numa pastilha branca, e informações na horizontal ou na vertical.
 // Marca d'água do modo "sobre a foto": do tamanho do bloco de informações.
-const double _cardWatermarkWidth = 440;
+const double _cardWatermarkWidth = 320;
 const double _cardColumnMarkWidth = 240;
 // Medalha e ícone de destaque: tamanhos e margem a partir do canto da foto.
 const double _cardMedalSize = 280;
@@ -218,24 +218,19 @@ Rect _cornerRect(
   return Rect.fromLTWH(x, y, side, side);
 }
 
-/// Cópia do logo com o preto virado para branco (e o branco para preto), mantendo o laranja e a
-/// transparência. Assim a marca d'água aparece sobre fotos escuras.
-Future<ui.Image> _invertedInk(ui.Image image) async {
+/// Cópia do logo em que tudo fica branco, exceto o laranja da marca (o homem correndo e o "+"), que é mantido.
+/// A transparência não muda. Assim a marca d'água aparece sobre fotos escuras e claras.
+Future<ui.Image> _whiteInk(ui.Image image) async {
   final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
   final bytes = Uint8List.fromList(data!.buffer.asUint8List());
   for (var i = 0; i < bytes.length; i += 4) {
-    final r = bytes[i], g = bytes[i + 1], b = bytes[i + 2], a = bytes[i + 3];
-    if (a == 0) continue;
-    final dark = r < 90 && g < 90 && b < 90;
-    final light = r > 200 && g > 200 && b > 200;
-    if (dark) {
+    if (bytes[i + 3] == 0) continue;
+    final r = bytes[i], g = bytes[i + 1], b = bytes[i + 2];
+    final orange = r > 150 && r > g + 40 && b < 120;
+    if (!orange) {
       bytes[i] = 255;
       bytes[i + 1] = 255;
       bytes[i + 2] = 255;
-    } else if (light) {
-      bytes[i] = 0;
-      bytes[i + 1] = 0;
-      bytes[i + 2] = 0;
     }
   }
   final done = Completer<ui.Image>();
@@ -423,8 +418,8 @@ Future<Uint8List> buildShareCard({
 
   // Logo da marca; sem o asset carregar por algum motivo, cai para o texto "+1Pódio".
   final logo = await _loadAssetImage('assets/brand/logo-light.png');
-  // Na imagem "sobre a foto", o logo vem com o preto e o branco invertidos (ver _invertedInk).
-  final markImage = overlay && logo != null ? await _invertedInk(logo) : null;
+  // Na imagem "sobre a foto", o logo fica branco, com o laranja da marca (ver _whiteInk).
+  final markImage = overlay && logo != null ? await _whiteInk(logo) : null;
   if (overlay) {
     // Título no alto da foto, sobre uma sombra escura, e a marca sobreposta embaixo, numa pastilha branca.
     final topShade = Rect.fromLTWH(0, 0, _cardSide, 380);
