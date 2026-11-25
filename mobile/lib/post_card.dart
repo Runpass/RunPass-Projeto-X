@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -157,8 +158,9 @@ const double _cardFooterHeight = 380;
 // Logo do rodapé, em tamanho de marca (o dobro do que era).
 const double _cardLogoHeight = 112;
 // Na imagem "sobre a foto": logo sobreposto à foto, numa pastilha branca, e informações na horizontal ou na vertical.
-const double _cardWatermarkHeight = 80;
-const double _cardColumnMarkHeight = 62;
+// Marca d'água do modo "sobre a foto": do tamanho do bloco de informações.
+const double _cardWatermarkWidth = 440;
+const double _cardColumnMarkWidth = 240;
 // Medalha e ícone de destaque: tamanhos e margem a partir do canto da foto.
 const double _cardMedalSize = 280;
 const double _cardStickerSize = 170;
@@ -214,6 +216,37 @@ Rect _cornerRect(
       ? photoTop + _cardCornerMargin
       : photoTop + photoHeight - _cardCornerMargin - side;
   return Rect.fromLTWH(x, y, side, side);
+}
+
+/// Cópia do logo com o preto virado para branco (e o branco para preto), mantendo o laranja e a
+/// transparência. Assim a marca d'água aparece sobre fotos escuras.
+Future<ui.Image> _invertedInk(ui.Image image) async {
+  final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  final bytes = Uint8List.fromList(data!.buffer.asUint8List());
+  for (var i = 0; i < bytes.length; i += 4) {
+    final r = bytes[i], g = bytes[i + 1], b = bytes[i + 2], a = bytes[i + 3];
+    if (a == 0) continue;
+    final dark = r < 90 && g < 90 && b < 90;
+    final light = r > 200 && g > 200 && b > 200;
+    if (dark) {
+      bytes[i] = 255;
+      bytes[i + 1] = 255;
+      bytes[i + 2] = 255;
+    } else if (light) {
+      bytes[i] = 0;
+      bytes[i + 1] = 0;
+      bytes[i + 2] = 0;
+    }
+  }
+  final done = Completer<ui.Image>();
+  ui.decodeImageFromPixels(
+    bytes,
+    image.width,
+    image.height,
+    ui.PixelFormat.rgba8888,
+    done.complete,
+  );
+  return done.future;
 }
 
 Future<ui.Image?> _decodeImage(Uint8List? bytes) async {
@@ -390,6 +423,8 @@ Future<Uint8List> buildShareCard({
 
   // Logo da marca; sem o asset carregar por algum motivo, cai para o texto "+1Pódio".
   final logo = await _loadAssetImage('assets/brand/logo-light.png');
+  // Na imagem "sobre a foto", o logo vem com o preto e o branco invertidos (ver _invertedInk).
+  final markImage = overlay && logo != null ? await _invertedInk(logo) : null;
   if (overlay) {
     // Título no alto da foto, sobre uma sombra escura, e a marca sobreposta embaixo, numa pastilha branca.
     final topShade = Rect.fromLTWH(0, 0, _cardSide, 380);
@@ -416,17 +451,24 @@ Future<Uint8List> buildShareCard({
         ),
     );
     // Marca d'água: o logo nas cores originais (com o homem correndo), translúcido e sem fundo.
-    void mark(double centerX, double top, double height) {
-      if (logo == null) return;
-      final width = logo.width * (height / logo.height);
+    // Devolve a altura desenhada, para o layout da coluna.
+    double mark(double centerX, double top, double width) {
+      if (markImage == null) return 0;
+      final height = width * markImage.height / markImage.width;
       canvas.drawImageRect(
-        logo,
-        Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
+        markImage,
+        Rect.fromLTWH(
+          0,
+          0,
+          markImage.width.toDouble(),
+          markImage.height.toDouble(),
+        ),
         Rect.fromLTWH(centerX - width / 2, top, width, height),
         Paint()
           ..filterQuality = FilterQuality.high
-          ..color = const Color(0x99ffffff),
+          ..color = const Color(0xd9ffffff),
       );
+      return height;
     }
 
     if (vertical) {
@@ -449,8 +491,10 @@ Future<Uint8List> buildShareCard({
           : _cardCornerMargin + 150;
       // A marca entra na coluna, logo abaixo do pace, com as outras informações.
       const markGap = 40.0;
-      final columnTop =
-          (photoHeight - (600 + markGap + _cardColumnMarkHeight)) / 2;
+      final markHeight = markImage == null
+          ? 0.0
+          : _cardColumnMarkWidth * markImage.height / markImage.width;
+      final columnTop = (photoHeight - (600 + markGap + markHeight)) / 2;
       stat(
         centerX,
         columnTop,
@@ -461,7 +505,7 @@ Future<Uint8List> buildShareCard({
       );
       stat(centerX, columnTop + 200, statTimeIcon, time, 'Tempo', Colors.white);
       stat(centerX, columnTop + 400, statPaceIcon, pace, 'Pace', Colors.white);
-      mark(centerX, columnTop + 600 + markGap, _cardColumnMarkHeight);
+      mark(centerX, columnTop + 600 + markGap, _cardColumnMarkWidth);
     } else {
       final top = photoHeight - 368;
       stat(
@@ -475,10 +519,13 @@ Future<Uint8List> buildShareCard({
       stat(_cardSide / 2, top, statTimeIcon, time, 'Tempo', Colors.white);
       stat(_cardSide * 5 / 6, top, statPaceIcon, pace, 'Pace', Colors.white);
       // Marca d'água embaixo, no centro da foto.
+      final watermarkHeight = markImage == null
+          ? 0.0
+          : _cardWatermarkWidth * markImage.height / markImage.width;
       mark(
         _cardSide / 2,
-        photoHeight - 40 - _cardWatermarkHeight,
-        _cardWatermarkHeight,
+        photoHeight - 40 - watermarkHeight,
+        _cardWatermarkWidth,
       );
     }
   } else {
