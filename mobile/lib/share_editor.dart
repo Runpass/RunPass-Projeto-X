@@ -49,6 +49,7 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
   ShareCorner stickerCorner = ShareCorner.topRight;
   ShareOrientation orientation = ShareOrientation.horizontal;
   ShareTitlePlacement titlePlacement = ShareTitlePlacement.top;
+  ShareTitleDirection titleDirection = ShareTitleDirection.upward;
   Uint8List? preview;
   int _request = 0;
 
@@ -59,6 +60,7 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
     stickerCorner: stickerCorner,
     orientation: orientation,
     titlePlacement: titlePlacement,
+    titleDirection: titleDirection,
   );
 
   @override
@@ -208,6 +210,31 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
                   ),
                 ],
               ),
+              if (titlePlacement != ShareTitlePlacement.top) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      key: const Key('share-title-up'),
+                      label: const Text('De baixo para cima'),
+                      selected: titleDirection == ShareTitleDirection.upward,
+                      onSelected: (_) => change(
+                        () => titleDirection = ShareTitleDirection.upward,
+                      ),
+                    ),
+                    ChoiceChip(
+                      key: const Key('share-title-down'),
+                      label: const Text('De cima para baixo'),
+                      selected: titleDirection == ShareTitleDirection.downward,
+                      onSelected: (_) => change(
+                        () => titleDirection = ShareTitleDirection.downward,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
             const SizedBox(height: 20),
             const Text(
