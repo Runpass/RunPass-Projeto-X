@@ -48,6 +48,7 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
   ShareSticker sticker = ShareSticker.none;
   ShareCorner stickerCorner = ShareCorner.topRight;
   ShareOrientation orientation = ShareOrientation.horizontal;
+  ShareTitlePlacement titlePlacement = ShareTitlePlacement.top;
   Uint8List? preview;
   int _request = 0;
 
@@ -57,6 +58,7 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
     sticker: sticker,
     stickerCorner: stickerCorner,
     orientation: orientation,
+    titlePlacement: titlePlacement,
   );
 
   @override
@@ -169,6 +171,40 @@ class _ShareEditorScreenState extends State<ShareEditorScreen> {
                     onSelected: (_) => change(
                       () => orientation = ShareOrientation.verticalLeft,
                     ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Título',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    key: const Key('share-title-top'),
+                    label: const Text('No topo'),
+                    selected: titlePlacement == ShareTitlePlacement.top,
+                    onSelected: (_) =>
+                        change(() => titlePlacement = ShareTitlePlacement.top),
+                  ),
+                  ChoiceChip(
+                    key: const Key('share-title-right'),
+                    label: const Text('Vertical à direita'),
+                    selected: titlePlacement == ShareTitlePlacement.right,
+                    onSelected: (_) => change(
+                      () => titlePlacement = ShareTitlePlacement.right,
+                    ),
+                  ),
+                  ChoiceChip(
+                    key: const Key('share-title-left'),
+                    label: const Text('Vertical à esquerda'),
+                    selected: titlePlacement == ShareTitlePlacement.left,
+                    onSelected: (_) =>
+                        change(() => titlePlacement = ShareTitlePlacement.left),
                   ),
                 ],
               ),

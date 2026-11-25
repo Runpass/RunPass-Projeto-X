@@ -175,6 +175,9 @@ enum ShareCorner { topLeft, topRight, bottomLeft, bottomRight }
 /// Informações sobre a foto: uma linha embaixo (horizontal) ou uma coluna na direita ou na esquerda.
 enum ShareOrientation { horizontal, verticalRight, verticalLeft }
 
+/// Onde fica o título quando a foto tem as informações sobrepostas: no topo, ou numa coluna à direita ou à esquerda.
+enum ShareTitlePlacement { top, right, left }
+
 /// Ícone de destaque. É estático: a imagem para compartilhar é um PNG, que não anima.
 enum ShareSticker { none, star, trophy, flag, fire }
 
@@ -185,12 +188,14 @@ class ShareStyle {
   final ShareSticker sticker;
   final ShareCorner stickerCorner;
   final ShareOrientation orientation;
+  final ShareTitlePlacement titlePlacement;
   const ShareStyle({
     this.info = ShareInfoLayout.bands,
     this.medalCorner,
     this.sticker = ShareSticker.none,
     this.stickerCorner = ShareCorner.topRight,
     this.orientation = ShareOrientation.horizontal,
+    this.titlePlacement = ShareTitlePlacement.top,
   });
 }
 
@@ -432,7 +437,32 @@ Future<Uint8List> buildShareCard({
           const [Color(0xd9000000), Color(0x00000000)],
         ),
     );
-    text(title, 40, 54, weight: FontWeight.w900, color: Colors.white);
+    if (style.titlePlacement == ShareTitlePlacement.top) {
+      text(title, 40, 54, weight: FontWeight.w900, color: Colors.white);
+    } else {
+      // Título numa coluna ao lado da foto, no alto, com quebra de linha dentro da coluna.
+      final titleRight = style.titlePlacement == ShareTitlePlacement.right;
+      const columnWidth = 300.0;
+      final titleX = titleRight
+          ? _cardSide - _cardCornerMargin - columnWidth
+          : _cardCornerMargin;
+      final painter = TextPainter(
+        text: TextSpan(
+          text: title,
+          style: const TextStyle(
+            fontSize: 48,
+            fontWeight: FontWeight.w900,
+            color: Colors.white,
+            height: 1.15,
+          ),
+        ),
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+        maxLines: 6,
+        ellipsis: '…',
+      )..layout(maxWidth: columnWidth);
+      painter.paint(canvas, Offset(titleX, 40));
+    }
 
     final vertical = style.orientation != ShareOrientation.horizontal;
     final bottomShade = Rect.fromLTWH(0, photoHeight - 460, _cardSide, 460);
