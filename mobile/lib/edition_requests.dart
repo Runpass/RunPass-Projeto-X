@@ -912,3 +912,155 @@ class _MyEditionRequestsScreenState extends State<MyEditionRequestsScreen> {
     );
   }
 }
+
+/// Copiar de uma corrida existente: o pedido de cadastro já vem com nome, cidade, estado, distância e site dela
+/// (ex.: a edição do ano passado). A data fica de fora, porque é a da corrida nova. A distância só entra quando a
+/// corrida tem uma só (com várias, a pessoa escolhe no formulário).
+Map<String, String> copyPrefillFrom(Map<String, dynamic> edition) {
+  final kms = [
+    for (final d in (edition['distances'] as List? ?? const []))
+      if (d is Map && d['kilometers'] is num) (d['kilometers'] as num),
+  ];
+  String? text(String key) {
+    final value = '${edition[key] ?? ''}'.trim();
+    return value.isEmpty ? null : value;
+  }
+
+  final km = kms.length == 1 ? kms.first : null;
+  return {
+    'name': ?text('name'),
+    'city': ?text('city'),
+    'state': ?text('state'),
+    if (km != null)
+      'distanceKm': km == km.roundToDouble() ? '${km.toInt()}' : '$km',
+    'officialUrl': ?text('officialUrl'),
+  };
+}
+
+/// Escolhe a corrida do catálogo de onde copiar os dados. Devolve o preenchimento ([copyPrefillFrom]) ou nulo se a
+/// pessoa desistir. [initialQuery]: o nome já digitado ou lido da medalha.
+Future<Map<String, String>?> pickRaceToCopy(
+  BuildContext context,
+  IdentityGateway gateway, {
+  String initialQuery = '',
+}) => Navigator.of(context).push<Map<String, String>>(
+  MaterialPageRoute(
+    builder: (_) =>
+        CopyRaceScreen(gateway: gateway, initialQuery: initialQuery),
+  ),
+);
+
+class CopyRaceScreen extends StatefulWidget {
+  final IdentityGateway gateway;
+  final String initialQuery;
+  const CopyRaceScreen({
+    super.key,
+    required this.gateway,
+    this.initialQuery = '',
+  });
+
+  @override
+  State<CopyRaceScreen> createState() => _CopyRaceScreenState();
+}
+
+class _CopyRaceScreenState extends State<CopyRaceScreen> {
+  late final query = TextEditingController(text: widget.initialQuery);
+  final items = <Map<String, dynamic>>[];
+  bool loading = false;
+  String? note;
+
+  @override
+  void initState() {
+    super.initState();
+    if (query.text.trim().length >= 2) search();
+  }
+
+  @override
+  void dispose() {
+    query.dispose();
+    super.dispose();
+  }
+
+  Future<void> search() async {
+    final term = query.text.trim();
+    if (term.length < 2) return;
+    setState(() {
+      loading = true;
+      note = null;
+      items.clear();
+    });
+    try {
+      final page = await widget.gateway.request(
+        '/editions',
+        query: {'q': term, 'limit': '20'},
+      );
+      if (!mounted) return;
+      setState(() {
+        for (final item in (page['items'] as List? ?? const [])) {
+          if (item is Map) items.add(Map<String, dynamic>.from(item));
+        }
+        if (items.isEmpty) {
+          note = 'Nenhuma corrida com este nome. Tente outro nome.';
+        }
+      });
+    } on Exception {
+      if (mounted) {
+        setState(
+          () => note = 'Sem conexão com o servidor. Verifique a internet e tente de novo.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Copiar de uma corrida')),
+    body: ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          'Escolha uma corrida parecida (por exemplo, a edição do ano passado). '
+          'O cadastro começa com os dados dela; você confere e ajusta a data.',
+          style: TextStyle(color: Theme.of(context).hintColor),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          key: const Key('copy-race-query'),
+          controller: query,
+          autofocus: query.text.isEmpty,
+          textInputAction: TextInputAction.search,
+          textCapitalization: TextCapitalization.words,
+          onSubmitted: (_) => search(),
+          decoration: InputDecoration(
+            labelText: 'Nome da corrida',
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: IconButton(
+              key: const Key('copy-race-search'),
+              tooltip: 'Buscar',
+              icon: const Icon(Icons.arrow_forward_rounded),
+              onPressed: loading ? null : search,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (loading)
+          const Center(child: CircularProgressIndicator(strokeWidth: 2))
+        else ...[
+          if (note != null) Text(note!, key: const Key('copy-race-note')),
+          for (final edition in items)
+            KeyedSubtree(
+              key: Key('copy-race-${edition['id']}'),
+              child: cards.EditionCompactCard(
+                gateway: widget.gateway,
+                edition: edition,
+                onTap: () =>
+                    Navigator.of(context).pop(copyPrefillFrom(edition)),
+              ),
+            ),
+        ],
+      ],
+    ),
+  );
+}

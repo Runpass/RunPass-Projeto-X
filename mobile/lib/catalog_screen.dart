@@ -1336,17 +1336,29 @@ class _CatalogScreenState extends State<CatalogScreen> {
     ),
   );
 
-  Future<void> requestRace() async {
+  /// Sem resultado: copia os dados de uma corrida parecida do catálogo para o mesmo cadastro manual.
+  Future<void> copyRace() async {
+    final copied = await pickRaceToCopy(
+      context,
+      widget.gateway,
+      initialQuery: fields['q']!.text.trim(),
+    );
+    if (copied != null && mounted) await requestRace(prefill: copied);
+  }
+
+  Future<void> requestRace({Map<String, String>? prefill}) async {
     final sent = await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(
         builder: (_) => EditionRequestFormScreen(
           gateway: widget.gateway,
-          prefill: {
-            if (fields['q']!.text.trim().isNotEmpty)
-              'name': fields['q']!.text.trim(),
-            if ((fields['city']?.text.trim() ?? '').isNotEmpty)
-              'city': fields['city']!.text.trim(),
-          },
+          prefill:
+              prefill ??
+              {
+                if (fields['q']!.text.trim().isNotEmpty)
+                  'name': fields['q']!.text.trim(),
+                if ((fields['city']?.text.trim() ?? '').isNotEmpty)
+                  'city': fields['city']!.text.trim(),
+              },
         ),
       ),
     );
@@ -1498,15 +1510,23 @@ class _CatalogScreenState extends State<CatalogScreen> {
               items.isEmpty &&
               nextCursor == null &&
               !upcomingWindow)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                key: const Key('catalog-request-empty'),
-                onPressed: requestRace,
-                child: const Text(
-                  'Não encontrou? Cadastrar a corrida manualmente',
+            Wrap(
+              spacing: 4,
+              children: [
+                TextButton(
+                  key: const Key('catalog-request-empty'),
+                  onPressed: () => requestRace(),
+                  child: const Text(
+                    'Não encontrou? Cadastrar a corrida manualmente',
+                  ),
                 ),
-              ),
+                TextButton.icon(
+                  key: const Key('catalog-copy-empty'),
+                  onPressed: copyRace,
+                  icon: const Icon(Icons.copy_rounded, size: 16),
+                  label: const Text('Copiar de outra corrida'),
+                ),
+              ],
             ),
           ...editionViews(),
           if (nextCursor != null)
@@ -3896,12 +3916,21 @@ Future<void> forgetDraftForm(String id) async {
 
 /// Corrida que veio sem distância: pergunta o km e grava na corrida (vale para todos, marcada como informada
 /// por corredor). Devolve as distâncias da corrida depois de gravar, ou nulo se a pessoa desistir.
+/// [initialKm]: o km lido na medalha, já no campo para a pessoa só confirmar.
 Future<List<Map>?> askRunnerDistance(
   BuildContext context,
   IdentityGateway gateway,
-  String editionId,
-) async {
-  final controller = TextEditingController();
+  String editionId, {
+  double? initialKm,
+}) async {
+  final controller = TextEditingController(
+    text: initialKm == null
+        ? ''
+        : (initialKm == initialKm.roundToDouble()
+                  ? '${initialKm.toInt()}'
+                  : '$initialKm')
+              .replaceAll('.', ','),
+  );
   final text = await showDialog<String>(
     context: context,
     builder: (dialog) => AlertDialog(
