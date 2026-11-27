@@ -1013,16 +1013,18 @@ class _CatalogScreenState extends State<CatalogScreen> {
             () => togglePlan(edition, 'registered'),
           ),
         ],
-        action(
-          'quick-ran',
-          mine.containsKey(id)
-              ? Icons.check_circle_rounded
-              : Icons.directions_run,
-          mine.containsKey(id) ? 'Meu registro' : 'Já corri',
-          mine.containsKey(id) ? 'Ver meu registro' : 'Já corri',
-          mine.containsKey(id),
-          () => markRan(edition),
-        ),
+        // "Já corri" só para corrida que já aconteceu (ou que a pessoa já registrou): corrida futura não se corre ainda.
+        if (!upcoming || mine.containsKey(id))
+          action(
+            'quick-ran',
+            mine.containsKey(id)
+                ? Icons.check_circle_rounded
+                : Icons.directions_run,
+            mine.containsKey(id) ? 'Meu registro' : 'Já corri',
+            mine.containsKey(id) ? 'Ver meu registro' : 'Já corri',
+            mine.containsKey(id),
+            () => markRan(edition),
+          ),
       ],
     );
   }
