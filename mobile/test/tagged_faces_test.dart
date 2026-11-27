@@ -56,4 +56,26 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('post-tagged-faces-post2')), findsNothing);
   });
+
+  testWidgets('tocar no +n abre a lista com todos os marcados', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TaggedLink(
+            gateway: gateway(),
+            postId: 'post3',
+            tagged: [
+              for (final n in ['1', '2', '3', '4', '5']) person(n),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('+2'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('tagged-dialog')), findsOneWidget);
+    for (final n in ['1', '2', '3', '4', '5']) {
+      expect(find.byKey(Key('tagged-p$n')), findsOneWidget);
+    }
+  });
 }
