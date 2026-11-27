@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 class IdentityIssue implements Exception {
   final String code;
@@ -32,6 +33,20 @@ typedef ByteTransport = Future<int> Function(
 );
 
 typedef Sleeper = Future<void> Function(Duration duration);
+
+/// Abre a Hosted UI do Cognito (navegador do sistema) e espera o redirect de volta pro
+/// esquema do app. Separado do `JsonTransport`/`ByteTransport` pelo mesmo motivo deles:
+/// injetavel em teste, sem precisar de navegador de verdade.
+typedef WebAuthLauncher = Future<String> Function(
+  Uri url, {
+  required String callbackUrlScheme,
+});
+
+Future<String> launchWebAuth(Uri url, {required String callbackUrlScheme}) =>
+    FlutterWebAuth2.authenticate(
+      url: url.toString(),
+      callbackUrlScheme: callbackUrlScheme,
+    );
 
 Future<void> wait(Duration duration) => Future<void>.delayed(duration);
 
@@ -103,6 +118,48 @@ Future<JsonReply> sendJson(
       request.contentLength = bytes.length;
       request.add(bytes);
     }
+    final response = await request.close().timeout(const Duration(seconds: 15));
+    final text = await utf8.decoder
+        .bind(response)
+        .join()
+        .timeout(const Duration(seconds: 15));
+    return JsonReply(
+      response.statusCode,
+      text.isEmpty ? {} : jsonDecode(text) as Map<String, dynamic>,
+    );
+  } on Exception {
+    throw const IdentityIssue('SERVICE_UNAVAILABLE');
+  } finally {
+    client.close(force: true);
+  }
+}
+
+typedef FormTransport = Future<JsonReply> Function(
+  Uri uri,
+  Map<String, String> fields,
+);
+
+/// POST `application/x-www-form-urlencoded`, exigido pelo endpoint `/oauth2/token` da Hosted
+/// UI (diferente do `application/x-amz-json-1.1` que o resto do Cognito usa via `sendJson`).
+/// A resposta ainda e JSON.
+Future<JsonReply> sendForm(Uri uri, Map<String, String> fields) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final request = await client
+        .postUrl(uri)
+        .timeout(const Duration(seconds: 10));
+    request.headers.set('Content-Type', 'application/x-www-form-urlencoded');
+    request.followRedirects = false;
+    final bytes = utf8.encode(
+      fields.entries
+          .map(
+            (e) =>
+                '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}',
+          )
+          .join('&'),
+    );
+    request.contentLength = bytes.length;
+    request.add(bytes);
     final response = await request.close().timeout(const Duration(seconds: 15));
     final text = await utf8.decoder
         .bind(response)
@@ -265,9 +322,18 @@ class IdentityGateway {
   final String clientId;
   final JsonTransport transport;
   final ByteTransport byteTransport;
+  final FormTransport formTransport;
   final Sleeper sleeper;
   final TokenStore? tokenStore;
   final DateTime Function() clock;
+
+  /// Dominio da Hosted UI do Cognito (ex. `https://runpass-dev.auth.sa-east-1.amazoncognito.com`).
+  /// Nulo em ambientes sem login social configurado (ver `RUNPASS_COGNITO_HOSTED_UI_DOMAIN`).
+  final Uri? hostedUiDomain;
+
+  /// Esquema do deep link que recebe o redirect da Hosted UI de volta pro app.
+  final String oauthRedirectScheme;
+  final WebAuthLauncher webAuth;
   String? _accessToken;
   String? _refreshToken;
   String? _pendingCommand;
@@ -310,9 +376,13 @@ class IdentityGateway {
     required this.clientId,
     this.transport = sendJson,
     this.byteTransport = sendBytes,
+    this.formTransport = sendForm,
     this.sleeper = wait,
     this.tokenStore,
     this.clock = DateTime.now,
+    this.hostedUiDomain,
+    this.oauthRedirectScheme = 'runpass',
+    this.webAuth = launchWebAuth,
   }) {
     if (cognito.scheme != 'https' ||
         api.scheme != 'https' ||
@@ -452,6 +522,62 @@ class IdentityGateway {
       } else {
         await tokenStore?.clear();
       }
+    }
+  }
+
+  /// Login social (Google/Facebook) pela Hosted UI do Cognito — Authorization Code flow,
+  /// via navegador do sistema (`webAuth`), nunca SDK nativo do provedor. `provider` e o nome
+  /// exato do Identity Provider no User Pool (`"Google"` ou `"Facebook"`, ver
+  /// `infra/identity.template.json`). Vinculacao automatica de conta por e-mail verificado e
+  /// decidida pelo Cognito/backend, nao aqui.
+  Future<void> signInWithProvider(String provider) async {
+    final domain = hostedUiDomain;
+    if (domain == null) throw const IdentityIssue('SOCIAL_LOGIN_UNAVAILABLE');
+    clearSession();
+    final redirectUri = '$oauthRedirectScheme://auth/callback';
+    final authorizeUrl = domain.replace(
+      path: '/oauth2/authorize',
+      queryParameters: {
+        'response_type': 'code',
+        'client_id': clientId,
+        'redirect_uri': redirectUri,
+        'identity_provider': provider,
+        'scope': 'openid email profile',
+      },
+    );
+    final String callbackUrl;
+    try {
+      callbackUrl = await webAuth(
+        authorizeUrl,
+        callbackUrlScheme: oauthRedirectScheme,
+      );
+    } on Exception {
+      // Cobre tanto a pessoa cancelando (fechou o navegador) quanto falha de rede: nos
+      // dois casos nao ha nada mais especifico a dizer do que "tente de novo".
+      throw const IdentityIssue('SOCIAL_LOGIN_CANCELLED');
+    }
+    final code = Uri.parse(callbackUrl).queryParameters['code'];
+    if (code == null || code.isEmpty) {
+      throw const IdentityIssue('SOCIAL_LOGIN_CANCELLED');
+    }
+    final result = await formTransport(domain.replace(path: '/oauth2/token'), {
+      'grant_type': 'authorization_code',
+      'client_id': clientId,
+      'code': code,
+      'redirect_uri': redirectUri,
+    });
+    if (result.status < 200 || result.status >= 300) {
+      throw const IdentityIssue('SOCIAL_LOGIN_FAILED');
+    }
+    final token = result.body['access_token'];
+    if (token is! String || token.isEmpty) {
+      throw const IdentityIssue('INVALID_TOKEN');
+    }
+    _accessToken = token;
+    final refresh = result.body['refresh_token'];
+    if (refresh is String && refresh.isNotEmpty) {
+      _refreshToken = refresh;
+      await tokenStore?.write(refresh);
     }
   }
 

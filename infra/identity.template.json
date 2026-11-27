@@ -10,6 +10,16 @@
       ]
     }
   },
+  "Conditions": {
+    "IsDev": {
+      "Fn::Equals": [
+        {
+          "Ref": "Environment"
+        },
+        "dev"
+      ]
+    }
+  },
   "Resources": {
     "RunnerPool": {
       "Type": "AWS::Cognito::UserPool",
@@ -54,8 +64,64 @@
         }
       }
     },
+    "GoogleIdentityProvider": {
+      "Type": "AWS::Cognito::UserPoolIdentityProvider",
+      "Condition": "IsDev",
+      "Properties": {
+        "UserPoolId": {
+          "Ref": "RunnerPool"
+        },
+        "ProviderName": "Google",
+        "ProviderType": "Google",
+        "ProviderDetails": {
+          "client_id": "{{resolve:secretsmanager:runpass/dev/oauth/google:SecretString:client_id}}",
+          "client_secret": "{{resolve:secretsmanager:runpass/dev/oauth/google:SecretString:client_secret}}",
+          "authorize_scopes": "profile email openid"
+        },
+        "AttributeMapping": {
+          "email": "email",
+          "email_verified": "email_verified",
+          "username": "sub"
+        }
+      }
+    },
+    "FacebookIdentityProvider": {
+      "Type": "AWS::Cognito::UserPoolIdentityProvider",
+      "Condition": "IsDev",
+      "Properties": {
+        "UserPoolId": {
+          "Ref": "RunnerPool"
+        },
+        "ProviderName": "Facebook",
+        "ProviderType": "Facebook",
+        "ProviderDetails": {
+          "client_id": "{{resolve:secretsmanager:runpass/dev/oauth/facebook:SecretString:app_id}}",
+          "client_secret": "{{resolve:secretsmanager:runpass/dev/oauth/facebook:SecretString:app_secret}}",
+          "authorize_scopes": "public_profile,email",
+          "api_version": "v19.0"
+        },
+        "AttributeMapping": {
+          "email": "email",
+          "username": "id"
+        }
+      }
+    },
+    "RunnerPoolDomain": {
+      "Type": "AWS::Cognito::UserPoolDomain",
+      "Condition": "IsDev",
+      "Properties": {
+        "Domain": "runpass-dev",
+        "UserPoolId": {
+          "Ref": "RunnerPool"
+        }
+      }
+    },
     "RunnerClient": {
       "Type": "AWS::Cognito::UserPoolClient",
+      "DependsOn": [
+        "GoogleIdentityProvider",
+        "FacebookIdentityProvider"
+      ],
       "Properties": {
         "UserPoolId": {
           "Ref": "RunnerPool"
@@ -67,6 +133,72 @@
           "ALLOW_USER_PASSWORD_AUTH",
           "ALLOW_REFRESH_TOKEN_AUTH"
         ],
+        "SupportedIdentityProviders": {
+          "Fn::If": [
+            "IsDev",
+            [
+              "COGNITO",
+              "Google",
+              "Facebook"
+            ],
+            [
+              "COGNITO"
+            ]
+          ]
+        },
+        "AllowedOAuthFlowsUserPoolClient": {
+          "Fn::If": [
+            "IsDev",
+            true,
+            false
+          ]
+        },
+        "AllowedOAuthFlows": {
+          "Fn::If": [
+            "IsDev",
+            [
+              "code"
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "AllowedOAuthScopes": {
+          "Fn::If": [
+            "IsDev",
+            [
+              "openid",
+              "email",
+              "profile"
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "CallbackURLs": {
+          "Fn::If": [
+            "IsDev",
+            [
+              "runpass://auth/callback"
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "LogoutURLs": {
+          "Fn::If": [
+            "IsDev",
+            [
+              "runpass://auth/logout"
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
         "AccessTokenValidity": 60,
         "IdTokenValidity": 60,
         "RefreshTokenValidity": 30,
@@ -172,6 +304,12 @@
     "RunnerClient": {
       "Value": {
         "Ref": "RunnerClient"
+      }
+    },
+    "RunnerPoolDomain": {
+      "Condition": "IsDev",
+      "Value": {
+        "Ref": "RunnerPoolDomain"
       }
     },
     "OperatorPool": {

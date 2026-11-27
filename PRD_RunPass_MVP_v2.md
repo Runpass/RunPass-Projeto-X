@@ -89,7 +89,7 @@ Buscar corridas, consultar avaliações, salvar uma edição em “Quero correr�
 
 ## 6. Conta, perfil e busca de corredores
 
-Requisitos herdados do PRD inicial: cadastro por e-mail e senha, validação e confirmação de e-mail, recuperação de senha e logout. Login Google e Apple permanecem como evolução sujeita à validação dos requisitos de distribuição.
+Requisitos herdados do PRD inicial: cadastro por e-mail e senha, validação e confirmação de e-mail, recuperação de senha e logout. Login Google e Facebook entram na primeira entrega (decisão de produto de 25/11/2026, ver S11-login-social.md), ambiente DEV, com vinculação automática de conta quando o e-mail social é verificado pelo provedor. Login Apple permanece como evolução sujeita à validação dos requisitos de distribuição (App Store Guideline 4.8 pode exigi-lo quando houver build iOS).
 
 - Perfis públicos com informações voltadas às corridas e conquistas.
 - Nome de exibição, username, histórico, medalhas, avaliações e contagens de provas/medalhas compõem a proposta de perfil.

@@ -26,6 +26,8 @@ Estado do plano: S00 preparada/verificada e sequência S01 autorizada pelo usuá
 | S07 | Entrega de eventos, RunScore e histórico restrito | S06 | Aceito em 03/11/2026 — aceite local; SQS/DLQ/S3, IAM/MFA, p95 de 10 s, carga, alarmes e replay após restauração em S09 |
 | S08 | Edição, exclusão e proteção de dados | S06, S07 | Aceito em 03/11/2026 — aceite local; restauração, prazo real de 7 dias, IAM/MFA e descarte do controle de 15 dias em S09 |
 | S09 | Integração real em DEV e aceite da entrega | S02–S08, orçamento/autorização | Preparação local; teto DEV de R$ 1.000/mês aprovado, provisionamento ainda bloqueado pelos demais gates |
+| S10 | Amigos: busca, seguir, feed e comentários | S06, S07 | Implementado e testado localmente; não implantado no DEV. Ver S10-amigos.md |
+| S11 | Login social (Google e Facebook) | S02, credenciais OAuth (DEV) | Planejado, nada implementado. Decisão de produto de 25/11/2026. Ver S11-login-social.md |
 
 Não é uma decomposição de todo o MVP. Feed completo, interações sociais, wishlist, painel completo e pós-beta terão slices próprios depois; não foram removidos do escopo do produto.
 

@@ -28,6 +28,11 @@ Future<void> main() async {
   const api = String.fromEnvironment('RUNPASS_API_URL');
   const cognito = String.fromEnvironment('RUNPASS_COGNITO_URL');
   const client = String.fromEnvironment('RUNPASS_COGNITO_CLIENT_ID');
+  // Opcional: so DEV tem Hosted UI/login social configurado ate agora (S11).
+  // Sem esse define, os botoes de Google/Facebook ficam escondidos (ver IdentityScreen).
+  const hostedUiDomain = String.fromEnvironment(
+    'RUNPASS_COGNITO_HOSTED_UI_DOMAIN',
+  );
   IdentityGateway? gateway;
   if (api.isNotEmpty && cognito.isNotEmpty && client.isNotEmpty) {
     try {
@@ -36,6 +41,9 @@ Future<void> main() async {
         cognito: Uri.parse(cognito),
         clientId: client,
         tokenStore: SecureTokenStore(),
+        hostedUiDomain: hostedUiDomain.isEmpty
+            ? null
+            : Uri.parse(hostedUiDomain),
       );
     } on ArgumentError {
       gateway = null;
@@ -973,6 +981,11 @@ class _IdentityScreenState extends State<IdentityScreen> {
         'UPLOAD_UNAVAILABLE' => photoError(error),
         'ACCOUNT_UNAVAILABLE' => 'Esta conta está indisponível.',
         'INVALID_INPUT' => 'Confira os campos e tente novamente.',
+        'SOCIAL_LOGIN_CANCELLED' => null,
+        'SOCIAL_LOGIN_FAILED' =>
+          'Não foi possível entrar com essa conta agora. Tente novamente.',
+        'SOCIAL_LOGIN_UNAVAILABLE' =>
+          'Login social indisponível neste ambiente.',
         // Codigo exposto de proposito enquanto o app esta em teste DEV: sem isso,
         // qualquer erro novo e inteiramente mudo sobre a causa, so "tente de novo".
         _ =>
@@ -1011,6 +1024,15 @@ class _IdentityScreenState extends State<IdentityScreen> {
     editingFromCelebration = false;
     step = Step.celebration;
   }
+
+  /// Login via Google/Facebook (Hosted UI). `provider` e o nome do Identity Provider
+  /// no User Pool ("Google"/"Facebook"). Mesmo destino de `submit()` no caso
+  /// `Step.signIn`: `resume()` decide a proxima tela (perfil, se for a primeira vez
+  /// da conta federada; ready, se ja estiver admitida).
+  Future<void> signInWithSocialProvider(String provider) => perform(() async {
+    await widget.gateway!.signInWithProvider(provider);
+    await resume();
+  });
 
   Future<void> submit() => perform(() async {
     final gateway = widget.gateway!;
@@ -1731,6 +1753,60 @@ class _IdentityScreenState extends State<IdentityScreen> {
                             ),
                             const SizedBox(height: 24),
                           ],
+                          // Login social (Google/Facebook): so na tela de criar conta
+                          // (padrao combinado em 25/11/2026), e so quando o ambiente tem
+                          // Hosted UI configurada (hoje, so DEV — ver infra/identity.template.json).
+                          if (step == Step.signUp &&
+                              widget.gateway?.hostedUiDomain != null) ...[
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _SocialCircleButton(
+                                  asset: 'assets/icons/google-icon.png',
+                                  tooltip: 'Continuar com Google',
+                                  onPressed: busy
+                                      ? null
+                                      : () =>
+                                            signInWithSocialProvider('Google'),
+                                ),
+                                const SizedBox(width: 16),
+                                _SocialCircleButton(
+                                  asset: 'assets/icons/facebook-icon.png',
+                                  tooltip: 'Continuar com Facebook',
+                                  onPressed: busy
+                                      ? null
+                                      : () => signInWithSocialProvider(
+                                          'Facebook',
+                                        ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 20),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Divider(color: context.panelStrong),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
+                                  child: Text(
+                                    'ou',
+                                    style: TextStyle(
+                                      color: context.isDark
+                                          ? Colors.white70
+                                          : Colors.black54,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Divider(color: context.panelStrong),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 20),
+                          ],
                           if (initial) field(email, 'E-mail'),
                           if ([
                             Step.signIn,
@@ -2356,6 +2432,45 @@ class _IdentityScreenState extends State<IdentityScreen> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Botao circular pequeno e discreto para login social (Google/Facebook): mesmo desenho
+/// sempre que aparecer, sem texto (padrao unico por funcao, AGENTS.md). As logomarcas sao
+/// PNG com fundo transparente — por isso o fundo e so uma cor neutra bem sutil, sem borda
+/// (uma borda ao redor de um circulo colorido de marca ficaria pesado/chamativo demais).
+class _SocialCircleButton extends StatelessWidget {
+  final String asset;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  const _SocialCircleButton({
+    required this.asset,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onPressed,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 44,
+          height: 44,
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: context.isDark
+                ? Colors.white.withValues(alpha: 0.06)
+                : Colors.black.withValues(alpha: 0.04),
+          ),
+          child: Image.asset(asset, fit: BoxFit.contain),
         ),
       ),
     );
