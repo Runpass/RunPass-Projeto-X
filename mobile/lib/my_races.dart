@@ -3795,22 +3795,7 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
 
   /// Todos os selos entre o nome e o @usuario: os conquistados coloridos e os que faltam
   /// bloqueados (cinza, com cadeado). Tocar mostra o detalhe e como desbloquear.
-  Widget _sealRow(List<Seal> seals) => SingleChildScrollView(
-    key: const Key('seal-row'),
-    scrollDirection: Axis.horizontal,
-    child: Row(
-      children: [
-        for (final seal in seals)
-          Padding(
-            padding: const EdgeInsets.only(right: 12, top: 4, bottom: 2),
-            child: SealBadge(
-              seal: seal,
-              onTap: () => showSealsSheet(context, seals),
-            ),
-          ),
-      ],
-    ),
-  );
+  Widget _sealRow(List<Seal> seals) => sealRowOf(context, seals);
 
   Widget sectionTitle(
     String title, {
@@ -4167,3 +4152,22 @@ class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
     ),
   );
 }
+
+/// Linha de selos (conquistas) com toque para ver todas. Mesma do perfil e do perfil de outra pessoa.
+Widget sealRowOf(BuildContext context, List<Seal> seals) =>
+    SingleChildScrollView(
+      key: const Key('seal-row'),
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final seal in seals)
+            Padding(
+              padding: const EdgeInsets.only(right: 12, top: 4, bottom: 2),
+              child: SealBadge(
+                seal: seal,
+                onTap: () => showSealsSheet(context, seals),
+              ),
+            ),
+        ],
+      ),
+    );

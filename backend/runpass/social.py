@@ -896,6 +896,20 @@ class SocialService:
             self._authorized_post(self.store.get, actor.subject, post_id), actor.subject
         )
 
+    def profile_posts(self, actor, subject):
+        """Publicacoes de uma pessoa, no mesmo formato de `my_posts`. Publicacoes sao sempre publicas de conta
+        ativa (decisao de 08/11/2026), entao nao passam pela regra de perfil privado."""
+        self.identity.authorize(actor, admitted=True)
+        if not self._active_profile(self.store.get, subject) or self._is_blocked(
+            self.store.get, actor.subject, subject
+        ):
+            raise Problem(404, "PROFILE_NOT_FOUND")
+        parts = [
+            {**p, "owner": subject} for p in self._completed(subject) if p.get("publishToFeed")
+        ] + self._extra_posts(subject)
+        parts.sort(key=lambda p: (p.get("completedAt", ""), p["id"]), reverse=True)
+        return {"items": self._post_views(parts, actor.subject)}
+
     def my_posts(self, actor):
         """Todas as minhas publicações (a de cada corrida e as extras), mais recentes primeiro."""
         self.identity.authorize(actor, admitted=True)

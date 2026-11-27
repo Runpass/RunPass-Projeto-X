@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import 'catalog_screen.dart';
+import 'post_card.dart' show FeedEntry, PostThumb, entryFromPost;
 import 'identity_gateway.dart';
 import 'runpass_theme.dart';
 import 'safety.dart';
@@ -618,6 +619,7 @@ class PublicProfileScreen extends StatefulWidget {
 class _PublicProfileScreenState extends State<PublicProfileScreen> {
   Map<String, dynamic>? profile;
   List<RaceRecord> races = const [];
+  List<FeedEntry> posts = const [];
   String? error;
   bool busy = false;
   bool busyFriend = false;
@@ -663,10 +665,31 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         );
         list = [for (final p in items) RaceRecord(p, editions[p['editionId']])];
       }
+      // Publicacoes da pessoa (sempre publicas de conta ativa): mesmo formato das minhas.
+      var postList = const <FeedEntry>[];
+      try {
+        final page = await widget.gateway.request(
+          '/profiles/${Uri.encodeComponent(widget.profileId)}/posts',
+        );
+        final editions = {
+          for (final race in list) '${race.participation['id']}': race.edition,
+        };
+        postList = [
+          for (final post in (page['items'] as List? ?? const []).cast<Map>())
+            entryFromPost(
+              Map<String, dynamic>.from(post),
+              editions['${(post['participation'] as Map?)?['id']}'],
+              null,
+            ),
+        ];
+      } on Exception {
+        postList = const [];
+      }
       if (!mounted) return;
       setState(() {
         profile = loaded;
         races = list;
+        posts = postList;
         error = null;
       });
     } on IdentityIssue catch (issue) {
@@ -920,36 +943,86 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                     ),
                   )
                 else ...[
-                  if (races.isEmpty)
+                  if (races.isNotEmpty) ...[
                     const Text(
-                      'Ainda não há corridas concluídas para mostrar.',
-                    ),
-                  for (final race in races)
-                    Card(
-                      child: ListTile(
-                        leading: SizedBox(
-                          width: 52,
-                          height: 52,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: MedalPhoto(
-                              gateway: widget.gateway,
-                              participationId:
-                                  race.participation['id'] as String?,
-                              size: 34,
-                            ),
-                          ),
-                        ),
-                        title: Text(race.name),
-                        subtitle: Text(
-                          [
-                            if (race.place.isNotEmpty) race.place,
-                            if (race.date != null) displayDate(race.date!),
-                            if (race.timeSeconds != null)
-                              formatDuration(race.timeSeconds!),
-                          ].join(' · '),
-                        ),
+                      'Conquistas',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    sealRowOf(context, sealsOf(RaceStats.of(races))),
+                    const SizedBox(height: 16),
+                  ],
+                  const Text(
+                    'Publicações',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  if (posts.isEmpty)
+                    const Text(
+                      'Ainda não há publicações.',
+                      key: Key('no-profile-posts'),
+                    )
+                  else
+                    GridView.count(
+                      key: const Key('profile-posts-grid'),
+                      padding: EdgeInsets.zero,
+                      crossAxisCount: 3,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 6,
+                      crossAxisSpacing: 6,
+                      children: [
+                        for (final entry in posts)
+                          PostThumb(
+                            key: Key('profile-post-${entry.postId}'),
+                            gateway: widget.gateway,
+                            entry: entry,
+                          ),
+                      ],
+                    ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Medalhas',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  if (races.isEmpty)
+                    const Text('Ainda não há medalhas para mostrar.')
+                  else
+                    GridView.count(
+                      key: const Key('profile-medals-grid'),
+                      padding: EdgeInsets.zero,
+                      crossAxisCount: 3,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 0.8,
+                      children: [
+                        for (final race in races)
+                          Column(
+                            children: [
+                              Expanded(
+                                child: MedalPhoto(
+                                  gateway: widget.gateway,
+                                  participationId:
+                                      race.participation['id'] as String?,
+                                  size: 90,
+                                ),
+                              ),
+                              Text(
+                                race.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                            ],
+                          ),
+                      ],
                     ),
                 ],
               ],
