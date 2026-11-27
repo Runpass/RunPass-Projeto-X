@@ -1855,7 +1855,8 @@ class _EditionScreenState extends State<EditionScreen> {
                 current == 'registered',
                 savingPlan ? null : () => setPlan('registered'),
               ),
-            if (mine == null && selectedDistance != null && !archived)
+            // "Ja corri" so para corrida que ja aconteceu: corrida futura ainda nao se corre.
+            if (mine == null && selectedDistance != null && past && !archived)
               choice(
                 'plan-ran',
                 Icons.directions_run,
@@ -1876,7 +1877,7 @@ class _EditionScreenState extends State<EditionScreen> {
             ),
           ),
         // Vale também para a corrida que já aconteceu: é nela que se chega por "Já corri" na lista.
-        if (mine == null && !archived && selectedDistance == null)
+        if (mine == null && past && !archived && selectedDistance == null)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
