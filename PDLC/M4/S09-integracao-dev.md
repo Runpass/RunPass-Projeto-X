@@ -717,3 +717,10 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 - Como foi feito: `make lambda-package` da `dev`, upload ao bucket de artefatos, change set com `--use-previous-template` e todos os parâmetros em `UsePreviousValue`, menos `ArtifactKey`. Mudanças: só código das Lambdas e re-vínculo (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem IAM, sem recursos novos. Resultado: `UPDATE_COMPLETE`.
 - Entrou: uma publicação por corrida. `POST /posts` e `POST /participations/{id}/publish` recusam com `409 RACE_ALREADY_POSTED` quando a corrida já tem publicação (principal ou extra). A publicação continua com até 5 fotos (capa + 4 extras).
 - Verificação feita: rotas `/me` e `/posts` respondem 401 sem token. **Não** verificado com usuário real: a recusa de segunda publicação (exige uma corrida concluída com publicação, criada com conta de teste).
+
+## Deploy do backend com publicações do perfil de outra pessoa no DEV - 27/11/2026
+
+- **`perfil-amigo-190825`** (UPDATE, `runpass-dev-app`): autorizado pelo usuário ("faça o deploy do backend no DEV"), depois do merge dos PRs #178 e #179 (`2b613d6`). Pacote `lambda/runpass-a6c5dc3443796c8c.zip`. Anterior: `lambda/runpass-9471e8635cd91330.zip`.
+- Como foi feito: `make lambda-package` da `dev`, upload ao bucket de artefatos, change set com `--use-previous-template` e todos os parâmetros em `UsePreviousValue`, menos `ArtifactKey`. Mudanças: só código das Lambdas e re-vínculo (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem IAM, sem recursos novos. Resultado: `UPDATE_COMPLETE`.
+- Entrou: `GET /profiles/{id}/posts` (publicações de outra pessoa, mesmo formato de `/me/posts`; só conta ativa e sem bloqueio entre as duas pessoas).
+- Verificação feita: a rota responde 401 sem token. **Não** verificado com usuário real.
