@@ -10,8 +10,8 @@ import 'profile_photo.dart' show pickAndEditPhoto;
 import 'tagged_people.dart';
 import 'runpass_theme.dart';
 
-/// Nova postagem (o "+" da Home): publica no feed uma corrida que eu já concluí (também mais de uma vez,
-/// com outras fotos), com uma foto própria (qualquer foto, separada da foto da medalha) e um texto. A corrida pode ser outra:
+/// Nova postagem (o "+" da Home): publica no feed uma corrida que eu já concluí e ainda não publiquei (cada
+/// corrida tem uma publicação, com até 5 fotos), com uma foto própria (qualquer foto, separada da foto da medalha) e um texto. A corrida pode ser outra:
 /// "Adicionar outra corrida" usa o mesmo fluxo da medalha (corrida do catálogo ou pedido de cadastro) e, ao voltar,
 /// ela aparece na lista para publicar.
 class NewPostScreen extends StatefulWidget {
@@ -315,14 +315,16 @@ class _NewPostScreenState extends State<NewPostScreen> {
                       ),
                       actions: race.participation['publishToFeed'] == true
                           ? Text(
-                              'Já no feed: vira mais uma publicação',
+                              'Já tem publicação (uma por corrida)',
                               style: TextStyle(
                                 color: context.muted,
                                 fontSize: 12.5,
                               ),
                             )
                           : null,
-                      onTap: () => setState(() => chosen = race),
+                      onTap: race.participation['publishToFeed'] == true
+                          ? null
+                          : () => setState(() => chosen = race),
                     ),
                   ),
                 Align(alignment: Alignment.centerLeft, child: addRaceButton()),

@@ -764,64 +764,21 @@ class ParticipationTests(unittest.TestCase):
             {key: None}, {key: {"owner": owner, "origin": "runner", "state": "valid", "refs": 0}}
         )
 
-    def test_varias_publicacoes_da_mesma_corrida_no_feed_com_curtida_comentario_e_foto(self):
-        from runpass.social import SocialService
-        from runpass.upload import MemoryBlobStore, UploadService
-
-        social = SocialService(self.identity)
+    def test_uma_publicacao_por_corrida_nao_cria_outra(self):
         done, _, _ = self._published_with_images()
         extra_ref = "img_" + "d" * 64
         self._image(extra_ref)
-        extra = self.service.create_extra_post(
-            self.actor,
-            "xp-1",
-            {
-                "participationId": done["id"],
-                "postImageReference": extra_ref,
-                "postText": "Outra foto",
-            },
-        )
-        self.assertTrue(extra["id"].startswith("x-"))
-        # mesma chave: não cria outra
-        again = self.service.create_extra_post(
-            self.actor,
-            "xp-1",
-            {
-                "participationId": done["id"],
-                "postImageReference": extra_ref,
-                "postText": "Outra foto",
-            },
-        )
-        self.assertEqual(again["id"], extra["id"])
-        mine = [p["id"] for p in social.my_posts(self.actor)["items"]]
-        self.assertEqual(sorted(mine), sorted([done["id"], extra["id"]]))
-        viewer = self.admit("viewer")
-        feed = social.feed(viewer)["items"]
-        ids = [p["id"] for p in feed]
-        self.assertIn(done["id"], ids)
-        self.assertIn(extra["id"], ids)
-        post = social.post(viewer, extra["id"])
-        self.assertTrue(post["extra"])
-        self.assertEqual(post["participation"]["id"], done["id"])
-        self.assertEqual(post["comment"], "Outra foto")
-        self.assertTrue(post["hasPostImage"])
-        social.like(viewer, extra["id"], "l1")
-        social.comment(viewer, extra["id"], "c1", "Linda")
-        post = social.post(self.actor, extra["id"])
-        self.assertEqual((post["likeCount"], post["commentCount"]), (1, 1))
-        blobs = MemoryBlobStore()
-        blobs.derived[extra_ref] = {"owner": "owner", "contentType": "image/png", "data": b"x"}
-        uploads = UploadService(self.identity, blobs, may_view=social.may_view_photo)
-        self.assertIn("url", uploads.extra_post_image(viewer, extra["id"]))
-        # editar e remover
-        changed = self.service.update_extra_post(
-            self.actor, extra["id"], "xp-e", {"expectedVersion": 1, "postText": ""}
-        )
-        self.assertNotIn("postText", changed)
-        self.service.delete_extra_post(self.actor, extra["id"], "xp-d")
-        self.assertNotIn(extra["id"], [p["id"] for p in social.feed(viewer)["items"]])
-        with self.assertRaises(Problem):
-            social.post(viewer, extra["id"])
+        with self.assertRaises(Problem) as caught:
+            self.service.create_extra_post(
+                self.actor,
+                "xp-1",
+                {
+                    "participationId": done["id"],
+                    "postImageReference": extra_ref,
+                    "postText": "Outra foto",
+                },
+            )
+        self.assertEqual(caught.exception.code, "RACE_ALREADY_POSTED")
         self.assertEqual(
             self.store.get(("operations", "USER#owner", "IMAGE#" + extra_ref))["refs"], 0
         )
@@ -849,6 +806,10 @@ class ParticipationTests(unittest.TestCase):
         from runpass.erasure import ErasureProcessor
 
         done, blobs, _ = self._published_with_images()
+        # A corrida so pode ter uma publicacao: tira a principal para testar a extra (dado legado).
+        part_key = ("history", "USER#owner", "P#" + done["id"] + "#PART")
+        item = self.store.get(part_key)
+        self.store.commit({part_key: item}, {part_key: {**item, "publishToFeed": False}})
         ref = "img_" + "a" * 64
         self._image(ref)
         extra = self.service.create_extra_post(

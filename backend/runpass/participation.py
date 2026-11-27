@@ -47,6 +47,7 @@ def _sync_plan_pointer(read, write, pk, subject, edition_id, registered, now):
         write(ref, None)
 
 
+# Uma publicacao por corrida, com no maximo 5 fotos: a capa e 4 extras do carrossel.
 MAX_MORE_POST_IMAGES = 4
 
 
@@ -444,7 +445,17 @@ class ParticipationService:
             actor, "completeParticipation", key, payload, work, admitted=True
         )
 
-    # ---- publicações extras (várias por corrida) -------------------------------------------------------
+    # ---- publicações extras (uma publicacao por corrida) ------------------------------------------------
+
+    def _race_has_extra_post(self, pk, participation_id):
+        """Ha uma publicacao extra desta corrida? Junto com `publishToFeed`, garante uma publicacao por corrida."""
+        after = None
+        while True:
+            rows, after = self.store.query("history", pk, prefix="XP#", after=after, limit=100)
+            if any(row.get("participationId") == participation_id for _, row in rows):
+                return True
+            if after is None:
+                return False
 
     @staticmethod
     def _extra_view(item):
@@ -485,6 +496,9 @@ class ParticipationService:
                 raise Problem(404, "PARTICIPATION_NOT_FOUND")
             if part.get("state") != "completed":
                 raise Problem(409, "PARTICIPATION_NOT_COMPLETED")
+            # Cada corrida tem uma publicacao so (ate 5 fotos): nao cria outra.
+            if part.get("publishToFeed") or self._race_has_extra_post(pk, participation_id):
+                raise Problem(409, "RACE_ALREADY_POSTED")
             image_key, image = self._post_image(
                 read, actor.subject, payload["postImageReference"], part.get("medalImageReference")
             )
@@ -621,6 +635,8 @@ class ParticipationService:
                 raise Problem(409, "PARTICIPATION_NOT_COMPLETED")
             if item.get("publishToFeed"):
                 raise Problem(409, "ALREADY_PUBLISHED")
+            if self._race_has_extra_post(pk, participation_id):
+                raise Problem(409, "RACE_ALREADY_POSTED")
             if item["version"] != payload["expectedVersion"]:
                 raise Problem(409, "VERSION_CONFLICT")
             post_ref = payload["postImageReference"]

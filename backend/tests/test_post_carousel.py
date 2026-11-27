@@ -95,6 +95,18 @@ class PostCarouselTests(unittest.TestCase):
             **changes,
         }
 
+    def complete_unposted(self, more=None, key="cu"):
+        """Corrida concluida SEM publicacao: a unica publicacao da corrida ainda pode nascer como extra."""
+        draft = self.draft()
+        return self.service.complete(
+            self.actor,
+            draft["id"],
+            key,
+            self.completion(
+                draft, publishToFeed=False, postImageReference=None, morePostImageReferences=more
+            ),
+        )
+
     def complete_with(self, more, key="c1"):
         draft = self.draft()
         return self.service.complete(
@@ -289,7 +301,7 @@ class PostCarouselTests(unittest.TestCase):
     # ---- publicacao extra -----------------------------------------------------------------
 
     def test_publicacao_extra_com_fotos(self):
-        done = self.complete_with(None)
+        done = self.complete_unposted()
         extra_cover = "img_" + "a" * 64
         self.image(extra_cover)
         extra = self.service.create_extra_post(
@@ -308,14 +320,13 @@ class PostCarouselTests(unittest.TestCase):
         self.assertNotIn("morePostImageReferences", post)
         own = next(p for p in self.social.my_posts(self.actor)["items"] if p["id"] == extra["id"])
         self.assertEqual(own["morePostImageReferences"], [E1, E2])
-        # a publicacao da corrida (sem extras) nao herda as extras da publicacao extra e vice-versa
-        self.assertEqual(self.social.post(viewer, done["id"])["postImageCount"], 1)
         self.assertIn(E2, self.uploads.extra_post_image(viewer, extra["id"], 2)["url"])
         self.assertProblem(
             "IMAGE_NOT_AVAILABLE", self.uploads.extra_post_image, viewer, extra["id"], 3
         )
+        # a corrida ja tem publicacao: a regra de uma por corrida vem antes da validacao da foto
         self.assertProblem(
-            "POST_IMAGE_MUST_DIFFER",
+            "RACE_ALREADY_POSTED",
             self.service.create_extra_post,
             self.actor,
             "x2",
@@ -349,7 +360,7 @@ class PostCarouselTests(unittest.TestCase):
             self.assertNotIn(ref, self.blobs.derived)
 
     def test_exclusao_de_conta_apaga_as_extras(self):
-        done = self.complete_with([E1, E2])
+        done = self.complete_unposted()
         extra_cover = "img_" + "a" * 64
         self.image(extra_cover)
         self.service.create_extra_post(
