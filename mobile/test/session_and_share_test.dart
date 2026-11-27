@@ -245,6 +245,8 @@ void main() {
           required time,
           required pace,
           photoBytes,
+          ShareStyle style = const ShareStyle(),
+          Uint8List? medalBytes,
         }) async => Uint8List.fromList([1, 2, 3]);
         addTearDown(() {
           shareFunction = (params) => SharePlus.instance.share(params);
@@ -277,6 +279,18 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 300));
         });
         await tester.pumpAndSettle();
+        // A tela "Compartilhar" abre antes da imagem sair: confirma com o botão dela.
+        await tester.ensureVisible(find.byKey(const Key('share-send')));
+        await tester.runAsync(() async {
+          await tester.tap(find.byKey(const Key('share-send')));
+          await Future<void>.delayed(const Duration(milliseconds: 1500));
+        });
+        await tester.pumpAndSettle();
+        await tester.runAsync(() async {
+          for (var i = 0; i < 200 && sent == null; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          }
+        });
         expect(sent, isNotNull);
         // Sem texto junto da imagem: apps da Meta (Instagram, Facebook) tratam
         // mal o envio combinado e caem para o modo so-texto.
@@ -302,6 +316,8 @@ void main() {
         required time,
         required pace,
         photoBytes,
+        ShareStyle style = const ShareStyle(),
+        Uint8List? medalBytes,
       }) async => Uint8List.fromList([1]);
       addTearDown(() {
         shareFunction = (params) => SharePlus.instance.share(params);
@@ -333,6 +349,18 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 300));
       });
       await tester.pumpAndSettle();
+      // A tela "Compartilhar" abre antes da imagem sair: confirma com o botão dela.
+      await tester.ensureVisible(find.byKey(const Key('share-send')));
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('share-send')));
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+      });
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        for (var i = 0; i < 200 && calls.length < 2; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      });
       expect(calls, hasLength(2));
       expect(calls.last.files, isNull);
       expect(calls.last.text, contains('Corrida A'));

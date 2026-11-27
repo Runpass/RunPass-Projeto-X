@@ -2248,10 +2248,10 @@ void main() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      // Corrida futura: os três atalhos; corrida passada: só "já corri".
+      // Corrida futura: quero correr e inscrito, sem "já corri" (ainda não aconteceu); corrida passada: "já corri".
       expect(find.byKey(const Key('quick-wanted-EA')), findsOneWidget);
       expect(find.byKey(const Key('quick-registered-EA')), findsOneWidget);
-      expect(find.byKey(const Key('quick-ran-EA')), findsOneWidget);
+      expect(find.byKey(const Key('quick-ran-EA')), findsNothing);
       expect(find.byKey(const Key('quick-wanted-EB')), findsNothing);
       expect(find.byKey(const Key('quick-registered-EB')), findsNothing);
       expect(find.byKey(const Key('quick-ran-EB')), findsOneWidget);
@@ -2362,8 +2362,16 @@ void priorityOrderTests() {
         MaterialApp(home: CatalogScreen(gateway: gateway)),
       );
       await tester.pumpAndSettle();
-      double top(String id) =>
-          tester.getTopLeft(find.byKey(Key('quick-ran-E$id'))).dx;
+      // Ancora de cada corrida: o primeiro botao de acao que ela mostra ("Ja corri" nas passadas, "Quero correr" nas futuras).
+      Finder anchor(String id) {
+        for (final key in ['quick-ran', 'quick-wanted']) {
+          final finder = find.byKey(Key('$key-E$id'));
+          if (finder.evaluate().isNotEmpty) return finder;
+        }
+        return find.byKey(Key('quick-wanted-E$id'));
+      }
+
+      double top(String id) => tester.getTopLeft(anchor(id)).dx;
       List<String> order() =>
           (['A', 'B', 'C', 'D', 'E', 'F']
             ..sort((a, b) => top(a).compareTo(top(b))));

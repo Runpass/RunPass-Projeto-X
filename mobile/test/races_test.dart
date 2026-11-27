@@ -56,6 +56,7 @@ Future<IdentityGateway> runner({
   bool Function(String q)? foundFor,
   bool participationExists = false,
   bool draftOnA = true,
+  List<Object?>? addedKm,
 }) async {
   final editions = {
     'a': edition('a', 'Corrida A', '2026-09-01', 'São Paulo', 'SP', 5),
@@ -135,6 +136,16 @@ Future<IdentityGateway> runner({
       }
       if (uri.path == '/me/edition-requests') {
         return JsonReply(200, {'items': requests});
+      }
+      // Corrida sem distância: o km informado pelo corredor passa a valer para a corrida.
+      if (uri.path.endsWith('/distances') && method == 'POST') {
+        addedKm?.add((body! as Map)['kilometers']);
+        return JsonReply(200, {
+          'id': uri.pathSegments[1],
+          'distances': [
+            {'id': 'dk', 'kilometers': (body as Map)['kilometers']},
+          ],
+        });
       }
       final match = editions[uri.pathSegments.last];
       return match == null
@@ -463,6 +474,176 @@ void main() {
       await tester.tap(publish);
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('select-post-photo')), findsOneWidget);
+    },
+  );
+
+  test(
+    'copiar de outra corrida leva nome, lugar, km único e site, nunca a data',
+    () {
+      expect(
+        copyPrefillFrom({
+          'id': 'x',
+          'name': 'Circuito do Sol 2025',
+          'date': '2025-02-09',
+          'city': 'São Paulo',
+          'state': 'SP',
+          'officialUrl': 'https://exemplo.test',
+          'distances': [
+            {'id': 'd', 'kilometers': 21.1},
+          ],
+        }),
+        {
+          'name': 'Circuito do Sol 2025',
+          'city': 'São Paulo',
+          'state': 'SP',
+          'distanceKm': '21.1',
+          'officialUrl': 'https://exemplo.test',
+        },
+      );
+      // Várias distâncias: a pessoa escolhe no formulário.
+      expect(
+        copyPrefillFrom({
+          'name': 'Corrida',
+          'distances': [
+            {'id': '5', 'kilometers': 5},
+            {'id': '10', 'kilometers': 10},
+          ],
+        }),
+        {'name': 'Corrida'},
+      );
+    },
+  );
+
+  testWidgets(
+    'corrida achada sem km: pede o km ali mesmo (já com o lido na medalha) e segue para a participação',
+    (tester) async {
+      final added = <Object?>[];
+      final gateway = await runner(
+        addedKm: added,
+        found: [
+          {
+            'id': 'z',
+            'name': 'Circuito do Sol 2026',
+            'date': '2026-02-01',
+            'city': 'São Paulo',
+            'state': 'SP',
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['CIRCUITO DO SOL', '10 KM']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      await chooseMatch(tester, 'medal-match-z');
+      // Não abre a tela da corrida: pergunta o km, já preenchido com o da medalha.
+      expect(find.byType(EditionScreen), findsNothing);
+      final field = find.byKey(const Key('add-distance-field'));
+      expect(field, findsOneWidget);
+      expect(tester.widget<TextField>(field).controller!.text, '10');
+      await tester.tap(find.byKey(const Key('add-distance-confirm')));
+      await tester.pumpAndSettle();
+      expect(added, [10]);
+      expect(find.byType(ParticipationDraftScreen), findsOneWidget);
+      expect(find.byType(EditionScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'não achou a corrida: copia os dados de uma corrida parecida e segue para o cadastro com a data da medalha',
+    (tester) async {
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'x',
+            'name': 'Circuito do Sol 2025',
+            'date': '2025-02-09',
+            'city': 'Campinas',
+            'state': 'SP',
+            'distances': [
+              {'id': 'd', 'kilometers': 5},
+            ],
+          },
+        ],
+        // A medalha não acha nada; a busca da cópia acha a edição do ano passado.
+        foundFor: (q) => q == 'Circuito do Sol',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader([
+              'CIRCUITO DO SOL 2026',
+              '01/02/2026',
+            ]),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      expect(find.byKey(const Key('medal-scan-suggest')), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('medal-scan-copy')));
+      await tester.tap(find.byKey(const Key('medal-scan-copy')));
+      await tester.pumpAndSettle();
+      expect(find.byType(CopyRaceScreen), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('copy-race-query')),
+        'Circuito do Sol',
+      );
+      await tester.tap(find.byKey(const Key('copy-race-search')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('copy-race-x')));
+      await tester.pumpAndSettle();
+      expect(find.byType(EditionRequestFormScreen), findsOneWidget);
+      // Dados da corrida copiada; a data é a lida na medalha, não a da corrida copiada.
+      for (final text in [
+        'Circuito do Sol 2025',
+        'SP - Campinas',
+        '5',
+        '01/02/2026',
+      ]) {
+        expect(find.text(text), findsWidgets, reason: text);
+      }
+      expect(find.text('09/02/2025'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'com corridas na lista, cadastrar ou copiar aparece antes da lista',
+    (tester) async {
+      final gateway = await runner(
+        found: [
+          {
+            'id': 'a',
+            'name': 'Corrida A',
+            'date': '2026-09-01',
+            'city': 'São Paulo',
+            'state': 'SP',
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MedalCollectionScreen(
+            gateway: gateway,
+            medalPhotoPicker: (_) async => '/tmp/medalha.jpg',
+            medalTextReader: _FakeReader(['CORRIDA A']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapAdd(tester);
+      expect(find.text('Não está na lista?'), findsOneWidget);
+      final copy = tester.getTopLeft(find.byKey(const Key('medal-scan-copy')));
+      final list = tester.getTopLeft(find.byKey(const Key('medal-match-a')));
+      expect(copy.dy, lessThan(list.dy));
     },
   );
 
