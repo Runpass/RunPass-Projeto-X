@@ -1290,13 +1290,21 @@ class _PostCardState extends State<PostCard> {
                     key: Key('post-menu-${entry.postId}'),
                     tooltip: 'Opções da publicação',
                     icon: const Icon(Icons.more_horiz),
-                    onSelected: (value) =>
-                        value == 'edit' ? editMine() : removeMine(),
+                    onSelected: (value) => value == 'edit'
+                        ? editMine()
+                        : value == 'tag'
+                        ? tagPeople()
+                        : removeMine(),
                     itemBuilder: (_) => const [
                       PopupMenuItem(
                         key: Key('post-menu-edit'),
                         value: 'edit',
                         child: Text('Editar'),
+                      ),
+                      PopupMenuItem(
+                        key: Key('post-menu-tag'),
+                        value: 'tag',
+                        child: Text('Marcar pessoas'),
                       ),
                       PopupMenuItem(
                         key: Key('post-menu-remove'),
@@ -1482,16 +1490,14 @@ class _PostCardState extends State<PostCard> {
                         ],
                       ),
                     ),
-                    // Pessoas marcadas: ao lado direito dos comentários, abre o pop-up com os perfis.
-                    // Na minha publicação o ícone aparece sempre e é um atalho para marcar alguém.
-                    if ((entry.tagged.isNotEmpty || entry.mine) &&
-                        entry.postId != null) ...[
+                    // Pessoas marcadas: só as fotos; tocar numa mostra o cartao da pessoa (como na busca).
+                    // Marcar pessoas fica no menu da publicacao (so o dono).
+                    if (entry.tagged.isNotEmpty && entry.postId != null) ...[
                       const SizedBox(width: 22),
                       TaggedLink(
                         gateway: widget.gateway,
                         postId: entry.postId!,
                         tagged: entry.tagged,
-                        onTag: entry.mine ? tagPeople : null,
                       ),
                     ],
                     const SizedBox(width: 12),

@@ -190,71 +190,98 @@ class TaggedLink extends StatelessWidget {
   final IdentityGateway gateway;
   final String postId;
   final List<Map<String, dynamic>> tagged;
-
-  /// Na minha publicação o ícone é um atalho para marcar alguém (abre o seletor de pessoas direto); nas dos outros
-  /// abre a lista de quem foi marcado.
-  final VoidCallback? onTag;
   const TaggedLink({
     super.key,
     required this.gateway,
     required this.postId,
     required this.tagged,
-    this.onTag,
   });
 
   @override
-  Widget build(BuildContext context) => Tooltip(
-    message: onTag != null ? 'Marcar pessoas' : 'Pessoas marcadas',
-    child: InkWell(
-      key: Key('post-tagged-$postId'),
-      onTap: onTag ?? () => showTaggedPeople(context, gateway, tagged),
-      child: Row(
-        children: [
-          const Icon(Icons.local_offer_outlined),
-          if (tagged.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            // Foto de quem foi marcado (ate 3, sobrepostas); mais que isso, o numero a mais.
-            SizedBox(
-              key: Key('post-tagged-faces-$postId'),
-              height: 24,
-              width: 24 + 14.0 * ((tagged.length < 3 ? tagged.length : 3) - 1),
-              child: Stack(
-                children: [
-                  for (
-                    var i = 0;
-                    i < (tagged.length < 3 ? tagged.length : 3);
-                    i++
-                  )
-                    Positioned(
-                      left: 14.0 * i,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Theme.of(context).scaffoldBackgroundColor,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: ProfileAvatar(
-                          gateway: gateway,
-                          profile: tagged[i],
-                          radius: 11,
+  Widget build(BuildContext context) {
+    if (tagged.isEmpty) return const SizedBox.shrink();
+    final shown = tagged.length < 3 ? tagged.length : 3;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Foto de ate 3 pessoas marcadas, sobrepostas; tocar numa mostra o cartao dela (como na busca).
+        SizedBox(
+          key: Key('post-tagged-faces-$postId'),
+          height: 26,
+          width: 26 + 14.0 * (shown - 1),
+          child: Stack(
+            children: [
+              for (var i = 0; i < shown; i++)
+                Positioned(
+                  left: 14.0 * i,
+                  child: GestureDetector(
+                    key: Key('post-tagged-face-$postId-$i'),
+                    onTap: () => showTaggedCard(context, gateway, tagged[i]),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Theme.of(context).scaffoldBackgroundColor,
+                          width: 1.5,
                         ),
                       ),
+                      child: ProfileAvatar(
+                        gateway: gateway,
+                        profile: tagged[i],
+                        radius: 11,
+                      ),
                     ),
-                ],
-              ),
-            ),
-            if (tagged.length > 3) ...[
-              const SizedBox(width: 4),
-              Text('+${tagged.length - 3}'),
+                  ),
+                ),
             ],
-          ],
+          ),
+        ),
+        if (tagged.length > 3) ...[
+          const SizedBox(width: 4),
+          Text('+${tagged.length - 3}'),
         ],
+      ],
+    );
+  }
+}
+
+/// O cartao da pessoa no mesmo formato da busca de amigos; tocar nele abre o perfil.
+Future<void> showTaggedCard(
+  BuildContext context,
+  IdentityGateway gateway,
+  Map<String, dynamic> person,
+) => showModalBottomSheet<void>(
+  context: context,
+  builder: (sheet) => SafeArea(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Card(
+        key: Key('tagged-card-${person['id']}'),
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 6,
+          ),
+          leading: ProfileAvatar(gateway: gateway, profile: person),
+          title: Text(person['displayName'] as String? ?? ''),
+          subtitle: Text('@${person['username'] ?? ''}'),
+          onTap: () {
+            Navigator.of(sheet).pop();
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => PublicProfileScreen(
+                  gateway: gateway,
+                  profileId: person['id'] as String,
+                  initial: Map<String, dynamic>.from(person),
+                ),
+              ),
+            );
+          },
+        ),
       ),
     ),
-  );
-}
+  ),
+);
 
 /// Pop-up com os perfis marcados; tocar em um abre o perfil da pessoa.
 Future<void> showTaggedPeople(
