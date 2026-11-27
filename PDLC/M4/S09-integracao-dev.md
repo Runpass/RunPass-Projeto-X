@@ -710,3 +710,10 @@ iPhone 17 (iOS 27.0.1), build release com `scripts/run-device-dev.sh`, conta de 
 - Como foi feito: change set com `--use-previous-template` e todos os parametros em `UsePreviousValue`, menos `ArtifactKey` (sem `scripts/deploy-portal.sh`, para nao tocar nos parametros opcionais da OpenAI e do agendador). Mudancas: `AdminFunction` (codigo), `HttpApiIntegration`, `AutoImportRule` e `AutoImportPermission` (re-vinculo); sem IAM, sem recursos novos. Resultado: `UPDATE_COMPLETE`.
 - Entrou: abas "Denuncias" (`GET /admin/reports`, permissao `catalog_admin`) e "Contas excluidas" (`GET /admin/deleted-accounts`, permissao `user_admin`).
 - Verificacao feita: a pagina publicada traz `aba-denuncias` e `aba-excluidas` e o `app.js` novo; as duas rotas e `GET /admin/feedback` respondem 401 sem login. **Nao** verificado: entrar com um operador e ver as listas carregarem.
+
+## Deploy do backend com uma publicação por corrida no DEV - 27/11/2026
+
+- **`uma-publicacao-154554`** (UPDATE, `runpass-dev-app`): autorizado pelo usuário ("faça o deploy do backend no DEV"), depois do merge do PR #173 (`563739b`). Pacote `lambda/runpass-9471e8635cd91330.zip`. Anterior: `lambda/runpass-073db7313f813f83.zip`.
+- Como foi feito: `make lambda-package` da `dev`, upload ao bucket de artefatos, change set com `--use-previous-template` e todos os parâmetros em `UsePreviousValue`, menos `ArtifactKey`. Mudanças: só código das Lambdas e re-vínculo (`ApiFunction`, `AuditConsumer`, `Maintenance`, `Publisher`, `ScoreConsumer`, `HttpApiIntegration`, `MaintenanceRule`, `MaintenanceSchedulePermission`); sem IAM, sem recursos novos. Resultado: `UPDATE_COMPLETE`.
+- Entrou: uma publicação por corrida. `POST /posts` e `POST /participations/{id}/publish` recusam com `409 RACE_ALREADY_POSTED` quando a corrida já tem publicação (principal ou extra). A publicação continua com até 5 fotos (capa + 4 extras).
+- Verificação feita: rotas `/me` e `/posts` respondem 401 sem token. **Não** verificado com usuário real: a recusa de segunda publicação (exige uma corrida concluída com publicação, criada com conta de teste).
