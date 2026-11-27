@@ -213,7 +213,42 @@ class TaggedLink extends StatelessWidget {
           const Icon(Icons.local_offer_outlined),
           if (tagged.isNotEmpty) ...[
             const SizedBox(width: 6),
-            Text('${tagged.length}'),
+            // Foto de quem foi marcado (ate 3, sobrepostas); mais que isso, o numero a mais.
+            SizedBox(
+              key: Key('post-tagged-faces-$postId'),
+              height: 24,
+              width: 24 + 14.0 * ((tagged.length < 3 ? tagged.length : 3) - 1),
+              child: Stack(
+                children: [
+                  for (
+                    var i = 0;
+                    i < (tagged.length < 3 ? tagged.length : 3);
+                    i++
+                  )
+                    Positioned(
+                      left: 14.0 * i,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Theme.of(context).scaffoldBackgroundColor,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: ProfileAvatar(
+                          gateway: gateway,
+                          profile: tagged[i],
+                          radius: 11,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (tagged.length > 3) ...[
+              const SizedBox(width: 4),
+              Text('+${tagged.length - 3}'),
+            ],
           ],
         ],
       ),
