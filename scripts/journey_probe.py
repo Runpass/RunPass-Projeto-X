@@ -561,9 +561,9 @@ class Journey:
         c("stranger", "GET", "/profiles?q=nina&limit=30")
         c("newbie", "GET", "/profiles/suggestions?limit=12")
 
-        # 5. mais publicacoes: publicacao extra e foto a mais
+        # 5. uma publicacao por corrida: outra publicacao da mesma corrida e recusada
         extra_photo = self.upload("newbie", 4)
-        extra = c(
+        c(
             "newbie",
             "POST",
             "/posts",
@@ -572,19 +572,9 @@ class Journey:
                 "postImageReference": extra_photo,
                 "postText": "Mais uma foto",
             },
-            expect=201,
+            expect=409,
         )
         c("newbie", "GET", "/me/posts")
-        if extra.get("id"):
-            c(
-                "newbie",
-                "PATCH",
-                f"/posts/{extra['id']}/extra",
-                {"expectedVersion": extra.get("version", 1), "postText": "Texto editado"},
-            )
-            c("newbie", "GET", f"/posts/{extra['id']}/image")
-            c("friend", "PUT", f"/posts/{extra['id']}/like")
-            c("newbie", "DELETE", f"/posts/{extra['id']}", expect=(200, 202, 204))
         c(
             "newbie",
             "POST",
@@ -632,19 +622,14 @@ class Journey:
             expect=(200,),
             label="o amigo ve o banner",
         )
-        tagged_photo = self.upload("newbie", 7)
-        tagged = c(
+        # Marcar um amigo na publicacao da propria corrida (uma publicacao por corrida: nao cria outra).
+        version = c("newbie", "GET", f"/participations/{pid}").get("version", 1)
+        c(
             "newbie",
-            "POST",
-            "/posts",
-            {
-                "participationId": pid,
-                "postImageReference": tagged_photo,
-                "postText": "Com o Fabio",
-                "taggedUserIds": [self.subjects["friend"]],
-            },
-            expect=201,
-            label="publicar marcando um amigo",
+            "PATCH",
+            f"/participations/{pid}",
+            {"expectedVersion": version, "taggedUserIds": [self.subjects["friend"]]},
+            label="marcar um amigo na publicacao",
         )
         c("friend", "GET", "/me/notifications", label="o amigo marcado recebe aviso")
         medal_request = self.upload("newbie", 8)
@@ -672,14 +657,6 @@ class Journey:
                 f"/edition-requests/{first_request}/medal-image",
                 expect=(200,),
                 label="ver a foto da medalha do pedido",
-            )
-        if tagged.get("id"):
-            c(
-                "newbie",
-                "DELETE",
-                f"/posts/{tagged['id']}",
-                expect=(200, 202, 204),
-                label="apagar a publicacao marcada",
             )
         # 5b. bordas: corrida sem distancia, repeticao de pedido e erros esperados
         self.add_edition_without_distance()

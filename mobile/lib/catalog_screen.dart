@@ -189,6 +189,7 @@ String catalogError(IdentityIssue issue) => switch (issue.code) {
   'EDITION_REQUEST_NOT_FOUND' =>
     'Não encontramos este pedido. Volte à lista de solicitações.',
   'PARTICIPATION_NOT_COMPLETED' => 'Isto só pode ser alterado depois que a corrida é concluída. Conclua o registro e tente de novo.',
+  'RACE_ALREADY_POSTED' => 'Esta corrida já tem publicação. Cada corrida tem uma publicação com até 5 fotos.',
   'PARTICIPATION_NOT_DRAFT' => 'Esta participação já foi concluída ou excluída, então não pode mais ser alterada como rascunho.',
   _ => 'Não foi possível concluir agora. Pode ser falta de conexão ou instabilidade do serviço. Tente novamente em instantes.',
 };
@@ -4987,6 +4988,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     if (postImageReference == null) {
       setState(
         () => message = 'Escolha a foto da publicação ou use a da medalha.',
+      );
+      return;
+    }
+    if (isPublished) {
+      setState(
+        () => message = 'Esta corrida já tem publicação. Cada corrida tem uma publicação com até 5 fotos.',
       );
       return;
     }

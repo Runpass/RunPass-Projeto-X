@@ -431,7 +431,7 @@ void main() {
   );
 
   testWidgets(
-    'nova postagem de corrida já publicada vira mais uma publicação (sem medalha)',
+    'nova postagem: corrida que já tem publicação aparece, mas não pode ser escolhida (uma por corrida)',
     (tester) async {
       tall(tester);
       final (gateway, b) = await setup();
@@ -459,24 +459,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('new-post-photo')));
       await tester.pumpAndSettle();
-      // Com a foto escolhida, a lista traz as corridas concluidas; a ja publicada ganha mais uma.
+      // A corrida ja publicada aparece com o aviso, mas nao pode ser escolhida: nada e enviado.
       expect(find.byKey(const Key('new-post-race-c2')), findsOneWidget);
-      expect(find.textContaining('vira mais uma publicação'), findsOneWidget);
+      expect(find.textContaining('Já tem publicação'), findsOneWidget);
       await tester.tap(find.byKey(const Key('new-post-race-c2')));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const Key('new-post-text')),
-        'Outra foto',
-      );
-      await tester.tap(find.byKey(const Key('new-post-publish')));
-      await tester.pumpAndSettle();
-      expect(b.calls, contains('POST /posts'));
-      expect(b.calls, isNot(contains('POST /participations/c2/publish')));
-      expect(b.extra, {
-        'participationId': 'c2',
-        'postImageReference': 'img_post',
-        'postText': 'Outra foto',
-      });
+      expect(find.byKey(const Key('new-post-race-chosen')), findsNothing);
+      expect(b.calls, isNot(contains('POST /posts')));
     },
   );
 
