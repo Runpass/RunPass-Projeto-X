@@ -37,6 +37,8 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('post-tagged-faces-post1')), findsOneWidget);
     expect(find.text('+1'), findsOneWidget);
+    // Nenhuma foto de marcado sem a pessoa tocar: o ícone de marcar nao existe mais.
+    expect(find.byIcon(Icons.local_offer_outlined), findsNothing);
   });
 
   testWidgets('sem marcados, nao mostra fotos', (tester) async {
@@ -47,7 +49,6 @@ void main() {
             gateway: gateway(),
             postId: 'post2',
             tagged: const [],
-            onTag: () {},
           ),
         ),
       ),

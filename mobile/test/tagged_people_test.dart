@@ -33,7 +33,7 @@ Future<IdentityGateway> gateway() async {
 
 void main() {
   testWidgets(
-    'link Marcados ao lado do comentário abre o pop-up com os perfis',
+    'as fotos de quem foi marcado aparecem ao lado do comentário; tocar numa mostra o cartao da pessoa',
     (tester) async {
       final g = await gateway();
       final entry = entryFromPost(
@@ -66,7 +66,7 @@ void main() {
         ),
       );
       expect(find.text('Foi lindo'), findsOneWidget);
-      expect(find.byKey(const Key('post-tagged-p1')), findsOneWidget);
+      expect(find.byKey(const Key('post-tagged-faces-p1')), findsOneWidget);
       // Ordem do cartão: título, texto da publicação, foto e, na linha das ações abaixo da foto, os marcados.
       final title = tester.getTopLeft(find.byKey(const Key('post-race-p1'))).dy;
       final text = tester.getTopLeft(find.text('Foi lindo')).dy;
@@ -74,18 +74,20 @@ void main() {
           .getTopLeft(find.byKey(const Key('post-photo-p1')))
           .dy;
       final tagged = tester
-          .getTopLeft(find.byKey(const Key('post-tagged-p1')))
+          .getTopLeft(find.byKey(const Key('post-tagged-faces-p1')))
           .dy;
       expect(title, lessThan(text));
       expect(text, lessThan(photo));
       expect(photo, lessThan(tagged));
-      await tester.ensureVisible(find.byKey(const Key('post-tagged-p1')));
+      // Tocar na foto de quem foi marcado mostra o cartao da pessoa (como na busca de amigos).
+      await tester.ensureVisible(
+        find.byKey(const Key('post-tagged-face-p1-0')),
+      );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('post-tagged-p1')));
+      await tester.tap(find.byKey(const Key('post-tagged-face-p1-0')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('tagged-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('tagged-card-u1')), findsOneWidget);
       expect(find.text('@ana'), findsOneWidget);
-      expect(find.text('@beto'), findsOneWidget);
     },
   );
 
@@ -212,7 +214,7 @@ void main() {
   );
 
   testWidgets(
-    'na minha publicação o ícone de marcar é um atalho: abre o seletor e grava as marcações',
+    'na minha publicação, o menu tem Marcar pessoas: abre o seletor e grava as marcações',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
@@ -278,11 +280,10 @@ void main() {
           ),
         ),
       );
-      // Sem ninguém marcado, o ícone aparece mesmo assim, como atalho.
-      final icon = find.byKey(const Key('post-tagged-p9'));
-      expect(icon, findsOneWidget);
-      await tester.ensureVisible(icon);
-      await tester.tap(icon);
+      // Marcar pessoas fica no menu da publicacao (so o dono): abre o seletor direto.
+      await tester.tap(find.byKey(const Key('post-menu-p9')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('post-menu-tag')));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const Key('tag-search')),
@@ -329,7 +330,7 @@ void main() {
           ),
         ),
       );
-      expect(find.byKey(const Key('post-tagged-p8')), findsNothing);
+      expect(find.byKey(const Key('post-tagged-faces-p8')), findsNothing);
     },
   );
 }
