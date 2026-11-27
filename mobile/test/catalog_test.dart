@@ -2370,6 +2370,7 @@ void priorityOrderTests() {
         }
         return find.byKey(Key('quick-wanted-E$id'));
       }
+
       double top(String id) => tester.getTopLeft(anchor(id)).dx;
       List<String> order() =>
           (['A', 'B', 'C', 'D', 'E', 'F']
