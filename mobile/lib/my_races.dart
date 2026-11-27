@@ -2137,58 +2137,8 @@ class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
     }
   }
 
-  /// Nicho de nogueira com prateleira flutuante: fundo individual de cada
-  /// medalha (um nicho por medalha, nao uma prateleira compartilhada).
-  /// Cantos arredondados + sombra para ler como um "cartao" por medalha,
-  /// como no template; a medalha fica encostada no topo da prateleira.
   Widget _medalNiche({required MedalFrame frame, required Widget photo}) =>
-      DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 6,
-              offset: Offset(0, 3),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: AspectRatio(
-            aspectRatio: 1086 / 1448,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final w = constraints.maxWidth;
-                final h = constraints.maxHeight;
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Image.asset(
-                      'assets/medal_shelf/nicho_nogueira.png',
-                      fit: BoxFit.fill,
-                    ),
-                    Positioned(
-                      // O PNG de cada modelo tem uma margem transparente
-                      // embutida (a medalha ocupa so ~86% da altura e ~66%
-                      // da largura do arquivo); e a prateleira da imagem de
-                      // fundo comeca em ~76% da altura do nicho. Esta caixa
-                      // foi calculada para que a medalha DESENHADA (nao o
-                      // retangulo do PNG) encoste exatamente no topo da
-                      // prateleira, do tamanho maximo que cabe ali.
-                      left: w * 0.06,
-                      right: w * 0.06,
-                      top: h * 0.01,
-                      height: h * 0.87,
-                      child: medalFrameWidget(frame: frame, photo: photo),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ),
-      );
+      medalNiche(frame: frame, photo: photo);
 
   Widget tile(RaceRecord race) => Stack(
     children: [
@@ -4169,5 +4119,58 @@ Widget sealRowOf(BuildContext context, List<Seal> seals) =>
               ),
             ),
         ],
+      ),
+    );
+
+/// Nicho de nogueira com prateleira flutuante: fundo individual de cada
+/// medalha (um nicho por medalha, nao uma prateleira compartilhada).
+/// Cantos arredondados + sombra para ler como um "cartao" por medalha,
+/// como no template; a medalha fica encostada no topo da prateleira.
+Widget medalNiche({required MedalFrame frame, required Widget photo}) =>
+    DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x40000000),
+            blurRadius: 6,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: AspectRatio(
+          aspectRatio: 1086 / 1448,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final w = constraints.maxWidth;
+              final h = constraints.maxHeight;
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.asset(
+                    'assets/medal_shelf/nicho_nogueira.png',
+                    fit: BoxFit.fill,
+                  ),
+                  Positioned(
+                    // O PNG de cada modelo tem uma margem transparente
+                    // embutida (a medalha ocupa so ~86% da altura e ~66%
+                    // da largura do arquivo); e a prateleira da imagem de
+                    // fundo comeca em ~76% da altura do nicho. Esta caixa
+                    // foi calculada para que a medalha DESENHADA (nao o
+                    // retangulo do PNG) encoste exatamente no topo da
+                    // prateleira, do tamanho maximo que cabe ali.
+                    left: w * 0.06,
+                    right: w * 0.06,
+                    top: h * 0.01,
+                    height: h * 0.87,
+                    child: medalFrameWidget(frame: frame, photo: photo),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
       ),
     );

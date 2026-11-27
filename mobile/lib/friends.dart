@@ -956,7 +956,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                     const SizedBox(height: 16),
                   ],
                   const Text(
-                    'Publicações',
+                    'Minhas Publicações',
                     style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
@@ -985,7 +985,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                     ),
                   const SizedBox(height: 16),
                   const Text(
-                    'Medalhas',
+                    'Estante de Medalhas',
                     style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
@@ -1000,19 +1000,23 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                       physics: const NeverScrollableScrollPhysics(),
                       mainAxisSpacing: 8,
                       crossAxisSpacing: 8,
-                      childAspectRatio: 0.8,
+                      // Mesma estante das Medalhas: cada medalha num nicho de nogueira.
+                      childAspectRatio: 0.6,
                       children: [
                         for (final race in races)
                           Column(
                             children: [
-                              Expanded(
-                                child: MedalPhoto(
+                              medalNiche(
+                                frame: medalFrameFor(race.medalFrameId),
+                                photo: MedalPhoto(
                                   gateway: widget.gateway,
                                   participationId:
                                       race.participation['id'] as String?,
-                                  size: 90,
+                                  useDisplayImage: true,
+                                  fit: BoxFit.cover,
                                 ),
                               ),
+                              const SizedBox(height: 4),
                               Text(
                                 race.name,
                                 maxLines: 2,
