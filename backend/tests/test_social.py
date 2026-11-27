@@ -233,6 +233,22 @@ class SocialTests(unittest.TestCase):
         keys_after = {sk for sk, _ in self.store.query("identity", PIDX_REGISTRY, limit=100)[0]}
         self.assertIn("ze", keys_after)  # linha compartilhada: nao some com a conta
 
+    # ---- publicacoes de outra pessoa ----
+    def test_publicacoes_de_outra_pessoa_no_mesmo_formato_e_so_de_conta_ativa(self):
+        self.complete(self.ana, "pp1", "2026-11-05T10:00:00Z")
+        items = self.social.profile_posts(self.bia, "ana")["items"]
+        self.assertEqual([p["id"] for p in items], ["pp1"])
+        self.assertEqual(items[0]["author"]["id"], "ana")
+        # perfil privado nao esconde a publicacao (so o resumo de corridas)
+        self.private(self.ana)
+        self.assertEqual(len(self.social.profile_posts(self.bia, "ana")["items"]), 1)
+        self.social.block(self.bia, "ana", "pp-blk")
+        with self.assertRaises(Problem) as error:
+            self.social.profile_posts(self.bia, "ana")
+        self.assertEqual(error.exception.code, "PROFILE_NOT_FOUND")
+        with self.assertRaises(Problem):
+            self.social.profile_posts(self.bia, "ninguem")
+
     # ---- bloquear e denunciar ----
     def test_block_hides_both_ways_ends_relations_and_can_be_undone(self):
         self.complete(self.ana, "b1", "2026-11-05T10:00:00Z")

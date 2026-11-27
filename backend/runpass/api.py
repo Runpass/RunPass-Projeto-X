@@ -694,6 +694,11 @@ def create_app(
     ):
         return friends().feed(actor, limit, cursor, scope)
 
+    @app.get("/profiles/{id}/posts", operation_id="listProfilePosts")
+    def profile_posts(id: str, actor: Actor):
+        """Publicacoes de outra pessoa (conta ativa), no mesmo formato de /me/posts."""
+        return friends().profile_posts(actor, id)
+
     @app.get("/me/posts", operation_id="listMyPosts")
     def my_posts(actor: Actor):
         """Minhas publicações (a de cada corrida e as extras), para o perfil."""
