@@ -161,7 +161,9 @@ class _NewPostScreenState extends State<NewPostScreen> {
       );
       Navigator.of(context).pop(true);
     } on IdentityIssue catch (issue) {
-      if (mounted) {
+      if (issue.code == 'RACE_ALREADY_POSTED') {
+        if (mounted) await askRaceAlreadyPosted(race);
+      } else if (mounted) {
         message = issue.code == 'ALREADY_PUBLISHED'
             ? 'Esta corrida já está publicada no feed.'
             : catalogError(issue);
@@ -173,6 +175,49 @@ class _NewPostScreenState extends State<NewPostScreen> {
       }
     } finally {
       if (mounted) setState(() => publishing = false);
+    }
+  }
+
+  /// Pop-up quando a corrida escolhida já tem publicação: publicar em outra, atualizar a foto dela ou sair.
+  Future<void> askRaceAlreadyPosted(RaceRecord race) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        key: const Key('race-already-posted-dialog'),
+        title: const Text('Esta corrida já tem publicação'),
+        content: const Text(
+          'Cada corrida tem uma publicação, com até 5 fotos. Você pode publicar em outra corrida, atualizar a foto desta ou sair.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('race-posted-other'),
+            onPressed: () => Navigator.pop(dialog, 'other'),
+            child: const Text('Publicar em outra corrida'),
+          ),
+          TextButton(
+            key: const Key('race-posted-update'),
+            onPressed: () => Navigator.pop(dialog, 'update'),
+            child: const Text('Atualizar foto desta corrida'),
+          ),
+          TextButton(
+            key: const Key('race-posted-cancel'),
+            onPressed: () => Navigator.pop(dialog, 'cancel'),
+            child: const Text('Cancelar e sair'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'other') {
+      setState(() {
+        chosen = null;
+        message = null;
+      });
+    } else if (choice == 'update') {
+      await openMedal(context, widget.gateway, race);
+      if (mounted) Navigator.of(context).pop(true);
+    } else if (choice == 'cancel') {
+      Navigator.of(context).pop(false);
     }
   }
 
