@@ -51,7 +51,11 @@ class EventFixture(unittest.TestCase):
         self.identity.create_profile(
             self.actor, "profile", {"displayName": "Owner", "username": "owner"}
         )
-        self.identity.admit(self.actor, "admit", {"birthDate": "1990-01-01", "declaresAdult": True})
+        self.identity.admit(
+            self.actor,
+            "admit",
+            {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+        )
 
     def complete(self):
         draft = self.participations.create(

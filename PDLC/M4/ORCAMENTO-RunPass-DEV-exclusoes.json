@@ -1,0 +1,39 @@
+{
+  "usd_brl": 5.4935,
+  "modelled_dev_subtotal_usd": 3.0707649935,
+  "excluded_lines_usd": {
+    "Alarmes CloudWatch (padrão)": 0.54,
+    "Chave KMS própria do tópico de alertas (1 chave + requisições)": 1.003,
+    "SNS e-mail (faixa gratuita de 1.000/mês)": 0.0,
+    "Armazenamento de logs (retenção de 7 dias)": 0.00952,
+    "S3 versionado e temporários (linha de S3 do DEV x fator)": 0.09920000000000001,
+    "Artefatos de deploy versionados (S3)": 0.011340000000000001,
+    "Tráfego de respostas da API": 0.036,
+    "Restauração DynamoDB (ensaios de restore)": 0.45,
+    "Testes de carga (2 rodadas de 20 req/s por 30 min e 100 req/s por 10 min)": 4.7332810607999996
+  },
+  "excluded_total_usd": 6.8823410608,
+  "dev_total_usd": 9.953106054300001,
+  "with_contingency_30pct_usd": 12.93903787059,
+  "with_reserve_and_contingency_usd": 45.43903787059,
+  "ceiling_brl": 1000.0,
+  "ceiling_usd_at_ptax": 182.03331209611358,
+  "ceiling_usd_if_dollar_20pct_higher": 151.6944267467613,
+  "share_of_ceiling_with_reserve_and_contingency": 0.24961935454208617,
+  "budget_runpass_dev_mensal_usd": 150.0,
+  "budget_in_brl_at_ptax": 824.025,
+  "hypotheses": {
+    "alarms_count": 4,
+    "alert_emails_per_month": 40,
+    "kms_requests_per_month": 1000,
+    "log_retention_days": 7,
+    "s3_versioning_factor": 2.0,
+    "artifact_mb": 14,
+    "deploys_per_month": 20,
+    "api_response_kb": 4,
+    "restore_drills": 2,
+    "restore_gb_each": 1,
+    "load_calls": 192000,
+    "per_call_cost_usd": 2.4652505524999998e-05
+  }
+}

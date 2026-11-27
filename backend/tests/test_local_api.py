@@ -33,8 +33,40 @@ class LocalApiTests(unittest.TestCase):
                     self.assertEqual(response.status_code, status, response.text)
             admitted = {"Authorization": "Bearer " + runtime.tokens["runnerToken"]}
             page = client.get("/editions", headers=admitted).json()
-            self.assertEqual(len(page["items"]), 5)
-            self.assertNotIn("birthDate", client.get("/me", headers=admitted).json())
+            self.assertEqual(len(page["items"]), 4)  # a sintetica arquivada nao lista
+            # So no GET /me do proprio titular, depois da admissao gravar a data.
+            self.assertEqual(client.get("/me", headers=admitted).json()["birthDate"], "1990-01-01")
+
+    def test_slow_requests_are_logged_with_the_route_template_and_no_ids(self):
+        import contextlib
+        import io
+        import json as jsonlib
+
+        runtime = create_runtime()
+        headers = {"Authorization": "Bearer " + runtime.tokens["runnerToken"]}
+        with TestClient(runtime.app) as client:
+            # Limite abaixo de qualquer tempo real: toda requisicao conta como lenta.
+            with (
+                patch("runpass.api.SLOW_REQUEST_MS", 0),
+                contextlib.redirect_stdout(io.StringIO()) as out,
+            ):
+                client.get("/editions/synthetic-sp-2024?secret=1", headers=headers)
+                client.get("/nao-existe", headers=headers)
+            lines = [jsonlib.loads(line) for line in out.getvalue().splitlines() if line]
+            self.assertEqual(
+                [(x["method"], x["route"], x["status"]) for x in lines],
+                [("GET", "/editions/{id}", 200), ("GET", "(sem rota)", 404)],
+            )
+            self.assertTrue(all(x["slow"] and x["ms"] >= 0 for x in lines))
+            self.assertNotIn("synthetic-sp-2024", out.getvalue())  # nem o id
+            self.assertNotIn("secret", out.getvalue())  # nem a consulta
+            # Rapida (acima do limite): nada e escrito.
+            with (
+                patch("runpass.api.SLOW_REQUEST_MS", 60000),
+                contextlib.redirect_stdout(io.StringIO()) as quiet,
+            ):
+                client.get("/editions/synthetic-sp-2024", headers=headers)
+            self.assertEqual(quiet.getvalue(), "")
 
     def test_tokens_are_ephemeral_and_default_application_has_no_bypass(self):
         first, second = create_runtime(), create_runtime()
@@ -49,7 +81,7 @@ class LocalApiTests(unittest.TestCase):
             spec = json.loads(
                 (Path(directory) / ".local/runpass-api/RunPass-local.openapi.json").read_text()
             )
-            self.assertEqual(sum(len(v) for v in spec["paths"].values()), 23)
+            self.assertEqual(sum(len(v) for v in spec["paths"].values()), 82)
             self.assertEqual(spec["servers"][0]["url"], "http://127.0.0.1:8001")
             self.assertEqual(stat.S_IMODE(bruno.stat().st_mode), 0o600)
             self.assertEqual(stat.S_IMODE(insomnia.stat().st_mode), 0o600)

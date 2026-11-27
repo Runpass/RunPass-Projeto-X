@@ -12,7 +12,14 @@ from fastapi.testclient import TestClient
 from jsonschema import RefResolver
 from openapi_schema_validator import OAS30Validator
 from runpass.api import create_app
-from runpass.catalog import CatalogFilters, CatalogImporter, CatalogService, seed_synthetic
+from runpass.catalog import (
+    CatalogFilters,
+    CatalogImporter,
+    CatalogService,
+    name_core,
+    seed_synthetic,
+    title_case,
+)
 from runpass.identity import AuthFailure, Principal
 from runpass.service import IdentityService, Problem
 from runpass.store import DynamoStore, MemoryStore, Unavailable
@@ -20,7 +27,7 @@ from runpass.store import DynamoStore, MemoryStore, Unavailable
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "backend/fixtures/catalog.synthetic.json"
 NOW = datetime(2026, 10, 28, 15, tzinfo=timezone.utc)
-ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
+ADULT = {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
 
 
 def edition(id="one", **changes):
@@ -47,6 +54,91 @@ class CatalogTests(unittest.TestCase):
         self.importer = CatalogImporter(self.catalog)
         self.actor = self.admit("runner")
         seed_synthetic(self.catalog, FIXTURE)
+
+    def test_padrao_de_escrita_dos_nomes(self):
+        self.assertEqual(title_case("3 CORRIDA CONTRA A POLIO"), "3 Corrida Contra a Polio")
+        self.assertEqual(
+            title_case("xv meia maratona de são paulo 21k"), "XV Meia Maratona de São Paulo 21K"
+        )
+        self.assertEqual(title_case("2ª pace run - edição 2026"), "2ª Pace Run - Edição 2026")
+        self.assertEqual(title_case("[FICTICIA] corrida A"), "[FICTICIA] Corrida A")
+        self.assertEqual(title_case("VENUS WOMEN'S HALF"), "Venus Women's Half")
+        # Siglas: mantidas quando o nome mistura maiusculas e minusculas, e as de estado em nome todo maiusculo.
+        self.assertEqual(title_case("Corrida BTG Pactual SP"), "Corrida BTG Pactual SP")
+        self.assertEqual(title_case("meia da UFRJ"), "Meia da UFRJ")
+        self.assertEqual(title_case("MEIA MARATONA SP 21K"), "Meia Maratona SP 21K")
+        self.assertEqual(title_case("CORRIDA DE SAO PAULO"), "Corrida de Sao Paulo")
+        self.assertEqual(title_case("Corrida XV de Novembro"), "Corrida XV de Novembro")
+        self.assertEqual(
+            title_case("corrida sp run"), "Corrida Sp Run"
+        )  # tudo minusculo: nao da para saber
+        self.assertEqual(title_case("corrida d'água"), "Corrida D'Água")
+        # Toda entrada no catalogo passa pelo padrao.
+        self.put(edition("ed-caixa", name="CORRIDA DO SOLDADO", date="2026-12-06"))
+        self.assertEqual(self.catalog.detail(self.actor, "ed-caixa")["name"], "Corrida do Soldado")
+
+    def test_nucleo_do_nome_acha_a_mesma_prova_escrita_de_outro_jeito(self):
+        self.assertEqual(name_core("Pace Run - 2ª Edição"), name_core("2ª Pace Run 2026"))
+        self.assertEqual(
+            name_core("3 CORRIDA CONTRA POLIO"), name_core("3ª Corrida Contra a Pólio")
+        )
+        self.assertNotEqual(name_core("Corrida Kids do Parque"), name_core("Corrida do Parque"))
+        # numeros no meio do nome sao outra prova
+        self.assertNotEqual(
+            name_core("Campeonato Santista - 4ª Etapa"), name_core("Campeonato Santista - 5ª Etapa")
+        )
+        self.assertNotEqual(
+            name_core("Corrida Mãe Aparecida — 4 Km"), name_core("Corrida Mãe Aparecida — 9 Km")
+        )
+        self.assertEqual(name_core("Corrida 2026"), "corrida 2026")  # nunca vazio
+
+    def test_busca_por_palavra_traz_proximas_primeiro_depois_as_passadas_e_pagina(self):
+        for i, day in enumerate(
+            ["2026-12-20", "2026-11-05", "2025-05-01", "2027-01-10", "2026-10-01"]
+        ):
+            self.put(edition(f"ed-sil-{i}", name=f"Corrida Silvestre Teste {i}", date=day))
+        self.put(edition("ed-outra", name="Outra Prova", date="2026-12-01"))
+        first = self.catalog.list(self.actor, CatalogFilters(q="silvestre", limit=3))
+        # hoje e 28/10/2026: proximas (11/05, 12/20, 2027) e depois as passadas (10/01, 2025)
+        self.assertEqual(
+            [i["date"] for i in first["items"]], ["2026-11-05", "2026-12-20", "2027-01-10"]
+        )
+        rest = self.catalog.list(
+            self.actor, CatalogFilters(q="silvestre", limit=3), first["nextCursor"]
+        )
+        self.assertEqual([i["date"] for i in rest["items"]], ["2026-10-01", "2025-05-01"])
+        self.assertNotIn("nextCursor", rest)
+        # todas as palavras precisam estar no nome; parte da palavra tambem vale
+        two = self.catalog.list(self.actor, CatalogFilters(q="silv teste 3", limit=10))["items"]
+        self.assertEqual([i["id"] for i in two], ["ed-sil-3"])
+        with self.assertRaises(Problem):
+            self.catalog.list(self.actor, CatalogFilters(q="silvestre", limit=3), "x" * 20)
+
+    def test_lista_le_em_lote_e_guarda_versoes_na_memoria(self):
+        calls = {"get": 0, "batch": 0, "commit": 0}
+        get, batch, commit = self.store.get, self.store.batch_get, self.store.commit
+        self.store.get = lambda k: (calls.__setitem__("get", calls["get"] + 1), get(k))[1]
+        self.store.batch_get = lambda ks: (
+            calls.__setitem__("batch", calls["batch"] + 1),
+            batch(ks),
+        )[1]
+        self.store.commit = lambda e, w: (
+            calls.__setitem__("commit", calls["commit"] + 1),
+            commit(e, w),
+        )[1]
+        filters = CatalogFilters(limit=20)
+        first = self.catalog.list(self.actor, filters)["items"]
+        self.assertTrue(first)
+        # Conferir a conta custa 1 lote (conta + marca de exclusao) e, fora de uma requisicao HTTP, acontece
+        # no comeco e no fim da listagem (2). Mais 1 para HEAD, 1 para versoes novas e 1 para notas: nao
+        # cresce com o numero de corridas.
+        self.assertLessEqual(calls["batch"], 5)
+        self.assertEqual(calls["commit"], 0)  # leitura sem transacao
+        calls["batch"] = 0
+        again = self.catalog.list(self.actor, filters)["items"]
+        self.assertEqual(again, first)
+        # versoes ja estao na memoria: so a conta (2), HEAD e notas
+        self.assertLessEqual(calls["batch"], 4)
 
     def admit(self, sub):
         actor = Principal(sub, True)
@@ -75,8 +167,7 @@ class CatalogTests(unittest.TestCase):
             "synthetic-sp-2025",
             "synthetic-sp-2026",
             "synthetic-rj-2026",
-            "synthetic-archived",
-        }
+        }  # synthetic-archived existe, mas arquivada nunca aparece na lista
         samples = [
             (
                 "namePrefix",
@@ -246,6 +337,23 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaises(Problem):
             self.importer.retire_indexes("one", 2, synthetic=True)
 
+    def test_archive_reason_requires_an_archived_edition(self):
+        operator = Principal("operator", True, "operator", "digest")
+        with self.assertRaises(Problem):
+            self.importer.put(
+                edition("reason", archivedReason="cancelled"),
+                expected_version=0,
+                origin="https://example.test/race",
+                actor=operator,
+            )
+        with self.assertRaises(Problem):
+            self.importer.put(
+                edition("bad", archived=True, archivedReason="made-up"),
+                expected_version=0,
+                origin="https://example.test/race",
+                actor=operator,
+            )
+
     def test_revoked_operator_during_staging_cannot_activate(self):
         operator = Principal("operator", True, "operator", "digest")
         access = ("identity", "OPERATOR#operator", "ACCESS")
@@ -367,6 +475,20 @@ class CatalogApiTests(unittest.TestCase):
             self.actor, "create", {"displayName": "Runner", "username": "runner"}
         )
 
+    def test_q_search_matches_all_words_in_any_order(self):
+        self.identity.admit(self.actor, "admit", ADULT)
+
+        def ids(query):
+            response = self.client.get(f"/editions?q={query}&limit=50", headers=self.headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            return {item["id"] for item in response.json()["items"]}
+
+        # "Desafio Sintético da Orla": palavras fora de ordem e sem acento ainda acham
+        self.assertIn("synthetic-rj-2026", ids("orla%20desafio"))
+        self.assertIn("synthetic-rj-2026", ids("desafio%20sintetico%20orla"))
+        # uma palavra que nao esta no nome derruba o resultado
+        self.assertNotIn("synthetic-rj-2026", ids("desafio%20maratona"))
+
     def test_admission_required_and_http_responses_match_canonical_schemas(self):
         self.assertEqual(self.client.get("/editions").status_code, 401)
         self.assertEqual(self.client.get("/editions", headers=self.headers).status_code, 403)
@@ -374,6 +496,10 @@ class CatalogApiTests(unittest.TestCase):
         contract = json.loads((ROOT / "PDLC/M4/API-RunPass-v1.openapi.json").read_text())
         for path, schema in [
             ("/editions?city=sao%20paulo&distanceKm=10&limit=1", "EditionPage"),
+            (
+                "/editions?q=sao&registrationStatus=unknown&lat=-23.55&lon=-46.63&radiusKm=50",
+                "EditionPage",
+            ),
             ("/editions/synthetic-sp-2024", "Edition"),
         ]:
             response = self.client.get(path, headers=self.headers)
@@ -398,6 +524,11 @@ class CatalogApiTests(unittest.TestCase):
             "dateFrom=2027-01-01&dateTo=2026-01-01",
             "city=%20%20",
             "cursor=",
+            "lat=-23.5&lon=-46.6",  # raio incompleto
+            "radiusKm=10",
+            "lat=95&lon=0&radiusKm=5",
+            "registrationStatus=aberta",
+            "q=%20%20",
         ):
             response = self.client.get("/editions?" + query, headers=self.headers)
             self.assertEqual(response.status_code, 422, query)

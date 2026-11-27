@@ -1,5 +1,7 @@
 """Identity and catalog HTTP surface. Dependencies must be injected; default app fails closed."""
 
+import json
+import time
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -13,16 +15,32 @@ from pydantic import ValidationError
 from .catalog import CatalogFilters
 from .identity import AuthFailure
 from .models import (
+    AddDistance,
+    BannerSuggestion,
     CompleteParticipation,
+    CreateComment,
+    CreateEditionComment,
+    CreateExtraPost,
+    CreateFeedback,
     CreateParticipation,
     CreateProfile,
+    CreateReport,
+    EditComment,
+    EditionRequestFields,
     Eligibility,
+    PatchEditionRequest,
+    PatchExtraPost,
     PatchParticipation,
     PatchProfile,
+    PublishParticipation,
+    PutRacePlan,
     ReplaceReview,
+    ResubmitEditionRequest,
     StartUpload,
+    WebLookupRequest,
 )
-from .service import Problem
+from .nl_search import MAX_PHRASE, text_fallback
+from .service import REQUEST_MEMO, Problem
 from .store import Unavailable
 
 IdempotencyKey = Annotated[
@@ -31,11 +49,69 @@ IdempotencyKey = Annotated[
 ]
 
 
-def create_app(service=None, verifier=None, catalog=None, participations=None, uploads=None):
+# Requisicoes que passam deste tempo (ms) deixam uma linha no log da Lambda: metodo, MODELO da rota (por
+# exemplo `/editions/{id}`, nunca o caminho com ids nem os filtros), status e tempo. So as lentas, para
+# o log nao crescer com cada requisicao: o registro de acesso da API nao guarda a rota, e sem ela nao da
+# para saber quais telas demoram.
+SLOW_REQUEST_MS = 400
+
+
+def create_app(
+    service=None,
+    verifier=None,
+    catalog=None,
+    participations=None,
+    uploads=None,
+    social=None,
+    natural_search=None,
+    edition_requests=None,
+    web_lookup=None,
+):
     # Runtime schema is a subset; the versioned full contract remains the canonical OpenAPI.
     app = FastAPI(
         title="RunPass S03", version="0.8.0", docs_url=None, redoc_url=None, openapi_url=None
     )
+
+    class RequestMemo:
+        """Abre a memoria da requisicao (ver `service.REQUEST_MEMO`): a conferencia da conta vale uma vez
+        por requisicao, em vez de repetir as mesmas leituras em cada servico chamado. Tambem registra as
+        requisicoes lentas (ver `SLOW_REQUEST_MS`)."""
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                return await self.inner(scope, receive, send)
+            began, status = time.perf_counter(), [0]
+
+            async def watch(message):
+                if message["type"] == "http.response.start":
+                    status[0] = message["status"]
+                await send(message)
+
+            token = REQUEST_MEMO.set(set())
+            try:
+                await self.inner(scope, receive, watch)
+            finally:
+                REQUEST_MEMO.reset(token)
+                took = (time.perf_counter() - began) * 1000
+                if took >= SLOW_REQUEST_MS:
+                    route = scope.get("route")
+                    print(
+                        json.dumps(
+                            {
+                                "slow": True,
+                                "method": scope.get("method"),
+                                "route": getattr(route, "path", None) or "(sem rota)",
+                                "status": status[0],
+                                "ms": round(took),
+                            }
+                        ),
+                        flush=True,
+                    )
+
+    app.add_middleware(RequestMemo)
 
     @app.exception_handler(Problem)
     async def problem(request, error):
@@ -138,6 +214,12 @@ def create_app(service=None, verifier=None, catalog=None, participations=None, u
         dateFrom: date | None = None,
         dateTo: date | None = None,
         distanceKm: Decimal | None = Query(None, gt=0),
+        q: str | None = Query(None, min_length=1, max_length=160),
+        registrationStatus: str | None = Query(None, pattern=r"^(unknown|open|closed|sold_out)$"),
+        audience: str | None = Query(None, pattern=r"^(kids|adult)$"),
+        lat: float | None = Query(None, ge=-90, le=90),
+        lon: float | None = Query(None, ge=-180, le=180),
+        radiusKm: float | None = Query(None, gt=0, le=500),
     ):
         service.authorize(actor, admitted=True)
         if catalog is None:
@@ -151,10 +233,69 @@ def create_app(service=None, verifier=None, catalog=None, participations=None, u
                 dateFrom=dateFrom,
                 dateTo=dateTo,
                 distanceKm=distanceKm,
+                q=q,
+                registrationStatus=registrationStatus,
+                audience=audience,
+                lat=lat,
+                lon=lon,
+                radiusKm=radiusKm,
             )
         except ValidationError as error:
             raise Problem(422, "INVALID_FILTERS") from error
         return catalog.list(actor, filters, cursor)
+
+    @app.get("/editions/search", operation_id="searchEditions")
+    def search_editions(
+        actor: Actor,
+        phrase: str = Query(..., min_length=1, max_length=MAX_PHRASE),
+        limit: int = Query(20, ge=1, le=100),
+        lat: float | None = Query(None, ge=-90, le=90),
+        lon: float | None = Query(None, ge=-180, le=180),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        phrase = " ".join(phrase.split())
+        if not phrase or (lat is None) != (lon is None):
+            raise Problem(422, "INVALID_FILTERS")
+        translation = (
+            natural_search.translate(phrase, lat, lon) if natural_search else text_fallback(phrase)
+        )
+        echoed = {}
+        if translation.empty:
+            page = {"items": []}
+        else:
+            try:
+                filters = CatalogFilters(limit=limit, **translation.filters)
+            except ValidationError:
+                # Filtro vindo da IA fora dos limites do catalogo: busca por nome, nunca erro.
+                translation = text_fallback(phrase)
+                filters = CatalogFilters(limit=limit, **translation.filters)
+            page = catalog.list(actor, filters)
+            if "q" not in translation.filters and (
+                not translation.filters or "consulta_semantica" in translation.not_applied
+            ):
+                # A IA nao achou um nome na frase ("Batman") e devolveria corridas que nada tem a ver (ou todas). Antes de
+                # aceitar isso, tenta o nome: se alguma corrida tiver todas as palavras, ela vale mais.
+                try:
+                    by_name = CatalogFilters(limit=limit, **text_fallback(phrase).filters)
+                except ValidationError:
+                    by_name = None
+                if by_name is not None:
+                    named = catalog.list(actor, by_name)
+                    if named["items"]:
+                        translation, filters, page = text_fallback(phrase), by_name, named
+            # O cliente pagina depois por GET /editions com estes filtros e o mesmo limit.
+            echoed = filters.model_dump(mode="json", exclude_none=True, exclude={"limit"})
+        return {
+            **page,
+            "search": {
+                "source": translation.source,
+                "filters": echoed,
+                "applied": list(translation.applied),
+                "notApplied": list(translation.not_applied),
+            },
+        }
 
     @app.get("/editions/{id}", operation_id="getEdition")
     def edition(id: str, actor: Actor):
@@ -162,6 +303,103 @@ def create_app(service=None, verifier=None, catalog=None, participations=None, u
         if catalog is None:
             raise Unavailable()
         return catalog.detail(actor, id)
+
+    @app.post("/editions/{id}/distances", operation_id="addEditionDistance")
+    def add_edition_distance(id: str, body: AddDistance, actor: Actor):
+        """Corrida sem distancia: o corredor informa o km ao se inscrever (so quando nao ha distancia de fonte)."""
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        return catalog.add_runner_distance(actor, id, body.kilometers)
+
+    @app.get("/editions/{id}/reviews", operation_id="listEditionReviews")
+    def edition_reviews(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+        distanceId: str | None = Query(None, min_length=1, max_length=100),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_reviews(actor, id, distanceId, limit, cursor)
+
+    @app.get("/me/race-plans", operation_id="listMyRacePlans")
+    def list_my_race_plans(
+        actor: Actor, status: str | None = Query(None, pattern="^(wanted|registered)$")
+    ):
+        if participations is None:
+            raise Unavailable()
+        return participations.list_plans(actor, status)
+
+    @app.put("/me/race-plans/{editionId}", operation_id="putMyRacePlan")
+    def put_my_race_plan(editionId: str, body: PutRacePlan, actor: Actor):
+        if participations is None:
+            raise Unavailable()
+        return participations.put_plan(actor, editionId, body.status, body.distanceId)
+
+    @app.get("/me/race-plans/{editionId}", operation_id="getMyRacePlan")
+    def get_my_race_plan(editionId: str, actor: Actor):
+        if participations is None:
+            raise Unavailable()
+        return participations.get_plan(actor, editionId)
+
+    @app.delete("/me/race-plans/{editionId}", status_code=204, operation_id="deleteMyRacePlan")
+    def delete_my_race_plan(editionId: str, actor: Actor):
+        if participations is None:
+            raise Unavailable()
+        participations.delete_plan(actor, editionId)
+        return Response(status_code=204)
+
+    @app.get("/editions/{id}/banner", operation_id="getEditionBanner")
+    def edition_banner(id: str, actor: Actor):
+        service.authorize(actor, admitted=True)
+        if catalog is None or uploads is None:
+            raise Unavailable()
+        return uploads.edition_banner(actor, catalog.detail(actor, id))
+
+    @app.get("/editions/{id}/registrants", operation_id="listEditionRegistrants")
+    def edition_registrants(
+        id: str,
+        actor: Actor,
+        limit: int = Query(30, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_registrants(actor, id, limit, cursor)
+
+    @app.get("/editions/{id}/photos", operation_id="listEditionPhotos")
+    def edition_photos(
+        id: str,
+        actor: Actor,
+        limit: int = Query(30, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+        distanceId: str | None = Query(None, min_length=1, max_length=100),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_photos(actor, id, distanceId, limit, cursor)
+
+    @app.get("/editions/{id}/participants", operation_id="listEditionParticipants")
+    def edition_participants(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+        distanceId: str | None = Query(None, min_length=1, max_length=100),
+    ):
+        service.authorize(actor, admitted=True)
+        if catalog is None:
+            raise Unavailable()
+        catalog.detail(actor, id)  # 404 para edicao inexistente
+        return friends().edition_participants(actor, id, distanceId, limit, cursor)
 
     @app.post("/participations", status_code=201, operation_id="createParticipationDraft")
     def create_participation(
@@ -202,16 +440,126 @@ def create_app(service=None, verifier=None, catalog=None, participations=None, u
             raise Unavailable()
         return participations.get_deletion(actor, id)
 
+    @app.post("/edition-requests", status_code=201, operation_id="createEditionRequest")
+    def create_edition_request(
+        body: EditionRequestFields, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.create(actor, idempotency_key, body)
+
+    @app.post(
+        "/editions/{id}/banner-suggestions",
+        status_code=201,
+        operation_id="suggestEditionBanner",
+    )
+    def suggest_edition_banner(
+        id: str, body: BannerSuggestion, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.suggest_banner(actor, idempotency_key, id, body.imageReference)
+
+    @app.post("/edition-requests/web-lookup", operation_id="lookUpRaceOnTheWeb")
+    def web_lookup_route(body: WebLookupRequest, actor: Actor):
+        """Corrida fora do catalogo: procura na web e devolve candidatas para preencher o pedido (nao grava)."""
+        if web_lookup is None:
+            raise Problem(503, "WEB_LOOKUP_UNAVAILABLE")
+        return web_lookup.find(actor, body.name, body.city, body.state)
+
+    @app.get("/me/edition-requests", operation_id="listMyEditionRequests")
+    def list_my_edition_requests(
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=8192),
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.list_mine(actor, limit, cursor)
+
+    @app.get("/edition-requests/{id}/medal-image", operation_id="getEditionRequestMedalImage")
+    def edition_request_medal_image(id: str, actor: Actor):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.medal_image(actor, id)
+
+    @app.get("/edition-requests/{id}/banner-image", operation_id="getEditionRequestBannerImage")
+    def edition_request_banner_image(id: str, actor: Actor):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.medal_image(actor, id, "imageReference")
+
+    @app.delete("/edition-requests/{id}", operation_id="deleteEditionRequest")
+    def delete_edition_request(
+        id: str,
+        actor: Actor,
+        idempotency_key: IdempotencyKey,
+        expectedVersion: int = Query(..., ge=1),
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.delete(actor, id, idempotency_key, expectedVersion)
+
+    @app.get("/edition-requests/{id}", operation_id="getEditionRequest")
+    def get_edition_request(id: str, actor: Actor):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.get(actor, id)
+
+    @app.patch("/edition-requests/{id}", operation_id="patchEditionRequest")
+    def patch_edition_request(
+        id: str, body: PatchEditionRequest, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.patch(
+            actor, id, idempotency_key, body.model_dump(exclude_unset=True, mode="python")
+        )
+
+    @app.post("/edition-requests/{id}/resubmit", operation_id="resubmitEditionRequest")
+    def resubmit_edition_request(
+        id: str, body: ResubmitEditionRequest, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if edition_requests is None:
+            raise Unavailable()
+        return edition_requests.resubmit(actor, id, idempotency_key, body.model_dump())
+
     @app.get("/me/participations", operation_id="listMyParticipations")
     def list_participations(
         actor: Actor,
         state: str | None = Query(None, pattern=r"^(draft|completed)$"),
         limit: int = Query(20, ge=1, le=100),
         cursor: str | None = Query(None, min_length=1, max_length=8192),
+        expand: str | None = Query(None, pattern=r"^edition$"),
     ):
         if participations is None:
             raise Unavailable()
-        return participations.list(actor, state, limit, cursor)
+        page = participations.list(actor, state, limit, cursor)
+        if expand == "edition" and catalog is not None:
+            # Uma chamada em vez de uma por medalha: a prateleira do app mostrava totais e ordem diferentes
+            # a cada carga quando parte das chamadas simultaneas era recusada.
+            cache = {}
+            for item in page["items"]:
+                edition_id = item.get("editionId")
+                if edition_id not in cache:
+                    try:
+                        cache[edition_id] = catalog.detail(actor, edition_id)
+                    except Exception:  # edicao arquivada ou removida: o item segue sem ela
+                        cache[edition_id] = None
+                if cache[edition_id] is not None:
+                    item["edition"] = cache[edition_id]
+        return page
+
+    @app.post("/participations/{id}/publish", operation_id="publishParticipation")
+    def publish_participation(
+        id: str,
+        body: PublishParticipation,
+        actor: Actor,
+        idempotency_key: IdempotencyKey,
+    ):
+        if participations is None:
+            raise Unavailable()
+        return participations.publish(actor, id, idempotency_key, body.model_dump())
 
     @app.post("/participations/{id}/complete", operation_id="completeParticipation")
     def complete_participation(
@@ -251,6 +599,270 @@ def create_app(service=None, verifier=None, catalog=None, participations=None, u
         if uploads is None:
             raise Unavailable()
         return uploads.finalize(actor, id, idempotency_key)
+
+    def friends():
+        if social is None:
+            raise Unavailable()
+        return social
+
+    @app.get("/profiles", operation_id="searchProfiles")
+    def search_profiles(
+        actor: Actor,
+        q: str = Query(..., min_length=1, max_length=80),
+        limit: int = Query(20, ge=1, le=50),
+    ):
+        return friends().search(actor, q, limit)
+
+    @app.get("/profiles/suggestions", operation_id="listProfileSuggestions")
+    def profile_suggestions(actor: Actor, limit: int = Query(12, ge=1, le=30)):
+        return friends().suggestions(actor, limit)
+
+    @app.get("/profiles/{id}", operation_id="getPublicProfile")
+    def public_profile(id: str, actor: Actor):
+        return friends().profile_view(actor, id)
+
+    @app.get("/profiles/{id}/participations", operation_id="listPublicParticipations")
+    def public_participations(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().public_participations(actor, id, limit, cursor)
+
+    @app.get("/profiles/{id}/followers", operation_id="listProfileFollowers")
+    def profile_followers(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().list_followers(actor, id, limit, cursor)
+
+    @app.get("/profiles/{id}/following", operation_id="listProfileFollowing")
+    def profile_following(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().list_following(actor, id, limit, cursor)
+
+    @app.get("/profiles/{id}/friends", operation_id="listProfileFriends")
+    def profile_friends(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().list_friends(actor, id, limit, cursor)
+
+    @app.put("/profiles/{id}/follow", operation_id="putFollow")
+    def put_follow(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().follow(actor, id, idempotency_key)
+
+    @app.delete("/profiles/{id}/follow", operation_id="deleteFollow")
+    def delete_follow(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().unfollow(actor, id, idempotency_key)
+
+    @app.put("/profiles/{id}/friend", operation_id="putFriendRequest")
+    def put_friend(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().add_friend(actor, id, idempotency_key)
+
+    @app.delete("/profiles/{id}/friend", operation_id="deleteFriend")
+    def delete_friend(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().remove_friend(actor, id, idempotency_key)
+
+    @app.get("/me/friend-requests", operation_id="listMyFriendRequests")
+    def friend_requests(actor: Actor):
+        return friends().friend_requests(actor)
+
+    @app.put("/me/friend-requests/{id}", operation_id="approveFriendRequest")
+    def approve_friend_request(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().decide_friend(actor, id, True, idempotency_key)
+
+    @app.delete("/me/friend-requests/{id}", operation_id="declineFriendRequest")
+    def decline_friend_request(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().decide_friend(actor, id, False, idempotency_key)
+
+    @app.get("/feed", operation_id="getFeed")
+    def get_feed(
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+        scope: str = Query("all", pattern="^(all|friends|network)$"),
+    ):
+        return friends().feed(actor, limit, cursor, scope)
+
+    @app.get("/profiles/{id}/posts", operation_id="listProfilePosts")
+    def profile_posts(id: str, actor: Actor):
+        """Publicacoes de outra pessoa (conta ativa), no mesmo formato de /me/posts."""
+        return friends().profile_posts(actor, id)
+
+    @app.get("/me/posts", operation_id="listMyPosts")
+    def my_posts(actor: Actor):
+        """Minhas publicações (a de cada corrida e as extras), para o perfil."""
+        return friends().my_posts(actor)
+
+    @app.post("/posts", status_code=201, operation_id="createExtraPost")
+    def create_extra_post(body: CreateExtraPost, actor: Actor, idempotency_key: IdempotencyKey):
+        """Outra publicação de uma corrida que eu já concluí (várias por corrida)."""
+        if participations is None:
+            raise Unavailable()
+        return participations.create_extra_post(
+            actor, idempotency_key, body.model_dump(exclude_none=True)
+        )
+
+    # Nao usa PATCH /posts/{id}: o contrato reserva essa rota para a visibilidade do post.
+    @app.patch("/posts/{id}/extra", operation_id="patchExtraPost")
+    def patch_extra_post(
+        id: str, body: PatchExtraPost, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        if participations is None:
+            raise Unavailable()
+        return participations.update_extra_post(
+            actor, id, idempotency_key, body.model_dump(exclude_unset=True)
+        )
+
+    @app.delete("/posts/{id}", operation_id="deleteExtraPost")
+    def delete_extra_post(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        if participations is None:
+            raise Unavailable()
+        return participations.delete_extra_post(actor, id, idempotency_key)
+
+    @app.get("/posts/{id}/image", operation_id="getExtraPostImage")
+    def extra_post_image(id: str, actor: Actor, index: int = Query(0, ge=0, le=4)):
+        # index 0 = capa (postImageReference); 1..4 = morePostImageReferences[index - 1].
+        if uploads is None:
+            raise Unavailable()
+        return uploads.extra_post_image(actor, id, index)
+
+    @app.get("/posts/{id}", operation_id="getPost")
+    def get_post(id: str, actor: Actor):
+        return friends().post(actor, id)
+
+    @app.put("/posts/{id}/like", operation_id="likePost")
+    def put_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like(actor, id, idempotency_key, True)
+
+    @app.delete("/posts/{id}/like", operation_id="unlikePost")
+    def delete_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like(actor, id, idempotency_key, False)
+
+    @app.get("/me/notifications", operation_id="listMyNotifications")
+    def list_notifications(actor: Actor):
+        return friends().notifications(actor)
+
+    @app.delete("/me/notifications/{id}", operation_id="deleteMyNotification")
+    def delete_notification(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().dismiss_notification(actor, id, idempotency_key)
+
+    @app.post("/me/notifications/read", operation_id="markMyNotificationsRead")
+    def read_notifications(actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().mark_notifications_read(actor, idempotency_key)
+
+    @app.get("/posts/{id}/comments", operation_id="listPostComments")
+    def list_comments(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().comments(actor, id, limit, cursor)
+
+    @app.post("/posts/{id}/comments", status_code=201, operation_id="createPostComment")
+    def create_comment(id: str, body: CreateComment, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().comment(actor, id, idempotency_key, body.text, body.parentId)
+
+    @app.get("/editions/{id}/comments", operation_id="listEditionComments")
+    def list_edition_comments(
+        id: str,
+        actor: Actor,
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = Query(None, min_length=1, max_length=512),
+    ):
+        return friends().edition_comments(actor, id, limit, cursor)
+
+    @app.post("/editions/{id}/comments", status_code=201, operation_id="createEditionComment")
+    def create_edition_comment(
+        id: str, body: CreateEditionComment, actor: Actor, idempotency_key: IdempotencyKey
+    ):
+        return friends().edition_comment(actor, id, idempotency_key, body.text)
+
+    @app.post("/feedback", status_code=201, operation_id="sendFeedback")
+    def send_feedback(body: CreateFeedback, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().send_feedback(
+            actor, idempotency_key, body.kind, body.text, body.appVersion
+        )
+
+    @app.post("/reports", status_code=201, operation_id="sendReport")
+    def send_report(body: CreateReport, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().report(
+            actor, idempotency_key, body.targetType, body.targetId, body.reason, body.text
+        )
+
+    @app.put("/profiles/{id}/block", operation_id="putBlock")
+    def put_block(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().block(actor, id, idempotency_key)
+
+    @app.delete("/profiles/{id}/block", operation_id="deleteBlock")
+    def delete_block(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().unblock(actor, id, idempotency_key)
+
+    @app.get("/me/blocks", operation_id="listMyBlocks")
+    def my_blocks(actor: Actor):
+        return friends().blocks(actor)
+
+    @app.delete("/edition-comments/{id}", operation_id="deleteEditionComment")
+    def delete_edition_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().delete_edition_comment(actor, id, idempotency_key)
+
+    @app.put("/comments/{id}/like", operation_id="likeComment")
+    def put_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like_comment(actor, id, idempotency_key, True)
+
+    @app.delete("/comments/{id}/like", operation_id="unlikeComment")
+    def delete_comment_like(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().like_comment(actor, id, idempotency_key, False)
+
+    @app.patch("/comments/{id}", operation_id="editOwnComment")
+    def edit_comment(id: str, body: EditComment, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().edit_comment(actor, id, idempotency_key, body.text, body.expectedVersion)
+
+    @app.delete("/comments/{id}", operation_id="deleteOwnComment")
+    def delete_comment(id: str, actor: Actor, idempotency_key: IdempotencyKey):
+        return friends().delete_comment(actor, id, idempotency_key)
+
+    @app.get("/profiles/{id}/photo", operation_id="getProfilePhoto")
+    def profile_photo(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.profile_photo(actor, id)
+
+    @app.get("/profiles/{id}/banner", operation_id="getProfileBanner")
+    def profile_banner(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.profile_photo(actor, id, "bannerReference")
+
+    @app.get("/participations/{id}/image", operation_id="getParticipationImage")
+    def participation_image(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.medal_image(actor, id)
+
+    @app.get("/participations/{id}/post-image", operation_id="getParticipationPostImage")
+    def participation_post_image(id: str, actor: Actor, index: int = Query(0, ge=0, le=4)):
+        # index 0 = capa (postImageReference); 1..4 = morePostImageReferences[index - 1].
+        if uploads is None:
+            raise Unavailable()
+        return uploads.post_image(actor, id, index)
+
+    @app.get("/participations/{id}/display-image", operation_id="getParticipationDisplayImage")
+    def participation_display_image(id: str, actor: Actor):
+        if uploads is None:
+            raise Unavailable()
+        return uploads.medal_display_image(actor, id)
 
     @app.get("/uploads/{id}/status", operation_id="getUploadStatus")
     def upload_status(id: str, actor: Actor):

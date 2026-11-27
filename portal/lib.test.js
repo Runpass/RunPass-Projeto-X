@@ -1,0 +1,358 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { dataBr, linkSeguro, mensagem, montarDecisao, resumoPedido, segundosAteExpirar } from './lib.js';
+
+test('montarDecisao: recusar exige motivo e vincular exige corrida', () => {
+  assert.throws(() => montarDecisao({ versao: 1, decisao: 'reject', motivo: '   ' }), /motivo/i);
+  assert.throws(() => montarDecisao({ versao: 1, decisao: 'link' }), /corrida/i);
+  assert.throws(() => montarDecisao({ versao: 'x', decisao: 'link', edicaoId: 'e' }), /Versão/);
+  assert.throws(() => montarDecisao({ versao: 1, decisao: 'apagar', edicaoId: 'e' }), /desconhecida/);
+  assert.throws(() => montarDecisao({ versao: 1, decisao: 'reject', motivo: 'x'.repeat(501) }), /500/);
+  assert.deepEqual(montarDecisao({ versao: 2, decisao: 'reject', motivo: ' duplicada ' }), {
+    expectedVersion: 2, decision: 'reject', reason: 'duplicada',
+  });
+  assert.deepEqual(montarDecisao({ versao: '3', decisao: 'link', edicaoId: 'csv-sp-x' }), {
+    expectedVersion: 3, decision: 'link', editionId: 'csv-sp-x',
+  });
+  // aprovar/vincular nunca levam motivo; recusar nunca leva corrida (o servidor recusaria os dois)
+  assert.equal('reason' in montarDecisao({ versao: 1, decisao: 'approve', edicaoId: 'e', motivo: 'm' }), false);
+  assert.equal('editionId' in montarDecisao({ versao: 1, decisao: 'reject', motivo: 'm', edicaoId: 'e' }), false);
+});
+
+test('linkSeguro aceita só https', () => {
+  assert.equal(linkSeguro('https://exemplo.com/a'), 'https://exemplo.com/a');
+  for (const ruim of ['javascript:alert(1)', 'http://exemplo.com', 'data:text/html,x', '', 'nao e url', null]) {
+    assert.equal(linkSeguro(ruim), null, String(ruim));
+  }
+});
+
+test('dataBr e resumoPedido', () => {
+  assert.equal(dataBr('2026-12-20'), '20/12/2026');
+  assert.equal(dataBr('lixo'), '');
+  const r = resumoPedido({ details: { name: 'Corrida X', date: '2026-12-20', city: 'São Paulo', state: 'SP', distanceKm: 10, officialUrl: 'https://x.com' } });
+  assert.deepEqual(r, { titulo: 'Corrida X', linha: '20/12/2026 · São Paulo/SP · 10 km', fonte: 'https://x.com' });
+  assert.equal(resumoPedido({}).titulo, '(sem nome)');
+});
+
+test('mensagem traduz códigos conhecidos e não vaza código desconhecido', () => {
+  assert.match(mensagem('CodeMismatchException'), /incorreto/);
+  assert.match(mensagem('INVALID_TOKEN'), /sessão/);
+  assert.equal(mensagem('ALGO_ESTRANHO_INTERNO'), 'Não foi possível concluir. Tente novamente.');
+  // Erros do Cognito sem tradução mostram o código (ajuda o suporte); outros códigos seguem ocultos.
+  assert.match(mensagem('InvalidParameterException'), /\(InvalidParameterException\)/);
+  assert.match(mensagem('PasswordResetRequiredException'), /redefinir/);
+  assert.match(mensagem('NetworkError'), /Cognito/);
+  assert.match(mensagem('UnsupportedChallenge:SELECT_MFA_TYPE'), /SELECT_MFA_TYPE/);
+  assert.equal(mensagem('x<script>Exception'), 'Não foi possível concluir. Tente novamente.');
+  assert.equal(mensagem(undefined), 'Não foi possível concluir. Tente novamente.');
+});
+
+test('segundosAteExpirar lê o exp do JWT e devolve 0 para token inválido', () => {
+  const corpo = Buffer.from(JSON.stringify({ exp: 2000 })).toString('base64url');
+  assert.equal(segundosAteExpirar(`a.${corpo}.c`, 1_000_000), 1000);
+  assert.equal(segundosAteExpirar(`a.${corpo}.c`, 5_000_000), 0);
+  assert.equal(segundosAteExpirar('lixo'), 0);
+});
+
+test('cadastros e operadores: resumo, status e e-mail', async () => {
+  const { resumoCadastros, statusCadastro, emailValido } = await import('./lib.js');
+  assert.equal(resumoCadastros({ total: 3, partial: false, byStatus: { CONFIRMED: 2, UNCONFIRMED: 1 } }), '3 cadastros: 2 confirmado, 1 e-mail não confirmado');
+  assert.equal(resumoCadastros({ total: 1, partial: true, byStatus: {} }), '1 cadastro (lista parcial)');
+  assert.equal(statusCadastro('XYZ'), 'XYZ');
+  assert.ok(emailValido(' a@b.com '));
+  assert.ok(!emailValido('sem-arroba'));
+  assert.match(mensagem('RUN_TOO_SOON'), /10 minutos/);
+});
+
+test('execuções: situação, duração e acompanhamento', async () => {
+  const { situacaoExecucao, duracao, ativa } = await import('./lib.js');
+  assert.equal(situacaoExecucao('running'), 'Em execução');
+  assert.equal(situacaoExecucao('timeout'), 'Tempo esgotado (15 min)');
+  assert.equal(duracao(9000), '9s');
+  assert.equal(duracao(150000), '2min 30s');
+  assert.equal(duracao(undefined), '');
+  assert.ok(ativa([{ status: 'done' }, { status: 'waiting' }]));
+  assert.ok(!ativa([{ status: 'done' }, { status: 'failed' }]));
+});
+
+test('agendamentos: descrição', async () => {
+  const { descreverAgendamento } = await import('./lib.js');
+  assert.equal(descreverAgendamento({ enabled: false, name: 'x', description: '' }).situacao, 'Desativado');
+  assert.equal(descreverAgendamento({ enabled: true, name: 'x', description: 'Calendário', expression: 'rate(1 day)', nextRun: null }).quando, 'Ver expressão: rate(1 day)');
+  assert.equal(descreverAgendamento({ enabled: true, name: 'n', description: '', nextRun: '2026-11-16T10:00:00Z' }).oque, 'n');
+});
+
+test('custos: formatação, percentual e barras', async () => {
+  const { usd, compacto, percentual, barras, mesBr } = await import('./lib.js');
+  assert.match(usd(5.5), /^US\$\s5,50$/);
+  assert.equal(usd(undefined), '—');
+  assert.equal(compacto(1_502_000), '1,5 mi');
+  assert.equal(compacto(2500), '2,5 mil');
+  assert.equal(compacto(12), '12');
+  assert.equal(percentual(5, 10), 50);
+  assert.equal(percentual(5, null), null);
+  assert.equal(percentual(5, 0), null);
+  assert.equal(mesBr('2026-11'), '11/2026');
+  const b = barras([0, 5, 10], 300, 100);
+  assert.equal(b[2].h, 100);
+  assert.equal(b[1].h, 50);
+  assert.equal(b[0].h, 0);
+  assert.ok(barras([0, 0], 100, 50).every((x) => x.h === 0));
+  assert.ok(barras([0.0001, 100], 100, 50)[0].h >= 1); // valor pequeno continua visível
+  assert.deepEqual(barras([], 100, 50), []);
+});
+
+test('operadores: situação e permissões', async () => {
+  const { situacaoOperador, permissoesDe } = await import('./lib.js');
+  const ativo = { enabled: true, status: 'CONFIRMED', access: { state: 'active', permissions: ['cost_read'] } };
+  assert.equal(situacaoOperador(ativo), 'Ativo');
+  assert.deepEqual(permissoesDe(ativo), ['cost_read']);
+  assert.equal(situacaoOperador({ ...ativo, enabled: false }), 'Desativado');
+  assert.match(situacaoOperador({ enabled: true, access: null }), /Sem acesso/);
+  assert.equal(situacaoOperador({ enabled: true, access: { state: 'revoked', permissions: [] } }), 'Acesso retirado');
+  assert.equal(situacaoOperador({ ...ativo, status: 'FORCE_CHANGE_PASSWORD' }), 'Convite enviado (ainda não entrou)');
+  assert.deepEqual(permissoesDe({ access: null }), []);
+  assert.match(mensagem('LAST_ADMIN'), /administrador/);
+});
+
+test('banners: nota de direitos padrão e data de hoje', async () => {
+  const { notaDireitosPadrao, dataHojeIso } = await import('./lib.js');
+  const nota = notaDireitosPadrao('https://o.exemplo/p', '2026-11-10');
+  assert.match(nota, /página oficial \(https:\/\/o\.exemplo\/p\)/);
+  assert.match(nota, /10\/11\/2026/);
+  assert.match(nota, /Sem autorização formal/);
+  assert.ok(notaDireitosPadrao('', '2026-11-10').length > 20);
+  assert.match(dataHojeIso(new Date('2026-11-10T15:00:00Z')), /^2026-11-10$/);
+  assert.match(mensagem('IMAGE_URL_BLOCKED'), /rede interna/);
+});
+
+test('motivo da falha da OpenAI vira frase útil sem vazar detalhes', async () => {
+  const { motivoOpenAi } = await import('./lib.js');
+  assert.match(motivoOpenAi('key_read_failed:ParameterNotFound'), /ParameterNotFound.*SecureString/);
+  assert.match(motivoOpenAi('http_401'), /administrador/);
+  assert.match(motivoOpenAi('http_403'), /permissão/);
+  assert.match(motivoOpenAi('http_400'), /projeto/);
+  assert.match(motivoOpenAi('http_500'), /\(500\)/);
+  assert.match(motivoOpenAi('network'), /Sem resposta/);
+  assert.match(motivoOpenAi('http_429:insufficient_quota'), /sem crédito/);
+  assert.match(motivoOpenAi('http_429:insufficient_quota@costs'), /sem crédito/);
+  assert.match(motivoOpenAi('http_429:rate_limit_exceeded@costs~30'), /"costs".*30 s/);
+  assert.match(motivoOpenAi('http_429:rate_limit_exceeded@completions'), /"completions".*instantes/);
+  assert.match(motivoOpenAi('http_401@costs'), /administrador/);
+  assert.match(motivoOpenAi('http_500@costs'), /\(500\)/);
+  assert.match(motivoOpenAi('http_429:rate_limit_exceeded'), /rate_limit_exceeded/);
+  assert.match(motivoOpenAi('key_read_failed:ParameterNotFound'), /ParameterNotFound/);
+  assert.equal(motivoOpenAi(undefined), 'Motivo não identificado.');
+});
+
+test('taxa: parte de total com porcentagem e valores inválidos', async () => {
+  const { taxa, RESULTADO_CONFERENCIA } = await import('./lib.js');
+  assert.equal(taxa(42, 44), '42 de 44 (95%)');
+  assert.equal(taxa(0, 44), '0 de 44 (0%)');
+  assert.equal(taxa(5, 0), '5');
+  assert.equal(taxa(NaN, 10), '—');
+  assert.equal(RESULTADO_CONFERENCIA.nao_verificado, 'Não verificado');
+});
+
+test('agendamento: validação do formulário e texto de quando roda', async () => {
+  const { validarAgendamento, quandoTexto } = await import('./lib.js');
+  const ok = { novo: true, nome: 'enriq-quinta', tipo: 'enriquecer', dias: ['THU'], horario: '06:05', rodada: 2, max: 20, meses: 3 };
+  assert.equal(validarAgendamento(ok), '');
+  assert.match(validarAgendamento({ ...ok, nome: 'Nome Ruim' }), /nome/i);
+  assert.match(validarAgendamento({ ...ok, nome: 'ab' }), /nome/i);
+  assert.match(validarAgendamento({ ...ok, nome: '../x' }), /nome/i);
+  assert.match(validarAgendamento({ ...ok, tipo: 'historico' }), /Escolha o que/);
+  assert.match(validarAgendamento({ ...ok, dias: [] }), /dia da semana/);
+  assert.match(validarAgendamento({ ...ok, horario: '' }), /dia da semana/);
+  assert.match(validarAgendamento({ ...ok, horario: '25:00' }), /inválido/);
+  assert.match(validarAgendamento({ ...ok, max: 26 }), /1 a 25/);
+  assert.match(validarAgendamento({ ...ok, max: 0 }), /1 a 25/);
+  assert.match(validarAgendamento({ ...ok, rodada: 4 }), /rodada/);
+  assert.match(validarAgendamento({ ...ok, tipo: 'calendario', meses: 7 }), /meses/);
+  // editar: dias e horário opcionais, mas sempre juntos
+  const edit = { novo: false, tipo: 'enriquecer', dias: [], horario: '', rodada: 1, max: 25 };
+  assert.equal(validarAgendamento(edit), '');
+  assert.match(validarAgendamento({ ...edit, dias: ['MON'] }), /juntos/);
+  assert.equal(quandoTexto(['THU', 'MON'], '06:00'), 'Seg, Qui às 06:00');
+  assert.equal(quandoTexto(null, '06:00'), '');
+  assert.equal(quandoTexto(null, '06:15', '2026-11-20'), '20/11/2026 às 06:15 (uma vez)');
+  // execução única: precisa de data e horário; os dias não importam
+  const uma = { novo: true, nome: 'uma-vez', tipo: 'imagens', modo: 'uma-vez', data: '2026-11-20', horario: '06:00', dias: [] };
+  assert.equal(validarAgendamento(uma), '');
+  assert.match(validarAgendamento({ ...uma, data: '' }), /data/);
+  assert.match(validarAgendamento({ ...uma, data: '20/11/2026' }), /data/);
+  assert.match(validarAgendamento({ ...uma, horario: '' }), /horário/);
+  assert.equal(quandoTexto([], '06:00'), '');
+});
+
+test('divergência: números de distância e validação da decisão', async () => {
+  const { listaKm, validarDecisao } = await import('./lib.js');
+  assert.deepEqual(listaKm('5, 10 km; 21,0975'), ['5', '10', '21,0975']);
+  assert.deepEqual(listaKm('5|10'), ['5', '10']);
+  assert.deepEqual(listaKm(''), []);
+  assert.deepEqual(listaKm('sem numero'), []);
+  const ok = { decisao: 'accepted', distancias: ['5', '10'], fonte: 'https://corrida.exemplo/regulamento', trecho: 'Percursos de 5 km e 10 km' };
+  assert.equal(validarDecisao(ok), '');
+  assert.match(validarDecisao({ ...ok, distancias: [] }), /distância/);
+  assert.match(validarDecisao({ ...ok, distancias: ['0'] }), /inválida/);
+  assert.match(validarDecisao({ ...ok, distancias: ['1001'] }), /inválida/);
+  assert.match(validarDecisao({ ...ok, distancias: Array(9).fill('5') }), /8/);
+  assert.match(validarDecisao({ ...ok, fonte: '' }), /fonte/);
+  assert.match(validarDecisao({ ...ok, fonte: 'http://x.test/a' }), /https/);
+  assert.match(validarDecisao({ ...ok, fonte: 'https://u:p@x.test/a' }), /https/);
+  assert.match(validarDecisao({ ...ok, fonte: 'javascript:alert(1)' }), /https/);
+  assert.match(validarDecisao({ ...ok, trecho: '  ' }), /trecho/);
+  assert.match(validarDecisao({ ...ok, trecho: 'x'.repeat(161) }), /160/);
+  assert.equal(validarDecisao({ decisao: 'rejected', motivo: '' }), '');
+  assert.match(validarDecisao({ decisao: 'rejected', motivo: 'x'.repeat(201) }), /200/);
+  assert.match(validarDecisao({ decisao: 'talvez' }), /desconhecida/);
+});
+
+test('revocação: das nada encontrado conferidas, quantas tinham informação', async () => {
+  const { textoRevocacao } = await import('./lib.js');
+  assert.deepEqual(textoRevocacao({ total: 18, checked: 0, hadInfo: 0 }), { valor: '—', detalhe: '18 sem informação para conferir' });
+  assert.deepEqual(textoRevocacao({ total: 18, checked: 4, hadInfo: 1 }), { valor: '1 de 4 (25%)', detalhe: 'a rotina deixou de achar · 14 ainda por conferir' });
+  assert.equal(textoRevocacao(undefined).valor, '—');
+});
+
+test('preferências: leitura segura e aba inicial só entre as permitidas', async () => {
+  const { lerPrefs, abaInicial } = await import('./lib.js');
+  assert.deepEqual(lerPrefs('{"tema":"escuro","abaInicial":"custos"}'), { tema: 'escuro', abaInicial: 'custos' });
+  assert.deepEqual(lerPrefs(undefined), { tema: 'auto', abaInicial: '' });
+  assert.deepEqual(lerPrefs('não é json'), { tema: 'auto', abaInicial: '' });
+  assert.deepEqual(lerPrefs('{"tema":"roxo","abaInicial":"<script>"}'), { tema: 'auto', abaInicial: '' });
+  assert.deepEqual(lerPrefs('null'), { tema: 'auto', abaInicial: '' });
+  assert.equal(abaInicial('custos', ['cost_read']), 'custos');
+  assert.equal(abaInicial('custos', ['catalog_admin']), 'catalogo'); // sem permissão: cai no padrão (atualização do catálogo)
+  assert.equal(abaInicial('', ['user_admin']), 'cadastros');
+  assert.equal(abaInicial('banners', ['catalog_admin', 'cost_read']), 'banners');
+  assert.equal(abaInicial('operadores', ['cost_read']), 'custos');
+  assert.equal(abaInicial('', []), '');
+});
+
+test('aprovação do pedido: corpo validado e frase do resultado', async () => {
+  const { montarAprovacao, textoAprovacao } = await import('./lib.js');
+  assert.deepEqual(montarAprovacao({ versao: 3, estado: ' sp ', distancias: '5, 10 km' }), { expectedVersion: 3, state: 'SP', distances: ['5', '10'] });
+  assert.deepEqual(montarAprovacao({ versao: 1, estado: '', distancias: '' }), { expectedVersion: 1 });
+  assert.deepEqual(montarAprovacao({ versao: '2', distancias: ['21,0975'] }), { expectedVersion: 2, distances: ['21,0975'] });
+  assert.deepEqual(montarAprovacao({ versao: 1, nome: '  Corrida   do Clube  ' }), { expectedVersion: 1, name: 'Corrida do Clube' });
+  assert.deepEqual(montarAprovacao({ versao: 1, nome: '   ' }), { expectedVersion: 1 });
+  assert.throws(() => montarAprovacao({ versao: 1, nome: 'x'.repeat(161) }), /160/);
+  const { montarRenomear } = await import('./lib.js');
+  assert.deepEqual(montarRenomear('  Novo   nome '), { name: 'Novo nome' });
+  assert.throws(() => montarRenomear('  '), /nome/);
+  assert.throws(() => montarAprovacao({ versao: 0 }), /Versão/);
+  assert.throws(() => montarAprovacao({ versao: 1, estado: 'SPX' }), /2 letras/);
+  assert.throws(() => montarAprovacao({ versao: 1, estado: '1' }), /2 letras/);
+  assert.throws(() => montarAprovacao({ versao: 1, distancias: ['0'] }), /inválida/);
+  assert.throws(() => montarAprovacao({ versao: 1, distancias: ['1001'] }), /inválida/);
+  assert.throws(() => montarAprovacao({ versao: 1, distancias: Array(9).fill('5') }), /8/);
+  assert.match(textoAprovacao('created'), /criada/);
+  assert.match(textoAprovacao('linked'), /já existia/i);
+  assert.match(textoAprovacao('awaiting'), /aguardando/);
+  assert.equal(textoAprovacao('outro'), 'Pedido aprovado.');
+});
+
+test('banner sugerido: crédito, base de autorização e confirmação são obrigatórios', async () => {
+  const { montarPublicacaoBanner } = await import('./lib.js');
+  const ok = { credito: ' Divulgação: Org ', nota: 'Enviado pela organização, por escrito', confirmou: true };
+  assert.deepEqual(montarPublicacaoBanner(ok), { credit: 'Divulgação: Org', rightsNote: 'Enviado pela organização, por escrito', confirmRights: true });
+  assert.throws(() => montarPublicacaoBanner({ ...ok, credito: '  ' }), /crédito/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, credito: 'x'.repeat(201) }), /200/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, nota: 'curta' }), /10 caracteres/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, nota: 'x'.repeat(1001) }), /1000/);
+  assert.throws(() => montarPublicacaoBanner({ ...ok, confirmou: false }), /Confirme/);
+});
+
+test('acesso ao portal: mensagens de conta sem acesso', async () => {
+  const { situacaoOperador } = await import('./lib.js');
+  assert.match(mensagem('NO_PORTAL_ACCESS'), /não tem acesso ativo/);
+  assert.match(mensagem('ACCESS_ALREADY_EXISTS'), /reative/);
+  assert.match(situacaoOperador({ enabled: true, access: null }), /Sem acesso ao portal/);
+});
+
+test('dimensoesEnvio reduz só o que passa do limite e mantém a proporção', async () => {
+  const { dimensoesEnvio } = await import('./lib.js');
+  assert.deepEqual(dimensoesEnvio(4000, 2000), { largura: 1920, altura: 960 });
+  assert.deepEqual(dimensoesEnvio(1000, 3000), { largura: 640, altura: 1920 });
+  assert.deepEqual(dimensoesEnvio(800, 600), { largura: 800, altura: 600 }); // nunca amplia
+  assert.throws(() => dimensoesEnvio(0, 10), /tamanho/);
+});
+
+test('montarBannerArquivo exige corrida, arquivo válido, crédito, base e confirmação', async () => {
+  const { montarBannerArquivo } = await import('./lib.js');
+  const ok = { editionId: 'e1', base64: 'QUJD', tipo: 'image/jpeg', credito: 'Divulgação: Org', nota: 'Enviado pela organização, por escrito', confirmou: true };
+  assert.deepEqual(montarBannerArquivo(ok), {
+    editionId: 'e1', imageBase64: 'QUJD', contentType: 'image/jpeg',
+    credit: 'Divulgação: Org', rightsNote: 'Enviado pela organização, por escrito', confirmRights: true,
+  });
+  assert.throws(() => montarBannerArquivo({ ...ok, editionId: '' }), /corrida/);
+  assert.throws(() => montarBannerArquivo({ ...ok, base64: '' }), /arquivo/);
+  assert.throws(() => montarBannerArquivo({ ...ok, tipo: 'image/gif' }), /JPEG, PNG ou WebP/);
+  assert.throws(() => montarBannerArquivo({ ...ok, base64: 'A'.repeat(5_800_001) }), /grande demais/);
+  assert.throws(() => montarBannerArquivo({ ...ok, credito: ' ' }), /crédito/);
+  assert.throws(() => montarBannerArquivo({ ...ok, nota: 'curta' }), /base de autorização/);
+  assert.throws(() => montarBannerArquivo({ ...ok, confirmou: false }), /Confirme/);
+});
+
+test('resumoImporte soma as rodadas e traduz os motivos', async () => {
+  const { resumoImporte } = await import('./lib.js');
+  assert.deepEqual(resumoImporte(undefined), { texto: '0 importada(s)', detalhes: [] });
+  const r = resumoImporte([
+    { counts: { created: 1, blocked: 2, review: 0, invalid: 1, later: 0 }, reasons: { fora_da_capital: 1, parecida_com: 1 } },
+    { counts: { created: 2, blocked: 1, review: 1, invalid: 0, later: 3 }, reasons: { fora_da_capital: 1 } },
+  ]);
+  assert.equal(r.texto, '3 importada(s) · 5 para revisão · 3 ficaram para a próxima rodada');
+  assert.deepEqual(r.detalhes, ['2 fora da capital', '1 parecida com uma corrida que já existe no mesmo dia']);
+});
+
+test('idFonte e validarFonte seguem as regras do servidor', async () => {
+  const { idFonte, validarFonte } = await import('./lib.js');
+  assert.equal(idFonte('Organizadora Ficção [FICTICIA]!'), 'organizadora_ficcao_ficticia');
+  assert.equal(idFonte('  --  '), '');
+  const ok = { nome: 'Fonte [FICTICIA]', site: 'https://fonte.exemplo.invalid', tipo: 'organizer', nivel: 1, frequencia: 24 };
+  assert.equal(validarFonte(ok), '');
+  assert.match(validarFonte({ ...ok, site: 'http://fonte.exemplo.invalid' }), /https/);
+  assert.match(validarFonte({ ...ok, nivel: 2 }), /nível 1/);
+  assert.match(validarFonte({ ...ok, tipo: 'platform', nivel: 1 }), /Só organizador/);
+  assert.match(validarFonte({ ...ok, frequencia: 0 }), /1 a 2160/);
+  assert.match(validarFonte({ ...ok, nome: '' }), /nome/);
+});
+
+test('agendamento mensal: texto dos dias e validação dos dias do mês', async () => {
+  const { quandoMensal, listaDiasMes } = await import('./lib.js');
+  assert.equal(quandoMensal([3, 1, 2], '03:00'), 'Dias 1, 2 e 3 de cada mês às 03:00');
+  assert.equal(quandoMensal([5], '06:30'), 'Dia 5 de cada mês às 06:30');
+  assert.equal(quandoMensal([], '03:00'), '');
+  assert.deepEqual(listaDiasMes('3, 1;2'), [1, 2, 3]);
+  for (const ruim of ['', '0', '29', '1,1', '1,2,3,4,5,6', 'a']) assert.throws(() => listaDiasMes(ruim), ruim);
+});
+
+test('o portal não tem mais as abas de fontes e divergências', async () => {
+  const { ABAS } = await import('./lib.js');
+  assert.ok(!('fontes' in ABAS) && !('divergencias' in ABAS));
+  assert.ok('catalogo' in ABAS && 'descobertas' in ABAS);
+});
+
+test('feedbacks do app: aba, tipos e resumo', async () => {
+  const { ABAS, TIPOS_FEEDBACK, resumoFeedbacks } = await import('./lib.js');
+  assert.deepEqual(ABAS.feedbacks, ['Feedbacks do app', 'catalog_admin']);
+  assert.equal(TIPOS_FEEDBACK.problem, 'Problema');
+  assert.equal(resumoFeedbacks([]), 'Nenhum feedback recebido ainda.');
+  assert.equal(resumoFeedbacks([{ kind: 'praise' }]), '1 feedback: 1 elogio.');
+  assert.equal(
+    resumoFeedbacks([{ kind: 'suggestion' }, { kind: 'problem' }, { kind: 'problem' }]),
+    '3 feedbacks: 1 sugestão, 2 problemas.',
+  );
+});
+
+test('denúncias e contas excluídas: abas, motivos e resumo', async () => {
+  const { ABAS, MOTIVOS_DENUNCIA, ALVOS_DENUNCIA, resumoDenuncias } = await import('./lib.js');
+  assert.deepEqual(ABAS.denuncias, ['Denúncias', 'catalog_admin']);
+  assert.deepEqual(ABAS.excluidas, ['Contas excluídas', 'user_admin']);
+  assert.equal(MOTIVOS_DENUNCIA.nudity, 'Nudez ou conteúdo sexual');
+  assert.equal(ALVOS_DENUNCIA.user, 'Pessoa');
+  assert.equal(resumoDenuncias([]), 'Nenhuma denúncia recebida.');
+  assert.equal(resumoDenuncias([{}]), '1 denúncia.');
+  assert.equal(resumoDenuncias([{}, {}]), '2 denúncias.');
+});

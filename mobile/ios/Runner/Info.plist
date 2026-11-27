@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Runpass</string>
+	<string>+1Pódio</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,8 +26,14 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Entrar no +1Pódio com o rosto, sem digitar a senha.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Tirar uma foto de perfil ou da medalha para usar no +1Pódio.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Selecionar uma foto da corrida para validar e associar à participação.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Sugerir sua cidade no cadastro, sem rastrear em segundo plano.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -68,5 +74,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

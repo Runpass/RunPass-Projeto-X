@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: RunPass monthly cost budget with e-mail alerts (candidate, not applied). Apply as root or an administrator.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, hom, prod]
+    Default: dev
+  # 30% of the R$ 1,000 DEV ceiling at PTAX R$ 5.4935 (03/11/2026) is US$ 54.61.
+  MonthlyLimitUsd:
+    Type: Number
+    Default: 54.61
+    MinValue: 1
+  # Recipients are passed at deploy time and never committed. The first one is required
+  # because a budget notification needs at least one subscriber.
+  AlertEmail1:
+    Type: String
+    NoEcho: true
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  AlertEmail2:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  AlertEmail3:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  AlertEmail4:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
+
+Conditions:
+  HasAlertEmail2: !Not [!Equals [!Ref AlertEmail2, '']]
+  HasAlertEmail3: !Not [!Equals [!Ref AlertEmail3, '']]
+  HasAlertEmail4: !Not [!Equals [!Ref AlertEmail4, '']]
+
+Resources:
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub runpass-${Environment}-mensal
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyLimitUsd
+          Unit: USD
+        CostTypes:
+          IncludeTax: true
+          IncludeSubscription: true
+          UseBlended: false
+          IncludeRefund: false
+          IncludeCredit: false
+          IncludeUpfront: true
+          IncludeRecurring: true
+          IncludeOtherSubscription: true
+          IncludeSupport: true
+          IncludeDiscount: true
+          UseAmortized: false
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - {SubscriptionType: EMAIL, Address: !Ref AlertEmail1}
+            - !If [HasAlertEmail2, {SubscriptionType: EMAIL, Address: !Ref AlertEmail2}, !Ref 'AWS::NoValue']
+            - !If [HasAlertEmail3, {SubscriptionType: EMAIL, Address: !Ref AlertEmail3}, !Ref 'AWS::NoValue']
+            - !If [HasAlertEmail4, {SubscriptionType: EMAIL, Address: !Ref AlertEmail4}, !Ref 'AWS::NoValue']
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - {SubscriptionType: EMAIL, Address: !Ref AlertEmail1}
+            - !If [HasAlertEmail2, {SubscriptionType: EMAIL, Address: !Ref AlertEmail2}, !Ref 'AWS::NoValue']
+            - !If [HasAlertEmail3, {SubscriptionType: EMAIL, Address: !Ref AlertEmail3}, !Ref 'AWS::NoValue']
+            - !If [HasAlertEmail4, {SubscriptionType: EMAIL, Address: !Ref AlertEmail4}, !Ref 'AWS::NoValue']
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - {SubscriptionType: EMAIL, Address: !Ref AlertEmail1}
+            - !If [HasAlertEmail2, {SubscriptionType: EMAIL, Address: !Ref AlertEmail2}, !Ref 'AWS::NoValue']
+            - !If [HasAlertEmail3, {SubscriptionType: EMAIL, Address: !Ref AlertEmail3}, !Ref 'AWS::NoValue']
+            - !If [HasAlertEmail4, {SubscriptionType: EMAIL, Address: !Ref AlertEmail4}, !Ref 'AWS::NoValue']
+
+Outputs:
+  BudgetName:
+    Value: !Sub runpass-${Environment}-mensal

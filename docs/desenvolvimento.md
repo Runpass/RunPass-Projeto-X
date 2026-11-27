@@ -52,9 +52,26 @@ cd mobile
 flutter run --dart-define=RUNPASS_API_URL=https://api.example.test --dart-define=RUNPASS_COGNITO_URL=https://cognito-idp.sa-east-1.amazonaws.com --dart-define=RUNPASS_COGNITO_CLIENT_ID=CLIENT_PUBLICO
 ```
 
+Páginas legais (exigência da loja): `RUNPASS_PRIVACY_URL` e `RUNPASS_TERMS_URL` também são `--dart-define`, com endereço **https** da política de privacidade e dos termos de uso (textos do jurídico, publicados pelo time). Sem elas, os links em Configurações e nas telas de entrar/criar conta avisam que a página ainda não está disponível; **o build para a loja só vale com as duas definidas**.
+
 Os endereços acima são exemplos, não serviços disponíveis. Backend: consulte `backend/README.md` para factory/configuração explícita e comando que falha fechado por padrão. O template Cognito pode ser verificado com `make infra-check` sem aplicar. Principal/substituto e recuperação de operadores: `docs/operadores.md`.
 
 Se o ambiente virtual sob Documents apresentar lentidão ao ler dependências, crie outro fora dessa pasta com os mesmos requisitos: `make setup VENV=~/.cache/runpass/venv` e `make check VENV=~/.cache/runpass/venv`. Registrar caminho e resultados; não confundir troca de diretório com mudança de versões.
+
+## Publicação e branches
+
+O repositório oficial é `Runpass/RunPass-Projeto-X`, com os branches `dev`, `hom` e `main`. Todo envio vai para `dev`, por pull request: os rulesets recusam push direto (`GH013`, "Changes must be made through a pull request"). Fluxo: branch de funcionalidade a partir de `runpass/dev`, push para o remoto `runpass` e `gh pr create --repo Runpass/RunPass-Projeto-X --base dev`. Promoção para `hom` e `main` é decisão separada, também por PR. O remoto `origin` aponta para o repositório antigo (`Moura7/RunPass-Projeto-X`) e não recebe mais envios. O workflow `check.yml` roda em pull requests e em pushes para `dev`, `hom` e `main`. Não há workflow de deploy; ele só entra depois dos GitHub Environments com aprovadores (ver `PDLC/M4/S09-integracao-dev.md`).
+
+## Smoke test da jornada
+
+`scripts/smoke_journey.py` percorre a jornada principal por HTTP (status, perfil, admissão, catálogo, rascunho, versão antiga rejeitada, acesso alheio negado, imagem, conclusão com oito notas, avaliação e exclusão) e imprime `APROVADO`, `FALHA` ou `NAO EXECUTADO` por passo, com o tempo. Usa só a biblioteca padrão e dados sintéticos. Os tokens vêm apenas do ambiente (`RUNPASS_ACCESS_TOKEN`; opcionalmente `RUNPASS_ACCESS_TOKEN_OTHER` para o passo do usuário alheio) e nunca são impressos, assim como os corpos das respostas. Exclusão de conta é destrutiva e só roda com `--delete-account`.
+
+```sh
+make api-local   # outro terminal; escreve tokens sintéticos em api/bruno/environments/Local.bru
+RUNPASS_ACCESS_TOKEN=... .venv/bin/python scripts/smoke_journey.py --base-url http://127.0.0.1:8000
+```
+
+Contra o harness local, os passos de imagem e conclusão ficam `NAO EXECUTADO`, porque o armazenamento local não oferece URL de upload HTTPS. Eles só rodam contra DEV autorizado, com URL assinada do S3 e meta de cinco segundos (`--max-image-seconds`). O script não substitui a suíte de testes nem cobre carga, DLQ, restore ou permissões IAM; é o roteiro 1 do `S09-roteiro-e-relatorio.md` em forma executável. Resultados contra DEV entram no relatório da S09 com ID de execução e horário, sem tokens.
 
 ## Catálogo S03
 
@@ -64,7 +81,7 @@ A composição AWS pode receber `catalog_table` e `cursor_encryption_key` (chave
 
 ## Demonstração visual no simulador
 
-Entrada debug separada, sem rede: `mobile/lib/main_demo.dart`. Banner visível, dados fictícios, estado apenas em memória. E-mail inicial `demo@runpass.test`, senha `RunpassDemo123!`; cadastro fictício `.test`, confirmação/recuperação `123456`. Não testa Cognito ou backend real, não inserir dados pessoais reais. `lib/main.dart` continua a entrada do app real, sem fallback de autenticação falsa.
+Entrada debug separada, sem rede: `mobile/lib/main_demo.dart`. Banner visível, dados fictícios, estado apenas em memória. E-mail inicial `demo@runpass.test`, senha `RunpassDemo123!` (conta vazia, para o fluxo de cadastro e primeira corrida); `medalhas@runpass.test`, mesma senha, já admitida e com seis corridas concluídas fictícias, para ver Início, Meu Medalheiro e Perfil preenchidos; cadastro fictício `.test`, confirmação/recuperação `123456`. Não testa Cognito ou backend real, não inserir dados pessoais reais. `lib/main.dart` continua a entrada do app real, sem fallback de autenticação falsa.
 
 ```sh
 cd mobile
@@ -78,4 +95,20 @@ Xcode 27 usa Device Hub; o runtime iOS precisa estar instalado e o dispositivo d
 Execute `make api-local`. O servidor escuta somente em `http://127.0.0.1:8000`, usa os serviços reais de S02/S03 com armazenamento em memória e gera ambientes locais com tokens sintéticos. Abra `api/bruno` no Bruno ou importe `.local/runpass-api/RunPass-local.openapi.json` no Insomnia. Instruções completas: [`api/README.md`](../api/README.md).
 
 Esse fluxo não exige simulador nem AWS. O processo reinicia os dados e as chaves ao ser encerrado; os arquivos com tokens são privados, ignorados pelo Git e expiram em uma hora.
+
+## Teste em iPhone real contra o DEV
+
+Pré-requisitos, feitos uma vez pela pessoa dona do aparelho: iPhone com **Modo Desenvolvedor** ligado (Ajustes → Privacidade e Segurança), cabo ao Mac, **Xcode** com o Apple ID em Xcode → Settings → Accounts (conta gratuita basta, mas a instalação vale 7 dias) e, em `mobile/ios/Runner.xcworkspace`, o **Team** escolhido em Signing & Capabilities (o identificador `br.com.runpass.runpass` pode precisar ser trocado por um único se o Xcode recusar; não commitar essa troca).
+
+```sh
+cd mobile && flutter devices                         # copie o id do iPhone
+export AWS_PROFILE=runpass-dev-sa SSL_CERT_FILE=/etc/ssl/cert.pem
+scripts/run-device-dev.sh <id-do-iphone>
+```
+
+O script lê a URL da API e o client de corredores das saídas das stacks `runpass-dev-app` e `runpass-dev-identity` e roda o app em release com `--dart-define`. Na primeira vez, confie no desenvolvedor em Ajustes → Geral → VPN e Gerenciamento de Dispositivo.
+
+**Conta do corredor:** o app usa o cadastro do Cognito com o e-mail real da pessoa, que recebe um código de confirmação. Use um e-mail seu; a conta é de teste e pode ser apagada pelo app (exclusão de conta).
+
+**O que anotar:** cada passo da jornada (cadastro, login, catálogo, rascunho, foto, conclusão, medalha, exclusão), o tempo da foto (meta de 5 s) e qualquer mensagem de erro. **HEIC:** o app escolhe a foto pela galeria com `imageQuality` definido, e o seletor do iOS deve devolver JPEG; isso **não foi verificado em aparelho**. O backend só aceita JPEG, MPO e PNG, então um HEIC que chegasse sem conversão seria recusado (`IMAGE_FORMAT_INVALID`). O resultado do teste decide se precisamos converter HEIC. Foto de câmera não é testável ainda: o app só abre a galeria.
 

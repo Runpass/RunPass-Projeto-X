@@ -1,17 +1,30 @@
 """Explicit AWS composition, called only by a separately authorized environment entry point."""
 
+import time
 from dataclasses import dataclass
 
+from .admin_api import MfaPolicy, create_admin_app, find_portal_dir
+from .admin_banners import BannerAdmin
+from .admin_costs import AwsCosts, OpenAiOrg, OpenAiUsage
+from .admin_discoveries import DiscoveryStore
+from .admin_divergences import DivergenceReview
+from .admin_sources import SourceRegistry
+from .admin_users import AdminUsers, CatalogRunner, CatalogSchedules
 from .api import create_app
-from .aws_adapters import CognitoAccountRemover, S3AuditSink
+from .auto_import import AutoImport
+from .aws_adapters import CognitoAccountRemover, S3AuditSink, S3BlobStore
 from .catalog import CatalogService
+from .edition_requests import EditionRequestService
 from .erasure import ErasureProcessor
 from .events import EventProcessor
 from .identity import CognitoDirectory, CognitoVerifier, JwksProvider
 from .participation import ParticipationService
+from .quality_live import LiveQuality
 from .service import IdentityService
+from .social import SocialService
 from .store import DynamoStore
 from .upload import UploadService
+from .web_lookup import WebLookup
 
 
 @dataclass(frozen=True)
@@ -28,9 +41,10 @@ class AwsSettings:
     cursor_encryption_key: bytes | None = None
     history_table: str | None = None
     projections_table: str | None = None
+    runner_user_pool_id: str | None = None
 
 
-def _identity_service(settings: AwsSettings, dynamodb_client):
+def _identity_service(settings: AwsSettings, dynamodb_client, account_remover=None):
     store = DynamoStore(
         dynamodb_client,
         {
@@ -47,25 +61,209 @@ def _identity_service(settings: AwsSettings, dynamodb_client):
         settings.erasure_hmac_key,
         environment=settings.environment,
         identity_namespace=settings.runner_issuer,
+        account_remover=account_remover,
     )
 
 
-def create_aws_app(settings: AwsSettings, dynamodb_client, cognito_client, blob_store=None):
+def create_aws_app(
+    settings: AwsSettings,
+    dynamodb_client,
+    cognito_client,
+    blob_store=None,
+    natural_search=None,
+    web_lookup_invoke=None,
+):
     verifier = CognitoVerifier(
         settings.runner_issuer,
         settings.runner_client_id,
         JwksProvider(settings.runner_issuer, settings.region),
         CognitoDirectory(cognito_client),
     )
-    service = _identity_service(settings, dynamodb_client)
+    # Com o pool configurado, DELETE /me libera o email/username no Cognito na hora do pedido,
+    # em vez de so no proximo ciclo da manutencao (ver ErasureProcessor).
+    account_remover = (
+        CognitoAccountRemover(cognito_client, settings.runner_user_pool_id)
+        if settings.runner_user_pool_id
+        else None
+    )
+    service = _identity_service(settings, dynamodb_client, account_remover)
     catalog = None
     participations = None
+    edition_requests = None
     if settings.catalog_table and settings.cursor_encryption_key:
         catalog = CatalogService(service, settings.cursor_encryption_key)
         if settings.history_table:
             participations = ParticipationService(service, catalog, settings.cursor_encryption_key)
-    uploads = UploadService(service, blob_store) if blob_store is not None else None
-    return create_app(service, verifier, catalog, participations, uploads)
+            edition_requests = EditionRequestService(
+                service, settings.cursor_encryption_key, catalog, blob_store
+            )
+    social = SocialService(service) if settings.history_table else None
+    uploads = None
+    if blob_store is not None:
+        uploads = UploadService(
+            service,
+            blob_store,
+            may_view=social.may_view_photo if social else None,
+            may_view_profile=social.may_view_profile_photo if social else None,
+        )
+    return create_app(
+        service,
+        verifier,
+        catalog,
+        participations,
+        uploads,
+        social,
+        natural_search,
+        edition_requests,
+        WebLookup(service, web_lookup_invoke) if web_lookup_invoke else None,
+    )
+
+
+def _openai_log_groups(catalog_function):
+    """Logs das Lambdas do catalogo que chamam a OpenAI (rotina semanal e busca em linguagem natural)."""
+    if not catalog_function:
+        return []
+    base = catalog_function.rsplit("-", 1)[0]
+    return [f"/aws/lambda/{base}-semanal", f"/aws/lambda/{base}-busca"]
+
+
+def _banner_admin(service, catalog, clock, media):
+    if not media:
+        return None
+    return BannerAdmin(
+        service.store,
+        catalog,
+        S3BlobStore(media["s3"], media["medal_bucket"]),
+        media["s3"],
+        media.get("report_bucket", ""),
+        clock,
+    )
+
+
+def _quality_live(service, clock, media):
+    if not media:
+        return None
+    review = DivergenceReview(service.store, media["s3"], media.get("report_bucket", ""), clock)
+    return LiveQuality(media["s3"], media.get("report_bucket", ""), review)
+
+
+def _auto_import(service, catalog, media):
+    if not media or not media.get("report_bucket"):
+        return None
+    return AutoImport(service.store, catalog, media["s3"], media["report_bucket"])
+
+
+def _monthly(service, clock, discoveries, media):
+    if not media or not media.get("report_bucket"):
+        return None
+    from .monthly_update import MonthlyUpdate
+
+    return MonthlyUpdate(service.store, discoveries, media["s3"], media["report_bucket"], clock)
+
+
+def create_monthly_aws(settings: AwsSettings, dynamodb_client, s3_client, report_bucket):
+    """Aplicacao da atualizacao mensal fora da API (junto do evento horario da funcao do portal)."""
+    from .monthly_update import MonthlyUpdate
+
+    service = _identity_service(settings, dynamodb_client)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    discoveries = DiscoveryStore(service.store, time.time, catalog)
+    return MonthlyUpdate(service.store, discoveries, s3_client, report_bucket, time.time)
+
+
+def create_discovery_aws(settings: AwsSettings, dynamodb_client):
+    """Ingestao da esteira do catalogo (evento IAM do Lambda do portal, nunca HTTP)."""
+    service = _identity_service(settings, dynamodb_client)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    return DiscoveryStore(service.store, time.time, catalog)
+
+
+def create_auto_import_aws(settings: AwsSettings, dynamodb_client, s3_client, report_bucket):
+    """Importe automatico fora da API (evento agendado da funcao do portal). Desligado ate o portal ligar."""
+    service = _identity_service(settings, dynamodb_client)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    return AutoImport(service.store, catalog, s3_client, report_bucket)
+
+
+def _divergences(service, clock, media):
+    if not media:
+        return None
+    return DivergenceReview(service.store, media["s3"], media.get("report_bucket", ""), clock)
+
+
+def create_admin_aws_app(
+    settings: AwsSettings,
+    dynamodb_client,
+    cognito_client,
+    operator_issuer,
+    operator_client_id,
+    operator_pool_id,
+    portal_origin,
+    runner_pool_id="",
+    lambda_client=None,
+    catalog_function="",
+    logs_client=None,
+    scheduler_client=None,
+    costs=None,
+    media=None,
+):
+    """API do portal: so tokens do pool de operadores; o MFA do pool e conferido (ver admin_api)."""
+    service = _identity_service(settings, dynamodb_client)
+    catalog = CatalogService(service, settings.cursor_encryption_key)
+    verifier = CognitoVerifier(
+        operator_issuer,
+        operator_client_id,
+        JwksProvider(operator_issuer, settings.region),
+        CognitoDirectory(cognito_client),
+        audience="operator",
+    )
+    portal = find_portal_dir()
+    clock = time.time
+    discoveries = DiscoveryStore(service.store, clock, catalog)
+    return create_admin_app(
+        service.store,
+        catalog,
+        verifier,
+        MfaPolicy(cognito_client, operator_pool_id),
+        portal_origin,
+        clock=clock,
+        users=AdminUsers(service.store, cognito_client, runner_pool_id, operator_pool_id, clock),
+        runner=CatalogRunner(service.store, lambda_client, catalog_function, clock, logs_client),
+        banners=_banner_admin(service, catalog, clock, media),
+        divergences=_divergences(service, clock, media),
+        sources=SourceRegistry(service.store, clock),
+        discoveries=discoveries,
+        monthly=_monthly(service, clock, discoveries, media),
+        quality_live=_quality_live(service, clock, media),
+        auto_import=_auto_import(service, catalog, media),
+        openai_org=OpenAiOrg(
+            (costs or {}).get("openai_key_loader"),
+            clock,
+            (costs or {}).get("openai_project", ""),
+            (costs or {}).get("limit"),
+        ),
+        schedules=CatalogSchedules(
+            scheduler_client,
+            catalog_function,
+            clock,
+            (costs or {}).get("scheduler_role_arn", ""),
+            (costs or {}).get("catalog_function_arn", ""),
+            service.store,
+        ),
+        aws_costs=AwsCosts((costs or {}).get("ce"), clock, (costs or {}).get("budget")),
+        openai_usage=OpenAiUsage(
+            logs_client,
+            _openai_log_groups(catalog_function),
+            clock,
+            (costs or {}).get("prices"),
+            (costs or {}).get("limit"),
+        ),
+        site=(
+            {"directory": portal, "region": settings.region, "client_id": operator_client_id}
+            if portal
+            else None
+        ),
+    )
 
 
 def create_event_processor(settings: AwsSettings, dynamodb_client, s3_client, audit_bucket):

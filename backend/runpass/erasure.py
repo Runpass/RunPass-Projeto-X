@@ -5,6 +5,8 @@ from copy import deepcopy
 from .service import Problem, stamp
 from .store import Conflict, iter_partition
 
+MAX_ROWS = 90
+
 
 class ErasureProcessor:
     """`external` holds destinations with delete_owner(owner), such as the identity directory."""
@@ -13,8 +15,106 @@ class ErasureProcessor:
         self.identity, self.store, self.blobs = identity, identity.store, blobs
         self.external, self.audit = external, audit
 
+    def run_pending_participations(self, max_items=200):
+        """Executa as exclusoes de participacao aceitas: apaga o registro, a avaliacao, a medalha e as copias das
+        imagens, e marca a operacao como concluida. Cada uma e independente; a que falhar fica para a proxima rodada."""
+        completed, pending = 0, 0
+        for shard in range(16):
+            for sk, marker in iter_partition(
+                self.store, "operations", f"WORK#erase_participation#pending#{shard:02d}"
+            ):
+                if max_items <= 0:
+                    return {"completed": completed, "pending": pending + 1}
+                max_items -= 1
+                try:
+                    self._erase_participation(("operations", marker["workPartition"], sk), marker)
+                    completed += 1
+                except (Problem, Conflict):
+                    pending += 1
+        return {"completed": completed, "pending": pending}
+
+    def _erase_participation(self, marker_key, marker):
+        owner, participation_id = marker["owner"], marker["participationId"]
+        pk = "USER#" + owner
+        job_key = ("operations", pk, "JOB#" + marker["operationId"])
+        part_key = ("history", pk, "P#" + participation_id + "#PART")
+        keys = {
+            "part": part_key,
+            "review": ("history", pk, "P#" + participation_id + "#REVIEW"),
+            "medal": ("history", pk, "P#" + participation_id + "#MEDAL"),
+            "owner": ("history", "PARTICIPATION#" + participation_id, "OWNER"),
+            "revref": ("history", pk, "REVREF#" + participation_id),
+            "feedref": ("history", pk, "FEEDREF#" + participation_id),
+        }
+        job = self.store.get(job_key)
+        rows = {name: self.store.get(key) for name, key in keys.items()}
+        part = rows["part"]
+        if part is not None and part.get("state") != "deleted":
+            raise Problem(409, "PARTICIPATION_NOT_DELETED")  # nunca apaga o que nao foi excluido
+        expected = {marker_key: self.store.get(marker_key)}
+        writes = {marker_key: None}
+        # Imagens da pessoa que so esta participacao usava: apaga a copia tratada e a linha de controle.
+        references = {
+            ref
+            for ref in (
+                (part or {}).get("medalImageReference"),
+                (part or {}).get("postImageReference"),
+                (part or {}).get("medalDisplayImageReference"),
+                *((part or {}).get("morePostImageReferences") or []),
+                (rows["medal"] or {}).get("imageReference")
+                if (rows["medal"] or {}).get("imageOrigin") == "runner"
+                else None,
+            )
+            if ref
+        }
+        for ref in sorted(references):
+            image_key = ("operations", pk, "IMAGE#" + ref)
+            image = self.store.get(image_key)
+            if not image or image.get("owner") != owner or image.get("origin") != "runner":
+                continue  # foto oficial do catalogo ou de outro dono: nunca e apagada aqui
+            # A foto da prateleira nao e descontada na exclusao; as outras ja foram.
+            leftover = image.get("refs", 0) - (
+                1 if ref == (part or {}).get("medalDisplayImageReference") else 0
+            )
+            if leftover > 0:
+                continue  # ainda usada por outra participacao
+            if self.blobs is not None and hasattr(self.blobs, "delete_derived"):
+                self.blobs.delete_derived(owner, ref)
+            expected[image_key] = image
+            writes[image_key] = None
+        # Publicações extras desta corrida: saem junto (item, ponteiros e a contagem de uso da foto).
+        extras, _ = self.store.query("history", pk, prefix="XP#", limit=100)
+        for sk, extra in extras:
+            if extra.get("participationId") != participation_id:
+                continue
+            expected[("history", pk, sk)] = extra
+            writes[("history", pk, sk)] = None
+            for shared in map(tuple, extra.get("sharedKeys", [])):
+                if shared not in expected:
+                    expected[shared] = self.store.get(shared)
+                    writes[shared] = None
+        for name, key in keys.items():
+            if rows[name] is not None:
+                expected[key] = rows[name]
+                writes[key] = None
+                for shared in map(tuple, rows[name].get("sharedKeys", [])):
+                    if shared not in expected:
+                        expected[shared] = self.store.get(shared)
+                        writes[shared] = None
+        if job is not None and job.get("type") == "erase_participation":
+            expected[job_key] = job
+            writes[job_key] = {
+                **job,
+                "state": "completed",
+                "completedAt": stamp(self.identity.clock()),
+            }
+        try:
+            self.store.commit(expected, writes)
+        except Conflict as error:
+            raise Problem(503, "CONCURRENT_RETRY_REQUIRED") from error
+
     def run_pending(self, max_steps=200, limit=50):
-        """Advance accepted jobs; unfinished ones stay durable and resume on the next run."""
+        """Advance accepted account jobs; unfinished ones stay durable and resume on the next run."""
         completed, pending = 0, 0
         for shard in range(16):
             for _, marker in iter_partition(
@@ -114,13 +214,23 @@ class ErasureProcessor:
             if self.audit is not None:
                 for key, item in candidates:
                     self._delete_audit_object(key, item)
-            expected = {key: item for key, item in candidates}
-            writes = {key: None for key, _ in candidates}
+            expected, writes = {}, {}
             for key, item in candidates:
+                # One commit holds at most 100 rows; leftovers are picked up by the next step.
+                if expected and len(expected) + 1 + len(item.get("sharedKeys", [])) > MAX_ROWS:
+                    break
+                expected[key] = item
+                writes[key] = None
                 if key[0] == "history" and key[2].endswith("#PART") and item.get("id"):
                     reverse = ("history", "PARTICIPATION#" + item["id"], "OWNER")
                     expected[reverse] = self.store.get(reverse)
                     writes[reverse] = None
+                # Rows owned by this account but stored elsewhere (search index, the other side
+                # of a follow, comments): removed in the same commit as the pointer row.
+                for shared in map(tuple, item.get("sharedKeys", [])):
+                    if shared not in expected:
+                        expected[shared] = self.store.get(shared)
+                        writes[shared] = None
             try:
                 self.store.commit(expected, writes)
             except Conflict as error:

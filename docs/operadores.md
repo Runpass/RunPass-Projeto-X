@@ -10,3 +10,55 @@ Procedimento preparado na S02; não executado na AWS. Bloquear habilitação adm
 6. Recuperação: confirmar identidade por responsável distinto, suspender ACCESS/incrementar versão antes de redefinir fatores; revogar sessões Cognito, invalidar sessões locais e exigir novo enrollment/TOTP. Reativar após revisão; não há endpoint público de bypass. Registrar motivo/ator com a política de auditoria aprovada, sem copiar segredo ou token.
 
 Antes de DEV: criar políticas IAM por recurso para identidade/sessões, definir armazenamento do segredo HMAC e provar que cliente público não pode gravar atestações. Antes de PROD: ensaiar primeira autenticação, enrollment incompleto, refresh, token alheio, revogação, recuperação e ausência do principal. A função Python/testes locais demonstram o protocolo, não uma execução real de MFA.
+
+## Alertas críticos (escalonamento)
+
+Definido em 04/11/2026: **Thiago é o primeiro responsável e Rafael o segundo.** Os alertas do tópico SNS `CriticalAlerts` (mensagens nas DLQs de eventos e auditoria, erros 5xx da API e falhas da manutenção agendada) chegam por e-mail aos quatro endereços cadastrados, que ficam fora do Git e entram como parâmetros `AlertEmail1` a `AlertEmail4` no deploy. O primeiro responsável confirma o recebimento e investiga; o segundo assume se o primeiro não puder. O prazo de resposta ainda não foi definido e deve ser acordado antes de DEV receber tráfego de teste de carga. O recebimento só é provado no deploy: cada destinatário confirma o e-mail de assinatura e um alarme de teste (`aws cloudwatch set-alarm-state`) deve chegar a todos.
+
+## Política IAM dos operadores: bloco KMS
+
+A política dos usuários de operador (`runpass-dev-thiago`, `runpass-dev-rafael` e equivalentes) cobre CloudFormation, Lambda, DynamoDB, S3, SQS, SNS, CloudWatch e demais serviços em `sa-east-1`, mas **não tinha ações de KMS**. A chave de alertas da stack de dados (`AlertsKey`, necessária porque alarmes do CloudWatch não publicam em tópico cifrado com `alias/aws/sns`) falhou na primeira execução em 04/11/2026 com `UnauthorizedTaggingOperation`. Acrescentar este bloco ao array `Statement`:
+
+```json
+{
+    "Sid": "ManageRunPassAlertsKeyInSaoPaulo",
+    "Effect": "Allow",
+    "Action": [
+        "kms:CreateKey", "kms:DescribeKey", "kms:TagResource", "kms:UntagResource",
+        "kms:ListResourceTags", "kms:PutKeyPolicy", "kms:GetKeyPolicy",
+        "kms:EnableKeyRotation", "kms:GetKeyRotationStatus", "kms:CreateAlias",
+        "kms:UpdateAlias", "kms:DeleteAlias", "kms:ListAliases", "kms:ListKeys",
+        "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion"
+    ],
+    "Resource": "*",
+    "Condition": {"StringEquals": {"aws:RequestedRegion": "sa-east-1"}}
+}
+```
+
+`kms:CreateKey` não aceita ARN de chave, por isso a restrição é a região. A política completa vive no IAM; este documento registra só a mudança. O papel de deploy OIDC (`infra/deploy-role.template.yaml`) precisará de permissões equivalentes antes de o workflow criar a stack de dados.
+
+## Ensaio em DEV: criar o operador e carregar o catálogo
+
+Ferramenta: `scripts/operator_tool.py` (uso interno, nunca por HTTP). Rodar cada passo **no terminal da própria pessoa**, não em sessão de assistente, porque o comando `enroll` imprime o segredo do TOTP. Em macOS, se o Python acusar `CERTIFICATE_VERIFY_FAILED`, usar `SSL_CERT_FILE=/etc/ssl/cert.pem`.
+
+```sh
+export AWS_PROFILE=runpass-dev-sa PYTHONPATH=backend
+# 1. Pessoa que será operadora: cria o usuário no pool de operadores e cadastra o TOTP.
+python3 scripts/operator_tool.py enroll --username <email-do-operador>
+# 2. OUTRA pessoa, com o perfil AWS dela, ativa o acesso com permissão mínima.
+python3 scripts/operator_tool.py grant --subject <sub> --permission catalog_admin --operator-iam-user <usuario-iam-do-operador>
+# 3. Operadora: login com MFA e carga da fixture pelo importador real.
+python3 scripts/operator_tool.py load-catalog --username <email-do-operador>
+```
+
+A carga usa a origem `https://runpass.invalid/fixture-sintetica` (domínio `.invalid` reservado, nunca resolve) e a fixture já traz "Sintética" no nome e a descrição "não representa uma prova real". É repetível: executar de novo não duplica. O acesso vale por 1 hora de sessão e a revogação (`state` diferente de `active`) bloqueia a carga. A prova com MFA real em DEV é evidência do S09; não substitui o ensaio completo de operadores exigido antes de PROD.
+
+### Lições do primeiro ensaio (04/11/2026)
+
+- **Sessão de console sem MFA bloqueia tudo.** A política de operador nega qualquer ação sem MFA (`DenyEverythingElseWithoutMfa`). Depois de cadastrar o MFA do usuário IAM, é preciso sair e entrar de novo; só então o `aws login` e o CLI funcionam.
+- **Dependência local.** O `.venv` precisa de `botocore[crt]` para o boto3 ler a sessão do `aws login` (`.venv/bin/python -m pip install "botocore[crt]"`).
+- **Usuário incompleto.** Se o `enroll` parar no meio, o usuário fica no pool sem MFA e o comando falha com `UsernameExistsException`; apagar com `aws cognito-idp admin-delete-user` e repetir.
+- **Código TOTP.** Cada execução do `enroll` gera um segredo novo; usar a entrada nova do autenticador e esperar o código trocar. Não é o MFA do usuário IAM.
+- **Nomes IAM.** `runpass-dev-operator` (perfil `runpass-dev-sa`) e `runpass-dev-thiago` (perfil `runpass-dev-thiago`); no ensaio, o `grant` foi feito por um e a identidade registrada em `--operator-iam-user` é o outro. Ambos são da mesma pessoa, então isso não substitui a separação entre pessoas.
+- **Raiz.** Nunca usar o root pelo CLI para isso. O renome do usuário IAM exigiu uma sessão administrativa e foi o único uso do root.
+
