@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class IdentityIssue implements Exception {
   final String code;
@@ -31,6 +35,27 @@ typedef Sleeper = Future<void> Function(Duration duration);
 
 Future<void> wait(Duration duration) => Future<void>.delayed(duration);
 
+/// Envia o corpo com Content-Length explicito. Sem ele o Dart usa Transfer-Encoding: chunked,
+/// que o S3 recusa em URL pre-assinada (501 NotImplemented).
+Future<int> putBytes(
+  HttpClient client,
+  Uri uri,
+  String method,
+  Map<String, String> headers,
+  List<int> bytes,
+) async {
+  final request = await client
+      .openUrl(method, uri)
+      .timeout(const Duration(seconds: 10));
+  request.followRedirects = false;
+  headers.forEach(request.headers.set);
+  request.contentLength = bytes.length;
+  request.add(bytes);
+  final response = await request.close().timeout(const Duration(seconds: 30));
+  await response.drain<void>();
+  return response.statusCode;
+}
+
 Future<int> sendBytes(
   Uri uri,
   String method,
@@ -40,15 +65,7 @@ Future<int> sendBytes(
   if (uri.scheme != 'https') throw const IdentityIssue('INVALID_UPLOAD_URL');
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
   try {
-    final request = await client
-        .openUrl(method, uri)
-        .timeout(const Duration(seconds: 10));
-    request.followRedirects = false;
-    headers.forEach(request.headers.set);
-    request.add(bytes);
-    final response = await request.close().timeout(const Duration(seconds: 30));
-    await response.drain<void>();
-    return response.statusCode;
+    return await putBytes(client, uri, method, headers, bytes);
   } on IdentityIssue {
     rethrow;
   } on Exception {
@@ -71,7 +88,21 @@ Future<JsonReply> sendJson(
         .timeout(const Duration(seconds: 10));
     request.followRedirects = false;
     headers.forEach(request.headers.set);
-    if (body != null) request.write(jsonEncode(body));
+    if (body != null) {
+      // Bytes UTF-8 explicitos: acentos e emojis nao podem depender do charset padrao.
+      final bytes = utf8.encode(jsonEncode(body));
+      // So a API usa application/json; o Cognito exige application/x-amz-json-1.1 e nao pode
+      // ser trocado.
+      if (headers['Content-Type'] == 'application/json') {
+        request.headers.contentType = ContentType(
+          'application',
+          'json',
+          charset: 'utf-8',
+        );
+      }
+      request.contentLength = bytes.length;
+      request.add(bytes);
+    }
     final response = await request.close().timeout(const Duration(seconds: 15));
     final text = await utf8.decoder
         .bind(response)
@@ -88,6 +119,146 @@ Future<JsonReply> sendJson(
   }
 }
 
+/// Guarda o token de renovacao do Cognito (30 dias) para "manter conectado". So o token de
+/// renovacao e gravado, nunca a senha.
+///
+/// "Trancar" (Sair com biometria ligada) move o token para um item do Keychain que o iOS
+/// so entrega com rosto/digital (biometryCurrentSet) e registra quando foi trancado, para
+/// o gateway descartar a sessao trancada depois do prazo.
+abstract class TokenStore {
+  /// Le o token (na sessao trancada, o sistema pede a biometria aqui).
+  Future<String?> read();
+
+  /// Grava o token em uso e destrava: apaga a copia protegida e a data da tranca.
+  Future<void> write(String token);
+
+  /// Apaga tudo: token em uso, copia protegida e data da tranca.
+  Future<void> clear();
+
+  /// Quando a sessao foi trancada; nulo se nao esta trancada. Nao pede biometria.
+  Future<DateTime?> lockedAt();
+
+  /// Move o token para o item protegido por biometria e registra `at`.
+  Future<void> lock(DateTime at);
+}
+
+/// iOS Keychain / Android Keystore.
+class SecureTokenStore implements TokenStore {
+  static const _key = 'runpass-refresh-token';
+  static const _lockedKey = 'runpass-refresh-token-locked';
+  static const _lockedAtKey = 'runpass-refresh-token-locked-at';
+  final _storage = const FlutterSecureStorage(
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock_this_device,
+    ),
+  );
+  static const _protected = IOSOptions(
+    accessibility: KeychainAccessibility.passcode,
+    accessControlFlags: [AccessControlFlag.biometryCurrentSet],
+  );
+
+  @override
+  Future<String?> read() async {
+    try {
+      if (await lockedAt() != null) {
+        final locked = await _storage.read(
+          key: _lockedKey,
+          iOptions: _protected,
+        );
+        if (locked != null && locked.isNotEmpty) return locked;
+      }
+      return await _storage.read(key: _key);
+    } on Object {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> write(String token) async {
+    try {
+      await _storage.write(key: _key, value: token);
+    } on Object {
+      // Sem armazenamento seguro: a pessoa so precisa entrar de novo na proxima vez.
+    }
+    await _dropLock();
+  }
+
+  @override
+  Future<void> clear() async {
+    try {
+      await _storage.delete(key: _key);
+    } on Object {
+      // Nada a limpar.
+    }
+    await _dropLock();
+  }
+
+  @override
+  Future<DateTime?> lockedAt() async {
+    try {
+      final text = await _storage.read(key: _lockedAtKey);
+      return text == null ? null : DateTime.tryParse(text);
+    } on Object {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> lock(DateTime at) async {
+    try {
+      final token = await _storage.read(key: _key);
+      if (token != null && token.isNotEmpty) {
+        try {
+          await _storage.write(
+            key: _lockedKey,
+            value: token,
+            iOptions: _protected,
+          );
+          await _storage.delete(key: _key);
+        } on Object {
+          // Aparelho sem biometria/senha para proteger o item: o token segue no item comum.
+        }
+      }
+      await _storage.write(key: _lockedAtKey, value: at.toIso8601String());
+    } on Object {
+      // Sem armazenamento seguro: nada a trancar.
+    }
+  }
+
+  Future<void> _dropLock() async {
+    try {
+      await _storage.delete(key: _lockedAtKey);
+      await _storage.delete(key: _lockedKey, iOptions: _protected);
+    } on Object {
+      // Nada a limpar.
+    }
+  }
+}
+
+/// Memoria apenas; usado nos testes.
+class MemoryTokenStore implements TokenStore {
+  String? value;
+  DateTime? locked;
+  @override
+  Future<String?> read() async => value;
+  @override
+  Future<void> write(String token) async {
+    value = token;
+    locked = null;
+  }
+
+  @override
+  Future<void> clear() async {
+    value = null;
+    locked = null;
+  }
+
+  @override
+  Future<DateTime?> lockedAt() async => locked;
+  @override
+  Future<void> lock(DateTime at) async => locked = at;
+}
+
 class IdentityGateway {
   final Uri cognito;
   final Uri api;
@@ -95,9 +266,43 @@ class IdentityGateway {
   final JsonTransport transport;
   final ByteTransport byteTransport;
   final Sleeper sleeper;
+  final TokenStore? tokenStore;
+  final DateTime Function() clock;
   String? _accessToken;
+  String? _refreshToken;
   String? _pendingCommand;
   String? _pendingKey;
+
+  /// Chamadas à API ao mesmo tempo, no máximo. Abrir o app disparava centenas de uma vez e a AWS recusava o
+  /// excedente (503) quando a conta batia o limite de execuções simultâneas.
+  static const maxInFlight = 4;
+  int _inFlight = 0;
+  final Queue<Completer<void>> _waiting = Queue<Completer<void>>();
+  final Random _jitter = Random();
+
+  Future<T> _limited<T>(Future<T> Function() run) async {
+    if (_inFlight >= maxInFlight) {
+      final turn = Completer<void>();
+      _waiting.add(turn);
+      await turn.future; // a vaga é passada direto por quem terminou
+    } else {
+      _inFlight++;
+    }
+    try {
+      return await run();
+    } finally {
+      if (_waiting.isNotEmpty) {
+        _waiting.removeFirst().complete();
+      } else {
+        _inFlight--;
+      }
+    }
+  }
+
+  /// Espera antes de repetir uma leitura: cresce a cada tentativa e tem um pouco de acaso, para várias
+  /// chamadas recusadas juntas não voltarem todas no mesmo instante.
+  Duration _backoff(int attempt) =>
+      Duration(milliseconds: 400 * (1 << attempt) + _jitter.nextInt(300));
 
   IdentityGateway({
     required this.cognito,
@@ -106,6 +311,8 @@ class IdentityGateway {
     this.transport = sendJson,
     this.byteTransport = sendBytes,
     this.sleeper = wait,
+    this.tokenStore,
+    this.clock = DateTime.now,
   }) {
     if (cognito.scheme != 'https' ||
         api.scheme != 'https' ||
@@ -120,19 +327,25 @@ class IdentityGateway {
 
   bool get signedIn => _accessToken != null;
 
+  /// Ha onde guardar a sessao (app real); nos testes nao ha.
+  bool get canRestore => tokenStore != null;
+
+  /// Chamada Cognito autenticada por ClientId (SignUp, InitiateAuth, ...).
   Future<Map<String, dynamic>> _cognito(
     String operation,
     Map<String, dynamic> body,
+  ) => _cognitoCall(operation, {'ClientId': clientId, ...body});
+
+  /// Chamada Cognito sem ClientId (operacoes autenticadas por AccessToken, como
+  /// ChangePassword e GlobalSignOut, que rejeitam o parametro).
+  Future<Map<String, dynamic>> _cognitoCall(
+    String operation,
+    Map<String, dynamic> body,
   ) async {
-    final result = await transport(
-      cognito,
-      'POST',
-      {
-        'Content-Type': 'application/x-amz-json-1.1',
-        'X-Amz-Target': 'AWSCognitoIdentityProviderService.$operation',
-      },
-      {'ClientId': clientId, ...body},
-    );
+    final result = await transport(cognito, 'POST', {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityProviderService.$operation',
+    }, body);
     if (result.status < 200 || result.status >= 300) {
       // Provider messages can contain identifiers; only a stable error code reaches the UI.
       throw IdentityIssue(
@@ -144,14 +357,46 @@ class IdentityGateway {
     return result.body;
   }
 
+  /// true quando este SignUp foi retomado: o e-mail ja existia no Cognito,
+  /// ainda sem confirmar (fechou o app antes de digitar o codigo), em vez de
+  /// criado agora mesmo. A senha que a pessoa definiu nesta tentativa NAO vale
+  /// nesse caso — a conta ja tem a senha definida na primeira tentativa, e nao
+  /// ha como troca-la antes de confirmar o e-mail (o Cognito recusa
+  /// `ForgotPassword` num cadastro ainda nao confirmado). A tela avisa isso e,
+  /// depois de `confirm()`, manda pro login normal em vez de entrar direto —
+  /// nao da pra saber qual das senhas digitadas (desta vez ou da primeira) e
+  /// a que vale.
+  bool resumedSignUp = false;
+
+  /// A senha entra no proprio SignUp (nunca uma temporaria trocada depois):
+  /// elimina o estado "e-mail confirmado mas sem senha nenhuma" por completo,
+  /// que era a causa real dos e-mails travados no meio do cadastro.
   Future<void> signUp(String email, String password) async {
-    await _cognito('SignUp', {
-      'Username': email,
-      'Password': password,
-      'UserAttributes': [
-        {'Name': 'email', 'Value': email},
-      ],
-    });
+    try {
+      await _cognito('SignUp', {
+        'Username': email,
+        'Password': password,
+        'UserAttributes': [
+          {'Name': 'email', 'Value': email},
+        ],
+      });
+      resumedSignUp = false;
+    } on IdentityIssue catch (issue) {
+      if (issue.code != 'UsernameExistsException') rethrow;
+      // SignUp nao diz se o username existente ja foi confirmado ou nao. Em vez de
+      // travar a pessoa, tenta reenviar o codigo de confirmacao: o Cognito so
+      // recusa esse reenvio quando a conta JA esta confirmada
+      // (InvalidParameterException) — e, como a senha agora sempre entra junto
+      // do SignUp, uma conta confirmada SEMPRE tem uma senha de verdade, entao
+      // o erro original ("ja existe conta, entre ou recupere senha") e o certo
+      // pra tela nesse caso, sem mais nenhuma excecao a tratar.
+      try {
+        await resendConfirmation(email);
+      } on IdentityIssue {
+        throw issue;
+      }
+      resumedSignUp = true;
+    }
   }
 
   Future<void> confirm(String email, String code) async {
@@ -177,7 +422,11 @@ class IdentityGateway {
     });
   }
 
-  Future<void> signIn(String email, String password) async {
+  Future<void> signIn(
+    String email,
+    String password, {
+    bool keepSignedIn = false,
+  }) async {
     clearSession();
     final response = await _cognito('InitiateAuth', {
       'AuthFlow': 'USER_PASSWORD_AUTH',
@@ -193,6 +442,96 @@ class IdentityGateway {
       throw const IdentityIssue('INVALID_TOKEN');
     }
     _accessToken = token;
+    final refresh =
+        (response['AuthenticationResult']
+            as Map<String, dynamic>?)?['RefreshToken'];
+    if (refresh is String && refresh.isNotEmpty) {
+      _refreshToken = refresh;
+      if (keepSignedIn) {
+        await tokenStore?.write(refresh);
+      } else {
+        await tokenStore?.clear();
+      }
+    }
+  }
+
+  /// Renova o acesso com o token guardado. Falso se nao ha token ou o Cognito o recusou
+  /// (expirado, revogado); falha de rede lanca `IdentityIssue` e mantem o token guardado.
+  Future<bool> restoreSession() async {
+    if (await _lockExpired()) return false;
+    final wasLocked = await isLocked;
+    final stored = _refreshToken ?? await tokenStore?.read();
+    if (stored == null || stored.isEmpty) return false;
+    final result = await transport(
+      cognito,
+      'POST',
+      {
+        'Content-Type': 'application/x-amz-json-1.1',
+        'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth',
+      },
+      {
+        'ClientId': clientId,
+        'AuthFlow': 'REFRESH_TOKEN_AUTH',
+        'AuthParameters': {'REFRESH_TOKEN': stored},
+      },
+    );
+    final token =
+        (result.body['AuthenticationResult']
+            as Map<String, dynamic>?)?['AccessToken'];
+    if (result.status >= 200 &&
+        result.status < 300 &&
+        token is String &&
+        token.isNotEmpty) {
+      _accessToken = token;
+      _refreshToken = stored;
+      if (wasLocked) await tokenStore?.write(stored); // destranca
+      return true;
+    }
+    if (result.status >= 500 || result.status == 429) {
+      throw const IdentityIssue('SERVICE_UNAVAILABLE');
+    }
+    await forgetSession();
+    return false;
+  }
+
+  /// Ha um token de renovacao guardado neste aparelho (base do "entrar com o rosto").
+  /// Nao pede biometria: na sessao trancada so confere a data da tranca.
+  Future<bool> get hasStoredSession async {
+    if (await _lockExpired()) return false;
+    if (await isLocked) return true;
+    final stored = _refreshToken ?? await tokenStore?.read();
+    return stored != null && stored.isNotEmpty;
+  }
+
+  /// Quanto tempo a sessao trancada (Sair com biometria) continua valendo no aparelho.
+  static const lockTtl = Duration(days: 7);
+
+  /// A sessao foi trancada com "Sair" e o token esta atras da biometria do aparelho.
+  Future<bool> get isLocked async => (await tokenStore?.lockedAt()) != null;
+
+  /// Passou do prazo da sessao trancada: esquece o token e a pessoa entra com a senha.
+  Future<bool> _lockExpired() async {
+    final at = await tokenStore?.lockedAt();
+    if (at == null || clock().difference(at) <= lockTtl) return false;
+    await forgetSession();
+    return true;
+  }
+
+  /// Sai da conta neste aparelho SEM revogar o token guardado: a proxima entrada e feita
+  /// com a biometria. So vale com a biometria ligada; sem ela, use `signOut`.
+  /// O token passa para um item do Keychain que so abre com rosto/digital e a tranca vale
+  /// por `lockTtl`.
+  Future<void> lockSession() async {
+    clearSession();
+    _refreshToken = null;
+    await tokenStore?.lock(clock());
+  }
+
+  /// Esquece a sessao neste aparelho, inclusive a guardada para "manter conectado".
+  Future<void> forgetSession() async {
+    clearSession();
+    _refreshToken = null;
+    await tokenStore?.clear();
   }
 
   Future<Map<String, dynamic>> request(
@@ -200,6 +539,14 @@ class IdentityGateway {
     String method = 'GET',
     Map<String, dynamic>? body,
     Map<String, String>? query,
+  }) => _request(path, method: method, body: body, query: query, retry: true);
+
+  Future<Map<String, dynamic>> _request(
+    String path, {
+    String method = 'GET',
+    Map<String, dynamic>? body,
+    Map<String, String>? query,
+    required bool retry,
   }) async {
     if (_accessToken == null) throw const IdentityIssue('INVALID_TOKEN');
     final command = '$method:$path:${jsonEncode(body)}';
@@ -218,21 +565,64 @@ class IdentityGateway {
       }
       headers['Idempotency-Key'] = _pendingKey!;
     }
-    final result = await transport(
-      api.replace(
-        path: '${api.path.replaceFirst(RegExp(r'/$'), '')}$path',
-        queryParameters: query,
-      ),
-      method,
-      headers,
-      body,
+    final uri = api.replace(
+      path: '${api.path.replaceFirst(RegExp(r'/$'), '')}$path',
+      queryParameters: query,
     );
+    // Leitura (GET) recusada por sobrecarga ou sem resposta: tenta de novo até 2 vezes, com espera crescente.
+    // Escritas não repetem aqui (a tela decide).
+    late JsonReply result;
+    for (var attempt = 0; ; attempt++) {
+      final canRetry = method == 'GET' && attempt < 2;
+      try {
+        result = await _limited(() => transport(uri, method, headers, body));
+      } on IdentityIssue catch (issue) {
+        if (canRetry && issue.code == 'SERVICE_UNAVAILABLE') {
+          await sleeper(_backoff(attempt));
+          continue;
+        }
+        rethrow;
+      }
+      // Só falha de infraestrutura (o API Gateway/Lambda recusou por sobrecarga, sem o `code` da aplicação) ou
+      // quando o próprio servidor pede para repetir. Erro da aplicação volta direto para a tela.
+      final overloaded =
+          const {429, 502, 504}.contains(result.status) ||
+          (result.status == 503 &&
+              (result.body['code'] == null ||
+                  result.body['code'] == 'CONCURRENT_RETRY_REQUIRED'));
+      if (canRetry && overloaded) {
+        await sleeper(_backoff(attempt));
+        continue;
+      }
+      break;
+    }
     if (result.status == 401) {
+      // O acesso vale 60 minutos; com "manter conectado" renova uma vez e repete a chamada.
+      if (retry && _refreshToken != null) {
+        final bool restored;
+        try {
+          restored = await restoreSession();
+        } on Exception {
+          // Sem rede para renovar: a sessão continua guardada e a próxima chamada tenta de novo
+          // (antes ela era descartada e o app ficava "vazio" até ser fechado).
+          throw const IdentityIssue('SERVICE_UNAVAILABLE');
+        }
+        if (restored) {
+          // Fora do try: um erro da chamada repetida (ex.: 409) sobe como é, sem derrubar a sessão.
+          return await _request(
+            path,
+            method: method,
+            body: body,
+            query: query,
+            retry: false,
+          );
+        }
+      }
       clearSession();
       throw const IdentityIssue('INVALID_TOKEN');
     }
     if (result.status == 403 && result.body['code'] == 'ACCOUNT_UNAVAILABLE') {
-      clearSession();
+      await forgetSession();
     }
     if (result.status < 200 || result.status >= 300) {
       throw IdentityIssue(
@@ -298,7 +688,7 @@ class IdentityGateway {
 
   Future<void> signOut() async {
     final token = _accessToken;
-    clearSession();
+    await forgetSession();
     if (token == null) return;
     // GlobalSignOut has no ClientId parameter.
     await transport(

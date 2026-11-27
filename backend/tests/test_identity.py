@@ -20,11 +20,12 @@ from runpass.identity import (
     Principal,
     require_operator,
 )
+from runpass.models import PatchProfile
 from runpass.service import IdentityService, Problem
-from runpass.store import DynamoStore, MemoryStore
+from runpass.store import DynamoStore, MemoryStore, Unavailable
 
 NOW = datetime(2026, 10, 28, 15, tzinfo=timezone.utc)
-ADULT = {"birthDate": "1990-01-01", "declaresAdult": True}
+ADULT = {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"}
 
 
 class ServiceTests(unittest.TestCase):
@@ -35,6 +36,18 @@ class ServiceTests(unittest.TestCase):
             self.store, b"synthetic-erasure-key-not-a-secret!", lambda: self.now
         )
         self.actor = Principal("u1", True)
+
+    def test_authorize_e_so_leitura_sem_transacao_mas_continua_barrando_conta_indisponivel(self):
+        self.create("u1")
+        commits = []
+        original = self.store.commit
+        self.store.commit = lambda expected, writes: (commits.append(1), original(expected, writes))
+        self.service.authorize(self.actor)  # conta ativa: confere e nao grava nem abre transacao
+        self.assertEqual(commits, [])
+        # sem perfil/admissao, quando exigida, segue barrando
+        with self.assertRaises(Problem) as caught:
+            self.service.authorize(Principal("ninguem", True), admitted=True)
+        self.assertEqual(caught.exception.code, "BETA_ADMISSION_REQUIRED")
 
     def create(self, subject, username=None):
         actor = Principal(subject, True)
@@ -47,15 +60,72 @@ class ServiceTests(unittest.TestCase):
         key = ("identity", "BETA#v1", "CONTROL")
         self.store.commit({key: self.store.get(key)}, {key: {"count": count}})
 
-    def test_bootstrap_is_not_admission_and_private_fields_absent(self):
+    def test_bootstrap_is_not_admission_and_birth_date_is_owner_only(self):
         self.create("u1")
         self.assertEqual(self.service.status(self.actor)["myStatus"], "not_admitted")
         with self.assertRaises(Problem) as e:
             self.service.authorize(self.actor, admitted=True)
         self.assertEqual(e.exception.code, "BETA_ADMISSION_REQUIRED")
-        self.service.admit(self.actor, "admit", ADULT)
         self.assertNotIn("birthDate", self.service.profile(self.actor))
+        self.service.admit(self.actor, "admit", ADULT)
+        # So depois da admissao, e so para o proprio titular via GET /me (decisao 06/11/2026).
+        self.assertEqual(self.service.profile(self.actor)["birthDate"], ADULT["birthDate"])
         self.assertNotIn("email", self.service.profile(self.actor))
+
+    def test_minor_is_admitted_with_private_profile_and_adult_stays_public(self):
+        # NOW e 28/10/2026: 17 anos (faz 18 no dia seguinte), 18 exatos e adulto. Dados sinteticos.
+        cases = [("minor", "2008-10-29", True), ("eighteen", "2008-10-28", None)]
+        for subject, birth, expected in cases:
+            actor = self.create(subject)
+            before = self.service.profile(actor)["version"]
+            self.service.admit(
+                actor,
+                "admit-" + subject,
+                {"birthDate": birth, "declaresAdult": True, "gender": "undisclosed"},
+            )
+            profile = self.service.profile(actor)
+            self.assertEqual(profile.get("isPrivate"), expected)
+            self.assertEqual(profile["version"], before + (1 if expected else 0))
+        # Repetir a admissao nao muda nada, e o menor pode tornar o perfil publico depois.
+        minor = Principal("minor", True)
+        self.service.admit(
+            minor,
+            "admit-minor",
+            {"birthDate": "2008-10-29", "declaresAdult": True, "gender": "undisclosed"},
+        )
+        profile = self.service.profile(minor)
+        self.assertIs(profile["isPrivate"], True)
+        self.service.patch_profile(
+            minor, "open", {"expectedVersion": profile["version"], "isPrivate": False}
+        )
+        self.assertIs(self.service.profile(minor)["isPrivate"], False)
+
+    def test_patch_profile_allows_name_and_username_before_admission_not_other_fields(
+        self,
+    ):
+        # Decisao de produto de 21/11/2026: quem ainda esta no meio do cadastro (perfil
+        # criado, nao admitido ainda) pode corrigir nome/usuario sem precisar esperar a
+        # admissao; qualquer outro campo continua exigindo conta admitida, como sempre.
+        actor = self.create("u1", "primeiro_nome")
+        with self.assertRaises(Problem) as e:
+            self.service.authorize(actor, admitted=True)
+        self.assertEqual(e.exception.code, "BETA_ADMISSION_REQUIRED")
+        changed = self.service.patch_profile(
+            actor,
+            "corrige-nome",
+            {
+                "expectedVersion": 1,
+                "displayName": "Nome Corrigido",
+                "username": "nome_corrigido",
+            },
+        )
+        self.assertEqual(changed["displayName"], "Nome Corrigido")
+        self.assertEqual(changed["username"], "nome_corrigido")
+        with self.assertRaises(Problem) as e:
+            self.service.patch_profile(
+                actor, "tenta-bio", {"expectedVersion": 2, "bio": "ainda nao admitido"}
+            )
+        self.assertEqual(e.exception.code, "BETA_ADMISSION_REQUIRED")
 
     def test_same_username_concurrently_casefolds_without_partial_account(self):
         def attempt(i):
@@ -157,6 +227,38 @@ class ServiceTests(unittest.TestCase):
         job = self.store.get(("operations", "USER#u1", "JOB#" + receipt["operationId"]))
         self.assertEqual(job["dueAt"], "2026-11-04T15:00:00Z")
 
+    def test_deletion_frees_the_cognito_identity_right_away_so_the_email_can_sign_up_again(self):
+        removed = []
+        service = IdentityService(
+            self.store,
+            b"synthetic-erasure-key-not-a-secret!",
+            lambda: self.now,
+            account_remover=Mock(delete_owner=lambda owner: removed.append(owner)),
+        )
+        actor = Principal("u1", True)
+        service.create_profile(actor, "create", {"displayName": "u1", "username": "run_u1"})
+        service.admit(actor, "admit", ADULT)
+        service.delete_account(actor, "delete")
+        # Nao espera o job assincrono: o Cognito ja foi chamado na mesma requisicao de exclusao.
+        self.assertEqual(removed, ["u1"])
+
+    def test_deletion_still_accepted_even_if_the_immediate_cognito_removal_fails(self):
+        remover = Mock()
+        remover.delete_owner.side_effect = Unavailable()
+        service = IdentityService(
+            self.store,
+            b"synthetic-erasure-key-not-a-secret!",
+            lambda: self.now,
+            account_remover=remover,
+        )
+        actor = Principal("u1", True)
+        service.create_profile(actor, "create", {"displayName": "u1", "username": "run_u1"})
+        service.admit(actor, "admit", ADULT)
+        # A tentativa imediata falha (rede etc.), mas o pedido continua aceito; o job assincrono
+        # de erasure ainda remove o usuario do Cognito mais tarde, como ja acontecia antes.
+        receipt = service.delete_account(actor, "delete")
+        self.assertTrue(receipt["accessBlocked"])
+
     def test_waitlist_voluntary_unique_and_replay_after_removal_does_not_rejoin(self):
         self.create("u1")
         self.seed_count(1000)
@@ -183,10 +285,14 @@ class ServiceTests(unittest.TestCase):
         self.now = datetime(2026, 10, 29, 1, tzinfo=timezone.utc)  # still 28th in São Paulo
         with self.assertRaises(Problem):
             self.service.admit(
-                self.actor, "young", {"birthDate": "2008-10-29", "declaresAdult": True}
+                self.actor,
+                "young",
+                {"birthDate": "2013-10-29", "declaresAdult": True, "gender": "undisclosed"},
             )
         result = self.service.admit(
-            self.actor, "adult", {"birthDate": "2008-10-28", "declaresAdult": True}
+            self.actor,
+            "adult",
+            {"birthDate": "2013-10-28", "declaresAdult": True, "gender": "undisclosed"},
         )
         self.assertTrue(result["admitted"])
 
@@ -461,6 +567,98 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(TestClient(create_app()).get("/beta/status").status_code, 503)
 
+    def test_state_accepts_only_a_two_letter_uf_code(self):
+        self.client.put(
+            "/me", json={"displayName": "Thiago", "username": "thiago"}, headers=self.headers
+        )
+        self.client.post("/beta/admissions", json=ADULT, headers=self.headers)
+        for bad in ("sp", "SPX", "S", ""):
+            response = self.client.patch(
+                "/me",
+                json={"expectedVersion": 1, "state": bad, "city": "Taboão da Serra"},
+                headers=self.headers,
+            )
+            self.assertEqual(response.status_code, 422)
+        response = self.client.patch(
+            "/me",
+            json={"expectedVersion": 1, "state": "SP", "city": "Taboão da Serra"},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.schema("OwnProfile", response.json())
+        self.assertEqual(
+            (response.json()["state"], response.json()["city"]), ("SP", "Taboão da Serra")
+        )
+
+    def test_latitude_and_longitude_accompany_state_and_city(self):
+        self.client.put(
+            "/me", json={"displayName": "Thiago", "username": "thiago"}, headers=self.headers
+        )
+        self.client.post("/beta/admissions", json=ADULT, headers=self.headers)
+        response = self.client.patch(
+            "/me",
+            json={
+                "expectedVersion": 1,
+                "state": "SP",
+                "city": "Taboão da Serra",
+                "latitude": -23.6028,
+                "longitude": -46.7922,
+            },
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.schema("OwnProfile", response.json())
+        self.assertEqual(
+            (response.json()["latitude"], response.json()["longitude"]), (-23.6028, -46.7922)
+        )
+        for bad in ({"latitude": 91}, {"longitude": -181}):
+            response = self.client.patch(
+                "/me", json={"expectedVersion": 2, **bad}, headers=self.headers
+            )
+            self.assertEqual(response.status_code, 422)
+
+    def test_owner_can_update_name_bio_and_birth_date_with_the_minimum_age_rule(self):
+        self.client.put(
+            "/me", json={"displayName": "Thiago", "username": "thiago"}, headers=self.headers
+        )
+        self.client.post("/beta/admissions", json=ADULT, headers=self.headers)
+        response = self.client.patch(
+            "/me",
+            json={
+                "expectedVersion": 1,
+                "displayName": "Thiago G.",
+                "bio": "Correr e o meu jeito de pensar",
+                "birthDate": "1991-05-20",
+            },
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("birthDate", response.json())  # nunca na resposta publica
+        mine = self.client.get("/me", headers=self.headers).json()
+        self.assertEqual(
+            (mine["displayName"], mine["bio"], mine["birthDate"]),
+            ("Thiago G.", "Correr e o meu jeito de pensar", "1991-05-20"),
+        )
+        # Menor de 13 anos, data futura, formato ruim e data apagada: recusados.
+        for i, bad in enumerate(("2020-01-01", "2999-01-01", "20/05/1991", None)):
+            response = self.client.patch(
+                "/me",
+                json={"expectedVersion": 2, "birthDate": bad},
+                headers={**self.headers, "Idempotency-Key": f"bad-{i}"},
+            )
+            self.assertIn(response.status_code, (422,), bad)
+        self.assertEqual(
+            self.client.get("/me", headers=self.headers).json()["birthDate"], "1991-05-20"
+        )
+        # A frase pode ser apagada.
+        response = self.client.patch(
+            "/me",
+            json={"expectedVersion": 2, "bio": None},
+            headers={**self.headers, "Idempotency-Key": "clear-bio"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("bio", self.client.get("/me", headers=self.headers).json())
+
     def test_other_subject_cannot_read_or_patch_owner(self):
         self.client.put(
             "/me", json={"displayName": "Name", "username": "runner"}, headers=self.headers
@@ -476,6 +674,37 @@ class ApiTests(unittest.TestCase):
 
 
 class DynamoAdapterTests(unittest.TestCase):
+    def test_patch_profile_coordinates_encode_for_real_dynamodb_not_only_memorystore(self):
+        """Regressao: MemoryStore (usado no resto dos testes) nunca serializa para o DynamoDB,
+        entao um campo gravado como `float` em vez de `Decimal` passa limpo nos testes e so
+        quebra (TypeError: Float types are not supported) contra o DynamoDB de verdade. Visto
+        em producao no DEV em 08/11/2026: PATCH /me com latitude/longitude (a maioria das
+        cidades da lista do IBGE tem coordenada) sempre retornava 500."""
+        import boto3
+
+        patch = PatchProfile(
+            expectedVersion=1,
+            state="SP",
+            city="Taboão da Serra",
+            latitude=-23.6028,
+            longitude=-46.7922,
+        )
+        profile = {"id": "u1", "username": "u1", "displayName": "U1", "version": 1}
+        for name, value in patch.model_dump(exclude_unset=True).items():
+            if name != "expectedVersion":
+                profile[name] = value
+
+        client = boto3.client(
+            "dynamodb",
+            region_name="sa-east-1",
+            aws_access_key_id="synthetic",
+            aws_secret_access_key="synthetic",
+        )
+        adapter = DynamoStore(client, {"identity": "test-identity"})
+        encoded = adapter.encode(profile)
+        self.assertIn("N", encoded["latitude"])
+        self.assertIn("N", encoded["longitude"])
+
     def test_dynamo_reads_strongly_and_writes_expected_version_in_single_action(self):
         import boto3
 

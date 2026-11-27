@@ -26,6 +26,12 @@ Parameters:
     Type: String
     AllowedPattern: '^/.+'
     Description: SSM SecureString name holding the Fernet cursor key
+  # Funcao da busca em linguagem natural (repositorio RunPass-Catalogo). Vazio = a rota
+  # /editions/search funciona so por nome, sem IA, e nenhuma permissao extra e concedida.
+  CatalogSearchFunctionName:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[A-Za-z0-9-_]{1,64}$'
   MaintenanceSchedule:
     Type: String
     Default: rate(5 minutes)
@@ -38,6 +44,7 @@ Parameters:
 
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
+  HasCatalogSearch: !Not [!Equals [!Ref CatalogSearchFunctionName, '']]
 
 Resources:
   ApiFunctionLogs:
@@ -66,6 +73,7 @@ Resources:
           RUNPASS_ENV: !Ref Environment
           RUNPASS_RUNNER_ISSUER: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${RunnerUserPoolId}'
           RUNPASS_RUNNER_CLIENT_ID: !Ref RunnerClientId
+          RUNPASS_RUNNER_USER_POOL_ID: !Ref RunnerUserPoolId
           RUNPASS_ERASURE_HMAC_PARAM: !Ref ErasureHmacParameter
           RUNPASS_IDENTITY_TABLE:
             Fn::ImportValue: !Sub '${DataStack}-IdentityTable'
@@ -82,6 +90,7 @@ Resources:
           RUNPASS_CURSOR_KEY_PARAM: !Ref CursorKeyParameter
           RUNPASS_MEDAL_BUCKET:
             Fn::ImportValue: !Sub '${DataStack}-MedalBucket'
+          RUNPASS_CATALOG_SEARCH_FUNCTION: !If [HasCatalogSearch, !Ref CatalogSearchFunctionName, !Ref AWS::NoValue]
       Tags:
         - {Key: Project, Value: RunPass}
         - {Key: Environment, Value: !Ref Environment}
@@ -131,6 +140,13 @@ Resources:
                     - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
                     - Name:
                         Fn::ImportValue: !Sub '${DataStack}-ErasureControlTable'
+              - !If
+                - HasCatalogSearch
+                - Sid: InvokeCatalogSearch
+                  Effect: Allow
+                  Action: lambda:InvokeFunction
+                  Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${CatalogSearchFunctionName}'
+                - !Ref AWS::NoValue
               - Sid: ReadCatalog
                 Effect: Allow
                 Action:
@@ -142,6 +158,28 @@ Resources:
                     - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
                     - Name:
                         Fn::ImportValue: !Sub '${DataStack}-CatalogTable'
+              # "Ja corri" numa corrida sem distancia: o corredor informa o km e a API grava uma nova versao
+              # da edicao (com indice) pelo importador do catalogo (catalog.add_runner_distance). So Put: a
+              # API nunca apaga item do catalogo. Sem isto o DynamoDB nega e o app recebe 503.
+              - Sid: RunnerInformedDistance
+                Effect: Allow
+                Action: dynamodb:PutItem
+                Resource:
+                  - !Sub
+                    - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
+                    - Name:
+                        Fn::ImportValue: !Sub '${DataStack}-CatalogTable'
+              - Sid: ReadEditionScores
+                Effect: Allow
+                Action: dynamodb:GetItem
+                Resource:
+                  - !Sub
+                    - 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Name}'
+                    - Name:
+                        Fn::ImportValue: !Sub '${DataStack}-ProjectionsTable'
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys: ['EDITION#*']
               - Sid: RunnerPhotos
                 Effect: Allow
                 Action:
@@ -166,6 +204,10 @@ Resources:
                     - 'arn:${AWS::Partition}:s3:::${Name}'
                     - Name:
                         Fn::ImportValue: !Sub '${DataStack}-MedalBucket'
+              - Sid: EraseRunnerIdentityOnDeleteRequest
+                Effect: Allow
+                Action: cognito-idp:AdminDeleteUser
+                Resource: !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${RunnerUserPoolId}'
               - Sid: ReadSecretsAtStartup
                 Effect: Allow
                 Action: ssm:GetParameter

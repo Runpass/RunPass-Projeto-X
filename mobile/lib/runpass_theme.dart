@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-const runPassOrange = Color(0xfffc5426);
+// Igualado a cor real do logo "+1Pódio" (medida nos pixels de
+// assets/brand/icon-1024.png e mark-light.png: ~#ff5620, não o #fc5426
+// anterior, levemente puxado pro vermelho/rosa em vez do âmbar do logo).
+const runPassOrange = Color(0xffff5620);
+const runPassGold = Color(0xffe8b23a);
 const runPassNavy = Color(0xff101b2b);
 const runPassMist = Color(0xfff5f7fa);
 
@@ -28,8 +33,15 @@ ThemeData runPassTheme() {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
     ),
     inputDecorationTheme: InputDecorationTheme(
+      // Mensagens de erro e de ajuda em até duas linhas: em uma só, o fim da frase era cortado.
+      errorMaxLines: 2,
+      helperMaxLines: 2,
       filled: true,
       fillColor: Colors.white,
+      // Rotulo sempre visivel acima do campo: nunca some nem sobrepoe o que a
+      // pessoa digita (antes flutuava so ao focar, e sumia de volta ao desfocar
+      // sem conteudo, o que parecia um bug).
+      floatingLabelBehavior: FloatingLabelBehavior.always,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
@@ -55,65 +67,227 @@ ThemeData runPassTheme() {
   );
 }
 
+/// Modo escuro escolhido em Configuracoes; lembrado entre aberturas do app.
+class ThemeController {
+  static const _key = 'dark-mode';
+  static final dark = ValueNotifier<bool>(false);
+
+  static Future<void> load() async {
+    try {
+      dark.value =
+          (await SharedPreferences.getInstance()).getBool(_key) ?? false;
+    } on Object {
+      dark.value = false;
+    }
+  }
+
+  static Future<void> set(bool value) async {
+    dark.value = value;
+    try {
+      await (await SharedPreferences.getInstance()).setBool(_key, value);
+    } on Object {
+      // Vale ate fechar o app.
+    }
+  }
+}
+
+/// Tema escuro de todo o app (ligado em Configuracoes).
+ThemeData runPassDarkTheme() {
+  const surface = Color(0xff1a1a1d);
+  final scheme = ColorScheme.fromSeed(
+    seedColor: runPassOrange,
+    brightness: Brightness.dark,
+    surface: surface,
+  );
+  return ThemeData(
+    useMaterial3: true,
+    colorScheme: scheme.copyWith(primary: runPassOrange),
+    scaffoldBackgroundColor: const Color(0xff0e0e10),
+    appBarTheme: const AppBarTheme(
+      backgroundColor: Color(0xff0e0e10),
+      foregroundColor: Colors.white,
+      centerTitle: false,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+    ),
+    cardTheme: CardThemeData(
+      color: surface,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: surface,
+      selectedColor: runPassOrange,
+      labelStyle: const TextStyle(color: Colors.white),
+      side: BorderSide.none,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      // Mensagens de erro e de ajuda em até duas linhas: em uma só, o fim da frase era cortado.
+      errorMaxLines: 2,
+      helperMaxLines: 2,
+      filled: true,
+      fillColor: surface,
+      // Rotulo sempre visivel acima do campo: ver comentario equivalente no tema claro.
+      floatingLabelBehavior: FloatingLabelBehavior.always,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xff33363b)),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: runPassOrange,
+        foregroundColor: Colors.white,
+        minimumSize: const Size.fromHeight(52),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      ),
+    ),
+    navigationBarTheme: const NavigationBarThemeData(
+      backgroundColor: Color(0xff0e0e10),
+      indicatorColor: Color(0xff3a2a22),
+      labelTextStyle: WidgetStatePropertyAll(TextStyle(fontSize: 11)),
+    ),
+  );
+}
+
+/// Logotipo "+1Pódio" (imagem). Texto preto no tema claro e branco no escuro.
 class RunPassWordmark extends StatelessWidget {
   final bool compact;
   const RunPassWordmark({super.key, this.compact = false});
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(
-        Icons.directions_run_rounded,
-        color: runPassOrange,
-        size: compact ? 25 : 35,
-      ),
-      const SizedBox(width: 5),
-      RichText(
-        text: TextSpan(
-          style: TextStyle(
-            fontWeight: FontWeight.w900,
-            fontSize: compact ? 25 : 34,
-            letterSpacing: -1.4,
-            color: runPassNavy,
-          ),
-          children: const [
-            TextSpan(text: 'Run'),
-            TextSpan(
-              text: 'Pass',
-              style: TextStyle(color: runPassOrange),
-            ),
-          ],
-        ),
-      ),
-    ],
+  Widget build(BuildContext context) => Semantics(
+    label: '+1Pódio',
+    image: true,
+    child: Image.asset(
+      key: const Key('podium-logo'),
+      context.isDark
+          ? 'assets/brand/logo-dark.png'
+          : 'assets/brand/logo-light.png',
+      height: compact ? 38 : 54,
+      fit: BoxFit.contain,
+      excludeFromSemantics: true,
+    ),
   );
 }
 
 class RunPassBottomNav extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int>? onDestinationSelected;
+
+  /// Miniatura da foto do usuário, no lugar do ícone padrão da aba "Perfil"
+  /// (mesma foto sempre visível, como no Instagram). Sem foto, cai no ícone padrão.
+  final Widget? profileIcon;
+  final Widget? profileIconSelected;
   const RunPassBottomNav({
     super.key,
     required this.selectedIndex,
     this.onDestinationSelected,
+    this.profileIcon,
+    this.profileIconSelected,
   });
 
   @override
   Widget build(BuildContext context) => NavigationBar(
     selectedIndex: selectedIndex,
     onDestinationSelected: onDestinationSelected,
-    destinations: const [
-      NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Início'),
-      NavigationDestination(
+    destinations: [
+      const NavigationDestination(
+        icon: Icon(Icons.home_outlined),
+        label: 'Início',
+      ),
+      const NavigationDestination(icon: _MedalIcon(), label: 'Medalhas'),
+      const NavigationDestination(
         icon: Icon(Icons.directions_run),
         label: 'Corridas',
       ),
       NavigationDestination(
-        icon: Icon(Icons.emoji_events_outlined),
-        label: 'Medalhas',
+        icon: profileIcon ?? const Icon(Icons.person_outline),
+        selectedIcon: profileIconSelected ?? profileIcon,
+        label: 'Perfil',
       ),
-      NavigationDestination(icon: Icon(Icons.person_outline), label: 'Perfil'),
     ],
   );
 }
+
+/// Medalha da aba "Medalhas", seguindo o contorno de assets/icons/gold-medal.png
+/// (fita em V + disco) - sem cor propria como os demais icones do menu, mas
+/// com o disco preenchido (em vez de so contorno) para ler como medalha, nao
+/// como mira/alvo, no tamanho pequeno do menu.
+class _MedalIcon extends StatelessWidget {
+  const _MedalIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    final size = IconTheme.of(context).size ?? 24.0;
+    final color = IconTheme.of(context).color ?? Colors.black;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(painter: _MedalIconPainter(color)),
+    );
+  }
+}
+
+class _MedalIconPainter extends CustomPainter {
+  final Color color;
+  const _MedalIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scale = size.width / 24;
+    Offset p(double x, double y) => Offset(x * scale, y * scale);
+    final linePaint = Paint()
+      ..color = color
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 2 * scale
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawLine(p(3, 1), p(12, 9), linePaint); // fita esquerda
+    canvas.drawLine(p(21, 1), p(12, 9), linePaint); // fita direita
+
+    canvas.drawCircle(
+      p(12, 16),
+      6.5 * scale,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.fill,
+    ); // disco preenchido
+  }
+
+  @override
+  bool shouldRepaint(covariant _MedalIconPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
+/// Cores que mudam entre o tema claro e o escuro. Cores fixas de "fundo claro" nao podem ser
+/// usadas direto nas telas, senao ficam ilegiveis no modo escuro.
+extension RunPassPalette on BuildContext {
+  bool get isDark => Theme.of(this).brightness == Brightness.dark;
+  Color get muted => isDark ? Colors.white70 : Colors.black54;
+  Color get softFill =>
+      isDark ? const Color(0xff3a2a22) : const Color(0xffffe4dc);
+  Color get panel => isDark ? const Color(0xff26282c) : const Color(0xffe9ecf1);
+  Color get panelStrong =>
+      isDark ? const Color(0xff303338) : const Color(0xffd5d8dd);
+  Color get panelCard =>
+      isDark ? const Color(0xff202226) : const Color(0xffe6e8eb);
+  Color get archivedText =>
+      isDark ? const Color(0xff9aa0aa) : const Color(0xff7a808a);
+  Color get greenFill =>
+      isDark ? const Color(0xff17301f) : const Color(0xffe6f6ec);
+  Color get warnFill =>
+      isDark ? const Color(0xff33281a) : const Color(0xfffff3e0);
+  Color get track => isDark ? const Color(0xff33363b) : const Color(0xffeceff3);
+  Color get onSurfaceText => Theme.of(this).colorScheme.onSurface;
+}
+
+/// Navegador global: permite abrir uma tela a partir de um toque no aviso do celular.
+final GlobalKey<NavigatorState> runPassNavigatorKey =
+    GlobalKey<NavigatorState>();

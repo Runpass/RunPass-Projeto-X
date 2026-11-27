@@ -1,0 +1,4176 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' show max;
+import 'dart:typed_data' show Uint8List;
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+
+import 'bib_card.dart';
+import 'catalog_screen.dart';
+import 'agenda.dart' show AgendaScreen;
+import 'city_photos.dart';
+import 'edition_cards.dart';
+import 'new_post.dart' show foldName;
+import 'edit_profile.dart';
+import 'edition_requests.dart' show MyEditionRequestsScreen;
+import 'friends.dart';
+import 'identity_gateway.dart';
+import 'location_picker.dart';
+import 'medal_scan.dart';
+import 'pending_medals.dart';
+import 'notifications.dart';
+import 'post_card.dart'
+    show FeedEntry, PostThumb, deleteParticipation, entryFromPost;
+import 'profile_photo.dart';
+import 'runpass_theme.dart';
+import 'settings.dart';
+import 'undo_delete.dart';
+
+/// "15/03/1995 • 18 anos", so quando GET /me devolve birthDate (so para o proprio
+/// titular; nunca em perfil publico). Nulo se ausente ou mal formatada.
+String? birthDateLabel(String? isoBirthDate) {
+  final birth = isoBirthDate == null ? null : DateTime.tryParse(isoBirthDate);
+  if (birth == null) return null;
+  final today = DateTime.now();
+  var age = today.year - birth.year;
+  if (today.month < birth.month ||
+      (today.month == birth.month && today.day < birth.day)) {
+    age--;
+  }
+  final formatted =
+      '${birth.day.toString().padLeft(2, '0')}/${birth.month.toString().padLeft(2, '0')}/${birth.year}';
+  return '$formatted  •  $age anos';
+}
+
+/// A completed participation joined with the official edition it refers to.
+class RaceRecord {
+  final Map<String, dynamic> participation;
+  final Map<String, dynamic>? edition;
+  const RaceRecord(this.participation, this.edition);
+
+  /// A publicação tem foto própria (separada da medalha): `/post-image`. Sem ela, vale a foto da medalha.
+  bool get hasPostImage =>
+      participation['hasPostImage'] == true ||
+      participation['postImageReference'] != null;
+
+  /// Sem os dados da corrida, nunca mostra o código: corrida criada por pedido (`pedido-<nome>-<data>-<sufixo>`)
+  /// volta ao nome escrito no pedido; qualquer outra, só "Corrida".
+  String get name =>
+      edition?['name'] as String? ??
+      readableEditionName('${participation['editionId'] ?? ''}');
+  String? get date => edition?['date'] as String?;
+  int? get year => date == null ? null : int.tryParse(date!.substring(0, 4));
+  static const noCity = 'Sem cidade';
+
+  /// "São Paulo/SP", para agrupar as medalhas por cidade visitada.
+  String get cityLabel {
+    final city = edition?['city'] as String?;
+    if (city == null || city.isEmpty) return noCity;
+    final state = edition?['state'] as String?;
+    return state == null || state.isEmpty ? city : '$city/$state';
+  }
+
+  String get place {
+    final city = edition?['city'] as String?;
+    final state = edition?['state'] as String?;
+    if (city == null) return '';
+    return state == null ? city : '$city - $state';
+  }
+
+  double? get kilometers {
+    for (final distance
+        in (edition?['distances'] as List? ?? const []).cast<Map>()) {
+      if (distance['id'] == participation['distanceId']) {
+        return (distance['kilometers'] as num?)?.toDouble();
+      }
+    }
+    return null;
+  }
+
+  num? get timeSeconds => participation['timeSeconds'] as num?;
+
+  /// O guardado; se a inscrição ainda não tem pace mas tem tempo e distância, o calculado (tempo / km),
+  /// no intervalo que o servidor aceita (de 1:00 a 60:00 por km).
+  num? get paceSecondsPerKm {
+    final stored = participation['paceSecondsPerKm'] as num?;
+    if (stored != null) return stored;
+    final seconds = timeSeconds, km = kilometers;
+    if (seconds == null || seconds <= 0 || km == null || km <= 0) return null;
+    final perKm = (seconds / km).round();
+    return perKm >= 60 && perKm <= 3600 ? perKm : null;
+  }
+
+  /// Colocação na prova; só vem quando a pessoa informou e o servidor a libera para quem está vendo.
+  num? get placement => participation['placement'] as num?;
+
+  // Customizacao da medalha na prateleira: cada campo tem o dado do catalogo
+  // como padrao e so usa o valor salvo quando a pessoa o personalizou.
+  String get medalFrameId =>
+      participation['medalFrameId'] as String? ?? defaultMedalFrameId;
+  String? get medalDisplayImageReference =>
+      participation['medalDisplayImageReference'] as String?;
+  String get medalDescription =>
+      participation['medalDescription'] as String? ?? name;
+  String get medalCity =>
+      participation['medalCity'] as String? ??
+      (edition?['city'] as String? ?? '');
+  String get medalState =>
+      participation['medalState'] as String? ??
+      (edition?['state'] as String? ?? '');
+  int? get medalYear => (participation['medalYear'] as num?)?.toInt() ?? year;
+  String get medalPlace => medalCity.isEmpty
+      ? ''
+      : medalState.isEmpty
+      ? medalCity
+      : '$medalCity - $medalState';
+}
+
+/// Catalogo fixo de modelos de medalha: cada imagem ja traz a forma, o metal
+/// e a fita prontos, com um furo transparente onde a foto do usuario aparece.
+/// As fracoes do furo sao medidas sobre a propria imagem (uma unica vez,
+/// offline) e expressas como fracao da LARGURA da imagem — usando a mesma
+/// unidade nos dois eixos, a geometria fica correta em qualquer tamanho de
+/// tela, desde que a imagem seja exibida respeitando sua proporcao nativa.
+enum MedalHoleShape { circle, hexagon, roundedSquare, polygon }
+
+class MedalFrame {
+  final String id;
+  final String label;
+  final String asset;
+  final double aspectRatio; // largura / altura da imagem
+  final MedalHoleShape shape;
+  final double holeCenterXFrac;
+  final double holeCenterYFrac;
+  final double holeHalfWidthFrac;
+  final double holeHalfHeightFrac;
+  // Usado so quando shape == roundedSquare: fracao do raio do canto em
+  // relacao a largura do furo.
+  final double cornerRadiusFrac;
+  // Usado so quando shape == polygon: contorno exato do furo, medido sobre
+  // o canal alpha da imagem, em fracao da LARGURA da imagem (mesma unidade
+  // nos dois eixos, igual ao resto da geometria desta classe).
+  final List<Offset>? holeOutlineFrac;
+  const MedalFrame({
+    required this.id,
+    required this.label,
+    required this.asset,
+    required this.aspectRatio,
+    required this.shape,
+    this.holeCenterXFrac = 0,
+    this.holeCenterYFrac = 0,
+    this.holeHalfWidthFrac = 0,
+    this.holeHalfHeightFrac = 0,
+    this.cornerRadiusFrac = 0,
+    this.holeOutlineFrac,
+  });
+}
+
+const defaultMedalFrameId = 'circular_prata_azul';
+
+const medalFrames = <MedalFrame>[
+  MedalFrame(
+    id: 'circular_prata_azul',
+    label: 'Circular · prata/azul',
+    asset: 'assets/medal_frames/circular_prata_azul.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.circle,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3100,
+    holeHalfHeightFrac: 0.3100,
+  ),
+  MedalFrame(
+    id: 'circular_rose_rosa',
+    label: 'Circular · rosé/rosa',
+    asset: 'assets/medal_frames/circular_rose_rosa.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.circle,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3100,
+    holeHalfHeightFrac: 0.3100,
+  ),
+  MedalFrame(
+    id: 'circular_grafite_preto',
+    label: 'Circular · grafite/preto',
+    asset: 'assets/medal_frames/circular_grafite_preto.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.circle,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3100,
+    holeHalfHeightFrac: 0.3100,
+  ),
+  MedalFrame(
+    id: 'hexagonal_bronze_verde',
+    label: 'Hexagonal · bronze/verde',
+    asset: 'assets/medal_frames/hexagonal_bronze_verde.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.hexagon,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3705,
+    holeHalfHeightFrac: 0.3090,
+  ),
+  MedalFrame(
+    id: 'hexagonal_rose_lilas',
+    label: 'Hexagonal · rosé/lilás',
+    asset: 'assets/medal_frames/hexagonal_rose_lilas.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.hexagon,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3705,
+    holeHalfHeightFrac: 0.3090,
+  ),
+  MedalFrame(
+    id: 'quadrada_rose_malva',
+    label: 'Quadrada · rosé/malva',
+    asset: 'assets/medal_frames/quadrada_rose_malva.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.roundedSquare,
+    holeCenterXFrac: 0.5000,
+    holeCenterYFrac: 0.8167,
+    holeHalfWidthFrac: 0.3100,
+    holeHalfHeightFrac: 0.3100,
+    cornerRadiusFrac: 0.14,
+  ),
+  MedalFrame(
+    id: 'escudo_grafite_azul',
+    label: 'Escudo · grafite/azul',
+    asset: 'assets/medal_frames/escudo_grafite_azul.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.polygon,
+    holeOutlineFrac: [
+      Offset(0.4996, 0.5087),
+      Offset(0.3237, 0.5367),
+      Offset(0.2178, 0.5767),
+      Offset(0.2162, 0.6167),
+      Offset(0.2162, 0.6567),
+      Offset(0.2178, 0.6967),
+      Offset(0.2203, 0.7367),
+      Offset(0.2253, 0.7767),
+      Offset(0.2320, 0.8167),
+      Offset(0.2420, 0.8558),
+      Offset(0.2553, 0.8958),
+      Offset(0.2737, 0.9358),
+      Offset(0.2978, 0.9758),
+      Offset(0.3303, 1.0158),
+      Offset(0.3728, 1.0558),
+      Offset(0.4312, 1.0958),
+      Offset(0.4996, 1.1238),
+      Offset(0.5680, 1.0958),
+      Offset(0.6263, 1.0558),
+      Offset(0.6688, 1.0158),
+      Offset(0.7013, 0.9758),
+      Offset(0.7255, 0.9358),
+      Offset(0.7438, 0.8958),
+      Offset(0.7572, 0.8558),
+      Offset(0.7672, 0.8167),
+      Offset(0.7738, 0.7767),
+      Offset(0.7788, 0.7367),
+      Offset(0.7813, 0.6967),
+      Offset(0.7830, 0.6567),
+      Offset(0.7830, 0.6167),
+      Offset(0.7813, 0.5767),
+      Offset(0.6755, 0.5367),
+    ],
+  ),
+  MedalFrame(
+    id: 'assimetrica_prata_lima',
+    label: 'Assimétrica · prata/lima',
+    asset: 'assets/medal_frames/assimetrica_prata_lima.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.polygon,
+    holeOutlineFrac: [
+      Offset(0.4988, 0.5078),
+      Offset(0.3737, 0.5275),
+      Offset(0.3220, 0.5600),
+      Offset(0.2870, 0.5917),
+      Offset(0.2595, 0.6242),
+      Offset(0.2395, 0.6558),
+      Offset(0.2245, 0.6875),
+      Offset(0.2128, 0.7200),
+      Offset(0.2045, 0.7517),
+      Offset(0.1995, 0.7842),
+      Offset(0.1978, 0.8158),
+      Offset(0.1995, 0.8475),
+      Offset(0.2037, 0.8800),
+      Offset(0.2103, 0.9117),
+      Offset(0.2212, 0.9442),
+      Offset(0.2362, 0.9758),
+      Offset(0.2553, 1.0075),
+      Offset(0.2812, 1.0400),
+      Offset(0.3162, 1.0717),
+      Offset(0.3687, 1.1042),
+      Offset(0.4729, 1.1238),
+      Offset(0.4647, 1.1042),
+      Offset(0.4705, 1.0717),
+      Offset(0.4805, 1.0400),
+      Offset(0.4938, 1.0075),
+      Offset(0.5122, 0.9758),
+      Offset(0.5363, 0.9442),
+      Offset(0.5680, 0.9117),
+      Offset(0.6088, 0.8800),
+      Offset(0.6680, 0.8475),
+      Offset(0.8005, 0.8158),
+      Offset(0.7988, 0.7842),
+      Offset(0.7947, 0.7517),
+      Offset(0.7863, 0.7200),
+      Offset(0.7755, 0.6875),
+      Offset(0.7605, 0.6558),
+      Offset(0.7413, 0.6242),
+      Offset(0.7147, 0.5917),
+      Offset(0.6805, 0.5600),
+      Offset(0.6288, 0.5275),
+    ],
+  ),
+  MedalFrame(
+    id: 'triangular_grafite_preto',
+    label: 'Triangular · grafite/preto',
+    asset: 'assets/medal_frames/triangular_grafite_preto.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.polygon,
+    holeOutlineFrac: [
+      Offset(0.1912, 0.5078),
+      Offset(0.1912, 0.5408),
+      Offset(0.1912, 0.5867),
+      Offset(0.1912, 0.6325),
+      Offset(0.1912, 0.6775),
+      Offset(0.2070, 0.7225),
+      Offset(0.2412, 0.7683),
+      Offset(0.2753, 0.8142),
+      Offset(0.3087, 0.8592),
+      Offset(0.3420, 0.9042),
+      Offset(0.3762, 0.9500),
+      Offset(0.4103, 0.9958),
+      Offset(0.4437, 1.0408),
+      Offset(0.4770, 1.0858),
+      Offset(0.4996, 1.1197),
+      Offset(0.5222, 1.0858),
+      Offset(0.5555, 1.0408),
+      Offset(0.5888, 0.9958),
+      Offset(0.6230, 0.9500),
+      Offset(0.6572, 0.9042),
+      Offset(0.6905, 0.8592),
+      Offset(0.7238, 0.8142),
+      Offset(0.7580, 0.7683),
+      Offset(0.7922, 0.7225),
+      Offset(0.8080, 0.6775),
+      Offset(0.8080, 0.6325),
+      Offset(0.8080, 0.5867),
+      Offset(0.8080, 0.5408),
+      Offset(0.8080, 0.5078),
+    ],
+  ),
+  MedalFrame(
+    id: 'triangular_rose_rosa',
+    label: 'Triangular · rosé/rosa',
+    asset: 'assets/medal_frames/triangular_rose_rosa.png',
+    aspectRatio: 1200 / 1600,
+    shape: MedalHoleShape.polygon,
+    holeOutlineFrac: [
+      Offset(0.1912, 0.5078),
+      Offset(0.1912, 0.5408),
+      Offset(0.1912, 0.5867),
+      Offset(0.1912, 0.6325),
+      Offset(0.1912, 0.6775),
+      Offset(0.2070, 0.7225),
+      Offset(0.2412, 0.7683),
+      Offset(0.2753, 0.8142),
+      Offset(0.3087, 0.8592),
+      Offset(0.3420, 0.9042),
+      Offset(0.3762, 0.9500),
+      Offset(0.4103, 0.9958),
+      Offset(0.4437, 1.0408),
+      Offset(0.4770, 1.0858),
+      Offset(0.4996, 1.1197),
+      Offset(0.5222, 1.0858),
+      Offset(0.5555, 1.0408),
+      Offset(0.5888, 0.9958),
+      Offset(0.6230, 0.9500),
+      Offset(0.6572, 0.9042),
+      Offset(0.6905, 0.8592),
+      Offset(0.7238, 0.8142),
+      Offset(0.7580, 0.7683),
+      Offset(0.7922, 0.7225),
+      Offset(0.8080, 0.6775),
+      Offset(0.8080, 0.6325),
+      Offset(0.8080, 0.5867),
+      Offset(0.8080, 0.5408),
+      Offset(0.8080, 0.5078),
+    ],
+  ),
+];
+
+MedalFrame medalFrameFor(String? id) =>
+    medalFrames.firstWhere((f) => f.id == id, orElse: () => medalFrames.first);
+
+/// Recorte hexagonal (pontas na esquerda/direita, topo e base retos) usado
+/// para encaixar a foto exatamente no furo dos modelos hexagonais.
+class _HexagonHoleClipper extends CustomClipper<Path> {
+  const _HexagonHoleClipper();
+  @override
+  Path getClip(Size size) {
+    final w = size.width, h = size.height;
+    return Path()
+      ..moveTo(w, h / 2)
+      ..lineTo(w * 0.75, 0)
+      ..lineTo(w * 0.25, 0)
+      ..lineTo(0, h / 2)
+      ..lineTo(w * 0.25, h)
+      ..lineTo(w * 0.75, h)
+      ..close();
+  }
+
+  @override
+  bool shouldReclip(covariant _HexagonHoleClipper oldClipper) => false;
+}
+
+/// Composicao da medalha na prateleira: a foto do usuario atras, recortada no
+/// formato do furo, com a imagem do modelo (metal + fita) por cima.
+Widget medalFrameWidget({required MedalFrame frame, required Widget photo}) =>
+    AspectRatio(
+      aspectRatio: frame.aspectRatio,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          // Contorno em polígono: medido direto sobre a imagem inteira, então
+          // o recorte usa o Stack completo (sem sub-retângulo posicionado).
+          if (frame.shape == MedalHoleShape.polygon) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipPath(
+                  clipper: _PolygonHoleClipper(frame.holeOutlineFrac!),
+                  child: photo,
+                ),
+                Image.asset(frame.asset, fit: BoxFit.fill),
+              ],
+            );
+          }
+          final holeCx = frame.holeCenterXFrac * w;
+          final holeCy = frame.holeCenterYFrac * w;
+          final holeW = frame.holeHalfWidthFrac * w * 2;
+          final holeH = frame.holeHalfHeightFrac * w * 2;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned(
+                left: holeCx - holeW / 2,
+                top: holeCy - holeH / 2,
+                width: holeW,
+                height: holeH,
+                child: ClipPath(
+                  clipper: switch (frame.shape) {
+                    MedalHoleShape.hexagon => const _HexagonHoleClipper(),
+                    MedalHoleShape.roundedSquare => _RoundedSquareHoleClipper(
+                      frame.cornerRadiusFrac,
+                    ),
+                    _ => const _CircleClipper(),
+                  },
+                  child: photo,
+                ),
+              ),
+              Image.asset(frame.asset, fit: BoxFit.fill),
+            ],
+          );
+        },
+      ),
+    );
+
+class _CircleClipper extends CustomClipper<Path> {
+  const _CircleClipper();
+  @override
+  Path getClip(Size size) =>
+      Path()..addOval(Rect.fromLTWH(0, 0, size.width, size.height));
+  @override
+  bool shouldReclip(covariant _CircleClipper oldClipper) => false;
+}
+
+class _RoundedSquareHoleClipper extends CustomClipper<Path> {
+  final double cornerRadiusFrac;
+  const _RoundedSquareHoleClipper(this.cornerRadiusFrac);
+  @override
+  Path getClip(Size size) => Path()
+    ..addRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, size.width, size.height),
+        Radius.circular(size.width * cornerRadiusFrac),
+      ),
+    );
+  @override
+  bool shouldReclip(covariant _RoundedSquareHoleClipper oldClipper) =>
+      oldClipper.cornerRadiusFrac != cornerRadiusFrac;
+}
+
+/// Recorte por contorno exato, medido sobre o canal alpha da imagem do
+/// modelo (fracoes da LARGURA da imagem nos dois eixos). Usado para furos
+/// com formato irregular (escudo, assimetrica) que um simples circulo/
+/// hexagono nao reproduz sem sobrar foto fora do contorno metalico.
+class _PolygonHoleClipper extends CustomClipper<Path> {
+  final List<Offset> pointsFrac;
+  const _PolygonHoleClipper(this.pointsFrac);
+  @override
+  Path getClip(Size size) {
+    final w = size.width;
+    final path = Path();
+    for (var i = 0; i < pointsFrac.length; i++) {
+      final p = pointsFrac[i] * w;
+      if (i == 0) {
+        path.moveTo(p.dx, p.dy);
+      } else {
+        path.lineTo(p.dx, p.dy);
+      }
+    }
+    return path..close();
+  }
+
+  @override
+  bool shouldReclip(covariant _PolygonHoleClipper oldClipper) => false;
+}
+
+/// Baixa os bytes de um link assinado (S3), para reabrir num editor de
+/// recorte local. Lanca [IdentityIssue] se a resposta nao for 200.
+Future<List<int>> fetchImageBytes(String url) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final request = await client
+        .getUrl(Uri.parse(url))
+        .timeout(const Duration(seconds: 10));
+    final response = await request.close().timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      throw const IdentityIssue('IMAGE_NOT_VALID');
+    }
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+    }
+    return bytes;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+String two(int value) => value.toString().padLeft(2, '0');
+
+String formatDuration(num seconds) {
+  final total = seconds.round();
+  final hours = total ~/ 3600;
+  final minutes = (total % 3600) ~/ 60;
+  final rest = total % 60;
+  return hours > 0
+      ? '$hours:${two(minutes)}:${two(rest)}'
+      : '${two(minutes)}:${two(rest)}';
+}
+
+String formatPace(num secondsPerKm) {
+  final total = secondsPerKm.round();
+  return '${total ~/ 60}:${two(total % 60)}/km';
+}
+
+String formatKilometers(double km) => km == km.roundToDouble()
+    ? '${km.toInt()} km'
+    : '${km.toStringAsFixed(1)} km';
+
+/// "5K", "10K", "10,5K"; a meia e a maratona oficiais (21,0975 e 42,195 km) saem "21K" e "42K". Não
+/// arredonda para inteiro: 10,5 km não pode virar "11K".
+String distanceLabel(double km) {
+  if ((km - 42.195).abs() < 0.3) return '42K';
+  if ((km - 21.0975).abs() < 0.2) return '21K';
+  final rounded = (km * 10).round() / 10;
+  final text = rounded == rounded.roundToDouble()
+      ? rounded.round().toString()
+      : rounded.toStringAsFixed(1).replaceAll('.', ',');
+  return '${text}K';
+}
+
+/// Limita quantas chamadas rodam ao mesmo tempo. A conta do DEV aceita poucas execucoes simultaneas
+/// (cota de 10 para todas as funcoes): uma chamada por medalha, todas juntas, faz parte falhar e a
+/// prateleira muda de ordem, de nome e de total a cada volta.
+class _Gate {
+  final int limit;
+  _Gate(this.limit);
+  int _running = 0;
+  final _waiting = <Completer<void>>[];
+
+  Future<T> run<T>(Future<T> Function() job) async {
+    while (_running >= limit) {
+      final turn = Completer<void>();
+      _waiting.add(turn);
+      await turn.future;
+    }
+    _running++;
+    try {
+      return await job();
+    } finally {
+      _running--;
+      if (_waiting.isNotEmpty) _waiting.removeAt(0).complete();
+    }
+  }
+}
+
+final _editionGate = _Gate(4);
+final _photoGate = _Gate(4);
+
+/// Falhas que passam sozinhas: vale tentar de novo. As demais (404, imagem inexistente) nao.
+bool isTransientFailure(Object error) =>
+    error is IdentityIssue &&
+    (error.code == 'SERVICE_UNAVAILABLE' ||
+        error.code == 'DEPENDENCY_UNAVAILABLE');
+
+/// Dados da corrida guardados por alguns minutos: a prateleira nao pergunta tudo de novo a cada volta
+/// e, se uma chamada falhar, continua valendo o ultimo dado conhecido.
+final Map<String, ({Map<String, dynamic> data, DateTime at})> _editionCache =
+    {};
+const _editionCacheTtl = Duration(minutes: 10);
+
+/// Filtro e ordem escolhidos na prateleira; sobrevivem a troca de aba (a tela e recriada).
+MedalGrouping _lastMedalGrouping = MedalGrouping.all;
+bool _lastMedalNewestFirst = true;
+bool _lastMedalFramesView = false;
+
+/// Zera o que a prateleira guarda entre telas. Usado ao sair da conta e nos testes.
+void clearMedalCaches() {
+  _editionCache.clear();
+  _photoLinks.clear();
+  _lastMedalGrouping = MedalGrouping.all;
+  _lastMedalNewestFirst = true;
+  _lastMedalFramesView = false;
+}
+
+/// Edition details by id. Chamadas em no maximo 4 por vez, com ate 3 tentativas nas falhas passageiras.
+/// Se continuar falhando, vale o ultimo dado guardado; sem ele, a corrida fica fora do resultado.
+Future<Map<String, Map<String, dynamic>>> loadEditions(
+  IdentityGateway gateway,
+  Iterable<String> ids,
+) async {
+  final editions = <String, Map<String, dynamic>>{};
+  final now = DateTime.now();
+  await Future.wait([
+    for (final id in ids.toSet())
+      () async {
+        final cached = _editionCache[id];
+        if (cached != null && now.difference(cached.at) < _editionCacheTtl) {
+          editions[id] = cached.data;
+          return;
+        }
+        for (var attempt = 1; attempt <= 3; attempt++) {
+          try {
+            final data = await _editionGate.run(
+              () => gateway.request('/editions/${Uri.encodeComponent(id)}'),
+            );
+            _editionCache[id] = (data: data, at: DateTime.now());
+            editions[id] = data;
+            return;
+          } on Exception catch (error) {
+            if (!isTransientFailure(error) || attempt == 3) break;
+            await gateway.sleeper(Duration(milliseconds: 400 * attempt));
+          }
+        }
+        // Sem resposta: usa o ultimo dado conhecido, se houver.
+        if (cached != null) editions[id] = cached.data;
+      }(),
+  ]);
+  return editions;
+}
+
+String timeAgo(DateTime moment, {DateTime? now}) {
+  final diff = (now ?? DateTime.now()).difference(moment);
+  if (diff.inMinutes < 1) return 'agora';
+  if (diff.inMinutes < 60) return 'há ${diff.inMinutes} min';
+  if (diff.inHours < 24) {
+    return 'há ${diff.inHours} ${diff.inHours == 1 ? 'hora' : 'horas'}';
+  }
+  if (diff.inDays < 7) {
+    return 'há ${diff.inDays} ${diff.inDays == 1 ? 'dia' : 'dias'}';
+  }
+  final weeks = diff.inDays ~/ 7;
+  return 'há $weeks ${weeks == 1 ? 'semana' : 'semanas'}';
+}
+
+/// Placeholder for official medal art, which the API does not serve yet.
+class MedalArt extends StatelessWidget {
+  final double size;
+  const MedalArt({super.key, this.size = 46});
+
+  @override
+  Widget build(BuildContext context) =>
+      Icon(Icons.emoji_events, size: size, color: const Color(0xffe8b23a));
+}
+
+/// Imagem privada servida por link curto e assinado (`GET <endpoint>` devolve `url`).
+/// Sem foto, sem permissao ou sem rede, mostra o `fallback`.
+class SignedPhoto extends StatefulWidget {
+  final IdentityGateway gateway;
+  final String? endpoint;
+  final Widget fallback;
+  final BoxFit fit;
+
+  /// Chamado uma vez por foto carregada com largura / altura dela (o feed ajusta o quadro à foto).
+  final ValueChanged<double>? onAspect;
+  const SignedPhoto({
+    super.key,
+    required this.gateway,
+    required this.endpoint,
+    required this.fallback,
+    this.fit = BoxFit.cover,
+    this.onAspect,
+  });
+
+  @override
+  State<SignedPhoto> createState() => _SignedPhotoState();
+}
+
+/// Links valem 5 minutos; reaproveita enquanto a tela esta aberta.
+final Map<String, ({String url, DateTime expires})> _photoLinks = {};
+
+/// Esquece o link guardado, por exemplo depois de trocar a foto.
+void forgetMedalPhoto(String participationId) => _photoLinks.remove(
+  '/participations/${Uri.encodeComponent(participationId)}/image',
+);
+
+/// Esquece o link da foto da prateleira, depois de reposicionar/resetar.
+void forgetMedalDisplayImage(String participationId) => _photoLinks.remove(
+  '/participations/${Uri.encodeComponent(participationId)}/display-image',
+);
+
+/// Esquece o link da foto da publicação, depois de ajustar/trocar.
+void forgetPostPhoto(String participationId) => _photoLinks.remove(
+  '/participations/${Uri.encodeComponent(participationId)}/post-image',
+);
+
+void forgetBanner(String profileId) =>
+    _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/banner');
+
+void forgetProfilePhoto(String profileId) =>
+    _photoLinks.remove('/profiles/${Uri.encodeComponent(profileId)}/photo');
+
+class _SignedPhotoState extends State<SignedPhoto> {
+  String? url;
+  String? _aspectFor;
+
+  /// Descobre a proporção da foto (a imagem é a mesma do Image.network, então vem do cache) e avisa.
+  void _reportAspect(String link) {
+    if (widget.onAspect == null || _aspectFor == link) return;
+    _aspectFor = link;
+    final stream = NetworkImage(link).resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener((info, _) {
+      stream.removeListener(listener);
+      final h = info.image.height;
+      if (mounted && h > 0) widget.onAspect?.call(info.image.width / h);
+    }, onError: (_, _) => stream.removeListener(listener));
+    stream.addListener(listener);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  /// A lista reaproveita este estado quando muda a ordem (uma medalha nova entra na frente): sem recarregar
+  /// ao trocar o endereço, a foto de uma medalha aparecia em outra.
+  @override
+  void didUpdateWidget(SignedPhoto oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.endpoint != widget.endpoint) {
+      url = null;
+      load();
+    }
+  }
+
+  Timer? _retry;
+
+  @override
+  void dispose() {
+    _retry?.cancel();
+    super.dispose();
+  }
+
+  Future<void> load([int attempt = 1]) async {
+    final endpoint = widget.endpoint;
+    if (endpoint == null) return;
+    final cached = _photoLinks[endpoint];
+    if (cached != null && cached.expires.isAfter(DateTime.now())) {
+      url = cached.url;
+      return;
+    }
+    try {
+      // O endereço pode trazer a consulta (ex.: `?index=2`, a 3ª foto de uma publicação com várias).
+      final parts = Uri.parse(endpoint);
+      final reply = await _photoGate.run(
+        () => widget.gateway.request(
+          parts.path,
+          query: parts.queryParameters.isEmpty ? null : parts.queryParameters,
+        ),
+      );
+      _applyLink(endpoint, reply);
+    } on Exception catch (error) {
+      // Sem foto ou sem rede: fica o fallback. Falha passageira (cota do servidor): tenta de novo, ate 3 vezes.
+      if (isTransientFailure(error) && attempt < 3 && mounted) {
+        _retry?.cancel();
+        _retry = Timer(Duration(milliseconds: 500 * attempt), () {
+          if (mounted && widget.endpoint == endpoint) load(attempt + 1);
+        });
+      }
+    }
+  }
+
+  void _applyLink(String endpoint, Map<String, dynamic> reply) {
+    final link = reply['url'];
+    final expires = DateTime.tryParse(reply['expiresAt'] as String? ?? '');
+    if (link is String && link.startsWith('https://')) {
+      _photoLinks[endpoint] = (
+        url: link,
+        expires: (expires ?? DateTime.now().add(const Duration(minutes: 4)))
+            .subtract(const Duration(seconds: 30)),
+      );
+      if (mounted) setState(() => url = link);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final link = url;
+    if (link == null) return widget.fallback;
+    if (widget.onAspect != null && _aspectFor != link) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _reportAspect(link));
+    }
+    return Image.network(
+      link,
+      fit: widget.fit,
+      errorBuilder: (_, _, _) => widget.fallback,
+      // frameBuilder (nao loadingBuilder): quando a imagem ja esta no cache
+      // (por exemplo ao voltar para uma aba), o frame chega de forma
+      // sincrona (wasSynchronouslyLoaded) e evita o lampejo do fallback por
+      // um quadro a cada tela nova, mesmo com o link ja resolvido.
+      frameBuilder: (_, child, frame, wasSynchronouslyLoaded) =>
+          wasSynchronouslyLoaded || frame != null ? child : widget.fallback,
+    );
+  }
+}
+
+/// Foto da medalha enviada pela pessoa (`GET /participations/{id}/image`); sem foto, o trofeu.
+/// Com [useDisplayImage], usa `/display-image`: o recorte reposicionado pela
+/// pessoa so para a prateleira, quando existir (senao a mesma foto de sempre).
+class MedalPhoto extends StatelessWidget {
+  final IdentityGateway gateway;
+  final String? participationId;
+  final double size;
+  final BoxFit fit;
+  final bool useDisplayImage;
+
+  /// Foto da publicação no feed (separada da medalha); só use quando a participação tem uma.
+  final bool usePostImage;
+
+  /// Muda quando a foto foi trocada: força recarregar o link (a lista reaproveita o estado da foto).
+  final int revision;
+
+  /// Endereço da foto quando não é da participação (ex.: publicação extra, `/posts/{id}/image`).
+  final String? endpoint;
+
+  /// Recebe a proporção (largura / altura) da foto quando ela carrega.
+  final ValueChanged<double>? onAspect;
+  const MedalPhoto({
+    super.key,
+    required this.gateway,
+    required this.participationId,
+    this.endpoint,
+    this.size = 46,
+    this.fit = BoxFit.cover,
+    this.useDisplayImage = false,
+    this.usePostImage = false,
+    this.revision = 0,
+    this.onAspect,
+  });
+
+  @override
+  Widget build(BuildContext context) => SignedPhoto(
+    key: ValueKey(
+      'medal-photo-$participationId-$useDisplayImage-$usePostImage-$endpoint',
+    ),
+    gateway: gateway,
+    endpoint:
+        endpoint ??
+        (participationId == null
+            ? null
+            : '/participations/${Uri.encodeComponent(participationId!)}/'
+                  '${usePostImage ? 'post-image' : (useDisplayImage ? 'display-image' : 'image')}'),
+    fallback: MedalArt(size: size),
+    fit: fit,
+    onAspect: onAspect,
+  );
+}
+
+/// Detecta JPEG ou PNG pelos primeiros bytes; qualquer outro formato volta nulo.
+String? imageContentType(List<int> bytes) {
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xff &&
+      bytes[1] == 0xd8 &&
+      bytes[2] == 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 8 &&
+      bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4e &&
+      bytes[3] == 0x47) {
+    return 'image/png';
+  }
+  return null;
+}
+
+class Stars extends StatelessWidget {
+  final num value;
+  final double size;
+  const Stars(this.value, {super.key, this.size = 20});
+
+  @override
+  Widget build(BuildContext context) => FittedBox(
+    // Em cartão estreito (celular pequeno, texto grande) as cinco estrelas encolhem em vez de estourar a
+    // linha; com espaço de sobra ficam no tamanho normal, à esquerda.
+    fit: BoxFit.scaleDown,
+    alignment: Alignment.centerLeft,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 1; i <= 5; i++)
+          Icon(
+            value >= i - 0.25
+                ? Icons.star
+                : value >= i - 0.75
+                ? Icons.star_half
+                : Icons.star_border,
+            size: size,
+            color: runPassGold,
+          ),
+      ],
+    ),
+  );
+}
+
+String decimalPt(num value) => value.toStringAsFixed(1).replaceAll('.', ',');
+
+/// Rascunhos de corridas que já aconteceram (a participação foi começada e não concluída), para a
+/// prateleira oferecer "Continuar". Os de corrida futura ficam na agenda e não entram aqui.
+/// Qualquer falha devolve lista vazia: é um atalho, não pode derrubar a prateleira.
+Future<List<RaceRecord>> loadMyDrafts(IdentityGateway gateway) async {
+  try {
+    final page = await gateway.request(
+      '/me/participations',
+      query: {'state': 'draft', 'limit': '20', 'expand': 'edition'},
+    );
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final drafts = <RaceRecord>[];
+    for (final item in (page['items'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      if (map['state'] != 'draft' || pendingDeletions.contains(map['id'])) {
+        continue;
+      }
+      final edition = map.remove('edition');
+      final record = RaceRecord(
+        map,
+        edition is Map ? Map<String, dynamic>.from(edition) : null,
+      );
+      final date = record.date;
+      if (date != null && date.compareTo(today) > 0) continue;
+      drafts.add(record);
+    }
+    // Servidor que não devolve a corrida junto: busca o que faltou, para o cartão mostrar o nome.
+    final missing = [
+      for (final d in drafts)
+        if (d.edition == null) '${d.participation['editionId']}',
+    ];
+    if (missing.isNotEmpty) {
+      final found = await loadEditions(gateway, missing);
+      return [
+        for (final d in drafts)
+          d.edition != null
+              ? d
+              : RaceRecord(
+                  d.participation,
+                  found[d.participation['editionId']],
+                ),
+      ];
+    }
+    return drafts;
+  } on Exception {
+    return const [];
+  }
+}
+
+/// Every completed participation of the signed-in runner, newest edition first.
+/// Edition lookups that fail leave the record without edition details.
+Future<List<RaceRecord>> loadMyRaces(IdentityGateway gateway) async {
+  final completed = <Map<String, dynamic>>[];
+  final embedded = <String, Map<String, dynamic>>{};
+  String? cursor;
+  var pages = 0;
+  do {
+    // `expand=edition`: o servidor devolve a corrida junto de cada participacao, em vez de uma chamada por
+    // medalha. Servidor antigo ignora o parametro e o app busca as corridas uma a uma, como antes.
+    final page = await gateway.request(
+      '/me/participations',
+      query: {
+        'state': 'completed',
+        'limit': '100',
+        'expand': 'edition',
+        'cursor': ?cursor,
+      },
+    );
+    for (final item in (page['items'] as List? ?? const [])) {
+      final map = Map<String, dynamic>.from(item as Map);
+      if (map['state'] != 'completed') continue;
+      if (pendingDeletions.contains(map['id'])) {
+        continue; // exclusão em espera (janela do "Desfazer")
+      }
+      final edition = map.remove('edition');
+      if (edition is Map) {
+        embedded['${map['editionId']}'] = Map<String, dynamic>.from(edition);
+        _editionCache['${map['editionId']}'] = (
+          data: embedded['${map['editionId']}']!,
+          at: DateTime.now(),
+        );
+      }
+      completed.add(map);
+    }
+    cursor = page['nextCursor'] as String?;
+  } while (cursor != null && ++pages < 5);
+  final missing = [
+    for (final p in completed)
+      if (!embedded.containsKey(p['editionId'])) p['editionId'] as String,
+  ];
+  final fetched = missing.isEmpty
+      ? const <String, Map<String, dynamic>>{}
+      : await loadEditions(gateway, missing);
+  final editions = {...fetched, ...embedded};
+  final records = [
+    for (final p in completed) RaceRecord(p, editions[p['editionId']]),
+  ];
+  // Mais recente primeiro; na mesma data, a conclusao mais recente e, por fim, o id: a ordem nunca varia.
+  records.sort((a, b) {
+    final byDate = (b.date ?? '').compareTo(a.date ?? '');
+    if (byDate != 0) return byDate;
+    final byDone = '${b.participation['completedAt'] ?? ''}'.compareTo(
+      '${a.participation['completedAt'] ?? ''}',
+    );
+    if (byDone != 0) return byDone;
+    return '${a.participation['id']}'.compareTo('${b.participation['id']}');
+  });
+  return records;
+}
+
+/// Cidades conquistadas no passaporte: onde a pessoa concluiu uma corrida, da mais recente para a mais antiga,
+/// sem repetir. Cada item é (cidade, estado).
+List<(String, String?)> conqueredCities(List<RaceRecord> races) {
+  final seen = <String>{};
+  final out = <(String, String?)>[];
+  for (final race in races) {
+    final city = (race.edition?['city'] as String?)?.trim() ?? '';
+    if (city.isEmpty) continue;
+    final state = (race.edition?['state'] as String?)?.trim();
+    if (seen.add('${foldName(city)}|${state ?? ''}')) out.add((city, state));
+  }
+  return out;
+}
+
+/// Quantas cidades o passaporte tem: as que têm foto de cartão postal no app mais as que a pessoa já conquistou
+/// e ainda não têm foto (assim, "conquistadas" nunca passa do total).
+int passportTotal(List<(String, String?)> conquered) {
+  final keys = {for (final p in cityPhotoList) '${foldName(p.city)}|SP'};
+  for (final (city, state) in conquered) {
+    keys.add('${foldName(city)}|${state ?? ''}');
+  }
+  return keys.length;
+}
+
+String passportSummary(int conquered, int total) =>
+    '$conquered de $total cidades conquistadas';
+
+/// Achievements derived only from the runner's completed races. They are not
+/// stored or awarded by the backend: a badge shows when the condition holds.
+class Achievement {
+  final String title, caption;
+  final IconData icon;
+  final Color color;
+  const Achievement(this.title, this.caption, this.icon, this.color);
+}
+
+List<Achievement> achievementsOf(RaceStats stats) => [
+  if (stats.cities > 0)
+    Achievement(
+      'Desbravador',
+      '${stats.cities} ${stats.cities == 1 ? 'cidade' : 'cidades'}',
+      Icons.landscape_outlined,
+      const Color(0xff4cc38a),
+    ),
+  if ((stats.byDistance[5] ?? 0) > 0)
+    const Achievement(
+      'Primeiro Passo',
+      '5K',
+      Icons.looks_5_outlined,
+      Color(0xffff9f2e),
+    ),
+  if ((stats.byDistance[10] ?? 0) > 0)
+    const Achievement(
+      'Ritmo Forte',
+      '10K',
+      Icons.filter_1_outlined,
+      Color(0xff3fbf8a),
+    ),
+  if ((stats.byDistance[21] ?? 0) > 0)
+    const Achievement(
+      'Meio Caminho',
+      '(21K)',
+      Icons.star_outline,
+      Color(0xff8a5cf6),
+    ),
+  if ((stats.byDistance[42] ?? 0) > 0)
+    const Achievement(
+      'Lenda da Maratona',
+      '(42K)',
+      Icons.workspace_premium_outlined,
+      Color(0xffe8b23a),
+    ),
+];
+
+/// Selo do perfil: conquistado ou bloqueado (ainda nao conquistado), com a dica de como
+/// desbloquear. Sao todos os selos que existem hoje, derivados so das corridas concluidas.
+class Seal {
+  final Achievement item;
+  final String label, hint;
+  final bool earned;
+  const Seal(this.item, this.label, this.hint, {required this.earned});
+}
+
+List<Seal> sealsOf(RaceStats stats) {
+  bool did(double km) => (stats.byDistance[km] ?? 0) > 0;
+  return [
+    Seal(
+      Achievement(
+        'Desbravador',
+        '${stats.cities} ${stats.cities == 1 ? 'cidade' : 'cidades'}',
+        Icons.landscape_outlined,
+        const Color(0xff4cc38a),
+      ),
+      'Desbravador',
+      'Conclua uma prova em qualquer cidade.',
+      earned: stats.cities > 0,
+    ),
+    Seal(
+      const Achievement(
+        'Primeiro Passo',
+        '5K',
+        Icons.looks_5_outlined,
+        Color(0xffff9f2e),
+      ),
+      '5K',
+      'Conclua uma prova de 5K.',
+      earned: did(5),
+    ),
+    Seal(
+      const Achievement(
+        'Ritmo Forte',
+        '10K',
+        Icons.filter_1_outlined,
+        Color(0xff3fbf8a),
+      ),
+      '10K',
+      'Conclua uma prova de 10K.',
+      earned: did(10),
+    ),
+    Seal(
+      const Achievement(
+        'Meio Caminho',
+        '(21K)',
+        Icons.star_outline,
+        Color(0xff8a5cf6),
+      ),
+      '21K',
+      'Conclua uma meia maratona (21K).',
+      earned: did(21),
+    ),
+    Seal(
+      const Achievement(
+        'Lenda da Maratona',
+        '(42K)',
+        Icons.workspace_premium_outlined,
+        Color(0xffe8b23a),
+      ),
+      '42K',
+      'Conclua uma maratona (42K).',
+      earned: did(42),
+    ),
+  ];
+}
+
+/// Círculo do selo: colorido quando conquistado; cinza, com o ícone apagado e um cadeado, quando bloqueado.
+/// É o mesmo no perfil, em Medalhas > Conquistas e na folha de detalhes.
+class SealAvatar extends StatelessWidget {
+  final Seal seal;
+  final double radius;
+  const SealAvatar({super.key, required this.seal, this.radius = 17});
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        CircleAvatar(
+          radius: radius,
+          backgroundColor: seal.earned
+              ? seal.item.color
+              : (dark ? Colors.white12 : Colors.black12),
+          child: Icon(
+            seal.item.icon,
+            size: radius * 1.05,
+            color: seal.earned
+                ? Colors.white
+                : (dark ? Colors.white38 : Colors.black38),
+          ),
+        ),
+        if (!seal.earned)
+          Positioned(
+            right: -radius * 0.18,
+            bottom: -radius * 0.18,
+            child: Container(
+              key: Key('seal-locked-${seal.label}'),
+              padding: EdgeInsets.all(radius * 0.12),
+              decoration: BoxDecoration(
+                color: dark ? Colors.black54 : Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.lock,
+                size: radius * 0.6,
+                color: dark ? Colors.white54 : Colors.black54,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Selo (conquistado ou bloqueado) com o ícone e a legenda curta. É o mesmo no perfil e em
+/// Medalhas > Conquistas (lá, maior).
+class SealBadge extends StatelessWidget {
+  final Seal seal;
+  final VoidCallback onTap;
+  final double radius;
+  const SealBadge({
+    super.key,
+    required this.seal,
+    required this.onTap,
+    this.radius = 17,
+  });
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: seal.earned
+        ? '${seal.item.title} ${seal.item.caption}'
+        : 'Bloqueado: ${seal.hint}',
+    child: InkWell(
+      key: Key('seal-${seal.label}'),
+      customBorder: const CircleBorder(),
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SealAvatar(seal: seal, radius: radius),
+          SizedBox(height: radius * 0.2),
+          Text(
+            seal.label,
+            style: TextStyle(
+              fontSize: radius >= 26 ? 13 : 10,
+              fontWeight: FontWeight.w700,
+              color: seal.earned ? null : context.muted,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Folha com todos os selos e como desbloquear cada um.
+Future<void> showSealsSheet(BuildContext context, List<Seal> seals) =>
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Padding(
+          key: const Key('achievements-sheet'),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final seal in seals)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: SealAvatar(seal: seal, radius: 20),
+                  title: Text('${seal.item.title} ${seal.item.caption}'),
+                  subtitle: Text(
+                    seal.earned ? 'Conquistado' : 'Bloqueado. ${seal.hint}',
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+Widget achievementBadge(Achievement item) => SizedBox(
+  width: 78,
+  child: Column(
+    children: [
+      CircleAvatar(
+        radius: 28,
+        backgroundColor: item.color,
+        child: Icon(item.icon, color: Colors.white, size: 28),
+      ),
+      const SizedBox(height: 6),
+      Text(
+        item.title,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+      ),
+      Text(
+        item.caption,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 10, color: Colors.grey),
+      ),
+    ],
+  ),
+);
+
+String statLabel(double km) => switch (km.round()) {
+  21 => 'meias\n(21K)',
+  42 => 'maratona\n(42K)',
+  _ => 'corridas\n${distanceLabel(km)}',
+};
+
+class RaceStats {
+  final int completed, cities, countries;
+  final double kilometers;
+  final Map<double, int> byDistance;
+  const RaceStats(
+    this.completed,
+    this.cities,
+    this.byDistance, {
+    this.countries = 0,
+    this.kilometers = 0,
+  });
+
+  factory RaceStats.of(List<RaceRecord> races) {
+    final byDistance = <double, int>{};
+    var kilometers = 0.0;
+    for (final race in races) {
+      final km = race.kilometers;
+      if (km != null) {
+        final key = km.roundToDouble();
+        byDistance[key] = (byDistance[key] ?? 0) + 1;
+        kilometers += km;
+      }
+    }
+    return RaceStats(
+      races.length,
+      {
+        for (final race in races)
+          if ((race.edition?['city'] as String?) != null)
+            race.edition!['city'] as String,
+      }.length,
+      byDistance,
+      // Edicao sem pais informado e do Brasil.
+      countries: {
+        for (final race in races)
+          if (race.edition != null)
+            (race.edition!['country'] as String?)?.trim().toLowerCase() ??
+                'brasil',
+      }.length,
+      kilometers: kilometers,
+    );
+  }
+}
+
+Widget statBlock(
+  String value,
+  String label, {
+  Color? color,
+  Color? labelColor,
+  VoidCallback? onTap,
+}) {
+  final column = Column(
+    children: [
+      Text(
+        value,
+        style: TextStyle(
+          fontWeight: FontWeight.w900,
+          fontSize: 22,
+          color: color,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        label,
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 11, color: labelColor),
+      ),
+    ],
+  );
+  return Expanded(
+    child: onTap == null
+        ? column
+        : InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: column,
+          ),
+  );
+}
+
+Widget loadMessage(String text) => Center(
+  child: Padding(padding: const EdgeInsets.all(24), child: Text(text)),
+);
+
+String loadError(Object error) => error is IdentityIssue
+    ? catalogError(error)
+    : 'Não foi possível carregar seus dados. Tente novamente.';
+
+/// Toque na medalha em Medalhas: abre as opções para ajustar a MEDALHA (foto, modelo, legenda e, dali, os dados da
+/// corrida e a avaliação), no mesmo formato da edição da publicação. A publicação em si não é mexida aqui.
+Future<void> openMedal(
+  BuildContext context,
+  IdentityGateway gateway,
+  RaceRecord race,
+) => Navigator.of(context).push<void>(
+  MaterialPageRoute<void>(
+    builder: (_) => ParticipationDraftScreen(
+      gateway: gateway,
+      initial: race.participation,
+      medalMode: true,
+    ),
+  ),
+);
+
+/// Abre "Personalizar medalha" (modelo, foto da prateleira e legenda) a partir da tela da participação e grava
+/// o que mudou. Devolve a participação atualizada, ou nulo se a pessoa cancelou ou não deu para salvar.
+Future<Map<String, dynamic>?> editMedalInfo(
+  BuildContext context,
+  IdentityGateway gateway,
+  RaceRecord race, {
+  ImageBytesFetcher fetchDisplayPhoto = fetchImageBytes,
+  MedalCropOpener openCropScreen = openMedalCropScreen,
+}) async {
+  final result = await showModalBottomSheet<Map<String, dynamic>>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheet) => _MedalEditSheet(
+      gateway: gateway,
+      race: race,
+      fetchDisplayPhoto: fetchDisplayPhoto,
+      openCropScreen: openCropScreen,
+      allowDelete: false,
+    ),
+  );
+  if (result == null || !context.mounted) return null;
+  final id = race.participation['id'] as String;
+  try {
+    final updated = await gateway.request(
+      '/participations/${Uri.encodeComponent(id)}',
+      method: 'PATCH',
+      body: {'expectedVersion': race.participation['version'], ...result},
+    );
+    if (result.containsKey('medalDisplayImageReference')) {
+      forgetMedalDisplayImage(id);
+    }
+    return updated;
+  } on Exception {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível salvar a medalha. Tente de novo.'),
+        ),
+      );
+    }
+    return null;
+  }
+}
+
+String readableEditionName(String editionId) {
+  final match = RegExp(r'^pedido-(.+)-\d{4}-\d{2}-\d{2}-[^-]+$')
+      .firstMatch(editionId);
+  final words = match?.group(1)?.split('-').where((w) => w.isNotEmpty);
+  if (words == null || words.isEmpty) return 'Corrida';
+  return words.map((w) => w[0].toUpperCase() + w.substring(1)).join(' ');
+}
+
+enum MedalGrouping { all, year, distance, city }
+
+/// Baixa os bytes de uma foto, dada a URL assinada; injetavel para testes.
+typedef ImageBytesFetcher = Future<List<int>> Function(String url);
+
+/// Abre o editor de recorte circular (reaproveita o da foto de perfil) e
+/// devolve os bytes recortados, ou nulo se a pessoa desistir. Injetavel para
+/// testes, que podem pular a interacao real de recorte.
+typedef MedalCropOpener = Future<List<int>?> Function(
+  BuildContext context,
+  Uint8List image,
+  MedalFrame frame,
+);
+
+Future<List<int>?> openMedalCropScreen(
+  BuildContext context,
+  Uint8List image,
+  MedalFrame frame,
+) => Navigator.of(context).push<List<int>>(
+  MaterialPageRoute(
+    fullscreenDialog: true,
+    // O mesmo editor da foto da medalha e da publicação, aberto no formato "Prateleira".
+    builder: (_) => PhotoZoomScreen(
+      image: image,
+      title: 'Foto da medalha',
+      shelf: (key) => MedalShelfCrop(key: key, image: image, frame: frame),
+    ),
+  ),
+);
+
+/// Razao largura/altura da area que a foto realmente preenche no furo do
+/// modelo escolhido: para os formatos com sub-retangulo posicionado
+/// (circulo, hexagono, quadrada) e a razao do proprio furo; para contorno em
+/// poligono (escudo, assimetrica) a foto preenche o quadro inteiro antes do
+/// recorte, entao e a razao do quadro. Usada para o recorte de reposicionar
+/// a foto exportar no mesmo formato que vai aparecer na prateleira, sem
+/// sobra nem corte extra por um BoxFit.cover posterior.
+double medalCropAspectRatio(MedalFrame frame) =>
+    frame.shape == MedalHoleShape.polygon
+    ? frame.aspectRatio
+    : frame.holeHalfWidthFrac / frame.holeHalfHeightFrac;
+
+/// Mesmo contorno usado para recortar a foto na prateleira (circulo,
+/// hexagono, quadrada arredondada ou poligono), mas calculado direto para um
+/// [Size] arbitrario — usado so para desenhar o guia de recorte, sem
+/// precisar montar a arvore de widgets da prateleira.
+Path medalHolePath(MedalFrame frame, Size size) => switch (frame.shape) {
+  MedalHoleShape.hexagon => const _HexagonHoleClipper().getClip(size),
+  MedalHoleShape.roundedSquare => _RoundedSquareHoleClipper(
+    frame.cornerRadiusFrac,
+  ).getClip(size),
+  MedalHoleShape.polygon => _PolygonHoleClipper(
+    frame.holeOutlineFrac!,
+  ).getClip(size),
+  MedalHoleShape.circle => const _CircleClipper().getClip(size),
+};
+
+/// Desenha a foto aplicando zoom/giro/arrasto; usado tanto na pre-visualizacao
+/// ao vivo quanto na exportacao final, pra garantir que os dois batem pixel a
+/// pixel (sem essa garantia, o recorte exportado poderia ficar diferente do
+/// que a pessoa viu na tela).
+class TouchCropPainter extends CustomPainter {
+  final ui.Image image;
+  final double scale;
+  final double rotation;
+  final Offset offset;
+  const TouchCropPainter({
+    required this.image,
+    required this.scale,
+    required this.rotation,
+    required this.offset,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cover = max(size.width / image.width, size.height / image.height);
+    canvas.save();
+    canvas.translate(size.width / 2 + offset.dx, size.height / 2 + offset.dy);
+    canvas.rotate(rotation);
+    canvas.scale(cover * scale);
+    canvas.translate(-image.width / 2, -image.height / 2);
+    canvas.drawImage(image, Offset.zero, Paint());
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant TouchCropPainter oldDelegate) =>
+      oldDelegate.image != image ||
+      oldDelegate.scale != scale ||
+      oldDelegate.rotation != rotation ||
+      oldDelegate.offset != offset;
+}
+
+/// Mascara semitransparente por cima do recorte, no formato exato do furo
+/// do modelo escolhido (circulo, hexagono, quadrada ou poligono) — so pra
+/// orientar, nao afeta o que e exportado. O contorno e desenhado em duas
+/// camadas (preta larga por baixo, branca estreita por cima) pra continuar
+/// visivel mesmo sobre fotos escuras ou claras.
+class _FrameGuidePainter extends CustomPainter {
+  final MedalFrame frame;
+  const _FrameGuidePainter(this.frame);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final hole = medalHolePath(frame, size);
+    final mask = Path.combine(
+      PathOperation.difference,
+      Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height)),
+      hole,
+    );
+    canvas.drawPath(mask, Paint()..color = const Color(0x99000000));
+    canvas.drawPath(
+      hole,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4
+        ..color = const Color(0xaa000000),
+    );
+    canvas.drawPath(
+      hole,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..color = Colors.white,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _FrameGuidePainter oldDelegate) =>
+      oldDelegate.frame.id != frame.id;
+}
+
+/// Recorte no formato do furo da medalha (o "Prateleira" do editor de foto): arrastar com um dedo move a
+/// foto, pinçar amplia/reduz e girar com dois dedos gira, tudo junto. [export] devolve um PNG no mesmo
+/// formato do furo do modelo (círculo, hexágono, quadrada ou polígono — ver [medalCropAspectRatio]).
+class MedalShelfCrop extends StatefulWidget {
+  final Uint8List image;
+  final MedalFrame frame;
+  const MedalShelfCrop({super.key, required this.image, required this.frame});
+
+  @override
+  State<MedalShelfCrop> createState() => MedalShelfCropState();
+}
+
+class MedalShelfCropState extends State<MedalShelfCrop> {
+  ui.Image? decoded;
+  double scale = 1;
+  double rotation = 0;
+  Offset offset = Offset.zero;
+  double _baseScale = 1;
+  double _baseRotation = 0;
+  Size viewportSize = const Size(320, 320);
+
+  @override
+  void initState() {
+    super.initState();
+    _decode();
+  }
+
+  Future<void> _decode() async {
+    final codec = await ui.instantiateImageCodec(widget.image);
+    final codecFrame = await codec.getNextFrame();
+    if (!mounted) return;
+    setState(() => decoded = codecFrame.image);
+  }
+
+  bool get ready => decoded != null;
+
+  /// PNG do que está dentro da área da prateleira; nulo se a foto ainda não carregou.
+  Future<List<int>?> export() async {
+    final image = decoded;
+    if (image == null) return null;
+    final viewport = viewportSize;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    TouchCropPainter(
+      image: image,
+      scale: scale,
+      rotation: rotation,
+      offset: offset,
+    ).paint(canvas, viewport);
+    final output = await recorder.endRecording().toImage(
+      viewport.width.round(),
+      viewport.height.round(),
+    );
+    final data = await output.toByteData(format: ui.ImageByteFormat.png);
+    return data?.buffer.asUint8List();
+  }
+
+  @override
+  Widget build(BuildContext context) => decoded == null
+      ? const Center(child: CircularProgressIndicator(color: Colors.white))
+      : LayoutBuilder(
+          builder: (context, constraints) {
+            final aspect = medalCropAspectRatio(widget.frame);
+            final available = constraints.biggest;
+            var viewport = Size(available.width, available.width / aspect);
+            if (viewport.height > available.height) {
+              viewport = Size(available.height * aspect, available.height);
+            }
+            viewportSize = viewport;
+            return Center(
+              child: ClipRect(
+                child: GestureDetector(
+                  key: const Key('crop-touch-area'),
+                  onScaleStart: (_) {
+                    _baseScale = scale;
+                    _baseRotation = rotation;
+                  },
+                  onScaleUpdate: (details) => setState(() {
+                    scale = (_baseScale * details.scale).clamp(0.2, 8.0);
+                    rotation = _baseRotation + details.rotation;
+                    offset += details.focalPointDelta;
+                  }),
+                  child: SizedBox(
+                    width: viewport.width,
+                    height: viewport.height,
+                    child: Stack(
+                      children: [
+                        CustomPaint(
+                          size: viewport,
+                          painter: TouchCropPainter(
+                            image: decoded!,
+                            scale: scale,
+                            rotation: rotation,
+                            offset: offset,
+                          ),
+                        ),
+                        IgnorePointer(
+                          child: CustomPaint(
+                            size: viewport,
+                            painter: _FrameGuidePainter(widget.frame),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+}
+
+class MedalCollectionScreen extends StatefulWidget {
+  final IdentityGateway gateway;
+  final ImageBytesFetcher fetchDisplayPhoto;
+  final MedalCropOpener openCropScreen;
+
+  /// Foto da medalha para o "+" e o leitor de texto dela. Trocáveis nos testes (câmera e Vision não rodam lá).
+  final MedalPhotoPicker medalPhotoPicker;
+  final MedalTextReader medalTextReader;
+
+  /// Seleção de foto do rascunho da participação (só os testes trocam).
+  final PhotoSelector? draftPhotoSelector;
+
+  /// Carrega a foto da medalha provisória. Trocável nos testes (o link assinado não roda lá).
+  final Future<List<int>?> Function(IdentityGateway, String) pendingPhotoLoader;
+
+  /// Nome da corrida que acabou de ser concluída: a prateleira abre com o aviso da conquista.
+  final String? justEarned;
+  const MedalCollectionScreen({
+    super.key,
+    required this.gateway,
+    this.fetchDisplayPhoto = fetchImageBytes,
+    this.openCropScreen = openMedalCropScreen,
+    this.medalPhotoPicker = pickMedalPhotoPath,
+    this.medalTextReader = const PlatformMedalTextReader(),
+    this.draftPhotoSelector,
+    this.pendingPhotoLoader = loadRequestMedalPhoto,
+    this.justEarned,
+  });
+
+  @override
+  State<MedalCollectionScreen> createState() => _MedalCollectionScreenState();
+}
+
+class _MedalCollectionScreenState extends State<MedalCollectionScreen> {
+  late Future<List<RaceRecord>> races = loadMyRaces(widget.gateway);
+  late Future<List<Map<String, dynamic>>> pendingMedals = loadPendingMedals(
+    widget.gateway,
+  );
+  late Future<List<RaceRecord>> drafts = loadMyDrafts(widget.gateway);
+  late bool showEarned = widget.justEarned != null;
+  MedalGrouping grouping = _lastMedalGrouping;
+  bool newestFirst = _lastMedalNewestFirst;
+
+  /// Segunda visão de Medalhas: os quadros (medalha + número de peito) das corridas com número informado.
+  bool framesView = _lastMedalFramesView;
+  bool _applying = false;
+
+  /// Aviso da conquista, no alto da prateleira, logo depois de concluir uma corrida.
+  Widget earnedBanner() => Container(
+    key: const Key('medal-earned-banner'),
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+    decoration: BoxDecoration(
+      color: runPassOrange.withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: runPassOrange.withValues(alpha: .5)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.emoji_events, color: runPassGold, size: 34),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Medalha conquistada!',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
+              Text('${widget.justEarned} entrou na sua coleção.'),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Fechar',
+          icon: const Icon(Icons.close, size: 20),
+          onPressed: () => setState(() => showEarned = false),
+        ),
+      ],
+    ),
+  );
+
+  /// Rascunhos de corridas já realizadas: um atalho para concluir o que ficou pela metade.
+  /// [done]: as medalhas já concluídas; corrida que já tem medalha não volta como rascunho.
+  Widget draftsStrip(List<RaceRecord> done) => FutureBuilder<List<RaceRecord>>(
+    future: drafts,
+    builder: (context, snapshot) {
+      final earned = {
+        for (final race in done) '${race.participation['editionId']}',
+      };
+      final list = [
+        for (final draft in snapshot.data ?? const <RaceRecord>[])
+          if (!earned.contains('${draft.participation['editionId']}') &&
+              !hiddenDrafts.contains(draft.participation['id']))
+            draft,
+      ];
+      if (list.isEmpty) return const SizedBox.shrink();
+      return Column(
+        key: const Key('medal-drafts'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Para concluir',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+          ),
+          const SizedBox(height: 6),
+          for (final draft in list)
+            Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                key: Key('medal-draft-${draft.participation['id']}'),
+                leading: const Icon(Icons.edit_note, color: runPassOrange),
+                title: Text(
+                  draft.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: const Text('Rascunho · falta concluir'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Continuar',
+                      style: TextStyle(
+                        color: runPassOrange,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    IconButton(
+                      key: Key(
+                        'medal-draft-delete-${draft.participation['id']}',
+                      ),
+                      tooltip: 'Excluir rascunho',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                      onPressed: () => deleteDraft(draft),
+                    ),
+                  ],
+                ),
+                onTap: () => continueDraft(draft),
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
+      );
+    },
+  );
+
+  /// Rascunhos tirados da lista agora (com "Desfazer"): somem na hora, antes de o servidor confirmar.
+  final hiddenDrafts = <Object?>{};
+
+  /// × no rascunho: exclui com "Desfazer" (some na hora; a exclusão só vai ao servidor depois da janela).
+  Future<void> deleteDraft(RaceRecord draft) async {
+    final id = draft.participation['id'] as String;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final done = await deleteWithUndo(
+        context,
+        id: id,
+        message: 'Rascunho excluído.',
+        hide: () => setState(() => hiddenDrafts.add(id)),
+        restore: () {
+          if (mounted) setState(() => hiddenDrafts.remove(id));
+        },
+        perform: () => deleteParticipation(widget.gateway, id),
+      );
+      if (done && mounted) {
+        setState(() => drafts = loadMyDrafts(widget.gateway));
+      }
+    } on Exception {
+      if (mounted) setState(() => hiddenDrafts.remove(id));
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível excluir o rascunho. Tente de novo.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> continueDraft(RaceRecord draft) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ParticipationDraftScreen(
+          gateway: widget.gateway,
+          initial: draft.participation,
+          photoSelector: widget.draftPhotoSelector,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      drafts = loadMyDrafts(widget.gateway);
+      races = loadMyRaces(widget.gateway);
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    applyApprovedPending();
+  }
+
+  /// Corrida aprovada que tinha a minha participação guardada com o pedido (tempo, avaliação, fotos): cria e
+  /// conclui a participação sozinho, para eu não ter que voltar a preencher. Só mexe no que a equipe já aprovou;
+  /// se algo não casar (distância, data futura, participação já existente), deixa para o toque na medalha.
+  Future<void> applyApprovedPending() async {
+    if (_applying) return;
+    _applying = true;
+    try {
+      final pending = await pendingMedals;
+      final done = await races;
+      final doneEditions = {
+        for (final race in done) '${race.participation['editionId']}',
+      };
+      var applied = 0;
+      for (final request in pending) {
+        final data = request['participation'];
+        final linked = request['linkedEditionId'] as String?;
+        final approved =
+            request['status'] == 'approved' || request['status'] == 'linked';
+        if (data is! Map ||
+            data.isEmpty ||
+            !approved ||
+            linked == null ||
+            doneEditions.contains(linked)) {
+          continue;
+        }
+        if (await _applyOne(request, Map<String, dynamic>.from(data))) {
+          applied++;
+        }
+      }
+      if (applied > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              applied == 1
+                  ? 'A corrida foi aprovada e a sua participação já foi concluída, com o tempo e a avaliação que você guardou.'
+                  : '$applied corridas foram aprovadas e as suas participações já foram concluídas.',
+            ),
+          ),
+        );
+        _reloadShelf();
+      }
+    } on Exception {
+      // Não conseguiu agora: a medalha continua tocável e tenta de novo na próxima vez.
+    } finally {
+      _applying = false;
+    }
+  }
+
+  Future<bool> _applyOne(
+    Map<String, dynamic> request,
+    Map<String, dynamic> data,
+  ) async {
+    final editionId = request['linkedEditionId'] as String;
+    final details = (request['details'] as Map?) ?? const {};
+    final medalRef = details['medalImageReference'] as String?;
+    if (medalRef == null) return false;
+    final options = await editionDistances(widget.gateway, editionId, null);
+    final km = double.tryParse('${details['distanceKm'] ?? ''}');
+    Map? picked = options.length == 1 ? options.first : null;
+    if (picked == null && km != null) {
+      for (final d in options) {
+        if (((d['kilometers'] as num) - km).abs() < 0.05) picked = d;
+      }
+    }
+    if (picked == null) {
+      return false; // distância incerta: a pessoa escolhe ao tocar na medalha
+    }
+    try {
+      final draft = await widget.gateway.request(
+        '/participations',
+        method: 'POST',
+        body: {
+          'editionId': editionId,
+          'distanceId': picked['id'],
+          'timeSeconds': ?data['timeSeconds'],
+          'placement': ?data['placement'],
+          'bibNumber': ?data['bibNumber'],
+        },
+      );
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(draft['id'] as String)}/complete',
+        method: 'POST',
+        body: {
+          'expectedVersion': draft['version'],
+          'declaredCompleted': true,
+          'ratings': data['ratings'],
+          'medalImageReference': medalRef,
+          'publishToFeed': data['publishToFeed'] == true,
+          'postImageReference': ?data['postImageReference'],
+          'postText': ?data['postText'],
+          'comment': ?data['comment'],
+        },
+      );
+      return true;
+    } on IdentityIssue {
+      return false; // já existe participação, data futura etc.: fica para o toque na medalha
+    }
+  }
+
+  /// Exclui a medalha com "Desfazer": ela some na hora e a exclusão só vai ao servidor depois da janela.
+  Future<void> deleteMedal(RaceRecord race) async {
+    final id = race.participation['id'] as String;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final done = await deleteWithUndo(
+        context,
+        id: id,
+        message: 'Medalha excluída. Ela também saiu de Minhas corridas.',
+        hide: () => setState(() {
+          races = loadMyRaces(widget.gateway);
+        }),
+        restore: () {
+          if (mounted) {
+            setState(() {
+              races = loadMyRaces(widget.gateway);
+            });
+          }
+        },
+        perform: () async {
+          await deleteParticipation(widget.gateway, id);
+          forgetMedalDisplayImage(id);
+        },
+      );
+      if (done && mounted) {
+        setState(() {
+          races = loadMyRaces(widget.gateway);
+        });
+      }
+    } on Exception {
+      if (mounted) {
+        setState(() {
+          races = loadMyRaces(widget.gateway);
+        });
+      }
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível excluir a medalha. Tente de novo.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> editMedal(RaceRecord race) async {
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheet) => _MedalEditSheet(
+        gateway: widget.gateway,
+        race: race,
+        fetchDisplayPhoto: widget.fetchDisplayPhoto,
+        openCropScreen: widget.openCropScreen,
+      ),
+    );
+    if (result == null || !mounted) return;
+    final id = race.participation['id'] as String;
+    if (result['_delete'] == true) return deleteMedal(race);
+    try {
+      await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}',
+        method: 'PATCH',
+        body: {'expectedVersion': race.participation['version'], ...result},
+      );
+      if (result.containsKey('medalDisplayImageReference')) {
+        forgetMedalDisplayImage(id);
+      }
+      setState(() {
+        races = loadMyRaces(widget.gateway);
+      });
+    } on Exception {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível salvar a medalha. Tente de novo.'),
+        ),
+      );
+    }
+  }
+
+  Widget _medalNiche({required MedalFrame frame, required Widget photo}) =>
+      medalNiche(frame: frame, photo: photo);
+
+  Widget tile(RaceRecord race) => Stack(
+    children: [
+      InkWell(
+        onTap: () async {
+          await openMedal(context, widget.gateway, race);
+          _reloadShelf(); // a foto/dados podem ter mudado na tela da medalha
+        },
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          // Sem card/borda/sombra: a medalha fica direto no fundo da tela,
+          // como no template. Sem padding horizontal proprio: o espacamento
+          // entre as medalhas vem só do crossAxisSpacing da grade, senão o
+          // recuo dobra e as imagens não ficam próximas.
+          padding: EdgeInsets.zero,
+          child: Column(
+            // Altura fixa (sem Expanded/Center) para a imagem e para os
+            // blocos de texto: assim a medalha e a prateleira ficam na
+            // mesma posicao em todos os cards, mesmo quando a legenda de
+            // um deles quebra em 2 linhas e a do vizinho cabe em 1.
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              _medalNiche(
+                frame: medalFrameFor(race.medalFrameId),
+                photo: MedalPhoto(
+                  gateway: widget.gateway,
+                  participationId: race.participation['id'] as String?,
+                  useDisplayImage: true,
+                  revision: shelfRevision,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 32,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Text(
+                    race.medalDescription,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+              Text(
+                [
+                  if (race.medalPlace.isNotEmpty) race.medalPlace,
+                  if (race.medalYear != null) '${race.medalYear}',
+                ].join(' · '),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: context.muted, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+      ),
+      Positioned(
+        top: 2,
+        right: 2,
+        child: Material(
+          color: Colors.black38,
+          shape: const CircleBorder(),
+          child: InkWell(
+            key: Key('medal-edit-${race.participation['id']}'),
+            customBorder: const CircleBorder(),
+            onTap: () => editMedal(race),
+            child: const Padding(
+              padding: EdgeInsets.all(5),
+              child: Icon(Icons.edit, size: 14, color: Colors.white),
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+
+  Widget grid(
+    List<RaceRecord> list, [
+    List<Map<String, dynamic>> pending = const [],
+  ]) => GridView.count(
+    padding: EdgeInsets.zero,
+    crossAxisCount: 3,
+    shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    mainAxisSpacing: 0,
+    crossAxisSpacing: 2,
+    // Baixo o suficiente para o nicho de nogueira (proporcao fixa 1086:1448)
+    // mais o texto caberem usando a largura inteira do card, sem cortar —
+    // mesmo quando local/ano quebra em 2 linhas (o pior caso). Por isso nao
+    // da para reduzir muito mais sem arriscar sobrepor a proxima linha
+    // quando isso acontecer; 0.52 aperta a folga sem cortar texto.
+    childAspectRatio: 0.52,
+    children: [
+      for (final request in pending) pendingTile(request),
+      for (final race in list) tile(race),
+    ],
+  );
+
+  /// Botao compacto ao lado de "Minhas medalhas": abre a foto da medalha para achar a corrida.
+  /// "+": primeiro a foto da medalha (câmera ou galeria); o app lê o texto e tenta achar a corrida.
+  /// Se não achar, a tela seguinte tem o botão que leva às corridas.
+  /// Sem nenhuma medalha: a tela segue a mesma (filtros, totais, prateleira); aqui entra o convite
+  /// para adicionar a primeira, começando pela foto da medalha, sem escolher a corrida antes.
+  Widget emptyShelf() => Card(
+    key: const Key('medals-empty'),
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          const Text(
+            'Você ainda não concluiu uma corrida. Sua primeira medalha aparecerá aqui.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            key: const Key('medal-add-first'),
+            onPressed: addMedal,
+            icon: const Icon(Icons.add_a_photo_outlined),
+            label: const Text('Adicionar medalha'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  int shelfRevision =
+      0; // sobe quando uma medalha é editada: as fotos recarregam
+  final _pendingPhotos = <String, Future<List<int>?>>{};
+  final _editionNames = <String, Future<String?>>{};
+
+  /// Nome atual da corrida (a equipe pode ter corrigido depois do pedido): vale o do catálogo.
+  Future<String?> _currentName(String editionId) =>
+      _editionNames.putIfAbsent(editionId, () async {
+        final found = await loadEditions(widget.gateway, [editionId]);
+        return found[editionId]?['name'] as String?;
+      });
+
+  void _reloadShelf() {
+    if (!mounted) return;
+    setState(() {
+      shelfRevision++;
+      pendingMedals = loadPendingMedals(widget.gateway);
+      races = loadMyRaces(widget.gateway);
+    });
+  }
+
+  /// Medalha com a corrida aprovada: segue para a minha participação nela (tempo, percurso, avaliação e a
+  /// foto da medalha que já enviei). Se já existe um rascunho nessa corrida, abre o rascunho.
+  Future<void> concludePending(Map<String, dynamic> request) async {
+    final editionId = request['linkedEditionId'] as String?;
+    if (editionId == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      final options = await editionDistances(widget.gateway, editionId, null);
+      final km = double.tryParse(
+        '${(request['details'] as Map?)?['distanceKm'] ?? ''}',
+      );
+      if (!mounted) return;
+      final picked = await chooseDistance(context, options, km: km);
+      if (!mounted) return;
+      if (picked == null) {
+        if (options.isEmpty) {
+          // Corrida sem distâncias: a tela da corrida deixa marcar "Já corri".
+          await navigator.push(
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  EditionScreen(gateway: widget.gateway, editionId: editionId),
+            ),
+          );
+          _reloadShelf();
+        }
+        return; // desistiu de escolher a distância
+      }
+      Map<String, dynamic> draft;
+      List<int>? photo;
+      try {
+        draft = await widget.gateway.request(
+          '/participations',
+          method: 'POST',
+          body: {'editionId': editionId, 'distanceId': picked['id']},
+        );
+        photo = await widget.pendingPhotoLoader(
+          widget.gateway,
+          request['id'] as String,
+        );
+      } on IdentityIssue catch (issue) {
+        if (issue.code != 'PARTICIPATION_EXISTS') rethrow;
+        final mine = await loadMyEditions(widget.gateway);
+        final existing = mine[editionId];
+        if (existing == null) rethrow;
+        draft =
+            existing; // já existe: continua de onde parou (sem reenviar a foto)
+        photo = null;
+      }
+      if (!mounted) return;
+      await navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => ParticipationDraftScreen(
+            gateway: widget.gateway,
+            initial: draft,
+            initialPhoto: photo,
+            initialPhotoCropper: (context, bytes) async => bytes,
+            initialShelfCropper: widget.openCropScreen,
+          ),
+        ),
+      );
+      _reloadShelf();
+    } on IdentityIssue catch (issue) {
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível abrir agora. Verifique a internet e tente de novo.',
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Menu do lápis da medalha em análise/aprovada: continuar a participação, ver a solicitação ou excluir.
+  Future<void> pendingMenu(Map<String, dynamic> request) async {
+    final approved =
+        request['status'] == 'approved' || request['status'] == 'linked';
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (approved && request['linkedEditionId'] != null)
+              ListTile(
+                key: const Key('pending-menu-continue'),
+                leading: const Icon(Icons.edit_note_rounded),
+                title: const Text('Atualizar minha participação'),
+                subtitle: const Text(
+                  'Tempo, percurso, avaliação e a foto da medalha',
+                ),
+                onTap: () => Navigator.pop(sheet, 'continue'),
+              ),
+            ListTile(
+              key: const Key('pending-menu-request'),
+              leading: const Icon(Icons.assignment_outlined),
+              title: const Text('Ver a solicitação'),
+              onTap: () => Navigator.pop(sheet, 'request'),
+            ),
+            ListTile(
+              key: const Key('pending-menu-delete'),
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text(
+                'Excluir medalha',
+                style: TextStyle(color: Colors.red),
+              ),
+              onTap: () => Navigator.pop(sheet, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (choice) {
+      case 'continue':
+        await concludePending(request);
+      case 'request':
+        _openRequests();
+      case 'delete':
+        await deletePending(request);
+    }
+  }
+
+  /// Exclui a medalha em análise/aprovada: sai a solicitação e a foto enviada com ela. A corrida do catálogo
+  /// continua (dá para cadastrar a medalha de novo escolhendo a corrida).
+  Future<void> deletePending(Map<String, dynamic> request) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Excluir medalha?'),
+        content: const Text(
+          'A solicitação e a foto da medalha enviadas serão excluídas. A corrida continua no catálogo, e você pode cadastrar a medalha de novo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('pending-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final done = await deleteWithUndo(
+        context,
+        id: request['id'] as String,
+        message: 'Medalha excluída.',
+        hide: _reloadShelf,
+        restore: () {
+          if (mounted) _reloadShelf();
+        },
+        perform: () async {
+          await widget.gateway.request(
+            '/edition-requests/${Uri.encodeComponent(request['id'] as String)}',
+            method: 'DELETE',
+            query: {'expectedVersion': '${request['version']}'},
+          );
+          _pendingPhotos.remove(request['id']);
+        },
+      );
+      if (done && mounted) _reloadShelf();
+    } on IdentityIssue catch (issue) {
+      if (mounted) _reloadShelf();
+      messenger.showSnackBar(SnackBar(content: Text(catalogError(issue))));
+    } on Exception {
+      if (mounted) _reloadShelf();
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível excluir. Verifique a internet e tente de novo.',
+          ),
+        ),
+      );
+    }
+  }
+
+  void _openRequests() => Navigator.of(context)
+      .push(
+        MaterialPageRoute<void>(
+          builder: (_) => MyEditionRequestsScreen(gateway: widget.gateway),
+        ),
+      )
+      .then((_) => _reloadShelf());
+
+  /// Medalha provisória (pedido de cadastro com a foto da medalha), até a equipe decidir: aparece junto das
+  /// outras na prateleira, em cinza e com cadeado. Aprovada, ganha cor e abre a corrida para concluir.
+  Widget pendingTile(Map<String, dynamic> request) {
+    final id = request['id'] as String;
+    final details = (request['details'] as Map?) ?? const {};
+    final linked = request['linkedEditionId'] as String?;
+    final approved =
+        request['status'] == 'approved' || request['status'] == 'linked';
+    final locked = !approved;
+    final photo = FutureBuilder<List<int>?>(
+      future: _pendingPhotos.putIfAbsent(
+        id,
+        () => widget.pendingPhotoLoader(widget.gateway, id),
+      ),
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        final image = bytes == null
+            ? const ColoredBox(
+                color: Color(0x33888888),
+                child: Center(
+                  child: Icon(Icons.workspace_premium_outlined, size: 40),
+                ),
+              )
+            : Image.memory(
+                Uint8List.fromList(bytes),
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              );
+        return image; // a foto aparece normal; só o cadeado no canto indica que está em análise
+      },
+    );
+    return Stack(
+      key: Key('pending-medal-$id'),
+      children: [
+        InkWell(
+          key: Key('pending-locked-$id-$locked'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: approved && linked != null
+              ? () => concludePending(request)
+              : _openRequests,
+          child: Column(
+            children: [
+              _medalNiche(frame: medalFrameFor(null), photo: photo),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 32,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: FutureBuilder<String?>(
+                    future: linked == null ? null : _currentName(linked),
+                    builder: (context, snapshot) => Text(
+                      snapshot.data ?? '${details['name'] ?? 'Medalha'}',
+                      key: Key('pending-name-$id'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Text(
+                pendingMedalStatus(request),
+                key: Key('pending-status-$id'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: context.muted, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+        if (locked)
+          // Cadeado pequeno no canto inferior direito da foto (em análise); a foto e os dados seguem ativos.
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: AspectRatio(
+              aspectRatio: 1086 / 1448,
+              child: Align(
+                alignment: Alignment.bottomRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      color: Color(0xCC000000),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.all(5),
+                      child: Icon(
+                        Icons.lock_outline_rounded,
+                        key: Key('pending-lock'),
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          top: 2,
+          right: 2,
+          child: Material(
+            color: Colors.black38,
+            shape: const CircleBorder(),
+            child: InkWell(
+              key: Key('pending-edit-$id'),
+              customBorder: const CircleBorder(),
+              // Aprovada: edita/conclui a minha participação. Em análise: abre a solicitação (editar ou excluir).
+              onTap: () => pendingMenu(request),
+              child: const Padding(
+                padding: EdgeInsets.all(5),
+                child: Icon(Icons.edit, size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Prateleira: as medalhas concluídas e, junto, as em análise (cinza, com cadeado).
+  Widget shelf(List<RaceRecord> data) =>
+      FutureBuilder<List<Map<String, dynamic>>>(
+        future: pendingMedals,
+        builder: (context, snapshot) {
+          final pending = visiblePendingMedals(snapshot.data ?? const [], {
+            for (final race in data) '${race.participation['editionId']}',
+          });
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (showEarned) earnedBanner(),
+              draftsStrip(data),
+              if (data.isEmpty) ...[
+                if (pending.isNotEmpty) grid(const [], pending),
+                emptyShelf(),
+              ] else
+                ...sections(data, pending),
+            ],
+          );
+        },
+      );
+
+  Future<void> addMedal() async {
+    final path = await widget.medalPhotoPicker(context);
+    if (path == null || !mounted) return;
+    final registered = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute<Object?>(
+        builder: (_) => MedalScanScreen(
+          gateway: widget.gateway,
+          photoPath: path,
+          reader: widget.medalTextReader,
+          draftPhotoSelector: widget.draftPhotoSelector,
+        ),
+      ),
+    );
+    if (registered == 'request' && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 6),
+          content: Text(
+            'Pedido enviado. A medalha fica em análise, com um cadeado no canto. Quando a equipe aprovar, a sua participação é concluída sozinha com o que você preencheu.',
+          ),
+        ),
+      );
+    }
+    if (registered != null && mounted) {
+      setState(() {
+        pendingMedals = loadPendingMedals(widget.gateway);
+        races = loadMyRaces(
+          widget.gateway,
+        ); // pode ter concluído uma medalha de verdade
+      });
+    }
+  }
+
+  Widget _addTile() => InkWell(
+    key: const Key('medal-add-tile'),
+    borderRadius: BorderRadius.circular(16),
+    onTap: addMedal,
+    child: Container(
+      width: 24,
+      height: 24,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white,
+        // No claro, o branco nao contrasta com o fundo: uma borda fina
+        // laranja marca o circulo. No escuro ele ja se destaca sozinho.
+        border: context.isDark
+            ? null
+            : Border.all(color: runPassOrange, width: 1),
+      ),
+      child: const Icon(Icons.add, color: runPassOrange, size: 16),
+    ),
+  );
+
+  List<Widget> sections(
+    List<RaceRecord> races, [
+    List<Map<String, dynamic>> pending = const [],
+  ]) {
+    final ordered = newestFirst ? races : races.reversed.toList();
+    if (grouping == MedalGrouping.all) {
+      // As medalhas em análise ficam junto das outras, no começo da prateleira (cinza, com cadeado).
+      return [grid(ordered, pending)];
+    }
+    final groups = <String, List<RaceRecord>>{};
+    for (final race in ordered) {
+      final key = switch (grouping) {
+        MedalGrouping.year => '${race.year ?? 'Sem data'}',
+        MedalGrouping.city => race.cityLabel,
+        _ =>
+          race.kilometers == null ? 'Outras' : distanceLabel(race.kilometers!),
+      };
+      groups.putIfAbsent(key, () => []).add(race);
+    }
+    final keys = groups.keys.toList();
+    if (grouping == MedalGrouping.city) {
+      // Cidades visitadas em ordem alfabética; as medalhas sem cidade ficam por último.
+      keys.sort((a, b) {
+        if (a == RaceRecord.noCity) return 1;
+        if (b == RaceRecord.noCity) return -1;
+        return a.toLowerCase().compareTo(b.toLowerCase());
+      });
+    }
+    if (grouping == MedalGrouping.distance) {
+      keys.sort(
+        (a, b) => (int.tryParse(a.replaceAll('K', '')) ?? 1 << 20).compareTo(
+          int.tryParse(b.replaceAll('K', '')) ?? 1 << 20,
+        ),
+      );
+    }
+    return [
+      if (pending.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.only(top: 8, bottom: 8),
+          child: Text(
+            'Em análise',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+          ),
+        ),
+        grid(const [], pending),
+      ],
+      for (final key in keys) ...[
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 8),
+          child: Text(
+            key,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+          ),
+        ),
+        grid(groups[key]!),
+      ],
+    ];
+  }
+
+  // Icone ao lado do numero (em vez de em cima), e a legenda embaixo: ganha
+  // altura vertical no card sem mudar fonte/cor. A legenda sempre quebra nas
+  // 2 palavras (quebra manual, nao automatica): assim as 3 legendas ficam
+  // com a mesma altura/duas linhas sempre, em vez de uma quebrar e outra
+  // nao conforme o texto coube ou nao na largura.
+  Widget bigStat(
+    Widget icon,
+    String value,
+    String firstWord,
+    String secondWord,
+  ) => Expanded(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(width: 22, height: 22, child: Center(child: icon)),
+            const SizedBox(width: 6),
+            Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20),
+            ),
+          ],
+        ),
+        Text(
+          '$firstWord\n$secondWord',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13, color: context.muted),
+        ),
+      ],
+    ),
+  );
+
+  /// Quadros: uma moldura por corrida que tem número de peito, com a medalha de um lado e o cartão do número
+  /// (distância, nome, número e colocação) do outro. Segue a ordem escolhida (mais recentes ou mais antigas).
+  List<Widget> frames(List<RaceRecord> data) {
+    final ordered = newestFirst ? data : data.reversed.toList();
+    final items = [
+      for (final race in ordered)
+        if (BibCard.of(race) case final card?) (race, card),
+    ];
+    if (items.isEmpty) {
+      return [
+        Padding(
+          key: const Key('medal-frames-empty'),
+          padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 12),
+          child: Text(
+            'Os quadros aparecem para as corridas com número de peito. Abra uma medalha, toque em '
+            '"Alterar dados da corrida e avaliação" e informe o número de peito (e a colocação, se quiser).',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: context.muted),
+          ),
+        ),
+      ];
+    }
+    return [
+      for (final (race, card) in items)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
+          child: InkWell(
+            key: Key('medal-frame-${race.participation['id']}'),
+            onTap: () async {
+              await openMedal(context, widget.gateway, race);
+              _reloadShelf();
+            },
+            child: MedalBibFrame(
+              gateway: widget.gateway,
+              race: race,
+              card: card,
+              revision: shelfRevision,
+            ),
+          ),
+        ),
+    ];
+  }
+
+  Widget chip(String label, MedalGrouping value) => Padding(
+    padding: const EdgeInsets.only(right: 8),
+    child: ChoiceChip(
+      label: Text(label),
+      selected: grouping == value,
+      onSelected: (_) => setState(() => grouping = _lastMedalGrouping = value),
+      showCheckmark: false,
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => Theme(
+    data: Theme.of(context),
+    child: Builder(
+      builder: (context) => Scaffold(
+        appBar: AppBar(
+          title: const RunPassWordmark(compact: true),
+          actions: [
+            NotificationBell(gateway: widget.gateway),
+            const SizedBox(width: 8),
+          ],
+        ),
+        bottomNavigationBar: runPassNavigation(context, widget.gateway, 1),
+        body: FutureBuilder<List<RaceRecord>>(
+          future: races,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return loadMessage(loadError(snapshot.error!));
+            }
+            final data = snapshot.data!;
+            final stats = RaceStats.of(data);
+            final missing = data.where((r) => r.edition == null).length;
+            return ListView(
+              key: const Key('medals-list'),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              children: [
+                // Segundo menu: a prateleira de medalhas ou os quadros com o número de peito.
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: SegmentedButton<bool>(
+                    key: const Key('medals-view'),
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(
+                        value: false,
+                        icon: Icon(Icons.workspace_premium_outlined),
+                        label: Text('Medalhas'),
+                      ),
+                      ButtonSegment(
+                        value: true,
+                        icon: Icon(Icons.confirmation_number_outlined),
+                        label: Text('Quadros'),
+                      ),
+                    ],
+                    selected: {framesView},
+                    onSelectionChanged: (value) => setState(
+                      () => framesView = _lastMedalFramesView = value.first,
+                    ),
+                  ),
+                ),
+                // Os filtros de agrupar valem para a prateleira; em Quadros não aparecem.
+                if (!framesView)
+                  SingleChildScrollView(
+                    key: const Key('medal-grouping'),
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        chip('Todas', MedalGrouping.all),
+                        chip('Por ano', MedalGrouping.year),
+                        chip('Por distância', MedalGrouping.distance),
+                        chip('Por cidade', MedalGrouping.city),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 6),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 8,
+                      horizontal: 12,
+                    ),
+                    child: IntrinsicHeight(
+                      child: Row(
+                        children: [
+                          bigStat(
+                            const Icon(
+                              Icons.directions_run_rounded,
+                              color: Color(0xff4cc38a),
+                              size: 22,
+                            ),
+                            '${stats.kilometers.round()}',
+                            "km's",
+                            'percorridos',
+                          ),
+                          VerticalDivider(
+                            width: 24,
+                            thickness: 1,
+                            color: context.panelStrong,
+                          ),
+                          bigStat(
+                            Image.asset(
+                              'assets/icons/gold-medal.png',
+                              width: 22,
+                              height: 22,
+                            ),
+                            '${stats.completed}',
+                            'medalhas',
+                            'conquistadas',
+                          ),
+                          VerticalDivider(
+                            width: 24,
+                            thickness: 1,
+                            color: context.panelStrong,
+                          ),
+                          bigStat(
+                            Image.asset(
+                              'assets/icons/location.png',
+                              width: 22,
+                              height: 22,
+                            ),
+                            '${stats.cities}',
+                            'cidades',
+                            'visitadas',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (missing > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      key: const Key('medals-incomplete'),
+                      children: [
+                        Expanded(
+                          child: Text(
+                            missing == 1
+                                ? 'Uma corrida não carregou agora; os totais podem estar incompletos.'
+                                : '$missing corridas não carregaram agora; os totais podem estar incompletos.',
+                            style: TextStyle(
+                              color: context.muted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          key: const Key('medals-retry'),
+                          onPressed: () => setState(() {
+                            races = loadMyRaces(widget.gateway);
+                          }),
+                          child: const Text('Tentar de novo'),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Minhas medalhas',
+                            key: const Key('medals-title'),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 17,
+                            ),
+                          ),
+                          // Sem medalhas, o convite grande ja tem o botao de adicionar: um so controle.
+                          if (data.isNotEmpty) ...[
+                            const SizedBox(width: 10),
+                            _addTile(),
+                          ],
+                        ],
+                      ),
+                    ),
+                    // Só o ícone; a dica diz a ordem atual, sempre pela data da corrida (não pela do cadastro).
+                    IconButton(
+                      key: const Key('medal-sort'),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: newestFirst
+                          ? 'Corridas mais recentes'
+                          : 'Corridas mais antigas',
+                      onPressed: () => setState(
+                        () =>
+                            newestFirst = _lastMedalNewestFirst = !newestFirst,
+                      ),
+                      icon: const Icon(Icons.swap_vert, size: 22),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                if (framesView) ...frames(data) else shelf(data),
+              ],
+            );
+          },
+        ),
+      ),
+    ),
+  );
+}
+
+/// Bottom sheet para personalizar a medalha: modelo (catalogo de imagens) e
+/// legenda (descricao, cidade, UF, ano). Devolve o corpo pronto para PATCH
+/// /participations/{id}, ou nulo se a pessoa cancelar.
+class _MedalEditSheet extends StatefulWidget {
+  final IdentityGateway gateway;
+  final RaceRecord race;
+  final ImageBytesFetcher fetchDisplayPhoto;
+  final MedalCropOpener openCropScreen;
+
+  /// Sem o "Excluir medalha": a tela da participação já tem o seu "Excluir participação".
+  final bool allowDelete;
+  const _MedalEditSheet({
+    required this.gateway,
+    required this.race,
+    this.fetchDisplayPhoto = fetchImageBytes,
+    this.openCropScreen = openMedalCropScreen,
+    this.allowDelete = true,
+  });
+
+  @override
+  State<_MedalEditSheet> createState() => _MedalEditSheetState();
+}
+
+class _MedalEditSheetState extends State<_MedalEditSheet> {
+  late String frameId = widget.race.medalFrameId;
+  late final description = TextEditingController(
+    text: widget.race.medalDescription,
+  );
+  // Recorte da foto so para a prateleira; so entra no PATCH se a pessoa
+  // realmente tocar em "Reposicionar foto" (senao nao mexe no que ja existe).
+  late String? displayImageReference = widget.race.medalDisplayImageReference;
+  bool displayImageTouched = false;
+  bool repositioning = false;
+
+  @override
+  void dispose() {
+    description.dispose();
+    super.dispose();
+  }
+
+  Future<void> confirmDelete() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Excluir medalha?'),
+        content: const Text(
+          'A medalha e a sua participação nesta corrida serão excluídas: tempo, colocação, número de peito e avaliação. '
+          'Ela também deixa de aparecer em Minhas corridas. A corrida continua no catálogo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('medal-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (sure == true && mounted) Navigator.pop(context, {'_delete': true});
+  }
+
+  String? _blankToNull(String text) {
+    final trimmed = text.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  Future<void> repositionPhoto() async {
+    final id = widget.race.participation['id'] as String?;
+    if (id == null || repositioning) return;
+    setState(() => repositioning = true);
+    try {
+      // Sempre parte da foto oficial (nunca alterada), nao do recorte
+      // anterior: senao, cada reposicionamento encolheria o enquadramento a
+      // partir do corte ja feito, em vez de deixar escolher de novo na foto
+      // inteira.
+      final reply = await widget.gateway.request(
+        '/participations/${Uri.encodeComponent(id)}/image',
+      );
+      final url = reply['url'] as String?;
+      if (url == null) throw const IdentityIssue('IMAGE_NOT_AVAILABLE');
+      final bytes = await widget.fetchDisplayPhoto(url);
+      if (!mounted) return;
+      final cropped = await widget.openCropScreen(
+        context,
+        Uint8List.fromList(bytes),
+        medalFrameFor(frameId),
+      );
+      if (cropped == null || !mounted) return;
+      final reference = await uploadProfilePhoto(widget.gateway, cropped);
+      setState(() {
+        displayImageReference = reference;
+        displayImageTouched = true;
+      });
+    } on Exception {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível reposicionar a foto. Tente de novo.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => repositioning = false);
+    }
+  }
+
+  void resetPhoto() => setState(() {
+    displayImageReference = null;
+    displayImageTouched = true;
+  });
+
+  String? _customLegend(String typed, RaceRecord race) {
+    final text = _blankToNull(typed);
+    return text == null || text == race.name || text == 'Corrida' ? null : text;
+  }
+
+  void save() {
+    Navigator.pop<Map<String, dynamic>>(context, {
+      'medalFrameId': frameId,
+      // A legenda só é guardada quando a pessoa a mudou de fato. O campo já vem preenchido com o nome da
+      // corrida; se a corrida não carregou, esse nome era só "Corrida", e guardá-lo fixava um nome genérico.
+      'medalDescription': _customLegend(description.text, widget.race),
+      // Cidade, UF e ano nao sao mais personalizaveis aqui: sempre vem do
+      // catalogo da corrida (RaceRecord.medalCity/medalState/medalYear ja
+      // caem para o catalogo quando a participacao nao tem valor proprio).
+      'medalCity': null,
+      'medalState': null,
+      'medalYear': null,
+      if (displayImageTouched)
+        'medalDisplayImageReference': displayImageReference,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 8,
+        bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Personalizar medalha',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('medal-reposition-photo'),
+                    onPressed: repositioning ? null : repositionPhoto,
+                    icon: repositioning
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.crop, size: 18),
+                    label: Text(
+                      repositioning ? 'Carregando…' : 'Reposicionar foto',
+                    ),
+                  ),
+                ),
+                if (displayImageReference != null) ...[
+                  const SizedBox(width: 8),
+                  TextButton(
+                    key: const Key('medal-reset-photo'),
+                    onPressed: repositioning ? null : resetPhoto,
+                    child: const Text('Remover'),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Modelo da medalha',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 140,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: medalFrames.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  final option = medalFrames[index];
+                  final selected = frameId == option.id;
+                  return InkWell(
+                    key: Key('medal-frame-${option.id}'),
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => setState(() => frameId = option.id),
+                    child: Container(
+                      width: 92,
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: selected ? runPassOrange : Colors.transparent,
+                          width: 2,
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: medalFrameWidget(
+                              frame: option,
+                              photo: MedalPhoto(
+                                gateway: widget.gateway,
+                                participationId:
+                                    widget.race.participation['id'] as String?,
+                                useDisplayImage: true,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            option.label,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 10),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: description,
+              decoration: const InputDecoration(
+                labelText: 'Nome da Corrida',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('medal-edit-save'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: runPassOrange,
+                    ),
+                    onPressed: save,
+                    child: const Text('Salvar'),
+                  ),
+                ),
+              ],
+            ),
+            if (widget.allowDelete) const SizedBox(height: 8),
+            if (widget.allowDelete)
+              TextButton.icon(
+                key: const Key('medal-delete'),
+                onPressed: confirmDelete,
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                label: const Text(
+                  'Excluir medalha',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class ProfileData {
+  final Map<String, dynamic> profile;
+  final List<RaceRecord> races;
+
+  /// Agenda da pessoa (`/me/race-plans`): corridas desejadas e inscritas.
+  final List<Map<String, dynamic>> plans;
+  final List<FeedEntry> myPosts;
+  final int followers, following, friends;
+  const ProfileData(
+    this.profile,
+    this.races,
+    this.plans, [
+    this.followers = 0,
+    this.following = 0,
+    this.myPosts = const [],
+    this.friends = 0,
+  ]);
+}
+
+/// As publicações do próprio usuário (corridas com `publishToFeed=true`), mais recente
+/// primeiro, já no formato completo do cartão do Feed (curtidas, comentários).
+Future<List<FeedEntry>> loadMyPosts(
+  IdentityGateway gateway,
+  List<RaceRecord> races,
+  String? myId,
+) async {
+  // Todas as minhas publicações numa chamada: a de cada corrida e as extras (outras fotos da mesma corrida).
+  final editions = {
+    for (final race in races) '${race.participation['id']}': race.edition,
+  };
+  try {
+    final page = await gateway.request('/me/posts');
+    return [
+      for (final post in (page['items'] as List? ?? const []).cast<Map>())
+        if (!pendingDeletions.contains(post['id']))
+          entryFromPost(
+            Map<String, dynamic>.from(post),
+            editions['${(post['participation'] as Map?)?['id']}'],
+            myId,
+          ),
+    ];
+  } on Exception {
+    return const [];
+  }
+}
+
+class RunnerProfileScreen extends StatefulWidget {
+  final IdentityGateway gateway;
+  final ProfilePhotoPicker photoPicker;
+  final ProfilePhotoPicker bannerPicker;
+  const RunnerProfileScreen({
+    super.key,
+    required this.gateway,
+    this.photoPicker = pickProfilePhoto,
+    this.bannerPicker = pickBannerPhoto,
+  });
+
+  @override
+  State<RunnerProfileScreen> createState() => _RunnerProfileScreenState();
+}
+
+class _RunnerProfileScreenState extends State<RunnerProfileScreen> {
+  /// Minhas publicações: sempre em grade de 3 miniaturas (tocar abre a publicação inteira).
+  static const postColumns = 3;
+
+  late Future<ProfileData> data = load();
+
+  /// Toque na foto: amplia em formato de medalha, com alterar e remover.
+  Future<void> viewPhoto(Map<String, dynamic> profile) async {
+    final action = await openProfilePhoto(
+      context,
+      gateway: widget.gateway,
+      profile: profile,
+      editable: true,
+    );
+    if (action == null || !mounted) return;
+    if (action == ProfilePhotoAction.remove) {
+      await changePhoto(profile, preset: PhotoChoice.remove);
+    } else {
+      final choice = await askPhotoChoice(context);
+      if (choice == null || !mounted) return;
+      await changePhoto(profile, preset: choice);
+    }
+  }
+
+  Future<void> changePhoto(
+    Map<String, dynamic> profile, {
+    PhotoChoice? preset,
+  }) async {
+    final hasPhoto = profile['photoReference'] != null;
+    final choice = preset ?? await askPhotoChoice(context, canRemove: hasPhoto);
+    if (choice == null || !mounted) return;
+    try {
+      String? reference;
+      if (choice == PhotoChoice.remove) {
+        final sure = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Remover a foto de perfil?'),
+            content: const Text('Seu perfil volta a mostrar o ícone padrão.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                key: const Key('confirm-remove-photo'),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Remover'),
+              ),
+            ],
+          ),
+        );
+        if (sure != true) return;
+      } else {
+        final bytes = await widget.photoPicker(context, choice);
+        if (bytes == null) return;
+        soon('Enviando a foto...');
+        reference = await uploadProfilePhoto(widget.gateway, bytes);
+      }
+      await widget.gateway.request(
+        '/me',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': profile['version'],
+          'photoReference': reference,
+        },
+      );
+      forgetProfilePhoto(profile['id'] as String);
+      forgetNavProfile(widget.gateway);
+      if (mounted) {
+        setState(() {
+          data = load();
+        });
+      }
+    } on IdentityIssue catch (issue) {
+      soon(photoError(issue));
+    } on Exception catch (error) {
+      soon(photoError(error));
+    }
+  }
+
+  void openRelationList(
+    Map<String, dynamic> profile,
+    RelationListKind kind,
+    String title,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RelationListScreen(
+          gateway: widget.gateway,
+          profileId: profile['id'] as String,
+          kind: kind,
+          title: title,
+          ownList: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> editProfile(Map<String, dynamic> profile) async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) =>
+            EditProfileScreen(gateway: widget.gateway, profile: profile),
+      ),
+    );
+    if (saved == true && mounted) {
+      setState(() {
+        data = load();
+      });
+    }
+  }
+
+  Future<void> changeBanner(Map<String, dynamic> profile) async {
+    final choice = await askPhotoChoice(
+      context,
+      canRemove: profile['bannerReference'] != null,
+    );
+    if (choice == null || !mounted) return;
+    try {
+      String? reference;
+      if (choice != PhotoChoice.remove) {
+        final bytes = await widget.bannerPicker(context, choice);
+        if (bytes == null) return;
+        soon('Enviando o banner...');
+        reference = await uploadProfilePhoto(widget.gateway, bytes);
+      }
+      await widget.gateway.request(
+        '/me',
+        method: 'PATCH',
+        body: {
+          'expectedVersion': profile['version'],
+          'bannerReference': reference,
+        },
+      );
+      forgetBanner(profile['id'] as String);
+      if (mounted) {
+        setState(() {
+          data = load();
+        });
+      }
+    } on IdentityIssue catch (issue) {
+      soon(photoError(issue));
+    } on Exception catch (error) {
+      soon(photoError(error));
+    }
+  }
+
+  Future<ProfileData> load() async {
+    final profile = await widget.gateway.request('/me');
+    rememberNavProfile(widget.gateway, profile);
+    var races = const <RaceRecord>[];
+    var plans = const <Map<String, dynamic>>[];
+    try {
+      races = await loadMyRaces(widget.gateway);
+    } on Exception {
+      // The profile still opens, only without the race summary.
+    }
+    try {
+      final page = await widget.gateway.request('/me/race-plans');
+      plans = (page['items'] as List? ?? const []).cast<Map<String, dynamic>>();
+    } on Exception {
+      // A agenda e opcional; a secao mostra a mensagem de vazio.
+    }
+    var followers = 0, following = 0, friends = 0;
+    final myId = profile['id'] as String?;
+    if (myId != null) {
+      try {
+        final me = await widget.gateway.request(
+          '/profiles/${Uri.encodeComponent(myId)}',
+        );
+        followers = (me['followersCount'] as num?)?.toInt() ?? 0;
+        following = (me['followingCount'] as num?)?.toInt() ?? 0;
+        friends = (me['friendsCount'] as num?)?.toInt() ?? 0;
+      } on Exception {
+        // Sem contagem: mostra zero.
+      }
+    }
+    var myPosts = const <FeedEntry>[];
+    try {
+      myPosts = await loadMyPosts(widget.gateway, races, myId);
+    } on Exception {
+      // A secao de publicacoes so fica vazia.
+    }
+    return ProfileData(
+      profile,
+      races,
+      plans,
+      followers,
+      following,
+      myPosts,
+      friends,
+    );
+  }
+
+  void soon(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+
+  Widget cover(Map<String, dynamic> profile, ProfileData result) => SizedBox(
+    height: 232,
+    child: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          key: const Key('profile-banner'),
+          height: 176,
+          clipBehavior: Clip.hardEdge,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [runPassNavy, Color(0xff5a2a1c), runPassOrange],
+            ),
+          ),
+          child: profile['bannerReference'] == null
+              ? null
+              : SizedBox.expand(
+                  child: SignedPhoto(
+                    key: ValueKey('banner-${profile['bannerReference']}'),
+                    gateway: widget.gateway,
+                    endpoint:
+                        '/profiles/${Uri.encodeComponent(profile['id'] as String)}/banner',
+                    fallback: const SizedBox.shrink(),
+                  ),
+                ),
+        ),
+        Positioned(
+          right: 12,
+          top: 134,
+          child: InkWell(
+            key: const Key('change-banner'),
+            onTap: () => changeBanner(profile),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.image_outlined, size: 16, color: Colors.white),
+                  SizedBox(width: 6),
+                  Text(
+                    'Banner',
+                    style: TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          right: 8,
+          top: 8,
+          child: SafeArea(
+            child: Row(
+              children: [
+                IconTheme(
+                  data: const IconThemeData(color: Colors.white),
+                  child: NotificationBell(gateway: widget.gateway),
+                ),
+                IconButton(
+                  key: const Key('open-settings'),
+                  tooltip: 'Configurações',
+                  color: Colors.white,
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => SettingsScreen(gateway: widget.gateway),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // Seguidores e seguindo ao lado da foto, ABAIXO do banner (formato do Instagram).
+        Positioned(
+          left: 124,
+          right: 12,
+          top: 188,
+          child: Row(
+            key: const Key('profile-counts'),
+            children: [
+              statBlock(
+                '${result.friends}',
+                'amigos',
+                onTap: () => openRelationList(
+                  profile,
+                  RelationListKind.friends,
+                  'Amigos',
+                ),
+              ),
+              statBlock(
+                '${result.followers}',
+                'seguidores',
+                onTap: () => openRelationList(
+                  profile,
+                  RelationListKind.followers,
+                  'Seguidores',
+                ),
+              ),
+              statBlock(
+                '${result.following}',
+                'seguindo',
+                onTap: () => openRelationList(
+                  profile,
+                  RelationListKind.following,
+                  'Seguindo',
+                ),
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          left: 20,
+          bottom: 0,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              GestureDetector(
+                key: const Key('open-profile-photo'),
+                onTap: () => viewPhoto(profile),
+                child: ProfileAvatar(
+                  key: ValueKey('avatar-${profile['photoReference']}'),
+                  radius: 46,
+                  gateway: widget.gateway,
+                  profile: profile,
+                  // Sobre o banner fica só o círculo dourado: o cordão cobria a imagem do banner.
+                  ribbon: false,
+                ),
+              ),
+              Positioned(
+                right: -2,
+                bottom: 2,
+                child: InkWell(
+                  key: const Key('change-profile-photo'),
+                  onTap: () => changePhoto(profile),
+                  child: const CircleAvatar(
+                    radius: 14,
+                    backgroundColor: runPassNavy,
+                    child: Icon(
+                      Icons.photo_camera_outlined,
+                      size: 15,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  /// Todos os selos entre o nome e o @usuario: os conquistados coloridos e os que faltam
+  /// bloqueados (cinza, com cadeado). Tocar mostra o detalhe e como desbloquear.
+  Widget _sealRow(List<Seal> seals) => sealRowOf(context, seals);
+
+  Widget sectionTitle(
+    String title, {
+    String? action,
+    VoidCallback? onAction,
+    Widget? trailing,
+  }) => Padding(
+    padding: const EdgeInsets.only(top: 8, bottom: 2),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 19),
+          ),
+        ),
+        ?trailing,
+        if (action != null)
+          TextButton(
+            onPressed: onAction,
+            style: TextButton.styleFrom(
+              minimumSize: Size.zero,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(action),
+          ),
+      ],
+    ),
+  );
+
+  /// Corrida da agenda em linha (miniatura, nome, data e local). Em "Quero correr" o coração tira a corrida da
+  /// lista; em "Inscrita" aparece um ✓. Tocar na linha abre a prova.
+  Widget planTile(Map<String, dynamic> plan) {
+    final edition = {
+      ...(plan['edition'] as Map<String, dynamic>? ?? const {}),
+      'id': plan['editionId'],
+    };
+    final id = plan['editionId'] as String?;
+    Future<void> open() async {
+      if (id == null) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => EditionScreen(gateway: widget.gateway, editionId: id),
+        ),
+      );
+      if (mounted) {
+        setState(() {
+          data = load();
+        });
+      }
+    }
+
+    Future<void> unwant() async {
+      if (id == null) return;
+      try {
+        await widget.gateway.request(
+          '/me/race-plans/${Uri.encodeComponent(id)}',
+          method: 'DELETE',
+        );
+        if (mounted) {
+          setState(() {
+            data = load();
+          });
+        }
+      } on Exception {
+        soon('Não foi possível tirar de "Quero correr" agora. Tente de novo.');
+      }
+    }
+
+    final wanted = plan['status'] == 'wanted';
+    return PlanRow(
+      key: Key('plan-${plan['editionId']}'),
+      gateway: widget.gateway,
+      edition: edition,
+      onTap: open,
+      trailing: wanted
+          ? IconButton(
+              key: Key('plan-heart-${plan['editionId']}'),
+              tooltip: 'Tirar de Quero correr',
+              icon: const Icon(Icons.favorite, color: runPassOrange),
+              onPressed: unwant,
+            )
+          : const Padding(
+              padding: EdgeInsets.all(12),
+              child: Icon(Icons.check_circle, color: runPassOrange),
+            ),
+    );
+  }
+
+  void openAgenda() => Navigator.of(context)
+      .push(
+        MaterialPageRoute<void>(
+          builder: (_) => AgendaScreen(gateway: widget.gateway),
+        ),
+      )
+      .then((_) {
+        if (mounted) {
+          setState(() {
+            data = load();
+          });
+        }
+      });
+
+  /// Desejadas ou inscritas, da mais próxima para a mais distante (só as 3 primeiras; o resto em "Ver todas").
+  Widget planGrid(String status, List<Map<String, dynamic>> plans) {
+    final items =
+        [
+          for (final p in plans)
+            if (p['status'] == status) p,
+        ]..sort(
+          (a, b) => ((a['edition'] as Map?)?['date'] as String? ?? '')
+              .compareTo((b['edition'] as Map?)?['date'] as String? ?? ''),
+        );
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Column(
+      key: Key('plans-$status'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (status != 'wanted')
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 6),
+            child: Text(
+              'Inscritas',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: context.muted,
+              ),
+            ),
+          ),
+        for (final plan in items.take(3)) planTile(plan),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    bottomNavigationBar: runPassNavigation(context, widget.gateway, 3),
+    body: FutureBuilder<ProfileData>(
+      future: data,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) return loadMessage(loadError(snapshot.error!));
+        final result = snapshot.data!;
+        final profile = result.profile;
+        final stats = RaceStats.of(result.races);
+        final distances = stats.byDistance.keys.toList()..sort();
+        final city = profile['city'] as String?;
+        final bio = profile['bio'] as String?;
+        final birthLabel = birthDateLabel(profile['birthDate'] as String?);
+        final conquered = conqueredCities(result.races);
+        final myPosts = result.myPosts;
+        return ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            cover(profile, result),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          profile['displayName'] as String? ?? 'Corredor',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 24,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: const Key('edit-profile'),
+                        tooltip: 'Editar perfil',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                        onPressed: () => editProfile(profile),
+                      ),
+                    ],
+                  ),
+                  _sealRow(sealsOf(stats)),
+                  Text(
+                    [
+                      '@${profile['username'] ?? ''}',
+                      ?brLocationLabel(profile),
+                      if (brLocationLabel(profile) == null &&
+                          city != null &&
+                          city.isNotEmpty)
+                        city,
+                    ].join('  •  '),
+                    style: TextStyle(color: context.muted),
+                  ),
+                  if (birthLabel != null) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.cake_outlined,
+                          size: 16,
+                          color: context.muted,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          birthLabel,
+                          style: TextStyle(color: context.muted, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (bio != null && bio.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(bio, key: const Key('profile-phrase')),
+                  ],
+                  const SizedBox(height: 16),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Row(
+                        children: [
+                          statBlock('${stats.completed}', 'provas\nconcluídas'),
+                          for (final km in distances.take(4))
+                            statBlock('${stats.byDistance[km]}', statLabel(km)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  sectionTitle(
+                    'Quero correr',
+                    action: result.plans.isEmpty ? null : 'Ver todas',
+                    onAction: openAgenda,
+                  ),
+                  if (result.plans.isEmpty)
+                    const Text(
+                      'Suas corridas desejadas e inscritas aparecerão aqui.',
+                      key: Key('no-plans'),
+                    )
+                  else ...[
+                    planGrid('wanted', result.plans),
+                    planGrid('registered', result.plans),
+                  ],
+                  sectionTitle('Minhas publicações'),
+                  if (myPosts.isEmpty)
+                    const Text(
+                      'Suas corridas publicadas aparecerão aqui.',
+                      key: Key('no-my-posts'),
+                    )
+                  else
+                    // Miniaturas, 3 por linha; tocar abre a publicação inteira.
+                    GridView.count(
+                      padding: EdgeInsets.zero,
+                      key: const Key('my-posts-grid'),
+                      crossAxisCount: postColumns,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 6,
+                      crossAxisSpacing: 6,
+                      children: [
+                        for (final entry in myPosts)
+                          PostThumb(
+                            key: Key('my-post-${entry.postId}'),
+                            gateway: widget.gateway,
+                            entry: entry,
+                            onChanged: () {
+                              if (mounted) {
+                                setState(() {
+                                  data = load();
+                                });
+                              }
+                            },
+                          ),
+                      ],
+                    ),
+                  const SizedBox(height: 8),
+                  // Meu passaporte: as cidades conquistadas (corridas concluídas), com a foto de cada uma.
+                  Card(
+                    key: const Key('passport-card'),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => soon('Passaporte completo em breve.'),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.map_outlined,
+                                  color: runPassOrange,
+                                  size: 34,
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Meu passaporte',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 17,
+                                        ),
+                                      ),
+                                      Text(
+                                        passportSummary(
+                                          conquered.length,
+                                          passportTotal(conquered),
+                                        ),
+                                        key: const Key('passport-summary'),
+                                        style: TextStyle(color: context.muted),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right),
+                              ],
+                            ),
+                            if (conquered.isNotEmpty) ...[
+                              const SizedBox(height: 14),
+                              SingleChildScrollView(
+                                key: const Key('passport-cities'),
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    for (final c in conquered)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 10,
+                                        ),
+                                        child: PassportCity(
+                                          city: c.$1,
+                                          state: c.$2,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+/// Linha de selos (conquistas) com toque para ver todas. Mesma do perfil e do perfil de outra pessoa.
+Widget sealRowOf(BuildContext context, List<Seal> seals) =>
+    SingleChildScrollView(
+      key: const Key('seal-row'),
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final seal in seals)
+            Padding(
+              padding: const EdgeInsets.only(right: 12, top: 4, bottom: 2),
+              child: SealBadge(
+                seal: seal,
+                onTap: () => showSealsSheet(context, seals),
+              ),
+            ),
+        ],
+      ),
+    );
+
+/// Nicho de nogueira com prateleira flutuante: fundo individual de cada
+/// medalha (um nicho por medalha, nao uma prateleira compartilhada).
+/// Cantos arredondados + sombra para ler como um "cartao" por medalha,
+/// como no template; a medalha fica encostada no topo da prateleira.
+Widget medalNiche({required MedalFrame frame, required Widget photo}) =>
+    DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x40000000),
+            blurRadius: 6,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: AspectRatio(
+          aspectRatio: 1086 / 1448,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final w = constraints.maxWidth;
+              final h = constraints.maxHeight;
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.asset(
+                    'assets/medal_shelf/nicho_nogueira.png',
+                    fit: BoxFit.fill,
+                  ),
+                  Positioned(
+                    // O PNG de cada modelo tem uma margem transparente
+                    // embutida (a medalha ocupa so ~86% da altura e ~66%
+                    // da largura do arquivo); e a prateleira da imagem de
+                    // fundo comeca em ~76% da altura do nicho. Esta caixa
+                    // foi calculada para que a medalha DESENHADA (nao o
+                    // retangulo do PNG) encoste exatamente no topo da
+                    // prateleira, do tamanho maximo que cabe ali.
+                    left: w * 0.06,
+                    right: w * 0.06,
+                    top: h * 0.01,
+                    height: h * 0.87,
+                    child: medalFrameWidget(frame: frame, photo: photo),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );

@@ -26,3 +26,13 @@ A limpeza ativa nega e remove EVENT/DELIVERY após sete dias da última confirma
 - Pendente: SQS/DLQ/S3 reais, IAM/MFA, benchmark p95 de dez segundos, carga, alarmes e replay após restauração. Todos exigem integração DEV autorizada no S09.
 
 Nenhum recurso AWS foi criado e nenhum score é aceito do cliente.
+
+
+## Política de descarte aprovada — 03/11/2026
+
+O usuário aprovou que, com a auditoria ainda pendente no vencimento, o payload seja descartado e permaneça só o registro mínimo de expiração ou falha. Aceite da S07 depende de decisão separada.
+
+
+## Aceite humano — 03/11/2026
+
+Aceita pelo usuário como aceite local, com as ressalvas em `implementation-slices.md` (seção "Aceite humano da S07"). Integração real permanece na S09.

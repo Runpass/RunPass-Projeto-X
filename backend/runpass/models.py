@@ -1,10 +1,15 @@
 import re
 from datetime import date
-from typing import Annotated
+from decimal import Decimal, InvalidOperation
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Username = Annotated[str, Field(min_length=3, max_length=30, pattern=r"^[A-Za-z0-9_]+$")]
+ImageReference = Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+# Fotos extras da publicacao (carrossel): a capa e `postImageReference`; aqui vao ate 4 a mais, na ordem
+# em que aparecem. Repetidas, iguais a capa ou a foto da medalha sao recusadas no servico.
+MorePostImages = Annotated[list[ImageReference], Field(max_length=4)]
 
 
 class Input(BaseModel):
@@ -28,15 +33,51 @@ class PatchProfile(Input):
     displayName: Annotated[str, Field(min_length=1, max_length=80)] | None = None
     username: Username | None = None
     city: Annotated[str, Field(max_length=100)] | None = None
+    state: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] | None = None
+    # Centroide da cidade escolhida (app manda os dois juntos, derivados da lista do IBGE; sem
+    # GPS do aparelho). So para o raio de proximidade do filtro "Minha Cidade". Decimal, nao
+    # float: o DynamoDB nao grava float (mesma razao de ImportDistance/ImportEdition).
+    latitude: Decimal | None = Field(default=None, ge=-90, le=90, max_digits=12, decimal_places=7)
+    longitude: Decimal | None = Field(
+        default=None, ge=-180, le=180, max_digits=12, decimal_places=7
+    )
     bio: Annotated[str, Field(max_length=500)] | None = None
+    # Data de nascimento (so o proprio titular a ve): continua valendo a regra de idade minima
+    # da admissao (13 anos), conferida no servico.
+    birthDate: date | None = None
+    # Mesma visibilidade/obrigatoriedade do birthDate: owner-only, obrigatorio na admissao
+    # (decisao de produto de 20/11/2026), aqui so para edicao posterior pelo proprio titular.
+    gender: Literal["female", "male", "undisclosed"] | None = None
     photoReference: str | None = None
+    bannerReference: str | None = None
+    isPrivate: bool | None = None
+
+    @field_validator("birthDate", mode="before")
+    @classmethod
+    def birth_date(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("Date must be YYYY-MM-DD")
+        return date.fromisoformat(value)
+
+    @field_validator("latitude", "longitude", mode="before")
+    @classmethod
+    def decimal_coordinate(cls, value):
+        if value is None or isinstance(value, Decimal):
+            return value
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError("Coordenada invalida") from error
 
     @model_validator(mode="after")
     def fields(self):
         if not self.model_fields_set - {"expectedVersion"}:
             raise ValueError("At least one change required")
         if any(
-            getattr(self, f) is None for f in self.model_fields_set & {"displayName", "username"}
+            getattr(self, f) is None
+            for f in self.model_fields_set & {"displayName", "username", "isPrivate"}
         ):
             raise ValueError("Required field cannot be cleared")
         if self.displayName is not None and not self.displayName.strip():
@@ -47,6 +88,8 @@ class PatchProfile(Input):
 class Eligibility(Input):
     birthDate: date
     declaresAdult: bool
+    # Obrigatorio (decisao de produto de 20/11/2026): sem genero nao admite.
+    gender: Literal["female", "male", "undisclosed"]
 
     @field_validator("declaresAdult")
     @classmethod
@@ -63,10 +106,17 @@ class Eligibility(Input):
         return date.fromisoformat(value)
 
 
+class PutRacePlan(Input):
+    status: Literal["wanted", "registered"]
+    distanceId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+
+
 class CreateParticipation(Input):
     editionId: Annotated[str, Field(min_length=1, max_length=100)]
     distanceId: Annotated[str, Field(min_length=1, max_length=100)]
     timeSeconds: Annotated[int, Field(ge=1)] | None = None
+    # Pace (ritmo) opcional em segundos por km: de 1:00/km a 60:00/km.
+    paceSecondsPerKm: Annotated[int, Field(ge=60, le=3600)] | None = None
     placement: Annotated[int, Field(ge=1)] | None = None
     bibNumber: Annotated[str, Field(max_length=40)] | None = None
 
@@ -83,17 +133,56 @@ class PatchParticipation(Input):
     editionId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     distanceId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     timeSeconds: Annotated[int, Field(ge=1)] | None = None
+    # Pace (ritmo) opcional em segundos por km: de 1:00/km a 60:00/km.
+    paceSecondsPerKm: Annotated[int, Field(ge=60, le=3600)] | None = None
     placement: Annotated[int, Field(ge=1)] | None = None
     bibNumber: Annotated[str, Field(max_length=40)] | None = None
     showTime: bool | None = None
     showPlacement: bool | None = None
+    medalImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    # Foto e texto da publicacao no feed (so de participacao concluida e ja publicada).
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    morePostImageReferences: MorePostImages | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
+    # Modelo de medalha (catalogo fixo de imagens); None volta ao padrao
+    # (circular_prata_azul). Customizacao visual da legenda abaixo tambem opcional.
+    medalFrameId: (
+        Literal[
+            "circular_prata_azul",
+            "circular_rose_rosa",
+            "circular_grafite_preto",
+            "hexagonal_bronze_verde",
+            "hexagonal_rose_lilas",
+            "quadrada_rose_malva",
+            "escudo_grafite_azul",
+            "assimetrica_prata_lima",
+            "triangular_grafite_preto",
+            "triangular_rose_rosa",
+        ]
+        | None
+    ) = None
+    medalDescription: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    medalCity: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    medalState: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] | None = None
+    medalYear: Annotated[int, Field(ge=1900, le=2100)] | None = None
+    # Recorte da foto so para a prateleira (reposicionamento); None volta ao
+    # recorte automatico da foto oficial (medalImageReference), que nunca muda.
+    medalDisplayImageReference: Annotated[str, Field(min_length=1, max_length=200)] | None = None
 
     @model_validator(mode="after")
     def changes(self):
         changed = self.model_fields_set - {"expectedVersion"}
         if not changed:
             raise ValueError("At least one change required")
-        if any(getattr(self, name) is None for name in changed & {"editionId", "distanceId"}):
+        if any(
+            getattr(self, name) is None
+            for name in changed & {"editionId", "distanceId", "medalImageReference"}
+        ):
             raise ValueError("Catalog references cannot be cleared")
         if "bibNumber" in changed and self.bibNumber is not None:
             if not self.bibNumber.strip():
@@ -128,10 +217,21 @@ class ReviewRatings(Input):
 class CompleteParticipation(Input):
     expectedVersion: Annotated[int, Field(ge=1)]
     declaredCompleted: bool
-    ratings: ReviewRatings
+    # Avaliacao opcional: sem `ratings` a participacao conclui sem avaliacao (a pessoa avalia depois) e nao conta
+    # na nota publica da corrida. Quando vem, sao sempre as 8 notas.
+    ratings: ReviewRatings | None = None
     medalImageReference: Annotated[str, Field(min_length=1, max_length=200)]
     publishToFeed: bool
     comment: Annotated[str, Field(max_length=2000)] | None = None
+    # Outra foto, separada da medalha, para a publicacao no feed. Exigida quando publishToFeed e verdadeiro.
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    morePostImageReferences: MorePostImages | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
 
     @field_validator("declaredCompleted")
     @classmethod
@@ -140,8 +240,279 @@ class CompleteParticipation(Input):
             raise ValueError("Completion declaration required")
         return value
 
+    @model_validator(mode="after")
+    def comment_needs_ratings(self):
+        if self.comment is not None and self.ratings is None:
+            raise ValueError("O comentario pertence a avaliacao: envie as notas junto")
+        return self
+
+
+class PublishParticipation(Input):
+    """Publica no feed uma participacao ja concluida (e ainda nao publicada), com uma foto propria."""
+
+    expectedVersion: Annotated[int, Field(ge=1)]
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+    morePostImageReferences: MorePostImages | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    # Pessoas marcadas na corrida publicada (ate 10). Lista vazia remove as marcacoes.
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
+
 
 class ReplaceReview(Input):
-    expectedVersion: Annotated[int, Field(ge=1)]
+    # 0 cria a avaliacao de uma participacao concluida sem avaliacao; >= 1 substitui a existente.
+    expectedVersion: Annotated[int, Field(ge=0)]
     ratings: ReviewRatings
     comment: Annotated[str, Field(max_length=2000)] | None = None
+
+
+class CreateEditionComment(Input):
+    """Comentario na corrida (texto livre, visivel na beta). Nao e avaliacao e nao pede participacao."""
+
+    text: Annotated[str, Field(min_length=1, max_length=1000)]
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Comentario vazio")
+        return value
+
+
+class CreateFeedback(Input):
+    """Feedback sobre o app (sugestao, problema ou elogio), lido so pela equipe."""
+
+    kind: Literal["suggestion", "problem", "praise"]
+    text: Annotated[str, Field(min_length=1, max_length=2000)]
+    appVersion: Annotated[str, Field(max_length=40)] | None = None
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Feedback vazio")
+        return value
+
+
+class CreateReport(Input):
+    """Denuncia de publicacao, comentario ou pessoa, lida so pela equipe."""
+
+    targetType: Literal["post", "comment", "user"]
+    targetId: Annotated[str, Field(min_length=1, max_length=128)]
+    reason: Literal["spam", "offensive", "nudity", "violence", "fake", "other"]
+    text: Annotated[str, Field(max_length=1000)] | None = None
+
+
+class CreateComment(Input):
+    text: Annotated[str, Field(min_length=1, max_length=1000)]
+    # Resposta a um comentario (um nivel: responder a uma resposta vira resposta ao comentario raiz).
+    parentId: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Comment cannot be blank")
+        return value.strip()
+
+
+class EditComment(Input):
+    text: Annotated[str, Field(min_length=1, max_length=1000)]
+    expectedVersion: Annotated[int, Field(ge=1)] | None = None
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Comment cannot be blank")
+        return value.strip()
+
+
+class BannerSuggestion(Input):
+    """Banner sugerido para uma corrida ja cadastrada: so a referencia de uma imagem JA enviada e tratada."""
+
+    imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+
+
+class PendingParticipation(Input):
+    """Dados da MINHA participacao informados junto do pedido de cadastro da corrida. Ficam guardados (so o
+    dono ve) e o app os aplica quando a equipe aprova a corrida, para a pessoa nao preencher de novo."""
+
+    timeSeconds: Annotated[int, Field(ge=1)] | None = None
+    # Pace (ritmo) opcional em segundos por km: de 1:00/km a 60:00/km.
+    paceSecondsPerKm: Annotated[int, Field(ge=60, le=3600)] | None = None
+    placement: Annotated[int, Field(ge=1)] | None = None
+    bibNumber: Annotated[str, Field(max_length=40)] | None = None
+    ratings: ReviewRatings | None = None
+    comment: Annotated[str, Field(max_length=2000)] | None = None
+    publishToFeed: bool = False
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+
+    @model_validator(mode="after")
+    def post_photo_rules(self):
+        if self.publishToFeed and not self.postImageReference:
+            raise ValueError("Publicar no feed exige a foto da publicacao")
+        if self.postImageReference and not self.publishToFeed:
+            raise ValueError("A foto da publicacao so vale ao publicar no feed")
+        if self.comment is not None and self.ratings is None:
+            raise ValueError("O comentario pertence a avaliacao: envie as notas junto")
+        return self
+
+
+class AddDistance(Input):
+    kilometers: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
+
+    @field_validator("kilometers", mode="before")
+    @classmethod
+    def kilometers_value(cls, value):
+        # O modo estrito so aceita Decimal, que o JSON nao tem: sem esta conversao todo pedido
+        # caia em 422 (o app mostrava erro ao informar o km de corrida sem distancia).
+        if isinstance(value, bool):
+            raise ValueError("Distancia invalida")
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, str):
+            value = value.strip().replace(",", ".")
+        elif not isinstance(value, int | float):
+            raise ValueError("Distancia invalida")
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError("Distancia invalida") from error
+
+
+class WebLookupRequest(Input):
+    name: Annotated[str, Field(min_length=3, max_length=160)]
+    city: Annotated[str, Field(max_length=100)] | None = None
+    state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
+
+
+class CreateExtraPost(Input):
+    participationId: Annotated[str, Field(min_length=1, max_length=100)]
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")]
+    morePostImageReferences: MorePostImages | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
+
+
+class PatchExtraPost(Input):
+    expectedVersion: Annotated[int, Field(ge=1)]
+    postImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    morePostImageReferences: MorePostImages | None = None
+    postText: Annotated[str, Field(max_length=500)] | None = None
+    taggedUserIds: (
+        Annotated[list[Annotated[str, Field(min_length=1, max_length=100)]], Field(max_length=10)]
+        | None
+    ) = None
+
+
+class EditionRequestFields(Input):
+    """Pedido de prova ausente (contrato EditionRequestFields). `imageReference` e o banner sugerido pela pessoa
+    (imagem ja enviada e tratada, so dela): nunca publica sozinho; a equipe aprova com credito e autorizacao."""
+
+    name: Annotated[str, Field(min_length=1, max_length=160)]
+    date: date
+    city: Annotated[str, Field(min_length=1, max_length=100)]
+    state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
+    distanceKm: Decimal = Field(gt=0, le=1000, max_digits=8, decimal_places=4)
+    officialUrl: Annotated[str, Field(max_length=500, pattern=r"^https://[^\s]+$")] | None = None
+    imageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    # Foto da MEDALHA da pessoa (medalha provisoria ate a equipe decidir o pedido): privada, fora da fila de
+    # banners, nunca vira banner nem fica publica. Independe do banner sugerido em `imageReference`.
+    medalImageReference: Annotated[str, Field(pattern=r"^img_[a-f0-9]{64}$")] | None = None
+    # Tempo, avaliacao etc. da participacao, para aplicar quando a corrida for aprovada. Exige a foto da medalha.
+    participation: PendingParticipation | None = None
+
+    @model_validator(mode="after")
+    def participation_needs_medal_photo(self):
+        if self.participation and not self.medalImageReference:
+            raise ValueError("A participacao pendente exige a foto da medalha")
+        return self
+
+    @model_validator(mode="after")
+    def distinct_images(self):
+        if self.medalImageReference and self.medalImageReference == self.imageReference:
+            raise ValueError("A foto da medalha e o banner precisam ser imagens diferentes")
+        return self
+
+    @field_validator("name", "city")
+    @classmethod
+    def text(cls, value):
+        value = " ".join(value.split())
+        if not value or any(ord(c) < 32 for c in value):
+            raise ValueError("Text required")
+        return value
+
+    @field_validator("state")
+    @classmethod
+    def uf(cls, value):
+        return value.upper() if value is not None else None
+
+    @field_validator("date", mode="before")
+    @classmethod
+    def race_date(cls, value):
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("Date must be YYYY-MM-DD")
+        return date.fromisoformat(value)
+
+    @field_validator("distanceKm", mode="before")
+    @classmethod
+    def kilometers(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("Distancia invalida")
+        if isinstance(value, Decimal):
+            return value
+        if not isinstance(value, int | float):
+            raise ValueError("Distancia invalida")
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError("Distancia invalida") from error
+
+
+class PatchEditionRequest(Input):
+    expectedVersion: Annotated[int, Field(ge=1)]
+    name: Annotated[str, Field(min_length=1, max_length=160)] | None = None
+    date: str | None = None
+    city: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    state: Annotated[str, Field(pattern=r"^[A-Za-z]{2}$")] | None = None
+    distanceKm: Decimal | None = None
+    officialUrl: Annotated[str, Field(max_length=500)] | None = None
+
+    @model_validator(mode="after")
+    def changes(self):
+        fields = self.model_fields_set - {"expectedVersion"}
+        if not fields or any(getattr(self, f) is None for f in fields):
+            raise ValueError("At least one change required, without nulls")
+        return self
+
+    @field_validator("distanceKm", mode="before")
+    @classmethod
+    def kilometers(cls, value):
+        return EditionRequestFields.kilometers(value) if value is not None else None
+
+
+class ResubmitEditionRequest(Input):
+    expectedVersion: Annotated[int, Field(ge=1)]
+
+
+class ReviewRequestDecision(Input):
+    expectedVersion: Annotated[int, Field(ge=1)]
+    decision: Literal["approve", "link", "reject"]
+    editionId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    reason: Annotated[str, Field(min_length=1, max_length=500)] | None = None
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if self.decision == "reject":
+            if not self.reason or not self.reason.strip() or self.editionId is not None:
+                raise ValueError("Reject needs a reason and no edition")
+        elif not self.editionId or self.reason is not None:
+            raise ValueError("Approve and link need an existing edition")
+        return self

@@ -5,9 +5,35 @@ Parameters:
   Environment:
     Type: String
     AllowedValues: [dev, prod]
+  # Recipients of the critical alerts topic. Passed at deploy time and never committed;
+  # each address must confirm the subscription e-mail that SNS sends.
+  AlertEmail1:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  AlertEmail2:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  AlertEmail3:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  AlertEmail4:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
 
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
+  HasAlertEmail1: !Not [!Equals [!Ref AlertEmail1, '']]
+  HasAlertEmail2: !Not [!Equals [!Ref AlertEmail2, '']]
+  HasAlertEmail3: !Not [!Equals [!Ref AlertEmail3, '']]
+  HasAlertEmail4: !Not [!Equals [!Ref AlertEmail4, '']]
 
 Resources:
   IdentityTable:
@@ -254,13 +280,72 @@ Resources:
         deadLetterTargetArn: !GetAtt AuditDeadLetterQueue.Arn
         maxReceiveCount: 5
 
-  CriticalAlerts:
-    Type: AWS::SNS::Topic
+  # CloudWatch alarms cannot publish to a topic encrypted with the AWS managed key
+  # alias/aws/sns (its policy cannot grant CloudWatch access), so the topic uses a
+  # customer managed key whose policy allows the CloudWatch service for this account.
+  AlertsKey:
+    Type: AWS::KMS::Key
     Properties:
-      KmsMasterKeyId: alias/aws/sns
+      Description: !Sub RunPass ${Environment} critical alerts topic encryption
+      EnableKeyRotation: true
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AccountAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'
+          - Sid: CloudWatchAlarmsPublishEncrypted
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: [kms:Decrypt, kms:GenerateDataKey*]
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:*
       Tags:
         - {Key: Project, Value: RunPass}
         - {Key: Environment, Value: !Ref Environment}
+
+  AlertsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/runpass-${Environment}-alerts
+      TargetKeyId: !Ref AlertsKey
+
+  CriticalAlerts:
+    Type: AWS::SNS::Topic
+    Properties:
+      KmsMasterKeyId: !GetAtt AlertsKey.Arn
+      Tags:
+        - {Key: Project, Value: RunPass}
+        - {Key: Environment, Value: !Ref Environment}
+
+  AlertSubscription1:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail1
+    Properties: {TopicArn: !Ref CriticalAlerts, Protocol: email, Endpoint: !Ref AlertEmail1}
+
+  AlertSubscription2:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail2
+    Properties: {TopicArn: !Ref CriticalAlerts, Protocol: email, Endpoint: !Ref AlertEmail2}
+
+  AlertSubscription3:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail3
+    Properties: {TopicArn: !Ref CriticalAlerts, Protocol: email, Endpoint: !Ref AlertEmail3}
+
+  AlertSubscription4:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail4
+    Properties: {TopicArn: !Ref CriticalAlerts, Protocol: email, Endpoint: !Ref AlertEmail4}
 
   EventDlqAlarm:
     Type: AWS::CloudWatch::Alarm

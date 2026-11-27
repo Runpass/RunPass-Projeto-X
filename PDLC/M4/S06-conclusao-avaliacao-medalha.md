@@ -21,3 +21,8 @@ Após validar a foto, a tela do rascunho exibe as oito notas, comentário opcion
 - A suíte Flutter passou com 15 testes e análise estática limpa. O novo teste vertical percorre rascunho → sessão de upload → envio JPEG sintético → imagem válida → oito notas → declaração → conclusão, e verifica a ordem das chamadas e o corpo final.
 - EVENT é apenas outbox persistida. Publicação, reconciliação, entrega, RunScore e replay pertencem ao S07.
 - Sem DynamoDB/S3/Cognito reais, benchmark, feed, deploy, commit ou push. A prova de transação DynamoDB e integração DEV pertence ao S09.
+
+
+## Aceite humano — 03/11/2026
+
+Aceita pelo usuário como aceite local, com as ressalvas registradas em `implementation-slices.md` (seção "Aceite humano de S05, S06 e S08"). Integração real permanece na S09.

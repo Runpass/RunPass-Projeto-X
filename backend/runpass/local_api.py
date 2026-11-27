@@ -15,9 +15,11 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from .api import create_app
 from .catalog import CatalogService, seed_synthetic
+from .edition_requests import EditionRequestService
 from .identity import CognitoVerifier, Principal
 from .participation import ParticipationService
 from .service import IdentityService
+from .social import SocialService
 from .store import MemoryStore
 from .upload import MemoryBlobStore, UploadService
 
@@ -71,9 +73,21 @@ def create_runtime():
         "seed-profile",
         {"displayName": "Corredor Sintético", "username": "synthetic_admitted"},
     )
-    identity.admit(admitted, "seed-admission", {"birthDate": "1990-01-01", "declaresAdult": True})
+    identity.admit(
+        admitted,
+        "seed-admission",
+        {"birthDate": "1990-01-01", "declaresAdult": True, "gender": "undisclosed"},
+    )
     return LocalRuntime(
-        create_app(identity, verifier, catalog, participations, uploads),
+        create_app(
+            identity,
+            verifier,
+            catalog,
+            participations,
+            uploads,
+            SocialService(identity),
+            edition_requests=EditionRequestService(identity, Fernet.generate_key(), catalog),
+        ),
         tokens,
         (now + timedelta(hours=1)).isoformat(),
     )

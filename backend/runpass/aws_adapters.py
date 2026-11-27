@@ -9,6 +9,7 @@ from .service import Problem
 from .store import Unavailable
 
 UPLOAD_URL_SECONDS = 15 * 60
+VIEW_URL_SECONDS = 5 * 60
 DELETE_BATCH = 1000
 
 
@@ -108,6 +109,45 @@ class S3BlobStore:
         except (BotoCoreError, ClientError) as error:
             raise Unavailable() from error
 
+    def read_derived(self, owner, reference):
+        """Bytes e tipo da copia tratada (nunca o original) para a equipe aprovar um banner enviado por uma pessoa."""
+        try:
+            row = self.client.get_object(Bucket=self.bucket, Key=self._derived(owner, reference))
+            return row["Body"].read(), row.get("ContentType", "application/octet-stream")
+        except ClientError as error:
+            if _code(error) in ("404", "NoSuchKey", "NotFound"):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE") from error
+            raise Unavailable() from error
+        except BotoCoreError as error:
+            raise Unavailable() from error
+
+    def view_url(self, owner, reference):
+        """Short-lived signed GET for the sanitized copy only; originals stay unreachable."""
+        key = self._derived(owner, reference)
+        try:
+            head = self.client.head_object(Bucket=self.bucket, Key=key)
+            url = self.client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self.bucket, "Key": key},
+                ExpiresIn=VIEW_URL_SECONDS,
+                HttpMethod="GET",
+            )
+        except ClientError as error:
+            if _code(error) in ("404", "NoSuchKey", "NotFound"):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE") from error
+            raise Unavailable() from error
+        except BotoCoreError as error:
+            raise Unavailable() from error
+        return {"url": url, "contentType": head["ContentType"]}
+
+    def delete_derived(self, owner, reference):
+        """Apaga todas as versoes da copia tratada de UMA imagem do dono (o original temporario expira pelo ciclo
+        de vida do bucket)."""
+        try:
+            return _delete_versions(self.client, self.bucket, self._derived(owner, reference))
+        except (BotoCoreError, ClientError) as error:
+            raise Unavailable() from error
+
     def delete_owner(self, owner):
         try:
             return sum(
@@ -174,4 +214,24 @@ class CognitoAccountRemover:
             if _code(error) != "UserNotFoundException":
                 raise Unavailable() from error
         except BotoCoreError as error:
+            raise Unavailable() from error
+
+
+class LambdaSearchInvoker:
+    """Invoca a Lambda de busca do catalogo. Qualquer falha vira Unavailable (o chamador tem fallback)."""
+
+    def __init__(self, client, function_name):
+        self.client, self.function_name = client, function_name
+
+    def __call__(self, payload):
+        try:
+            result = self.client.invoke(
+                FunctionName=self.function_name,
+                InvocationType="RequestResponse",
+                Payload=json.dumps(payload).encode(),
+            )
+            if result.get("StatusCode") != 200 or result.get("FunctionError"):
+                raise Unavailable()
+            return json.loads(result["Payload"].read())
+        except (BotoCoreError, ClientError, ValueError, KeyError) as error:
             raise Unavailable() from error

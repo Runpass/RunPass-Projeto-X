@@ -1,0 +1,1084 @@
+import 'dart:io';
+import 'dart:isolate';
+import 'dart:ui' as ui;
+import 'dart:typed_data';
+
+import 'package:crop_your_image/crop_your_image.dart';
+import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import 'identity_gateway.dart';
+import 'my_races.dart'
+    show imageContentType, MedalShelfCropState, TouchCropPainter;
+import 'runpass_theme.dart';
+
+/// Rascunho local da foto de perfil ja escolhida (e recortada) mas ainda nao
+/// enviada ao servidor — guardado num arquivo, nao no SharedPreferences
+/// (nao e feito pra blobs binarios grandes), por id da conta. Sem isso,
+/// fechar o app na tela de foto antes de tocar "Continuar" perdia a foto
+/// escolhida, mesmo a etapa certa voltando a aparecer (24/11/2026). Apagado
+/// assim que a foto for de fato enviada ao servidor.
+class ChosenPhotoDraftPrefs {
+  static Future<File?> _file(String accountId) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      return File('${dir.path}/draft-profile-photo-$accountId.jpg');
+    } on Object {
+      return null;
+    }
+  }
+
+  static Future<void> save(String accountId, List<int> bytes) async {
+    try {
+      final file = await _file(accountId);
+      await file?.writeAsBytes(bytes, flush: true);
+    } on Object {
+      // Sem armazenamento: na pior hipotese, a foto escolhida se perde ao
+      // fechar o app antes de confirmar — pior do que hoje, nao melhor.
+    }
+  }
+
+  static Future<Uint8List?> load(String accountId) async {
+    try {
+      final file = await _file(accountId);
+      if (file == null || !await file.exists()) return null;
+      return await file.readAsBytes();
+    } on Object {
+      return null;
+    }
+  }
+
+  static Future<void> clear(String accountId) async {
+    try {
+      final file = await _file(accountId);
+      if (file != null && await file.exists()) await file.delete();
+    } on Object {
+      // Nada a limpar.
+    }
+  }
+}
+
+enum PhotoChoice { camera, gallery, web, remove }
+
+/// Pergunta de onde vem a foto de perfil; "remover" so aparece quando ja existe uma foto.
+Future<PhotoChoice?> askPhotoChoice(
+  BuildContext context, {
+  bool canRemove = false,
+  bool allowWeb = false,
+}) => showModalBottomSheet<PhotoChoice>(
+  context: context,
+  showDragHandle: true,
+  builder: (sheet) => SafeArea(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          key: const Key('photo-camera'),
+          leading: const Icon(Icons.photo_camera_outlined),
+          title: const Text('Tirar uma foto'),
+          onTap: () => Navigator.pop(sheet, PhotoChoice.camera),
+        ),
+        ListTile(
+          key: const Key('photo-gallery'),
+          leading: const Icon(Icons.photo_library_outlined),
+          title: const Text('Escolher da galeria'),
+          onTap: () => Navigator.pop(sheet, PhotoChoice.gallery),
+        ),
+        if (allowWeb)
+          ListTile(
+            key: const Key('photo-web'),
+            leading: const Icon(Icons.public),
+            title: const Text('Buscar na internet'),
+            subtitle: const Text('Procure a imagem e cole o link dela'),
+            onTap: () => Navigator.pop(sheet, PhotoChoice.web),
+          ),
+        if (canRemove)
+          ListTile(
+            key: const Key('photo-remove'),
+            leading: const Icon(Icons.delete_outline, color: Colors.red),
+            title: const Text(
+              'Remover foto',
+              style: TextStyle(color: Colors.red),
+            ),
+            onTap: () => Navigator.pop(sheet, PhotoChoice.remove),
+          ),
+      ],
+    ),
+  ),
+);
+
+/// Camera ou galeria e depois um recorte quadrado (circular na tela). Devolve os bytes
+/// recortados, ou nulo se a pessoa desistir em qualquer etapa.
+typedef ProfilePhotoPicker = Future<List<int>?> Function(
+  BuildContext context,
+  PhotoChoice choice,
+);
+
+Future<List<int>?> pickProfilePhoto(BuildContext context, PhotoChoice choice) =>
+    _pick(context, choice, banner: false);
+
+/// Imagem do banner do perfil: recorte retangular (largo).
+Future<List<int>?> pickBannerPhoto(BuildContext context, PhotoChoice choice) =>
+    _pick(context, choice, banner: true);
+
+Future<List<int>?> _pick(
+  BuildContext context,
+  PhotoChoice choice, {
+  required bool banner,
+}) async {
+  final file = await ImagePicker().pickImage(
+    source: choice == PhotoChoice.camera
+        ? ImageSource.camera
+        : ImageSource.gallery,
+    maxWidth: 1600,
+    maxHeight: 1600,
+    imageQuality: 88,
+    requestFullMetadata: false,
+    preferredCameraDevice: CameraDevice.front,
+  );
+  final bytes = await file?.readAsBytes();
+  if (bytes == null || !context.mounted) return null;
+  return Navigator.of(context).push<List<int>>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => ProfilePhotoCropScreen(image: bytes, banner: banner),
+    ),
+  );
+}
+
+/// Baixa uma imagem pelo link (só https, até 8 MB, só JPEG ou PNG). Troque nos testes.
+typedef ImageLinkFetcher = Future<List<int>> Function(String url);
+
+const maxWebImageBytes = 8 * 1024 * 1024;
+
+Future<List<int>> fetchImageFromLink(String link) async {
+  final uri = Uri.tryParse(link.trim());
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+    throw const IdentityIssue('IMAGE_LINK_INVALID');
+  }
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final request = await client
+        .getUrl(uri)
+        .timeout(const Duration(seconds: 10));
+    final response = await request.close().timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      throw const IdentityIssue('IMAGE_NOT_VALID');
+    }
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+      if (bytes.length > maxWebImageBytes) {
+        throw const IdentityIssue('IMAGE_SIZE_INVALID');
+      }
+    }
+    if (imageContentType(bytes) == null) {
+      throw const IdentityIssue('IMAGE_TYPE_INVALID');
+    }
+    return bytes;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+/// Endereço de uma busca de imagens na internet para o nome da corrida (abre no navegador).
+Uri webImageSearchUri(String query) => Uri.https('www.google.com', '/search', {
+  'tbm': 'isch',
+  'q': '${query.trim()} banner corrida',
+});
+
+/// Banner da internet: a pessoa procura a imagem no navegador, cola o link e o app baixa e recorta.
+/// A equipe só publica depois de conferir o crédito e a autorização do organizador.
+Future<List<int>?> pickBannerFromWeb(
+  BuildContext context, {
+  String query = '',
+  ImageLinkFetcher fetcher = fetchImageFromLink,
+}) async {
+  final bytes = await showDialog<List<int>>(
+    context: context,
+    builder: (dialog) => _WebImageDialog(query: query, fetcher: fetcher),
+  );
+  if (bytes == null || !context.mounted) return null;
+  return Navigator.of(context).push<List<int>>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => ProfilePhotoCropScreen(
+        image: Uint8List.fromList(bytes),
+        banner: true,
+      ),
+    ),
+  );
+}
+
+class _WebImageDialog extends StatefulWidget {
+  final String query;
+  final ImageLinkFetcher fetcher;
+  const _WebImageDialog({required this.query, required this.fetcher});
+
+  @override
+  State<_WebImageDialog> createState() => _WebImageDialogState();
+}
+
+class _WebImageDialogState extends State<_WebImageDialog> {
+  final link = TextEditingController();
+  bool loading = false;
+  String? error;
+
+  @override
+  void dispose() {
+    link.dispose();
+    super.dispose();
+  }
+
+  Future<void> use() async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final bytes = await widget.fetcher(link.text.trim());
+      if (mounted) Navigator.pop(context, bytes);
+    } on Object catch (problem) {
+      if (mounted) {
+        setState(() {
+          loading = false;
+          error =
+              problem is IdentityIssue && problem.code == 'IMAGE_LINK_INVALID'
+              ? 'Cole o link da imagem, começando com https://'
+              : photoError(problem);
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Banner da internet'),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '1. Procure a imagem no navegador. 2. Copie o link da imagem (toque e segure nela). 3. Cole aqui.',
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('web-image-search'),
+            onPressed: () => launchUrl(
+              webImageSearchUri(widget.query),
+              mode: LaunchMode.externalApplication,
+            ),
+            icon: const Icon(Icons.search_rounded),
+            label: const Text('Procurar no navegador'),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('web-image-link'),
+            controller: link,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'Link da imagem (https://...)',
+            ),
+          ),
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(error!, key: const Key('web-image-error')),
+            ),
+          const SizedBox(height: 8),
+          const Text(
+            'A imagem só é publicada se a equipe aprovar, com o crédito e a autorização do organizador.',
+            style: TextStyle(fontSize: 12),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: loading ? null : () => Navigator.pop(context),
+        child: const Text('Cancelar'),
+      ),
+      FilledButton(
+        key: const Key('web-image-use'),
+        onPressed: loading ? null : use,
+        child: Text(loading ? 'Baixando...' : 'Usar esta imagem'),
+      ),
+    ],
+  );
+}
+
+/// Envia a foto e devolve a referencia aceita; falha se a imagem nao passar na validacao.
+Future<String> uploadProfilePhoto(
+  IdentityGateway gateway,
+  List<int> bytes,
+) async {
+  final type = imageContentType(bytes);
+  if (type == null) throw const IdentityIssue('IMAGE_TYPE_INVALID');
+  final result = await gateway.uploadImage(bytes, type);
+  final reference = result['imageReference'];
+  if (result['state'] != 'valid' || reference is! String) {
+    throw const IdentityIssue('IMAGE_NOT_VALID');
+  }
+  return reference;
+}
+
+String photoError(Object error) => error is IdentityIssue
+    ? switch (error.code) {
+        'IMAGE_TYPE_INVALID' => 'Escolha uma foto JPEG ou PNG.',
+        'IMAGE_NOT_VALID' => 'A foto não foi aceita. Escolha outra imagem.',
+        'IMAGE_SIZE_INVALID' => 'A foto é grande demais. Escolha outra.',
+        'IMAGE_LINK_INVALID' => 'Cole o link da imagem, começando com https://',
+        _ => 'Não foi possível enviar a foto. Verifique a internet e tente de novo.',
+      }
+    : 'Não foi possível usar a câmera ou a galeria. Confira a permissão do app nos Ajustes do celular.';
+
+class ProfilePhotoCropScreen extends StatefulWidget {
+  final Uint8List image;
+  final bool banner;
+  final String? title;
+  final String? instructions;
+  const ProfilePhotoCropScreen({
+    super.key,
+    required this.image,
+    this.banner = false,
+    this.title,
+    this.instructions,
+  });
+
+  @override
+  State<ProfilePhotoCropScreen> createState() => _ProfilePhotoCropScreenState();
+}
+
+/// Recorte proprio (nao o pacote `crop_your_image`, usado no resto do app
+/// em `PhotoZoomScreen`): so pra foto de perfil e banner, no mesmo padrao do
+/// `MedalShelfCrop` (`my_races.dart`), que ja reconhece pinca (zoom) e giro
+/// de dois dedos juntos no mesmo gesto — algo que o pacote nunca exportou
+/// (so pinca; giro so dava via botao, pedido pelo usuario em 24/11/2026).
+class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
+  ui.Image? decoded;
+  double scale = 1;
+  double rotation = 0;
+  Offset offset = Offset.zero;
+  double _baseScale = 1;
+  double _baseRotation = 0;
+  Size viewportSize = const Size(320, 320);
+  bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _decode();
+  }
+
+  Future<void> _decode() async {
+    final codec = await ui.instantiateImageCodec(widget.image);
+    final frame = await codec.getNextFrame();
+    if (!mounted) return;
+    setState(() => decoded = frame.image);
+  }
+
+  Future<void> confirm() async {
+    final image = decoded;
+    if (image == null) return;
+    setState(() => busy = true);
+    try {
+      final viewport = viewportSize;
+      final recorder = ui.PictureRecorder();
+      TouchCropPainter(
+        image: image,
+        scale: scale,
+        rotation: rotation,
+        offset: offset,
+      ).paint(Canvas(recorder), viewport);
+      final output = await recorder.endRecording().toImage(
+        viewport.width.round(),
+        viewport.height.round(),
+      );
+      final data = await output.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = data?.buffer.asUint8List();
+      if (!mounted) return;
+      if (bytes == null) throw const FormatException('foto');
+      Navigator.of(context).pop<List<int>>(bytes);
+    } on Object {
+      if (mounted) {
+        setState(() => busy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível recortar a foto. Tente de novo.'),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: Text(
+        widget.title ?? (widget.banner ? 'Recortar banner' : 'Recortar foto'),
+      ),
+    ),
+    body: SafeArea(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              widget.instructions ??
+                  (widget.banner
+                      ? 'Arraste, use dois dedos para ampliar e girar. A parte dentro do quadro será o banner.'
+                      : 'Arraste, use dois dedos para ampliar e girar. Deixe só o rosto dentro do círculo.'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+          Expanded(
+            child: decoded == null
+                ? const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  )
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final aspect = widget.banner ? 16 / 7 : 1.0;
+                      final available = constraints.biggest;
+                      var viewport = Size(
+                        available.width,
+                        available.width / aspect,
+                      );
+                      if (viewport.height > available.height) {
+                        viewport = Size(
+                          available.height * aspect,
+                          available.height,
+                        );
+                      }
+                      viewportSize = viewport;
+                      return Center(
+                        child: ClipRect(
+                          child: GestureDetector(
+                            key: const Key('crop-touch-area'),
+                            onScaleStart: (_) {
+                              _baseScale = scale;
+                              _baseRotation = rotation;
+                            },
+                            onScaleUpdate: (details) => setState(() {
+                              scale = (_baseScale * details.scale).clamp(
+                                0.2,
+                                8,
+                              );
+                              rotation = _baseRotation + details.rotation;
+                              offset += details.focalPointDelta;
+                            }),
+                            child: SizedBox(
+                              width: viewport.width,
+                              height: viewport.height,
+                              child: Stack(
+                                children: [
+                                  CustomPaint(
+                                    size: viewport,
+                                    painter: TouchCropPainter(
+                                      image: decoded!,
+                                      scale: scale,
+                                      rotation: rotation,
+                                      offset: offset,
+                                    ),
+                                  ),
+                                  if (!widget.banner)
+                                    IgnorePointer(
+                                      child: CustomPaint(
+                                        size: viewport,
+                                        painter: const _CircleGuidePainter(),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('crop-cancel'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: busy ? null : () => Navigator.of(context).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('crop-confirm'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: runPassOrange,
+                    ),
+                    onPressed: busy ? null : confirm,
+                    child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Guia visual do circulo (foto de perfil): mascara escura fora do circulo,
+/// contorno branco por cima de uma linha preta mais larga (visivel sobre
+/// fotos claras ou escuras) — so orientacao, nao afeta o que e exportado.
+/// Mesmo estilo do `_FrameGuidePainter` da medalha, sem depender dele (so
+/// um circulo, nao os formatos variados do furo da medalha).
+class _CircleGuidePainter extends CustomPainter {
+  const _CircleGuidePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final circle = Path()
+      ..addOval(
+        Rect.fromCircle(
+          center: size.center(Offset.zero),
+          radius: size.shortestSide / 2,
+        ),
+      );
+    final mask = Path.combine(
+      PathOperation.difference,
+      Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height)),
+      circle,
+    );
+    canvas.drawPath(mask, Paint()..color = const Color(0x99000000));
+    canvas.drawPath(
+      circle,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4
+        ..color = const Color(0xaa000000),
+    );
+    canvas.drawPath(
+      circle,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..color = Colors.white,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CircleGuidePainter oldDelegate) => false;
+}
+
+/// Formatos do editor de foto: a foto inteira (padrão), o recorte livre e as proporções fixas
+/// (largura / altura). A "Prateleira" (furo da medalha) só aparece quando o editor recebe [PhotoZoomScreen.shelf].
+const photoAspects = <(String, double?)>[
+  ('Livre', null),
+  ('1:1', 1),
+  ('4:3', 4 / 3),
+  ('3:4', 3 / 4),
+  ('16:9', 16 / 9),
+  ('Feed 16:10', 16 / 10),
+];
+
+/// Foto da medalha ou da publicação, igual em todas as telas: a folha com câmera e galeria, a mesma
+/// resolução (até 2800 px, qualidade 88) e o mesmo editor. Devolve os bytes, ou nulo se a pessoa desistir.
+Future<List<int>?> pickAndEditPhoto(
+  BuildContext context, {
+  required String title,
+}) async {
+  final choice = await askPhotoChoice(context);
+  if (choice == null || choice == PhotoChoice.remove || !context.mounted) {
+    return null;
+  }
+  final file = await ImagePicker().pickImage(
+    source: choice == PhotoChoice.camera
+        ? ImageSource.camera
+        : ImageSource.gallery,
+    maxWidth: 2800,
+    maxHeight: 2800,
+    imageQuality: 88,
+    requestFullMetadata: false,
+  );
+  final original = await file?.readAsBytes();
+  if (original == null || !context.mounted) return null;
+  return Navigator.of(context).push<List<int>>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => PhotoZoomScreen(image: original, title: title),
+    ),
+  );
+}
+
+/// Fotos da publicação (Postar foto): a mesma folha. A câmera tira uma foto e abre o editor; a galeria escolhe
+/// até 5 de uma vez (só uma: abre o editor, como antes; várias: vão inteiras, e cada uma se ajusta depois na
+/// edição da publicação). Devolve a lista na ordem escolhida (a primeira é a capa), ou nulo se desistir.
+Future<List<List<int>>?> pickPostPhotos(BuildContext context) async {
+  final choice = await askPhotoChoice(context);
+  if (choice == null || choice == PhotoChoice.remove || !context.mounted) {
+    return null;
+  }
+  if (choice == PhotoChoice.camera) {
+    final file = await ImagePicker().pickImage(
+      source: ImageSource.camera,
+      maxWidth: 2800,
+      maxHeight: 2800,
+      imageQuality: 88,
+      requestFullMetadata: false,
+    );
+    final original = await file?.readAsBytes();
+    if (original == null || !context.mounted) return null;
+    final edited = await editPhoto(context, original, 'Foto da publicação');
+    return edited == null ? null : [edited];
+  }
+  final files = await ImagePicker().pickMultiImage(
+    limit: 5,
+    maxWidth: 2800,
+    maxHeight: 2800,
+    imageQuality: 88,
+    requestFullMetadata: false,
+  );
+  if (files.isEmpty || !context.mounted) return null;
+  final photos = [for (final file in files.take(5)) await file.readAsBytes()];
+  if (!context.mounted) return null;
+  if (photos.length == 1) {
+    final edited = await editPhoto(context, photos.first, 'Foto da publicação');
+    return edited == null ? null : [edited];
+  }
+  return photos;
+}
+
+/// Abre o editor único numa foto já escolhida; nulo se cancelar.
+Future<List<int>?> editPhoto(
+  BuildContext context,
+  List<int> photo,
+  String title,
+) => Navigator.of(context).push<List<int>>(
+  MaterialPageRoute(
+    fullscreenDialog: true,
+    builder: (_) => PhotoZoomScreen(
+      image: Uint8List.fromList(photo),
+      title: title,
+      original: photoOriginals[photo],
+    ),
+  ),
+);
+
+/// Editor único de foto (medalha e publicação). Abre sempre na foto inteira, com arrastar e zoom; o ícone
+/// "Formato" (discreto, no topo) mostra ou esconde a barra de formatos: Foto inteira, Prateleira (só na
+/// medalha, no formato do furo, com giro), Livre e as proporções. "Foto inteira" envia a original.
+class PhotoZoomScreen extends StatefulWidget {
+  final Uint8List image;
+
+  /// "Foto da medalha" ou "Foto da publicação".
+  final String title;
+
+  /// Recorte no formato da medalha (o "Prateleira"); com ele, o editor abre nesse formato.
+  final Widget Function(GlobalKey<MedalShelfCropState> key)? shelf;
+
+  /// A foto antes de um recorte anterior (nesta sessão): "Foto original" volta para ela.
+  final Uint8List? original;
+  const PhotoZoomScreen({
+    super.key,
+    required this.image,
+    this.title = 'Foto da publicação',
+    this.shelf,
+    this.original,
+  });
+
+  @override
+  State<PhotoZoomScreen> createState() => _PhotoZoomScreenState();
+}
+
+/// Foto original de cada foto recortada no editor (na sessão): ao ajustar de novo, dá para voltar a ela.
+final photoOriginals = Expando<Uint8List>('foto original');
+
+/// Recorta a parte [frac] (em frações de 0 a 1 da foto já na orientação certa) e devolve um JPEG (qualidade
+/// 88). Roda fora da tela, para não travar o app.
+Future<List<int>> cropPhotoFraction(Uint8List bytes, Rect frac) =>
+    Isolate.run(() {
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) throw const FormatException('foto');
+      final photo = img.bakeOrientation(decoded);
+      final x = (frac.left * photo.width).round().clamp(0, photo.width - 1);
+      final y = (frac.top * photo.height).round().clamp(0, photo.height - 1);
+      final w = (frac.width * photo.width).round().clamp(1, photo.width - x);
+      final h = (frac.height * photo.height).round().clamp(1, photo.height - y);
+      return img.encodeJpg(
+        img.copyCrop(photo, x: x, y: y, width: w, height: h),
+        quality: 88,
+      );
+    });
+
+/// Parte da foto que aparece na área [viewport] (em frações de 0 a 1), com a foto encaixada inteira
+/// (`BoxFit.contain`) e depois aproximada/arrastada por [transform]; nula se aparece a foto inteira.
+Rect? visiblePhotoFraction({
+  required Size viewport,
+  required double aspect,
+  required Matrix4 transform,
+}) {
+  if (viewport.isEmpty || aspect <= 0) return null;
+  final v = viewport;
+  final fitted = aspect > v.width / v.height
+      ? Rect.fromCenter(
+          center: v.center(Offset.zero),
+          width: v.width,
+          height: v.width / aspect,
+        )
+      : Rect.fromCenter(
+          center: v.center(Offset.zero),
+          width: v.height * aspect,
+          height: v.height,
+        );
+  final inverse = Matrix4.inverted(transform);
+  final shown = Rect.fromPoints(
+    MatrixUtils.transformPoint(inverse, Offset.zero),
+    MatrixUtils.transformPoint(inverse, Offset(v.width, v.height)),
+  ).intersect(fitted);
+  if (shown.width <= 0 || shown.height <= 0) return null;
+  final frac = Rect.fromLTWH(
+    (shown.left - fitted.left) / fitted.width,
+    (shown.top - fitted.top) / fitted.height,
+    shown.width / fitted.width,
+    shown.height / fitted.height,
+  );
+  return frac.width * frac.height > 0.98 ? null : frac;
+}
+
+class _PhotoZoomScreenState extends State<PhotoZoomScreen> {
+  static const minScale = 1.0, maxScale = 4.0, step = 0.5;
+  static const whole = -1, shelfFormat = -2;
+  final controller = TransformationController();
+  final crop = CropController();
+  final shelfKey = GlobalKey<MedalShelfCropState>();
+  bool showFormats = false, busy = false;
+  late int format = widget.shelf != null ? shelfFormat : whole;
+
+  /// Tamanho da área da foto e proporção da foto (para saber o que está visível depois da pinça).
+  Size viewport = Size.zero;
+  double? photoAspect;
+
+  /// A foto em edição: começa na recebida; "Foto original" troca pela de antes do recorte.
+  late Uint8List image = widget.image;
+
+  /// A original de tudo o que sair daqui (para um próximo ajuste poder voltar a ela).
+  Uint8List get source =>
+      widget.original ?? photoOriginals[widget.image] ?? widget.image;
+
+  bool get canRestore =>
+      !identical(image, source) ||
+      !controller.value.isIdentity() ||
+      (format != whole && format != shelfFormat);
+
+  void restoreOriginal() => setState(() {
+    image = source;
+    photoAspect = null;
+    controller.value = Matrix4.identity();
+    if (format != shelfFormat) format = whole;
+    _readAspect();
+  });
+
+  void _readAspect() {
+    final current = image;
+    ui
+        .instantiateImageCodec(current)
+        .then((codec) async {
+          final frame = await codec.getNextFrame();
+          if (mounted && identical(current, image)) {
+            setState(
+              () => photoAspect = frame.image.width / frame.image.height,
+            );
+          }
+        })
+        .catchError((Object _) {});
+  }
+
+  /// Devolve a foto pronta, lembrando a original dela.
+  void finish(List<int> result) {
+    final bytes = result is Uint8List ? result : Uint8List.fromList(result);
+    if (!identical(bytes, source)) photoOriginals[bytes] = source;
+    Navigator.of(context).pop<List<int>>(bytes);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _readAspect();
+  }
+
+  Rect? visibleFraction() {
+    final aspect = photoAspect;
+    if (aspect == null) return null;
+    return visiblePhotoFraction(
+      viewport: viewport,
+      aspect: aspect,
+      transform: controller.value,
+    );
+  }
+
+  double get scale => controller.value.getMaxScaleOnAxis();
+
+  void zoom(double delta) {
+    final next = (scale + delta).clamp(minScale, maxScale);
+    setState(() => controller.value = Matrix4.diagonal3Values(next, next, 1));
+  }
+
+  void failed() {
+    setState(() => busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Não foi possível recortar a foto. Tente de novo.'),
+      ),
+    );
+  }
+
+  void cropped(CropResult result) {
+    if (!mounted) return;
+    switch (result) {
+      case CropSuccess(:final croppedImage):
+        finish(croppedImage);
+      case CropFailure():
+        failed();
+    }
+  }
+
+  Future<void> use() async {
+    if (format == whole) {
+      // Com a pinça (aproximou ou arrastou), vai o que aparece na tela; sem ela, a foto original, inteira.
+      if (controller.value.isIdentity()) {
+        finish(image);
+        return;
+      }
+      if (photoAspect == null) {
+        try {
+          final frame = await (await ui.instantiateImageCodec(image))
+              .getNextFrame();
+          photoAspect = frame.image.width / frame.image.height;
+        } on Object {
+          photoAspect = null; // sem ler a foto, vai inteira
+        }
+        if (!mounted) return;
+      }
+      final frac = visibleFraction();
+      if (frac == null) {
+        finish(image);
+        return;
+      }
+      setState(() => busy = true);
+      try {
+        final bytes = await cropPhotoFraction(image, frac);
+        if (mounted) finish(bytes);
+      } on Object {
+        if (mounted) failed();
+      }
+      return;
+    }
+    setState(() => busy = true);
+    if (format != shelfFormat) {
+      crop.crop();
+      return;
+    }
+    try {
+      final bytes = await shelfKey.currentState?.export();
+      if (!mounted) return;
+      if (bytes == null) return failed();
+      finish(bytes);
+    } on Exception {
+      if (mounted) failed();
+    }
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  Widget formatChip(String key, String label, int value) => Padding(
+    padding: const EdgeInsets.only(right: 6),
+    child: ChoiceChip(
+      key: Key(key),
+      label: Text(label),
+      labelStyle: TextStyle(
+        fontSize: 12,
+        color: format == value ? Colors.black : Colors.white70,
+      ),
+      color: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.selected)
+            ? Colors.white
+            : Colors.white12,
+      ),
+      side: BorderSide.none,
+      showCheckmark: false,
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      selected: format == value,
+      onSelected: busy
+          ? null
+          : (_) => setState(() {
+              format = value;
+              controller.value = Matrix4.identity();
+            }),
+    ),
+  );
+
+  Widget formats() => Theme(
+    // Fundo transparente: no tema claro o chip não escolhido ficaria branco com o rótulo claro.
+    data: Theme.of(context).copyWith(canvasColor: Colors.transparent),
+    child: SingleChildScrollView(
+      key: const Key('photo-formats'),
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      child: Row(
+        children: [
+          formatChip('photo-format-whole', 'Foto inteira', whole),
+          if (widget.shelf != null)
+            formatChip('photo-format-shelf', 'Prateleira', shelfFormat),
+          for (final (index, option) in photoAspects.indexed)
+            formatChip('crop-aspect-$index', option.$1, index),
+        ],
+      ),
+    ),
+  );
+
+  Widget area() {
+    if (format == shelfFormat) return widget.shelf!(shelfKey);
+    if (format == whole) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          viewport = constraints.biggest;
+          return InteractiveViewer(
+            key: const Key('photo-zoom-viewer'),
+            transformationController: controller,
+            minScale: minScale,
+            maxScale: maxScale,
+            onInteractionEnd: (_) => setState(() {}),
+            child: Center(child: Image.memory(image, fit: BoxFit.contain)),
+          );
+        },
+      );
+    }
+    final ratio = photoAspects[format].$2;
+    return Crop(
+      // Trocar o formato recria o quadro do zero (a foto volta inteira).
+      key: ValueKey(format),
+      image: image,
+      controller: crop,
+      aspectRatio: ratio,
+      interactive: true,
+      fixCropRect: ratio != null,
+      baseColor: Colors.black,
+      maskColor: Colors.black.withValues(alpha: 0.6),
+      onCropped: cropped,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: Text(widget.title),
+      actions: [
+        if (canRestore)
+          IconButton(
+            key: const Key('photo-original'),
+            tooltip: 'Foto original',
+            color: Colors.white70,
+            onPressed: busy ? null : restoreOriginal,
+            icon: const Icon(Icons.restore_rounded, size: 20),
+          ),
+        IconButton(
+          key: Key(showFormats ? 'photo-crop-off' : 'photo-crop'),
+          tooltip: showFormats ? 'Esconder formatos' : 'Formato',
+          color: showFormats ? Colors.white : Colors.white70,
+          onPressed: busy
+              ? null
+              : () => setState(() => showFormats = !showFormats),
+          icon: const Icon(Icons.crop, size: 20),
+        ),
+      ],
+    ),
+    body: SafeArea(
+      child: Column(
+        children: [
+          Expanded(child: area()),
+          if (format == shelfFormat)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Arraste, pince para o zoom e gire com dois dedos. Essa área aparece na prateleira.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ),
+          if (format == whole)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  key: const Key('photo-zoom-out'),
+                  tooltip: 'Reduzir',
+                  color: Colors.white70,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: scale > minScale ? () => zoom(-step) : null,
+                  icon: const Icon(Icons.zoom_out, size: 20),
+                ),
+                IconButton(
+                  key: const Key('photo-zoom-in'),
+                  tooltip: 'Ampliar',
+                  color: Colors.white70,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: scale < maxScale ? () => zoom(step) : null,
+                  icon: const Icon(Icons.zoom_in, size: 20),
+                ),
+              ],
+            ),
+          if (showFormats) formats(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('crop-cancel'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: busy ? null : () => Navigator.pop(context),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('photo-zoom-use'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: runPassOrange,
+                    ),
+                    onPressed: busy ? null : use,
+                    child: Text(busy ? 'Aguarde…' : 'Usar esta foto'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}

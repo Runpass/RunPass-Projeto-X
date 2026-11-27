@@ -33,3 +33,8 @@ O caminho de demonstração possui transporte binário sintético, sem rede ou a
 - Definir/executar a limpeza de originais abandonados e imagens validadas não vinculadas com rechecagem de referências.
 
 Falha ou timeout de imagem não altera nem remove o rascunho do S04. Nenhuma imagem é vinculada a participação ou publicada neste slice; essa transação pertence ao S06.
+
+
+## Aceite humano — 03/11/2026
+
+Aceita pelo usuário como aceite local, com as ressalvas registradas em `implementation-slices.md` (seção "Aceite humano de S05, S06 e S08"). Integração real permanece na S09.

@@ -1,9 +1,17 @@
+import 'dart:convert';
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:runpass/demo_transport.dart';
 import 'package:runpass/catalog_screen.dart';
+import 'package:runpass/demo_transport.dart';
 import 'package:runpass/identity_gateway.dart';
 import 'package:runpass/main.dart';
+
+/// PNG valido de 1x1 pixel: a foto escolhida aparece na tela de cadastro.
+final onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
 
 IdentityGateway demoGateway(DemoTransport demo) => IdentityGateway(
   cognito: Uri.parse('https://cognito.demo.invalid'),
@@ -14,11 +22,24 @@ IdentityGateway demoGateway(DemoTransport demo) => IdentityGateway(
 );
 
 void main() {
+  setUp(draftFormCache.clear);
+
   testWidgets(
     'clearly labelled local demo goes from login through profile and admission to catalog',
     (tester) async {
+      // Tamanho real de aparelho (o padrao do teste, 800x600, e mais baixo que
+      // qualquer celular de verdade e nao cabe nem a faixa de demonstracao).
+      tester.view.physicalSize = const Size(360, 740);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final gateway = demoGateway(DemoTransport());
-      await tester.pumpWidget(MainApp(gateway: gateway, demonstration: true));
+      await tester.pumpWidget(
+        MainApp(
+          gateway: gateway,
+          demonstration: true,
+          photoPicker: (context, choice) async => onePixelPng,
+        ),
+      );
       expect(find.textContaining('DEMONSTRAÇÃO LOCAL'), findsOneWidget);
       await tester.enterText(
         find.widgetWithText(TextFormField, 'E-mail'),
@@ -28,11 +49,11 @@ void main() {
         find.widgetWithText(TextFormField, 'Senha'),
         'RunpassDemo123!',
       );
-      await tester.ensureVisible(find.text('Continuar'));
-      await tester.tap(find.text('Continuar'));
+      await tester.ensureVisible(find.text('Entrar'));
+      await tester.tap(find.text('Entrar'));
       await tester.pumpAndSettle();
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Nome de exibição'),
+        find.widgetWithText(TextFormField, 'Nome e sobrenome'),
         'Corredor Demo',
       );
       await tester.enterText(
@@ -42,40 +63,65 @@ void main() {
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Data de nascimento (AAAA-MM-DD)'),
-        '1990-01-01',
-      );
+      // Admissao: genero (obrigatorio) + data de nascimento + declaracao de maioridade.
+      await tester.ensureVisible(find.text('Masculino'));
+      await tester.tap(find.text('Masculino'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('birth-date-field')));
+      await tester.tap(find.byKey(const Key('birth-date-field')));
+      await tester.pumpAndSettle();
+      // Aceita a data padrao do seletor (hoje menos 18 anos), que ja e elegivel.
+      // O "Concluído" só vale depois de girar uma roda (a pessoa escolhe a data, não a aceita sem olhar).
+      await tester.drag(find.byType(CupertinoPicker).last, const Offset(0, 80));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('birth-date-done')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byType(CheckboxListTile));
       await tester.tap(find.byType(CheckboxListTile));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Continuar'));
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Explorar corridas'));
-      await tester.tap(find.text('Explorar corridas'));
+      await tester.ensureVisible(find.byKey(const Key('location-field')));
+      await tester.tap(find.byKey(const Key('location-field')));
       await tester.pumpAndSettle();
-      expect(find.text('Encontre sua próxima conquista'), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.text('Carregar mais').hitTestable(),
-        400,
-        scrollable: find
-            .descendant(
-              of: find.byType(CatalogScreen),
-              matching: find.byType(Scrollable),
-            )
-            .first,
-      );
-      expect(find.text('Carregar mais'), findsOneWidget);
+      // Aceita o estado/cidade padrao do seletor (primeiro da lista: Acre/Acrelândia).
+      await tester.tap(find.byKey(const Key('location-done')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Continuar'));
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      // Foto de perfil: opcional, mas o roteiro da demonstracao escolhe uma.
+      expect(find.text('Sua foto de perfil'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('choose-photo')));
+      await tester.tap(find.byKey(const Key('choose-photo')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('photo-gallery')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Continuar'));
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      // Celebracao: "Começar minha jornada" leva ao Início.
+      await tester.ensureVisible(find.text('Começar minha jornada'));
+      await tester.tap(find.text('Começar minha jornada'));
+      await tester.pumpAndSettle();
+      // After admission the runner lands on Início, not on the catalog.
+      // The demo feed carries fictional posts by other runners.
+      expect(find.text('Mariana Lopes'), findsOneWidget);
+      expect(find.text('Encontre sua próxima conquista'), findsNothing);
+      await tester.tap(find.text('Corridas'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('catalog-name-search')), findsOneWidget);
+      // Só a lista, sem filtro de data nem ícones de ordem.
+      expect(find.byKey(const Key('catalog-date-filter')), findsNothing);
+      expect(find.byKey(const Key('catalog-sort')), findsNothing);
       await tester.tap(find.text('Início'));
       await tester.pumpAndSettle();
-      expect(
-        find.text('Sua próxima história começa na linha de largada.'),
-        findsOneWidget,
-      );
+      // The demo feed carries fictional posts by other runners.
+      expect(find.text('Mariana Lopes'), findsOneWidget);
       await tester.tap(find.text('Medalhas'));
       await tester.pumpAndSettle();
-      expect(find.text('Minhas medalhas'), findsOneWidget);
+      expect(find.byType(MedalCollectionScreen), findsOneWidget);
       await tester.tap(find.text('Perfil'));
       await tester.pumpAndSettle();
       expect(find.text('Corredor Demo'), findsOneWidget);
@@ -88,7 +134,10 @@ void main() {
       final gateway = demoGateway(DemoTransport());
       await gateway.signUp('new@runpass.test', 'RunpassDemo123!');
       await gateway.confirm('new@runpass.test', '123456');
+      // A senha ja foi definida no SignUp; so falta entrar com ela, como um
+      // signIn comum.
       await gateway.signIn('new@runpass.test', 'RunpassDemo123!');
+      expect(gateway.signedIn, true);
       expect(
         (await gateway.request('/beta/status'))['myStatus'],
         'not_admitted',
@@ -116,7 +165,11 @@ void main() {
       await gateway.request(
         '/beta/admissions',
         method: 'POST',
-        body: {'birthDate': '1990-01-01', 'declaresAdult': true},
+        body: {
+          'birthDate': '1990-01-01',
+          'declaresAdult': true,
+          'gender': 'undisclosed',
+        },
       );
 
       final catalog = await gateway.request('/editions');

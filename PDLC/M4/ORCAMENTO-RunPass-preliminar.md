@@ -3,6 +3,8 @@
 Atualizado em 27/10/2026 com tarifas coletadas em 26/10/2026, sem nova consulta. Lake incluido como sensibilidade: evento de 4 KB por chamada de escrita (20% das chamadas), objeto individual, retencao de 60 dias, 5% de reenvios, fila e worker adicional de 256 MB/100 ms. Fracao real de avaliacoes e tamanho dos comentarios nao medidos. Estoque de 60 dias em regime cheio, nao crescimento real do beta.
 As novas linhas incluem entrega, PUT e estoque. Nao incluem integralmente escrita adicional de outbox/ledger, reconciliacao, limpeza, consultas administrativas, auditoria e versoes; subtotal continua parcial. Nao sao autorizacao de gastos ou custo final do lake.
 
+**Atualização de 04/11/2026:** os itens excluídos de DEV foram incorporados em `ORCAMENTO-RunPass-DEV.md`, com câmbio PTAX de 03/11/2026 e teto de R$ 1.000/mês (aprovado em 01/11/2026). Este documento continua válido como base de PROD, que segue sem cálculo próprio.
+
 **Estado:** simulação de sensibilidade, sem teto aprovado. Preços públicos consultados em 26/10/2026, São Paulo. USD, mês de 30 dias. Não é orçamento final nem benchmark.
 
 ## Premissas e cobertura

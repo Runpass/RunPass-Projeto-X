@@ -1,0 +1,111 @@
+import 'package:flutter/material.dart';
+
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:runpass/catalog_screen.dart';
+import 'package:runpass/identity_gateway.dart';
+import 'package:runpass/pending_requests.dart';
+
+Map<String, dynamic> request(String id, String status, {String? kind}) => {
+  'id': id,
+  'status': status,
+  'version': 1,
+  'kind': ?kind,
+  'details': {
+    'name': 'Corrida $id',
+    'date': '2027-03-14',
+    'city': 'São Paulo',
+    'state': 'SP',
+    'distanceKm': 10,
+  },
+};
+
+Future<IdentityGateway> gateway(List<Map<String, dynamic>> items) async {
+  final g = IdentityGateway(
+    cognito: Uri.parse('https://cognito.example'),
+    api: Uri.parse('https://api.example'),
+    clientId: 'synthetic',
+    transport: (uri, method, headers, body) async {
+      if (uri.host == 'cognito.example') {
+        return const JsonReply(200, {
+          'AuthenticationResult': {'AccessToken': 'synthetic'},
+        });
+      }
+      if (uri.path == '/editions/E1') {
+        return const JsonReply(200, {
+          'id': 'E1',
+          'name': '[FICTICIA] Corrida',
+          'date': '2026-09-22',
+          'city': 'São Paulo',
+          'state': 'SP',
+          'status': 'past',
+          'version': 1,
+          'distances': [
+            {'id': '5k', 'kilometers': 5},
+          ],
+        });
+      }
+      return JsonReply(200, {'items': items});
+    },
+  );
+  await g.signIn('synthetic@example.test', 'synthetic');
+  return g;
+}
+
+final onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
+
+void main() {
+  test(
+    'sem banner meu esperando decisão nesta corrida, nada provisório aparece',
+    () async {
+      final g = await gateway([
+        {...request('a', 'approved'), 'linkedEditionId': 'outra'},
+        {
+          ...request('b', 'linked'),
+          'linkedEditionId': 'E1',
+          'bannerState': 'dismissed', // já decidido: some
+          'details': {'name': 'x', 'imageReference': 'img_x'},
+        },
+        {
+          ...request('c', 'linked'),
+          'linkedEditionId': 'E1',
+          'details': {'name': 'sem imagem'},
+        },
+      ]);
+      expect(await loadProvisionalBanner(g, 'E1'), isNull);
+    },
+  );
+
+  testWidgets(
+    'banner em análise não aparece na corrida (banners desligados; vale a foto da cidade)',
+    (tester) async {
+      final g = await gateway([]);
+      Future<void> open(
+        Future<List<int>?> Function(IdentityGateway, String) loader,
+      ) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: EditionScreen(
+              gateway: g,
+              editionId: 'E1',
+              provisionalBannerLoader: loader,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await open((_, _) async => onePixelPng);
+      expect(find.byKey(const Key('hero-provisional')), findsNothing);
+      expect(find.byKey(const Key('hero-provisional-note')), findsNothing);
+      // Sem sugestão minha esperando decisão: nada provisório (tela nova, sem o estado anterior).
+      await tester.pumpWidget(const SizedBox());
+      await open((_, _) async => null);
+      expect(find.byKey(const Key('hero-provisional')), findsNothing);
+      expect(find.byKey(const Key('hero-provisional-note')), findsNothing);
+    },
+  );
+}

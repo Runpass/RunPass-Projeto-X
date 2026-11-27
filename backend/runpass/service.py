@@ -3,12 +3,19 @@
 import hashlib
 import hmac
 import json
+import secrets
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from .store import Conflict
+from .profile_index import PIDX_REGISTRY, index_keys, shared_keys
+from .store import Conflict, Unavailable
+
+# Memoria da requisicao HTTP em curso (um conjunto novo por requisicao, criado pelo middleware da API).
+# Fora de uma requisicao e None e nada e lembrado.
+REQUEST_MEMO = ContextVar("runpass_request_memo", default=None)
 
 
 class Problem(Exception):
@@ -32,12 +39,17 @@ class IdentityService:
         clock=utc_now,
         environment="local",
         identity_namespace="local-runner",
+        account_remover=None,
     ):
         if len(erasure_key) < 32:
             raise ValueError("Erasure HMAC key requires at least 32 bytes")
         self.store, self.clock, self.erasure_key = store, clock, erasure_key
         self.environment = environment
         self.identity_namespace = identity_namespace
+        # Libera o e-mail/username no Cognito na hora do pedido de exclusao (delete_account),
+        # em vez de esperar o job assincrono de limpeza de dados. Opcional: sem ele (local/testes),
+        # so o job assincrono cuida da remocao, como antes.
+        self.account_remover = account_remover
 
     def erasure(self, subject):
         digest = hmac.new(
@@ -51,7 +63,13 @@ class IdentityService:
         if principal.audience != "runner":
             raise Problem(403, "RUNNER_REQUIRED")
         fingerprint = hashlib.sha256(
-            json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            json.dumps(
+                body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                default=str,
+            ).encode()
         ).hexdigest()
         pk = "USER#" + principal.subject
         cmd = (
@@ -73,6 +91,14 @@ class IdentityService:
 
             now = self.clock()
             account_key = ("identity", pk, "ACCOUNT")
+            # Conta, marca de exclusao e a chave de repeticao: lidas de uma vez (em paralelo no DynamoDB).
+            # Toda rota passa por aqui; em fila eram 2 a 3 idas ao banco antes de comecar o trabalho.
+            first = [account_key, self.erasure(principal.subject), *([cmd] if cmd else [])]
+            # `batch_get` do DynamoDB devolve "ausente" para tabela nao configurada. Aqui isso nao pode passar
+            # em silencio (a marca de exclusao seria ignorada): nesse caso segue a leitura uma a uma, que acusa.
+            tables = getattr(self.store, "tables", None)
+            if tables is None or all(k[0] in tables for k in first):
+                expected.update(self.store.batch_get(first))
             account = read(account_key)
             erased = read(self.erasure(principal.subject))
             if (erased and erased["expiresAt"] > int(now.timestamp())) or (
@@ -97,6 +123,11 @@ class IdentityService:
                         "expiresAt": int((now + timedelta(days=7)).timestamp()),
                     },
                 )
+            if not writes:
+                # Operacao so de leitura (conferir a conta, listar, abrir): sem transacao. Uma transacao sobre a
+                # mesma conta a cada chamada fazia as chamadas simultaneas de uma pessoa se travarem
+                # (TransactionConflict, 503 e lentidao). As leituras ja sao consistentes item a item.
+                return result
             try:
                 self.store.commit(expected, writes)
                 return result
@@ -109,7 +140,19 @@ class IdentityService:
             result = read(("identity", "USER#" + principal.subject, "PROFILE"))
             if not result:
                 raise Problem(404, "PROFILE_NOT_FOUND")
-            return self.public_profile(result), {}
+            # Profiles created before search existed are indexed the next time their owner opens.
+            self._sync_index(read, write, principal.subject, result)
+            body = self.public_profile(result)
+            # Data de nascimento: so no GET /me do proprio titular (decisao 06/11/2026);
+            # public_profile() e as demais rotas nunca recebem esse campo.
+            private = read(("identity", "USER#" + principal.subject, "PRIVATE"))
+            if private and private.get("birthDate"):
+                body["birthDate"] = private["birthDate"]
+            if private and private.get("gender"):
+                body["gender"] = private["gender"]
+            if private and private.get("registrationCode"):
+                body["registrationCode"] = private["registrationCode"]
+            return body, {}
 
         return self.transact(principal, "getOwnProfile", None, {}, work)
 
@@ -117,12 +160,61 @@ class IdentityService:
     def public_profile(profile):
         return {
             k: profile[k]
-            for k in ("id", "displayName", "username", "version", "city", "bio", "photoReference")
+            for k in (
+                "id",
+                "displayName",
+                "username",
+                "version",
+                "city",
+                "state",
+                "latitude",
+                "longitude",
+                "bio",
+                "photoReference",
+                "bannerReference",
+                "isPrivate",
+            )
             if k in profile
         }
 
+    @staticmethod
+    def _sync_index(read, write, subject, profile):
+        """Keep the search rows and the owner's SEARCHIDX pointer equal to the profile."""
+        pointer = ("identity", "USER#" + subject, "SEARCHIDX")
+        old = {tuple(k) for k in (read(pointer) or {}).get("sharedKeys", [])}
+        new = index_keys(subject, profile["username"], profile["displayName"])
+        if old == new:
+            return
+        for key in old - new:
+            write(key, None)
+        for key in new - old:
+            write(key, {"owner": subject})
+        # Registro das particoes do indice que existem (uma linha por prefixo, compartilhada entre
+        # pessoas e nunca apagada junto com a conta): as sugestoes leem esta lista em vez de sondar
+        # as ~1.400 particoes possiveis (5 s na primeira chamada). Fora do `sharedKeys` de proposito.
+        for prefix in sorted({key[1].split("#", 1)[1] for key in new - old}):
+            registry = ("identity", PIDX_REGISTRY, prefix)
+            if not read(registry):
+                write(registry, {})
+        write(pointer, {"sharedKeys": shared_keys(new)})
+
     def authorize(self, principal, admitted=False):
-        # A read-only optimistic transaction makes account/erasure checks one atomic boundary.
+        # Dentro de uma mesma requisicao HTTP a conferencia vale uma vez: a entrada da API confere e cada
+        # servico conferia de novo (ate 3 vezes as mesmas leituras). So o sucesso e lembrado, e so ate a
+        # requisicao acabar (ver REQUEST_MEMO); fora de uma requisicao, confere sempre.
+        memo = REQUEST_MEMO.get()
+        seen = (id(self), principal.subject, principal.audience, bool(admitted))
+        if memo is not None and seen in memo:
+            return
+        self._authorize(principal, admitted)
+        if memo is not None:
+            memo.add(seen)
+            if admitted:  # quem passou como admitido tambem passa na conferencia simples
+                memo.add((id(self), principal.subject, principal.audience, False))
+
+    def _authorize(self, principal, admitted=False):
+        # Conferencia de leitura (conta ativa, sem exclusao em curso, admissao): leituras consistentes, sem
+        # transacao, para chamadas simultaneas da mesma pessoa nao entrarem em conflito entre si.
         def check(read, write, account, now, replay):
             return None, {}
 
@@ -155,12 +247,41 @@ class IdentityService:
             write(claim, {"owner": principal.subject})
             write(("identity", pk, "ACCOUNT"), {"state": "active", "admitted": False})
             write(profile_key, profile)
+            self._sync_index(read, write, principal.subject, profile)
             return self.public_profile(profile), {}
 
         return self.transact(principal, "createOwnProfile", key, payload, work)
 
+    @staticmethod
+    def _swap_profile_photo(read, write, subject, profile, payload, field="photoReference"):
+        """The image must be valid and uploaded by this runner; reference counts follow."""
+        reference = payload[field]
+        if reference == profile.get(field):
+            return
+        if reference is not None:
+            new_key = ("operations", "USER#" + subject, "IMAGE#" + reference)
+            new = read(new_key)
+            if not new or new.get("state") != "valid" or new.get("owner") != subject:
+                raise Problem(422, "IMAGE_NOT_VALID")
+            write(new_key, {**new, "refs": new.get("refs", 0) + 1})
+        previous = profile.get(field)
+        if previous:
+            old_key = ("operations", "USER#" + subject, "IMAGE#" + previous)
+            old = read(old_key)
+            if old:
+                write(old_key, {**old, "refs": max(0, old.get("refs", 0) - 1)})
+
     def patch_profile(self, principal, key, payload):
         pk = "USER#" + principal.subject
+        # Decisao de produto de 21/11/2026: so nome/usuario podem ser corrigidos
+        # antes da admissao (a pessoa ainda esta no meio do cadastro); qualquer
+        # outro campo (foto, genero, nascimento, localizacao etc) continua exigindo
+        # conta ja admitida, como sempre.
+        only_profile_identity = set(payload) <= {
+            "expectedVersion",
+            "displayName",
+            "username",
+        }
 
         def work(read, write, account, now, replay):
             pkey = ("identity", pk, "PROFILE")
@@ -171,9 +292,25 @@ class IdentityService:
                 return self.public_profile(profile), {}
             if profile["version"] != payload["expectedVersion"]:
                 raise Problem(409, "VERSION_CONFLICT")
-            if payload.get("photoReference") is not None:
-                # S05 must validate image owner, origin and state before enabling this field.
-                raise Problem(503, "PHOTO_UPLOAD_NOT_IMPLEMENTED")
+            for field in ("photoReference", "bannerReference"):
+                if field in payload:
+                    self._swap_profile_photo(
+                        read, write, principal.subject, profile, payload, field
+                    )
+            if "birthDate" in payload:
+                birth = payload["birthDate"]
+                if birth is None:
+                    raise Problem(422, "BIRTH_DATE_REQUIRED")
+                text = birth if isinstance(birth, str) else birth.isoformat()
+                self.eligible({"birthDate": text, "declaresAdult": True}, now)
+                private_key = ("identity", pk, "PRIVATE")
+                write(private_key, {**(read(private_key) or {}), "birthDate": text})
+            if "gender" in payload:
+                gender = payload["gender"]
+                if gender is None:
+                    raise Problem(422, "GENDER_REQUIRED")
+                private_key = ("identity", pk, "PRIVATE")
+                write(private_key, {**(read(private_key) or {}), "gender": gender})
             new_username = payload.get("username", profile["username"]).lower()
             if new_username != profile["username"]:
                 new = ("identity", "USERNAME#" + new_username, "CLAIM")
@@ -185,7 +322,7 @@ class IdentityService:
                 write(new, {"owner": principal.subject})
                 write(old, None)
             for name, value in payload.items():
-                if name == "expectedVersion":
+                if name in ("expectedVersion", "birthDate", "gender"):
                     continue
                 if value is None:
                     profile.pop(name, None)
@@ -194,13 +331,25 @@ class IdentityService:
             profile["username"] = new_username
             profile["version"] += 1
             write(pkey, profile)
+            self._sync_index(read, write, principal.subject, profile)
             return self.public_profile(profile), {}
 
-        return self.transact(principal, "patchOwnProfile", key, payload, work, admitted=True)
+        return self.transact(
+            principal,
+            "patchOwnProfile",
+            key,
+            payload,
+            work,
+            admitted=not only_profile_identity,
+        )
 
     def status(self, principal):
         def work(read, write, account, now, replay):
             control = read(("identity", "BETA#v1", "CONTROL")) or {"count": 0}
+            profile = read(("identity", "USER#" + principal.subject, "PROFILE"))
+            if profile and account and account.get("state") == "active":
+                # Runs at every sign-in, so profiles created before search existed become findable.
+                self._sync_index(read, write, principal.subject, profile)
             waiting = read(("identity", "USER#" + principal.subject, "WAITLIST"))
             closed = bool(
                 control.get("endsAt") and now >= datetime.fromisoformat(control["endsAt"])
@@ -218,11 +367,17 @@ class IdentityService:
         return self.transact(principal, "getMyBetaStatus", None, {}, work)
 
     @staticmethod
-    def eligible(payload, now):
+    def age_on(birth_date, now):
+        birth = datetime.strptime(birth_date, "%Y-%m-%d").date()
+        today = now.astimezone(ZoneInfo("America/Sao_Paulo")).date()
+        return today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+
+    @classmethod
+    def eligible(cls, payload, now):
         birth = datetime.strptime(payload["birthDate"], "%Y-%m-%d").date()
         today = now.astimezone(ZoneInfo("America/Sao_Paulo")).date()
-        age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
-        if birth > today or age < 18 or payload["declaresAdult"] is not True:
+        age = cls.age_on(payload["birthDate"], now)
+        if birth > today or age < 13 or payload["declaresAdult"] is not True:
             raise Problem(422, "NOT_ELIGIBLE")
 
     def admit(self, principal, key, payload, waitlist=False):
@@ -234,6 +389,10 @@ class IdentityService:
             if not account:
                 raise Problem(409, "PROFILE_REQUIRED")
             self.eligible(payload, now)
+            if not waitlist and not payload.get("gender"):
+                raise Problem(422, "GENDER_REQUIRED")
+            private_key = ("identity", pk, "PRIVATE")
+            private = read(private_key) or {}
             ckey = ("identity", "BETA#v1", "CONTROL")
             control = read(ckey) or {"count": 0}
             akey, wkey = ("identity", pk, "ADMISSION"), ("identity", pk, "WAITLIST")
@@ -274,7 +433,41 @@ class IdentityService:
             write(akey, {"admittedAt": stamp(now)})
             account["admitted"] = True
             write(("identity", pk, "ACCOUNT"), account)
-            write(("identity", pk, "PRIVATE"), {"birthDate": payload["birthDate"]})
+            # Codigo de inscricao: sorteado e reservado por claim atomico (mesmo padrao do username),
+            # nunca derivado de um contador sequencial — nao revela quantas contas existem nem a ordem
+            # de entrada (decisao de produto de 20/11/2026).
+            registration_code = private.get("registrationCode")
+            if not registration_code:
+                for _ in range(20):
+                    candidate = f"{secrets.randbelow(100000):05d}"
+                    claim = ("identity", "REGCODE#" + candidate, "CLAIM")
+                    if not read(claim):
+                        write(claim, {"owner": principal.subject})
+                        registration_code = candidate
+                        break
+                else:
+                    raise Problem(503, "CONCURRENT_RETRY_REQUIRED")
+            write(
+                ("identity", pk, "PRIVATE"),
+                {
+                    **private,
+                    "birthDate": payload["birthDate"],
+                    "gender": payload["gender"],
+                    "registrationCode": registration_code,
+                },
+            )
+            # Menor de 18 anos entra com o perfil privado (decisao de 19/11/2026). So define o
+            # padrao: quem ja escolheu um valor o mantem, e a pessoa pode mudar depois em PATCH /me.
+            profile_key = ("identity", pk, "PROFILE")
+            profile = read(profile_key)
+            if (
+                profile
+                and "isPrivate" not in profile
+                and self.age_on(payload["birthDate"], now) < 18
+            ):
+                profile["isPrivate"] = True
+                profile["version"] += 1
+                write(profile_key, profile)
             if waiting:
                 write(wkey, None)
             result = {"admitted": True, "admittedAt": stamp(now)}
@@ -316,6 +509,18 @@ class IdentityService:
             work_pk = "WORK#erase_account#pending#" + str(int(operation[:2], 16) % 16)
             work_sk = stamp(now) + "#" + operation
             write(("identity", pk, "ACCOUNT"), {**(account or {}), "state": "deleting"})
+            # Registro de auditoria: o app trata a conta como anonima (some de busca, feed e perfis), mas o
+            # back guarda quem era, para apuracoes futuras. So o minimo (id, usuario, nome, datas): sem
+            # e-mail, nascimento, cidade, fotos nem textos. Fica fora de USER#, entao a limpeza nao o apaga.
+            tombstone = {
+                "subject": principal.subject,
+                "username": profile.get("username") if profile else None,
+                "displayName": profile.get("displayName") if profile else None,
+                "deletedAt": stamp(now),
+                "operationId": operation,
+            }
+            write(("identity", "DELETEDUSER#" + principal.subject, "TOMBSTONE"), tombstone)
+            write(("identity", "DELETEDUSERS", stamp(now) + "#" + principal.subject), tombstone)
             write(
                 self.erasure(principal.subject),
                 {
@@ -353,4 +558,13 @@ class IdentityService:
                 "publiclyHidden": True,
             }, {}
 
-        return self.transact(principal, "deleteOwnAccount", key, {}, work)
+        result = self.transact(principal, "deleteOwnAccount", key, {}, work)
+        if self.account_remover is not None:
+            # Melhor esforco, fora da transacao: o email/username libera para um novo cadastro
+            # na hora. Se falhar (rede, etc.), o job assincrono de erasure ainda remove o usuario
+            # do Cognito mais tarde (ErasureProcessor ja chama o mesmo destino no fim da limpeza).
+            try:
+                self.account_remover.delete_owner(principal.subject)
+            except Unavailable:
+                pass
+        return result

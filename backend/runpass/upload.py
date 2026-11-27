@@ -64,6 +64,30 @@ class MemoryBlobStore:
             raise Problem(503, "DERIVED_COLLISION")
         self.derived[reference] = value
 
+    def read_derived(self, owner, reference):
+        """Bytes e tipo da copia tratada de uma pessoa (uso da equipe ao aprovar um banner enviado por ela)."""
+        item = self.derived.get(reference)
+        if not item or item["owner"] != owner:
+            raise Problem(404, "IMAGE_NOT_AVAILABLE")
+        return item["data"], item["contentType"]
+
+    def view_url(self, owner, reference):
+        item = self.derived.get(reference)
+        if not item or item["owner"] != owner:
+            raise Problem(404, "IMAGE_NOT_AVAILABLE")
+        return {
+            "url": f"memory://private/derived/{reference}?capability={self.secret}",
+            "contentType": item["contentType"],
+        }
+
+    def delete_derived(self, owner, reference):
+        """Apaga a copia tratada de UMA imagem do dono (exclusao de participacao). Devolve quantas removeu."""
+        item = self.derived.get(reference)
+        if item and item.get("owner") == owner:
+            self.derived.pop(reference, None)
+            return 1
+        return 0
+
     def delete_owner(self, owner):
         """Active local deletion of originals, versions and derived personal bytes."""
         removed = 0
@@ -81,9 +105,171 @@ class MemoryBlobStore:
         return removed
 
 
+VIEW_SECONDS = 5 * 60
+# Dono fixo das imagens do catalogo no bucket (`derived/catalog/...`); nunca colide com um sub de pessoa.
+CATALOG_OWNER = "catalog"
+
+
+def post_image_at(item, index):
+    """Foto `index` de uma publicacao: 0 e a capa (`postImageReference`), N >= 1 e a extra N-1 de
+    `morePostImageReferences`. None quando nao existe (a rota responde 404 como "sem imagem")."""
+    cover = item.get("postImageReference")
+    if not cover:
+        return None
+    images = [cover, *(item.get("morePostImageReferences") or [])]
+    return images[index] if 0 <= index < len(images) else None
+
+
 class UploadService:
-    def __init__(self, identity, blobs):
+    def __init__(self, identity, blobs, may_view=None, may_view_profile=None):
         self.identity, self.store, self.blobs = identity, identity.store, blobs
+        # may_view(read, actor, owner_subject, participation) -> bool. Default: only the owner.
+        # The social module injects follow/visibility rules here without touching this service.
+        self.may_view = may_view or (lambda read, actor, owner, part: owner == actor.subject)
+        self.may_view_profile = may_view_profile or (
+            lambda read, actor, owner: owner == actor.subject
+        )
+
+    def profile_photo(self, actor, subject, field="photoReference"):
+        """Short-lived signed link to a runner's profile photo or banner, when the viewer may."""
+
+        def work(read, write, account, now, replay):
+            profile = read(("identity", "USER#" + subject, "PROFILE"))
+            if not profile or not profile.get(field):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            if not self.may_view_profile(read, actor, subject):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            return {"reference": profile[field], "now": now}, {}
+
+        found = self.identity.transact(actor, "getProfilePhoto", None, {}, work, admitted=True)
+        link = self.blobs.view_url(subject, found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
+
+    def medal_image(self, actor, participation_id):
+        """Short-lived signed link to the sanitized medal photo; never the original."""
+
+        def work(read, write, account, now, replay):
+            owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
+            if not owner:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            subject = owner["owner"]
+            part = read(("history", "USER#" + subject, "P#" + participation_id + "#PART"))
+            if not part or not self.may_view(read, actor, subject, part):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            medal = read(("history", "USER#" + subject, "P#" + participation_id + "#MEDAL"))
+            if not part or part.get("state") != "completed" or not medal:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            if medal.get("imageOrigin") != "runner":
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            return {"owner": subject, "reference": medal["imageReference"], "now": now}, {}
+
+        found = self.identity.transact(actor, "getMedalImage", None, {}, work, admitted=True)
+        link = self.blobs.view_url(found["owner"], found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
+
+    def post_image(self, actor, participation_id, index=0):
+        """Link curto da foto da PUBLICACAO (outra foto, separada da medalha); so de quem pode ver a participacao."""
+
+        def work(read, write, account, now, replay):
+            owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
+            if not owner:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            subject = owner["owner"]
+            part = read(("history", "USER#" + subject, "P#" + participation_id + "#PART"))
+            if not part or not self.may_view(read, actor, subject, part):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            reference = post_image_at(part, index)
+            if part.get("state") != "completed" or not reference:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            return {"owner": subject, "reference": reference, "now": now}, {}
+
+        found = self.identity.transact(actor, "getPostImage", None, {}, work, admitted=True)
+        link = self.blobs.view_url(found["owner"], found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
+
+    def extra_post_image(self, actor, post_id, index=0):
+        """Link curto da foto de uma publicação extra; a publicação é pública enquanto a corrida estiver
+        concluída e a conta do autor ativa (mesma regra das outras publicações)."""
+
+        def work(read, write, account, now, replay):
+            pointer = read(("history", "XPOST#" + post_id, "OWNER"))
+            if not pointer:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            subject = pointer["owner"]
+            item = read(("history", "USER#" + subject, "XP#" + post_id))
+            part = read(("history", "USER#" + subject, "P#" + pointer["participationId"] + "#PART"))
+            if not item or not part or part.get("state") != "completed":
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            if not self.may_view(read, actor, subject, {**part, "publishToFeed": True}):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            reference = post_image_at(item, index)
+            if not reference:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            return {"owner": subject, "reference": reference, "now": now}, {}
+
+        found = self.identity.transact(actor, "getExtraPostImage", None, {}, work, admitted=True)
+        link = self.blobs.view_url(found["owner"], found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
+
+    def medal_display_image(self, actor, participation_id):
+        """Foto da prateleira: o recorte reposicionado pela pessoa quando existir, senao a
+        mesma foto sanitizada de medal_image. A foto oficial nunca e alterada por isso."""
+
+        def work(read, write, account, now, replay):
+            owner = read(("history", "PARTICIPATION#" + participation_id, "OWNER"))
+            if not owner:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            subject = owner["owner"]
+            part = read(("history", "USER#" + subject, "P#" + participation_id + "#PART"))
+            if not part or not self.may_view(read, actor, subject, part):
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            medal = read(("history", "USER#" + subject, "P#" + participation_id + "#MEDAL"))
+            if part.get("state") != "completed" or not medal:
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            if medal.get("imageOrigin") != "runner":
+                raise Problem(404, "IMAGE_NOT_AVAILABLE")
+            reference = part.get("medalDisplayImageReference") or medal["imageReference"]
+            return {"owner": subject, "reference": reference, "now": now}, {}
+
+        found = self.identity.transact(actor, "getMedalDisplayImage", None, {}, work, admitted=True)
+        link = self.blobs.view_url(found["owner"], found["reference"])
+        return {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(found["now"] + timedelta(seconds=VIEW_SECONDS)),
+        }
+
+    def edition_banner(self, actor, edition):
+        """Link temporario do banner aprovado da edicao (copia sanitizada guardada pelo operador)."""
+        self.identity.authorize(actor, admitted=True)
+        reference = edition.get("imageReference")
+        if not reference:
+            raise Problem(404, "IMAGE_NOT_AVAILABLE")
+        link = self.blobs.view_url(CATALOG_OWNER, reference)
+        result = {
+            "url": link["url"],
+            "contentType": link["contentType"],
+            "expiresAt": stamp(self.identity.clock() + timedelta(seconds=VIEW_SECONDS)),
+        }
+        if edition.get("imageCredit"):
+            result["credit"] = edition["imageCredit"]
+        return result
 
     @staticmethod
     def status(item):

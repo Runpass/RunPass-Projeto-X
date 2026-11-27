@@ -8,6 +8,9 @@ class DemoTransport {
   final editions = <Map<String, dynamic>>[];
   final participations = <String, Map<String, dynamic>>{};
   final uploads = <String, Map<String, dynamic>>{};
+  final editionRequests = <Map<String, dynamic>>[];
+  // Planos de corrida por pessoa: e-mail -> id da edição -> plano.
+  final racePlans = <String, Map<String, Map<String, dynamic>>>{};
   int sequence = 0;
 
   DemoTransport({this.capacity = 1000}) {
@@ -26,13 +29,299 @@ class DemoTransport {
         'state': i % 3 == 0 ? 'RJ' : 'SP',
         'status': i == 24 ? 'archived' : 'past',
         'version': 1,
-        'description': 'Dados fictícios para experimentar o RunPass. Esta prova não é um evento real.',
+        'description': 'Dados fictícios para experimentar o +1Pódio. Esta prova não é um evento real.',
         'distances': [
           {'id': '5k', 'kilometers': 5},
           {'id': '10k', 'kilometers': 10},
         ],
       });
     }
+    _seedMedalCollection();
+  }
+
+  /// Fictional completed races so the medal collection, home and profile
+  /// screens can be seen populated by signing in as medalhas@runpass.test.
+  void _seedMedalCollection() {
+    const email = 'medalhas@runpass.test';
+    accounts[email] = {
+      'password': 'RunpassDemo123!',
+      'confirmed': true,
+      'admitted': true,
+      'profile': {
+        'id': 'demo-profile-seed',
+        'displayName': 'Corredor Medalhista',
+        'username': 'medalhista',
+        'city': 'São Paulo - SP',
+        'bio':
+            'Cada prova é uma nova aventura. Dados fictícios de demonstração.',
+        'version': 1,
+      },
+    };
+    const races = [
+      (2, '5k', 5, 1560),
+      (3, '10k', 10, 3490),
+      (5, '10k', 10, 3315),
+      (6, '5k', 5, 1480),
+      (8, '10k', 10, 3600),
+      (9, '5k', 5, 1620),
+    ];
+    for (final (number, distance, km, seconds) in races) {
+      final id = 'demo-seed-$number';
+      participations[id] = {
+        'id': id,
+        'owner': email,
+        'editionId': 'demo-$number',
+        'distanceId': distance,
+        'state': 'completed',
+        'version': 2,
+        'timeSeconds': seconds,
+        'paceSecondsPerKm': seconds ~/ km,
+        'medalImageReference': 'img_seed',
+        'showTime': true,
+        'showPlacement': true,
+      };
+      editions[number - 1]['runScore'] = {
+        'value': 4.0 + (number % 5) * 0.2,
+        'reviewCount': 120 + number * 37,
+      };
+      editions[number - 1]['participantCount'] = 300 + number * 41;
+    }
+  }
+
+  final likes = <String, Set<String>>{};
+
+  // Parte social da demonstração: quem a pessoa segue e a quem pediu amizade (e-mail -> ids).
+  final following = <String, Set<String>>{};
+  final friendRequests = <String, Set<String>>{};
+
+  /// Corredores fictícios da demonstração (os mesmos autores do feed), para buscar, seguir e abrir o perfil.
+  static const demoRunners = [
+    ('demo-author-1', 'Mariana Lopes', 'marianalopes', 'São Paulo', 'SP'),
+    ('demo-author-2', 'Juliana Martins', 'julianamartins', 'Campinas', 'SP'),
+    (
+      'demo-author-3',
+      'Carlos Menezes',
+      'carlosmenezes',
+      'Rio de Janeiro',
+      'RJ',
+    ),
+  ];
+
+  Map<String, dynamic> demoRunnerCard(
+    (String, String, String, String, String) runner,
+    String email,
+  ) {
+    final follows = following[email]?.contains(runner.$1) ?? false;
+    final asked = friendRequests[email]?.contains(runner.$1) ?? false;
+    return {
+      'id': runner.$1,
+      'displayName': runner.$2,
+      'username': runner.$3,
+      'city': runner.$4,
+      'state': runner.$5,
+      'bio': 'Corredor fictício da demonstração.',
+      'version': 1,
+      'isPrivate': false,
+      'canView': true,
+      'followState': follows ? 'active' : 'none',
+      'friendState': asked ? 'pending_out' : 'none',
+      'followersCount': follows ? 1 : 0,
+      'followingCount': 0,
+      'friendsCount': 0,
+      'participationCount': 1,
+    };
+  }
+
+  /// Rotas sociais da demonstração; nulo quando o caminho não é delas.
+  JsonReply? demoSocial(Uri uri, String method, String email) {
+    if (uri.path == '/profiles/suggestions' && method == 'GET') {
+      return JsonReply(200, {
+        'items': [for (final r in demoRunners) demoRunnerCard(r, email)],
+      });
+    }
+    if (uri.path == '/profiles' && method == 'GET') {
+      final q = normalize(uri.queryParameters['q'] ?? '');
+      if (q.length < 2) return failure('QUERY_TOO_SHORT', 422);
+      return JsonReply(200, {
+        'items': [
+          for (final r in demoRunners)
+            if (normalize(r.$2).contains(q) || r.$3.contains(q))
+              demoRunnerCard(r, email),
+        ],
+      });
+    }
+    if (uri.path == '/me/friend-requests' && method == 'GET') {
+      return const JsonReply(200, {'items': []});
+    }
+    final match = RegExp(
+      r'^/profiles/([^/]+)(?:/(participations|follow|friend))?$',
+    ).firstMatch(uri.path);
+    if (match == null) return null;
+    final found = demoRunners.where((r) => r.$1 == match.group(1));
+    if (found.isEmpty) return failure('PROFILE_NOT_FOUND', 404);
+    final runner = found.first;
+    switch (match.group(2)) {
+      case null when method == 'GET':
+        return JsonReply(200, demoRunnerCard(runner, email));
+      case 'participations' when method == 'GET':
+        final post = demoFeed(email)
+            .firstWhere((p) => (p['author'] as Map)['id'] == runner.$1);
+        return JsonReply(200, {
+          'items': [post['participation']],
+        });
+      case 'follow':
+        final mine = following.putIfAbsent(email, () => {});
+        method == 'DELETE' ? mine.remove(runner.$1) : mine.add(runner.$1);
+        return JsonReply(200, demoRunnerCard(runner, email));
+      case 'friend':
+        final mine = friendRequests.putIfAbsent(email, () => {});
+        method == 'DELETE' ? mine.remove(runner.$1) : mine.add(runner.$1);
+        return JsonReply(200, demoRunnerCard(runner, email));
+    }
+    return null;
+  }
+
+  /// Fictional posts by other runners, plus the signed-in runner's own
+  /// published races. Demonstration data only.
+  List<Map<String, dynamic>> demoFeed(String email) {
+    final now = DateTime.now().toUtc();
+    const people = [
+      (
+        'demo-author-1',
+        'Mariana Lopes',
+        'marianalopes',
+        'demo-4',
+        '10k',
+        3503,
+        350,
+        142,
+        18,
+      ),
+      (
+        'demo-author-2',
+        'Juliana Martins',
+        'jumartins',
+        'demo-7',
+        '5k',
+        1488,
+        297,
+        87,
+        9,
+      ),
+      (
+        'demo-author-3',
+        'Carlos Menezes',
+        'carlosmenezes',
+        'demo-10',
+        '10k',
+        3120,
+        312,
+        56,
+        4,
+      ),
+    ];
+    const comments = [
+      'Prova incrível! Percurso bem sinalizado, clima perfeito e energia em cima.',
+      'Organização impecável e percurso lindo pelo parque. Medalha show!',
+      'Mais uma para a coleção. Valeu a madrugada!',
+    ];
+    final posts = <Map<String, dynamic>>[
+      for (var i = 0; i < people.length; i++)
+        {
+          'id': 'demo-post-${i + 1}',
+          'author': {
+            'id': people[i].$1,
+            'displayName': people[i].$2,
+            'username': people[i].$3,
+            'version': 1,
+          },
+          'participation': {
+            'id': 'demo-feed-${i + 1}',
+            'editionId': people[i].$4,
+            'distanceId': people[i].$5,
+            'state': 'completed',
+            'version': 2,
+            'timeSeconds': people[i].$6,
+            'paceSecondsPerKm': people[i].$7,
+          },
+          'comment': comments[i],
+          'publishedAt': now
+              .subtract(Duration(hours: 2 + i * 3))
+              .toIso8601String(),
+          'version': 1,
+          'likeCount':
+              people[i].$8 + (likes['demo-post-${i + 1}']?.length ?? 0),
+          'commentCount': people[i].$9,
+          'likedByMe': likes['demo-post-${i + 1}']?.contains(email) ?? false,
+        },
+    ];
+    final profile = accounts[email]?['profile'] as Map?;
+    for (final p in participations.values) {
+      if (p['owner'] != email || p['state'] != 'completed') continue;
+      if (p['publishToFeed'] == false || profile == null) continue;
+      posts.insert(0, {
+        'id': 'demo-post-${p['id']}',
+        'author': {
+          'id': profile['id'],
+          'displayName': profile['displayName'],
+          'username': profile['username'],
+          'version': 1,
+        },
+        'participation': publicDraft(p),
+        'publishedAt': now.toIso8601String(),
+        'version': 1,
+        'likeCount': likes['demo-post-${p['id']}']?.length ?? 0,
+        'commentCount': 0,
+        'likedByMe': likes['demo-post-${p['id']}']?.contains(email) ?? false,
+      });
+    }
+    return posts;
+  }
+
+  /// Fictional public reviews. The contract's Review has no author, so the
+  /// demonstration adds `authorName` and `createdAt` only for presentation.
+  List<Map<String, dynamic>> demoReviews(String editionId) {
+    final seed = int.tryParse(editionId.replaceAll(RegExp(r'\D'), '')) ?? 1;
+    const names = [
+      'Juliana Martins',
+      'Rafael Souza',
+      'Camila Ribeiro',
+      'Bruno Alves',
+      'Patrícia Lima',
+      'Thiago Rocha',
+    ];
+    const texts = [
+      'Prova sensacional! Organização impecável, percurso lindo pelo Ibirapuera. A medalha está uma das mais bonitas da série!',
+      'Ótima estrutura e hidratação bem distribuída. Voltarei no próximo ano.',
+      'Percurso plano e rápido. Kit simples, mas a prova compensa.',
+      'Muita gente e largada um pouco apertada, mas o astral é incrível.',
+      'Medalha linda e custo-benefício justo.',
+      'Segurança reforçada e ótimo atendimento na chegada.',
+    ];
+    return [
+      for (var i = 0; i < names.length; i++)
+        {
+          'participationId': 'demo-review-$editionId-$i',
+          'version': 1,
+          'moderationState': 'valid',
+          'authorName': names[i],
+          'createdAt': DateTime.now()
+              .toUtc()
+              .subtract(Duration(days: 4 + i * 6))
+              .toIso8601String(),
+          'comment': texts[i],
+          'ratings': {
+            'organization': 4 + (seed + i) % 2,
+            'course': 4 + (seed + i + 1) % 2,
+            'kit': 3 + (seed + i) % 3,
+            'medal': 4 + (seed + i + 2) % 2,
+            'hydration': 4 + (seed + i + 1) % 2,
+            'facilities': 3 + (seed + i + 1) % 3,
+            'safety': 4 + (seed + i) % 2,
+            'valueForMoney': 3 + (seed + i + 2) % 3,
+          },
+        },
+    ];
   }
 
   JsonReply failure(String code, [int status = 400]) =>
@@ -100,6 +389,17 @@ class DemoTransport {
         case 'GlobalSignOut':
           sessions.remove(data['AccessToken']);
           return const JsonReply(200, {});
+        case 'ChangePassword':
+          final sessionEmail = sessions[data['AccessToken']];
+          final sessionAccount = accounts[sessionEmail];
+          if (sessionAccount == null) return failure('NotAuthorizedException');
+          final newPassword = data['ProposedPassword'] as String;
+          // RunnerPool: minimo 6 caracteres, sem exigir composicao (igual ao Instagram).
+          if (newPassword.length < 6) {
+            return failure('InvalidPasswordException');
+          }
+          sessionAccount['password'] = newPassword;
+          return const JsonReply(200, {});
       }
       return failure('INVALID_INPUT');
     }
@@ -134,6 +434,32 @@ class DemoTransport {
         account['profile'] = profile;
         return JsonReply(201, profile);
       }
+      if (method == 'PATCH') {
+        final profile = account['profile'] as Map?;
+        if (profile == null) return failure('PROFILE_NOT_FOUND', 404);
+        if (data['expectedVersion'] != profile['version']) {
+          return failure('VERSION_CONFLICT', 409);
+        }
+        for (final name in [
+          'photoReference',
+          'isPrivate',
+          'displayName',
+          'state',
+          'city',
+          'latitude',
+          'longitude',
+        ]) {
+          if (data.containsKey(name)) {
+            if (data[name] == null) {
+              profile.remove(name);
+            } else {
+              profile[name] = data[name];
+            }
+          }
+        }
+        profile['version'] = (profile['version'] as int) + 1;
+        return JsonReply(200, Map<String, dynamic>.from(profile));
+      }
       if (method == 'DELETE') {
         account['deleted'] = true;
         return const JsonReply(202, {'accessBlocked': true});
@@ -154,7 +480,7 @@ class DemoTransport {
     if (uri.path == '/beta/admissions' || uri.path == '/beta/waitlist') {
       final birth = DateTime.tryParse(data['birthDate'] as String? ?? '');
       final now = DateTime.now();
-      final cutoff = DateTime(now.year - 18, now.month, now.day);
+      final cutoff = DateTime(now.year - 13, now.month, now.day);
       if (birth == null ||
           birth.isAfter(cutoff) ||
           data['declaresAdult'] != true) {
@@ -167,6 +493,16 @@ class DemoTransport {
       }
       if (full && account['admitted'] != true) return failure('BETA_FULL', 409);
       account['admitted'] = true;
+      // So no GET /me do proprio titular (decisao 06/11/2026), nunca em perfil publico.
+      (account['profile'] as Map?)?['birthDate'] = data['birthDate'];
+      // Como no servidor: menor de 18 anos entra com o perfil privado (pode mudar em Configurações).
+      final profile = account['profile'] as Map?;
+      if (profile != null &&
+          !profile.containsKey('isPrivate') &&
+          birth.isAfter(DateTime(now.year - 18, now.month, now.day))) {
+        profile['isPrivate'] = true;
+        profile['version'] = ((profile['version'] as int?) ?? 1) + 1;
+      }
       return const JsonReply(201, {'admitted': true});
     }
     if (uri.path == '/me/waitlist' && method == 'DELETE') {
@@ -175,6 +511,100 @@ class DemoTransport {
     }
     if (account['admitted'] != true) {
       return failure('BETA_ADMISSION_REQUIRED', 403);
+    }
+    if (uri.path == '/edition-requests' && method == 'POST') {
+      // Demonstracao: o pedido fica pendente; nao ha operador para aprovar.
+      final km = data['distanceKm'];
+      if (data['name'] == null ||
+          data['date'] == null ||
+          data['city'] == null) {
+        return failure('INVALID_INPUT', 422);
+      }
+      if (km is! num || km <= 0) return failure('INVALID_INPUT', 422);
+      final request = <String, dynamic>{
+        'id': 'demo-request-${++sequence}',
+        'owner': email,
+        'version': 1,
+        'status': 'pending',
+        'details': {
+          for (final key in [
+            'name',
+            'date',
+            'city',
+            'state',
+            'distanceKm',
+            'officialUrl',
+          ])
+            if (data[key] != null) key: data[key],
+        },
+      };
+      editionRequests.insert(0, request);
+      return JsonReply(201, {...request}..remove('owner'));
+    }
+    if (uri.path == '/me/race-plans' && method == 'GET') {
+      final mine = racePlans[email] ?? const {};
+      return JsonReply(200, {
+        'items': [
+          for (final plan in mine.values)
+            if (uri.queryParameters['status'] == null ||
+                uri.queryParameters['status'] == plan['status'])
+              {
+                ...plan,
+                'edition': {
+                  for (final e in editions.where(
+                    (e) => e['id'] == plan['editionId'],
+                  )) ...{
+                    for (final k in [
+                      'id',
+                      'name',
+                      'date',
+                      'city',
+                      'state',
+                      'status',
+                      'distances',
+                    ])
+                      k: e[k],
+                  },
+                },
+              },
+        ],
+      });
+    }
+    final planRoute = RegExp(r'^/me/race-plans/([^/]+)$').firstMatch(uri.path);
+    if (planRoute != null) {
+      final id = Uri.decodeComponent(planRoute.group(1)!);
+      final mine = racePlans.putIfAbsent(email, () => {});
+      if (method == 'GET') {
+        return mine[id] == null
+            ? failure('PLAN_NOT_FOUND', 404)
+            : JsonReply(200, mine[id]!);
+      }
+      if (method == 'DELETE') {
+        mine.remove(id);
+        return const JsonReply(204, {});
+      }
+      if (method == 'PUT') {
+        if (!editions.any((e) => e['id'] == id)) {
+          return failure('EDITION_NOT_FOUND', 404);
+        }
+        final old = mine[id];
+        mine[id] = {
+          'editionId': id,
+          'status': data['status'],
+          'distanceId': ?data['distanceId'],
+          'version': ((old?['version'] as int?) ?? 0) + 1,
+          'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        };
+        return JsonReply(200, mine[id]!);
+      }
+    }
+    if (uri.path == '/me/edition-requests' && method == 'GET') {
+      return JsonReply(200, {
+        'items': [
+          for (final r in editionRequests)
+            if (r['owner'] == email) {...r}..remove('owner'),
+        ],
+      });
     }
     if (uri.path == '/uploads' && method == 'POST') {
       final id = 'demo-upload-${++sequence}';
@@ -205,6 +635,22 @@ class DemoTransport {
         'imageReference': 'img_$id',
       });
     }
+    if (uri.path == '/editions/search') {
+      // Demonstracao sem IA: so busca pelo nome, como o servidor faz quando a IA nao responde.
+      final text = normalize(uri.queryParameters['phrase'] ?? '');
+      final found = editions
+          .where((e) => normalize(e['name'] as String).contains(text))
+          .toList();
+      return JsonReply(200, {
+        'items': found.take(20).toList(),
+        'search': {
+          'source': 'text',
+          'filters': {'q': text},
+          'applied': ['texto'],
+          'notApplied': <String>[],
+        },
+      });
+    }
     if (uri.path == '/editions') {
       final q = uri.queryParameters;
       final limit = int.tryParse(q['limit'] ?? '') ?? 20;
@@ -216,6 +662,10 @@ class DemoTransport {
           return false;
         }
         if (q['state'] != null && e['state'] != q['state']!.toUpperCase()) {
+          return false;
+        }
+        if (q['q'] != null &&
+            !normalize(e['name'] as String).contains(normalize(q['q']!))) {
           return false;
         }
         if (q['namePrefix'] != null &&
@@ -408,10 +858,70 @@ class DemoTransport {
         return JsonReply(200, publicDraft(draft));
       }
     }
+    if (uri.path == '/feed' && method == 'GET') {
+      return JsonReply(200, {'items': demoFeed(email)});
+    }
+    final like = RegExp(r'^/posts/([^/]+)/like$').firstMatch(uri.path);
+    if (like != null && (method == 'PUT' || method == 'DELETE')) {
+      final postId = like.group(1)!;
+      final likers = likes.putIfAbsent(postId, () => <String>{});
+      method == 'PUT' ? likers.add(email) : likers.remove(email);
+      return JsonReply(200, {'postId': postId, 'likedByMe': method == 'PUT'});
+    }
+    if (uri.path == '/me/wishlist' && method == 'GET') {
+      return JsonReply(200, {
+        'items': [
+          for (final id in ['demo-13', 'demo-15', 'demo-18'])
+            {
+              'edition': editions.firstWhere((e) => e['id'] == id),
+              'savedAt': DateTime.now().toUtc().toIso8601String(),
+            },
+        ],
+      });
+    }
+    final people = RegExp(r'^/editions/([^/]+)/participants$')
+        .firstMatch(uri.path);
+    if (people != null && method == 'GET') {
+      final edition = editions
+          .where((e) => e['id'] == people.group(1))
+          .firstOrNull;
+      if (edition == null) return failure('EDITION_NOT_FOUND', 404);
+      final distance = (edition['distances'] as List).first as Map;
+      const names = ['Juliana Martins', 'Rafael Souza', 'Camila Ribeiro'];
+      return JsonReply(200, {
+        'total': names.length + 1,
+        'items': [
+          for (var i = 0; i < names.length; i++)
+            {
+              'participationId': 'demo-part-${edition['id']}-$i',
+              'author': {
+                'id': 'demo-runner-$i',
+                'displayName': names[i],
+                'username': names[i].split(' ').first.toLowerCase(),
+                'version': 1,
+              },
+              'distanceId': distance['id'],
+              'completedAt': '2026-10-0${i + 1}T10:00:00Z',
+              'timeSeconds': 3000 + i * 240,
+            },
+        ],
+      });
+    }
+    final social = demoSocial(uri, method, email);
+    if (social != null) return social;
+    final reviews = RegExp(r'^/editions/([^/]+)/reviews$').firstMatch(uri.path);
+    if (reviews != null && method == 'GET') {
+      final known = editions.any((e) => e['id'] == reviews.group(1));
+      return known
+          ? JsonReply(200, {'items': demoReviews(reviews.group(1)!)})
+          : failure('EDITION_NOT_FOUND', 404);
+    }
     final matches = editions.where((e) => uri.path == '/editions/${e['id']}');
-    return matches.isEmpty
+    if (matches.isNotEmpty) return JsonReply(200, matches.first);
+    // Só um caminho de corrida desconhecida é "corrida não encontrada"; o resto é função fora da demonstração.
+    return uri.path.startsWith('/editions/')
         ? failure('EDITION_NOT_FOUND', 404)
-        : JsonReply(200, matches.first);
+        : failure('NOT_IN_DEMO', 404);
   }
 
   String normalize(String text) => text

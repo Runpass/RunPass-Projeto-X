@@ -2,7 +2,7 @@
 
 Data: 29/10/2026. Fonte única: SPEC_RunPass_MVP_v1.md. Escopo aprovado: autenticação → catálogo → rascunho → imagem → conclusão → avaliação e medalha.
 
-Estado do plano: S00 preparada/verificada e sequência S01 autorizada pelo usuário. S01 aceita pelo usuário após revisão dos três blocos conforme S01-desenho-e-contratos.md; S02, S03 e S04 implementadas localmente em revisão. S05 está em execução, S06, S07 e S08 estão em revisão local e S09 entrou em preparação local sem provisionamento. Cada slice possui dependências e saída verificável. Propostas técnicas são resolvidas dentro dos slices de desenho; não exigem reaprovação de nomes de atributos. Escolhas que alterem produto, custo ou privacidade voltam ao usuário.
+Estado do plano: S00 preparada/verificada e sequência S01 autorizada pelo usuário. S01 aceita pelo usuário após revisão dos três blocos conforme S01-desenho-e-contratos.md; S02, S03 e S04 aceitas pelo usuário em 03/11/2026 (aceite local, prova real na S09). S02 a S08 foram aceitas em 03/11/2026 (aceite local) e S09 está em preparação local sem provisionamento. Cada slice possui dependências e saída verificável. Propostas técnicas são resolvidas dentro dos slices de desenho; não exigem reaprovação de nomes de atributos. Escolhas que alterem produto, custo ou privacidade voltam ao usuário.
 
 ## Regras de execução
 
@@ -18,13 +18,13 @@ Estado do plano: S00 preparada/verificada e sequência S01 autorizada pelo usuá
 | --- | --- | --- | --- |
 | S00 | Contexto, estrutura e verificações locais | SPEC prioritária aprovada | Verificada; usuário autorizou sequência S01 |
 | S01 | Desenho físico do fluxo inicial e contratos fechados | S00 | Aceito pelo usuário em 28/10/2026 — revisão dos três blocos |
-| S02 | Identidade, admissão e autorização | S01 | Em revisão — implementação local e evidências em S02-identidade-admissao.md |
-| S03 | Catálogo consultável e carga controlada | S01, S02 | Em revisão — S03-catalogo.md |
-| S04 | Participação em rascunho | S03 | Em revisão — S04-rascunho-participacao.md |
-| S05 | Upload e imagem validada | S02, S04 | Em execução — backend/mobile locais validados; iPhone real e S3 pendentes |
-| S06 | Conclusão atômica, avaliação e medalha | S04, S05 | Em revisão — backend e jornada mobile locais validados |
-| S07 | Entrega de eventos, RunScore e histórico restrito | S06 | Em revisão local — consumidores, recuperação e expiração validados |
-| S08 | Edição, exclusão e proteção de dados | S06, S07 | Em revisão local — backend/mobile de edição, exclusão e limpeza retomável validados |
+| S02 | Identidade, admissão e autorização | S01 | Aceito em 03/11/2026 — aceite local; Cognito, e-mail, MFA e concorrência real em S09. Evidências em S02-identidade-admissao.md |
+| S03 | Catálogo consultável e carga controlada | S01, S02 | Aceito em 03/11/2026 — aceite local; catálogo real e cobertura de 90% pendentes para o beta. S03-catalogo.md |
+| S04 | Participação em rascunho | S03 | Aceito em 03/11/2026 — aceite local; DynamoDB real e persistência entre processos em S09. S04-rascunho-participacao.md |
+| S05 | Upload e imagem validada | S02, S04 | Aceito em 03/11/2026 — aceite local; HEIC no iPhone real, S3 real e p95 de 5 s em S09 |
+| S06 | Conclusão atômica, avaliação e medalha | S04, S05 | Aceito em 03/11/2026 — aceite local; teste humano no simulador em 29/10; integração real em S09 |
+| S07 | Entrega de eventos, RunScore e histórico restrito | S06 | Aceito em 03/11/2026 — aceite local; SQS/DLQ/S3, IAM/MFA, p95 de 10 s, carga, alarmes e replay após restauração em S09 |
+| S08 | Edição, exclusão e proteção de dados | S06, S07 | Aceito em 03/11/2026 — aceite local; restauração, prazo real de 7 dias, IAM/MFA e descarte do controle de 15 dias em S09 |
 | S09 | Integração real em DEV e aceite da entrega | S02–S08, orçamento/autorização | Preparação local; teto DEV de R$ 1.000/mês aprovado, provisionamento ainda bloqueado pelos demais gates |
 
 Não é uma decomposição de todo o MVP. Feed completo, interações sociais, wishlist, painel completo e pós-beta terão slices próprios depois; não foram removidos do escopo do produto.
@@ -51,7 +51,7 @@ Aceite: matriz rota → consulta/transação → chave/índice; nenhum acesso cr
 
 Resultado: aplicativo identifica o corredor e controla acesso conforme conta/admissão. Configuração declarativa de identidade separa corredores e operadores; integração real é verificada em S09.
 
-Trabalho: abstrair identidade validada, autenticação e recuperação via Cognito; verificar issuer/audience/expiração e estado atual na API. Implementar admissão transacional, e-mail confirmado, data de nascimento privada, 18 anos completos, teto de mil e marco do 50º. Fluxos de status/espera/exclusão não exigem vaga prévia; demais rotas exigem admissão quando previsto. Separar MFA administrativo por autenticador e autorização por função, sem criar painel completo.
+Trabalho: abstrair identidade validada, autenticação e recuperação via Cognito; verificar issuer/audience/expiração e estado atual na API. Implementar admissão transacional, e-mail confirmado, data de nascimento privada, 13 anos completos (decisão de produto de 07/11/2026, já refletida na SPEC e no código de `service.py`; este slice estava desalinhado), teto de mil e marco do 50º. Fluxos de status/espera/exclusão não exigem vaga prévia; demais rotas exigem admissão quando previsto. Separar MFA administrativo por autenticador e autorização por função, sem criar painel completo.
 
 Aceite: tokens inválidos ou destinados a outro cliente negados; usuário não admitido não acessa catálogo protegido; concorrência não ultrapassa mil nem perde o marco inicial; nascimento não aparece em resposta pública/log; conta bloqueada não opera com token anterior. Documentar/bootstrap e recuperação de operadores antes de ativar administração. Testes locais de regras não substituem prova real de MFA em S09.
 
@@ -180,3 +180,50 @@ Uma migração para `us-east-2` foi feita e desfeita no mesmo dia: a conta de pr
 ## Reverificação do mobile — 03/11/2026
 
 `make mobile-check` aprovado: análise estática sem problemas, formatação sem alterações (9 arquivos) e 18 testes Flutter aprovados (demo local, catálogo, rascunho, foto com oito avaliações, edição e exclusão de participação). É teste local com adaptadores; não substitui Android/iPhone reais nem integração com serviços AWS. Nenhum código foi alterado.
+
+## Aceite humano de S02, S03 e S04 — 03/11/2026
+
+Decisão do usuário em rodada de perguntas, com suíte local verde no dia (`make check`: 135 testes backend, contrato e cfn-lint; `make mobile-check`: 19 testes Flutter).
+
+- **S02 aceita.** Ressalvas: Cognito, envio de e-mail, MFA e concorrência real no DynamoDB só serão provados na S09. Sem sessão persistente nem refresh automático nesta entrega (aceito; persistência segura em slice posterior). Bootstrap e recuperação de operadores estão documentados em `docs/operadores.md`.
+- **S03 aceita.** Os seis filtros e a paginação por cursor ficam como propostos. Ressalva: a fixture de cinco edições fictícias não comprova cobertura; catálogo real (capital, dois anos iniciais, origem e revisão registradas) e cobertura de 90% são pendência do beta. Responsável pelo levantamento: Thiago.
+- **S04 aceita.** Ressalvas: DynamoDB real e persistência entre processos na S09; solicitação de edição ausente segue desabilitada até o slice administrativo.
+- **Pendência de política antes do beta:** prazo de retenção da lista de espera, dos rascunhos e das solicitações de catálogo (não herdam os 60 dias do beta). Decisão do usuário.
+
+Aceite local não é aceite de integração real. Nada disso autoriza provisionamento, PROD ou beta.
+
+## Aceite humano de S05, S06 e S08, e política de auditoria da S07 — 03/11/2026
+
+Decisão do usuário em rodada de perguntas.
+
+- **S05 aceita.** Ressalvas para a S09: conversão HEIC no iPhone real, adaptador S3 real (existe no código, não provado) e medição de p95 em cinco segundos.
+- **S06 aceita.** Ressalva: integração real na S09. O teste humano no simulador de 29/10 confirmou o fluxo e levou à correção da tela final.
+- **S08 aceita.** Ressalvas para a S09: ensaio de restauração, prazo real de sete dias, IAM/MFA e prova do descarte do controle de 15 dias.
+- **Política de descarte da auditoria vencida (S07) aprovada.** Se a auditoria ainda estiver pendente no vencimento, o score é reconciliado de forma independente, o payload é descartado e fica somente o registro mínimo de expiração ou falha, sem nova tentativa. Resolve a pendência que a S07 carregava.
+
+Aceite local não é aceite de integração real. Nada disso autoriza provisionamento, PROD ou beta.
+
+## Aceite humano da S07 — 03/11/2026
+
+Aceita pelo usuário como aceite local. Ressalvas para a S09: SQS, DLQ e S3 reais, IAM/MFA, p95 de dez segundos do RunScore, carga, alarmes e replay após restauração. Com isso, S02 a S08 estão aceitas localmente; falta a integração real (S09), que continua bloqueada pelo gate de entrada.
+
+## Atualização — 04/11/2026
+
+- Publicação: repositório `Runpass/RunPass-Projeto-X`, sempre por pull request para a `dev`; PR #2 mesclado em 04/11/2026 (visual do mockup no app, smoke test da jornada, cronograma). O aceite de S02 a S08 continua local.
+- App: o Início é um feed e mostra as corridas concluídas do próprio corredor; o detalhe da prova ganhou abas Sobre, Avaliações, Fotos e Participantes; Meu Medalheiro e Perfil seguem o mockup. A demo serve feed, avaliações, wishlist e curtidas fictícios pelas rotas do contrato; no backend real essas rotas ainda não existem e as telas mostram "em breve". Conquistas e "recomendariam" são derivadas dos dados no app, sem backend, e stories e conquistas por marcos seguem fora do MVP no PRD.
+- Próximos passos e bloqueios: `CHECKLIST-divisao-de-tarefas.md` (seção "Próximos passos") e `S09-integracao-dev.md`. O bloqueio atual é a criação dos GitHub Environments por quem tem `admin`.
+
+- **Environments criados (04/11/2026):** `dev`, `hom` e `prod` em `Runpass/RunPass-Projeto-X`, com aprovadores `thicost` e `Moura7` e restrição de branch, verificados por `gh api`. Bloqueio do papel OIDC liberado; o deploy segue dependendo da autorização de provisionamento e dos pré-requisitos de AWS (`S09-integracao-dev.md`).
+
+## Revisão da jornada do app — 19/11/2026
+
+Teste da jornada na `dev` (commit `581766f`) e correções em dois lotes. Só o app mudou; backend, contrato e infra ficaram como estavam.
+
+- **Teste local:** `make check` (439 testes de backend, 26 do portal) e `make mobile-check` (398 testes do app depois dos dois lotes). `scripts/smoke_journey.py` contra a API local: 9 passos aprovados, 4 não executados (imagem, conclusão e leitura da avaliação dependem do upload real; exclusão de conta só com `--delete-account`).
+- **Jornada manual:** app de demonstração (`lib/main_demo.dart`) em build de debug no navegador, 390×844. Cobriu cadastro, login, Corridas, "Já corri", rascunho, foto, avaliação, conclusão, Medalhas, Perfil, Configurações e exclusão de conta.
+- **Lote 1 (PR #101, mesclado):** o seletor de tempo não abria com o tema do app (botão cheio com largura infinita dentro de uma linha), o que impedia o pace calculado; opções de recorte ilegíveis; textos sobrepostos no rascunho; prévia diferente do cartão do Início; ajustes no detalhe da corrida e no cadastro. Os testes de widget montavam `MaterialApp` sem o tema e por isso não pegavam o defeito; `test/app_theme_layout_test.dart` passa a usar o tema real.
+- **Lote 2:** rascunho de corrida já realizada aparece em Medalhas ("Para concluir"); aviso "Medalha conquistada!" ao concluir; busca de cidade no seletor de estado e cidade; na exclusão de conta o botão de destaque é "Manter minha conta"; Corridas sem resultado ao abrir mostra uma orientação para buscar pelo nome (muda a decisão do PR #92, que deixava a tela sem mensagem); "publicação" no lugar de "postagem" e "post"; mensagens sem código interno do erro; a demonstração ganhou buscar amigos, sugestões, perfil, seguir e pedido de amizade.
+- **Lote 3 (pedido do usuário em 19/11):** no cartão da publicação, o texto e os números (km, tempo, pace) ficam junto do título, antes da foto, nessa ordem; a prévia segue a mesma ordem; a imagem de compartilhamento tem fundo branco, com texto em azul-marinho e o logo para fundo claro; versão do app em `pubspec.yaml` de 0.1.0+1 para 0.1.1+2.
+- **Perfil privado para menores de 18 (decisão do usuário em 19/11):** na admissão, quem tem menos de 18 anos recebe `isPrivate=true` se ainda não tinha escolhido; pode mudar depois; contas já admitidas não mudam. Backend (`service.py`), teste em `test_identity.py`, demonstração, SPEC e descrição da rota no OpenAPI. Teste local apenas. Perfil privado restringe só o resumo de corridas (decisão de 08/11): as publicações do menor continuam públicas.
+- **Limitações:** nada disso foi conferido em aparelho. O cadastro de medalha por foto não roda no navegador (usa `Image.file`) e só tem cobertura de teste automático. Compartilhar, câmera, biometria e avisos do sistema dependem do aparelho. Integração real com a AWS continua na S09.
+- **Pendências de decisão:** número de peito na publicação (o contrato marca `bibNumber` como "visibilidade ainda não aprovada" e a regra de 19/11 no `AGENTS.md` pede que apareça); termos de uso e política de privacidade no app; pedir senha na exclusão de conta. `GET /me/posts`, descobertas e atualização mensal seguem fora do OpenAPI, da SPEC e do modelo de dados.
