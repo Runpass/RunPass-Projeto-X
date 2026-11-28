@@ -753,6 +753,26 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
   /// Postar foto: tocar na corrida segue para o mesmo cadastro da corrida, com a foto da publicação.
   Future<void> openForPost(Map<String, dynamic> edition) async {
     final navigator = Navigator.of(context);
+    final id = edition['id'] as String;
+    final existing = (await loadMyEditions(widget.gateway))[id];
+    if (!mounted) return;
+    final hasPost =
+        existing != null &&
+        (existing['publishToFeed'] == true ||
+            existing['postImageReference'] != null ||
+            existing['hasPostImage'] == true);
+    if (hasPost) {
+      // Uma publicação por corrida: oferece trocar as fotos dela, escolher outra corrida ou sair.
+      final choice = await askRaceHasPost(
+        context,
+        edition['name'] as String? ?? 'Esta corrida',
+      );
+      if (!mounted || choice == null || choice == 'other') return;
+      if (choice == 'exit') {
+        navigator.pop();
+        return;
+      }
+    }
     await openRaceRegistration(
       context,
       widget.gateway,
@@ -941,3 +961,36 @@ class _MedalScanScreenState extends State<MedalScanScreen> {
     ),
   );
 }
+
+/// Corrida que já tem publicação (uma por corrida). Devolve 'photos' (trocar as fotos), 'other' (escolher outra
+/// corrida) ou 'exit' (sair); nulo se fechar.
+Future<String?> askRaceHasPost(
+  BuildContext context,
+  String raceName,
+) => showDialog<String>(
+  context: context,
+  builder: (dialog) => AlertDialog(
+    key: const Key('race-has-post-dialog'),
+    title: const Text('Esta corrida já tem publicação'),
+    content: Text(
+      '$raceName já tem uma publicação, com até 5 fotos. Você pode alterar as fotos dela, escolher outra corrida ou sair.',
+    ),
+    actions: [
+      TextButton(
+        key: const Key('race-has-post-exit'),
+        onPressed: () => Navigator.pop(dialog, 'exit'),
+        child: const Text('Sair'),
+      ),
+      TextButton(
+        key: const Key('race-has-post-other'),
+        onPressed: () => Navigator.pop(dialog, 'other'),
+        child: const Text('Escolher outra corrida'),
+      ),
+      FilledButton(
+        key: const Key('race-has-post-photos'),
+        onPressed: () => Navigator.pop(dialog, 'photos'),
+        child: const Text('Alterar as fotos'),
+      ),
+    ],
+  ),
+);
