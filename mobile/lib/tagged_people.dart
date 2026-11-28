@@ -201,87 +201,54 @@ class TaggedLink extends StatelessWidget {
   Widget build(BuildContext context) {
     if (tagged.isEmpty) return const SizedBox.shrink();
     final shown = tagged.length < 3 ? tagged.length : 3;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Foto de ate 3 pessoas marcadas, sobrepostas; tocar numa mostra o cartao dela (como na busca).
-        SizedBox(
-          key: Key('post-tagged-faces-$postId'),
-          height: 26,
-          width: 26 + 14.0 * (shown - 1),
-          child: Stack(
-            children: [
-              for (var i = 0; i < shown; i++)
-                Positioned(
-                  left: 14.0 * i,
-                  child: GestureDetector(
-                    key: Key('post-tagged-face-$postId-$i'),
-                    onTap: () => showTaggedCard(context, gateway, tagged[i]),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Theme.of(context).scaffoldBackgroundColor,
-                          width: 1.5,
+    return GestureDetector(
+      key: Key('post-tagged-tap-$postId'),
+      behavior: HitTestBehavior.opaque,
+      // Tocar nas fotos ou no "+n" abre a lista com todas as pessoas marcadas.
+      onTap: () => showTaggedPeople(context, gateway, tagged),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Foto de ate 3 pessoas marcadas, sobrepostas.
+          SizedBox(
+            key: Key('post-tagged-faces-$postId'),
+            height: 26,
+            width: 26 + 14.0 * (shown - 1),
+            child: Stack(
+              children: [
+                for (var i = 0; i < shown; i++)
+                  Positioned(
+                    left: 14.0 * i,
+                    child: KeyedSubtree(
+                      key: Key('post-tagged-face-$postId-$i'),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Theme.of(context).scaffoldBackgroundColor,
+                            width: 1.5,
+                          ),
                         ),
-                      ),
-                      child: ProfileAvatar(
-                        gateway: gateway,
-                        profile: tagged[i],
-                        radius: 11,
+                        child: ProfileAvatar(
+                          gateway: gateway,
+                          profile: tagged[i],
+                          radius: 11,
+                        ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
-        ),
-        if (tagged.length > 3) ...[
-          const SizedBox(width: 4),
-          Text('+${tagged.length - 3}'),
+          if (tagged.length > 3) ...[
+            const SizedBox(width: 4),
+            Text('+${tagged.length - 3}'),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
-
-/// O cartao da pessoa no mesmo formato da busca de amigos; tocar nele abre o perfil.
-Future<void> showTaggedCard(
-  BuildContext context,
-  IdentityGateway gateway,
-  Map<String, dynamic> person,
-) => showModalBottomSheet<void>(
-  context: context,
-  builder: (sheet) => SafeArea(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Card(
-        key: Key('tagged-card-${person['id']}'),
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 6,
-          ),
-          leading: ProfileAvatar(gateway: gateway, profile: person),
-          title: Text(person['displayName'] as String? ?? ''),
-          subtitle: Text('@${person['username'] ?? ''}'),
-          onTap: () {
-            Navigator.of(sheet).pop();
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => PublicProfileScreen(
-                  gateway: gateway,
-                  profileId: person['id'] as String,
-                  initial: Map<String, dynamic>.from(person),
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    ),
-  ),
-);
 
 /// Pop-up com os perfis marcados; tocar em um abre o perfil da pessoa.
 Future<void> showTaggedPeople(

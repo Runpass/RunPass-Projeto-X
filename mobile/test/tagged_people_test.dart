@@ -79,14 +79,15 @@ void main() {
       expect(title, lessThan(text));
       expect(text, lessThan(photo));
       expect(photo, lessThan(tagged));
-      // Tocar na foto de quem foi marcado mostra o cartao da pessoa (como na busca de amigos).
+      // Tocar nas fotos abre a lista com todos os marcados.
       await tester.ensureVisible(
         find.byKey(const Key('post-tagged-face-p1-0')),
       );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('post-tagged-face-p1-0')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('tagged-card-u1')), findsOneWidget);
+      expect(find.byKey(const Key('tagged-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('tagged-u1')), findsOneWidget);
       expect(find.text('@ana'), findsOneWidget);
     },
   );
