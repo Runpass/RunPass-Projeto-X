@@ -4130,6 +4130,9 @@ class ParticipationDraftScreen extends StatefulWidget {
   /// Cadastrar medalha: depois da foto, abre o ajuste no círculo da prateleira (o mesmo da edição da medalha)
   /// antes de seguir para o cadastro. O recorte vale ao concluir; nulo (padrão) não abre esse passo.
   final MedalCropOpener? initialShelfCropper;
+
+  /// Recorte circular da medalha ao trocar a foto (o mesmo da inclusão); o teste troca por um seletor e pula.
+  final MedalCropOpener replaceShelfCropper;
   const ParticipationDraftScreen({
     super.key,
     required this.gateway,
@@ -4146,6 +4149,7 @@ class ParticipationDraftScreen extends StatefulWidget {
     this.postPhotoAtLoader = loadPostPhotoAt,
     this.initialPhotoCropper = cropRacePhoto,
     this.initialShelfCropper,
+    this.replaceShelfCropper = openMedalCropScreen,
   });
 
   @override
@@ -5564,7 +5568,23 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
         bytes = await pickAndEditPhoto(context, title: 'Foto da medalha');
       }
       if (bytes == null) return;
+      // Mesmo formato da inclusão: a medalha vira círculo, e a pessoa ajusta com pinça. Desistir não troca a foto.
+      if (widget.photoSelector == null) {
+        if (!mounted) return;
+        final shelf = await widget.replaceShelfCropper(
+          context,
+          Uint8List.fromList(bytes),
+          medalFrameFor(draft['medalFrameId'] as String?),
+        );
+        if (!mounted) return;
+        if (shelf == null) {
+          message = 'Foto da medalha não trocada.';
+          return;
+        }
+        shelfPhoto = shelf;
+      }
       await sendPhoto(bytes);
+      if (draft['state'] == 'completed') await saveShelfPhoto();
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
     } on Exception {
