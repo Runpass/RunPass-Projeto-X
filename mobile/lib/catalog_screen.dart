@@ -4282,15 +4282,23 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   /// Postar foto: envia as fotos da publicação escolhidas antes de chegar aqui (a primeira é a capa).
   Future<void> sendInitialPostPhoto() async {
     final photos = widget.initialPostPhotos ?? const <List<int>>[];
-    if (await addPostPhotos(photos) && mounted) {
-      setState(() {
-        if (draft['state'] == 'completed') {
-          publishPanelOpen = true;
-        } else {
-          publishToFeed = true;
-        }
-      });
+    // As fotos novas trocam as da publicação atual (se já existe uma). Publicada, grava na hora.
+    if (!await addPostPhotos(photos, replace: true) || !mounted) return;
+    if (isPublished) {
+      setState(() => publishPanelOpen = true);
+      await patchPost({
+        'postImageReference': postImageReference,
+        'morePostImageReferences': morePostRefs,
+      }, 'Fotos da publicação trocadas.');
+      return;
     }
+    setState(() {
+      if (draft['state'] == 'completed') {
+        publishPanelOpen = true;
+      } else {
+        publishToFeed = true;
+      }
+    });
   }
 
   /// Envia as fotos escolhidas: a primeira vira a capa e as outras, as "mais fotos" (até 5 no total). Com [replace],
