@@ -4293,9 +4293,12 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
-  /// Envia as fotos escolhidas: a primeira vira a capa e as outras, as "mais fotos" (até 5 no total). Devolve se a
-  /// capa ficou.
-  Future<bool> addPostPhotos(List<List<int>> photos) async {
+  /// Envia as fotos escolhidas: a primeira vira a capa e as outras, as "mais fotos" (até 5 no total). Com [replace],
+  /// a escolha troca a capa e as mais fotos de uma vez; sem ele, soma às que já estão. Devolve se a capa ficou.
+  Future<bool> addPostPhotos(
+    List<List<int>> photos, {
+    bool replace = false,
+  }) async {
     if (photos.isEmpty || !mounted) return false;
     setState(() {
       uploadingPost = true;
@@ -4304,16 +4307,28 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     try {
       final reference = await uploadPostBytes(photos.first);
       if (reference == null || !mounted) return false;
-      postImageReference = reference;
-      for (final more in photos.skip(1).take(maxPostPhotos - 1)) {
+      final room = replace
+          ? maxPostPhotos - 1
+          : maxPostPhotos - 1 - morePostRefs.length;
+      final refs = <String>[];
+      final bytesList = <List<int>>[];
+      for (final more in photos.skip(1).take(room)) {
         final ref = await uploadPostBytes(more, cover: false);
-        if (!mounted) return true;
-        if (ref == null || ref == reference || morePostRefs.contains(ref)) {
+        if (!mounted) return false;
+        if (ref == null ||
+            ref == reference ||
+            refs.contains(ref) ||
+            (!replace && morePostRefs.contains(ref))) {
           continue;
         }
-        morePostRefs = [...morePostRefs, ref];
-        morePostBytes = [...morePostBytes, more];
+        refs.add(ref);
+        bytesList.add(more);
       }
+      setState(() {
+        postImageReference = reference;
+        morePostRefs = replace ? refs : [...morePostRefs, ...refs];
+        morePostBytes = replace ? bytesList : [...morePostBytes, ...bytesList];
+      });
       return true;
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
@@ -4329,15 +4344,13 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
     }
   }
 
-  /// "Incluir foto da publicação": sem capa, a galeria deixa escolher até 5 de uma vez (a primeira vira a capa).
-  /// Com capa, troca a foto como antes.
+  /// "Incluir foto da publicação": a galeria deixa escolher até 5 fotos de uma vez (a primeira vira a capa e
+  /// substitui a atual, inclusive a cópia da medalha). Nos testes, segue o seletor de uma foto.
   Future<void> includePostPhotos() async {
-    if (postImageReference != null || widget.postPhotoSelector != null) {
-      return selectPostPhoto();
-    }
+    if (widget.postPhotoSelector != null) return selectPostPhoto();
     final photos = await pickPostPhotos(context);
     if (photos == null || !mounted) return;
-    await addPostPhotos(photos);
+    await addPostPhotos(photos, replace: true);
   }
 
   /// Nome da corrida: tocar abre as informações da corrida (a mesma tela do catálogo).
