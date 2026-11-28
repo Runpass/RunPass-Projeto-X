@@ -4,7 +4,7 @@ import 'catalog_screen.dart';
 import 'duration_field.dart';
 import 'identity_gateway.dart';
 import 'post_preview.dart';
-import 'profile_photo.dart' show pickAndEditPhoto;
+import 'profile_photo.dart' show pickPostPhotos;
 
 /// Dados da minha participação, informados junto do pedido de cadastro de uma corrida que ainda não existe.
 /// Ficam guardados com o pedido e o app os aplica sozinho quando a equipe aprova: a pessoa não preenche de novo.
@@ -57,6 +57,7 @@ class _PendingParticipationScreenState
   bool publish = false, uploadingPost = false;
   String? postImageReference, message;
   List<int>? postBytes; // só para a prévia
+  List<String> morePostRefs = [];
 
   @override
   void dispose() {
@@ -107,27 +108,36 @@ class _PendingParticipationScreenState
   bool get ratingsComplete => ratings.values.every((v) => v >= 1);
   bool get ratingsEmpty => ratings.values.every((v) => v == 0);
 
+  /// Até 5 fotos da publicação de uma vez (a primeira é a capa). Escolher de novo troca o conjunto.
   Future<void> pickPostPhoto() async {
+    final List<List<int>> photos;
+    if (widget.postPhotoSelector != null) {
+      final bytes = await widget.postPhotoSelector!(context);
+      photos = bytes == null ? const [] : [bytes];
+    } else {
+      photos = await pickPostPhotos(context) ?? const [];
+    }
+    if (photos.isEmpty || !mounted) return;
     setState(() {
       uploadingPost = true;
       message = null;
     });
     try {
-      List<int>? bytes;
-      if (widget.postPhotoSelector != null) {
-        bytes = await widget.postPhotoSelector!(context);
-      } else {
-        bytes = await pickAndEditPhoto(context, title: 'Foto da publicação');
+      final refs = <String>[];
+      for (final bytes in photos.take(5)) {
+        final type = imageContentType(bytes);
+        if (type == null) throw const IdentityIssue('IMAGE_FORMAT_INVALID');
+        final result = await widget.gateway.uploadImage(bytes, type);
+        if (result['state'] != 'valid') {
+          throw IdentityIssue(
+            result['reasonCode'] as String? ?? 'INVALID_IMAGE',
+          );
+        }
+        refs.add(result['imageReference'] as String);
       }
-      if (bytes == null) return;
-      final type = imageContentType(bytes);
-      if (type == null) throw const IdentityIssue('IMAGE_FORMAT_INVALID');
-      final result = await widget.gateway.uploadImage(bytes, type);
-      if (result['state'] != 'valid') {
-        throw IdentityIssue(result['reasonCode'] as String? ?? 'INVALID_IMAGE');
-      }
-      postImageReference = result['imageReference'] as String;
-      postBytes = bytes;
+      postImageReference = refs.first;
+      morePostRefs = refs.skip(1).toList();
+      postBytes = photos.first;
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
     } on Exception {
@@ -174,6 +184,8 @@ class _PendingParticipationScreenState
         'comment': comment.text.trim(),
       'publishToFeed': publish,
       if (publish) 'postImageReference': postImageReference,
+      if (publish && morePostRefs.isNotEmpty)
+        'morePostImageReferences': morePostRefs,
       if (publish && postText.text.trim().isNotEmpty)
         'postText': postText.text.trim(),
     };
@@ -302,8 +314,10 @@ class _PendingParticipationScreenState
             ),
           ),
           if (postImageReference != null)
-            const Text(
-              'Foto da publicação enviada (separada da medalha).',
+            Text(
+              morePostRefs.isEmpty
+                  ? 'Foto da publicação enviada (separada da medalha).'
+                  : 'Fotos da publicação enviadas: ${1 + morePostRefs.length} (separadas da medalha).',
               key: Key('pending-post-ok'),
             ),
           TextField(
