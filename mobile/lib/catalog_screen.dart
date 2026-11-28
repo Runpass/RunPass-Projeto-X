@@ -4282,39 +4282,62 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
   /// Postar foto: envia as fotos da publicação escolhidas antes de chegar aqui (a primeira é a capa).
   Future<void> sendInitialPostPhoto() async {
     final photos = widget.initialPostPhotos ?? const <List<int>>[];
-    if (photos.isEmpty || !mounted) return;
+    if (await addPostPhotos(photos) && mounted) {
+      setState(() {
+        if (draft['state'] == 'completed') {
+          publishPanelOpen = true;
+        } else {
+          publishToFeed = true;
+        }
+      });
+    }
+  }
+
+  /// Envia as fotos escolhidas: a primeira vira a capa e as outras, as "mais fotos" (até 5 no total). Devolve se a
+  /// capa ficou.
+  Future<bool> addPostPhotos(List<List<int>> photos) async {
+    if (photos.isEmpty || !mounted) return false;
     setState(() {
       uploadingPost = true;
       message = null;
     });
     try {
       final reference = await uploadPostBytes(photos.first);
-      if (reference == null || !mounted) return;
+      if (reference == null || !mounted) return false;
       postImageReference = reference;
       for (final more in photos.skip(1).take(maxPostPhotos - 1)) {
         final ref = await uploadPostBytes(more, cover: false);
-        if (!mounted) return;
+        if (!mounted) return true;
         if (ref == null || ref == reference || morePostRefs.contains(ref)) {
           continue;
         }
         morePostRefs = [...morePostRefs, ref];
         morePostBytes = [...morePostBytes, more];
       }
-      if (draft['state'] == 'completed') {
-        publishPanelOpen = true;
-      } else {
-        publishToFeed = true;
-      }
+      return true;
     } on IdentityIssue catch (issue) {
       if (mounted) message = catalogError(issue);
+      return false;
     } on Exception {
       if (mounted) {
         message =
             'Não foi possível enviar as fotos da publicação. Tente de novo.';
       }
+      return false;
     } finally {
       if (mounted) setState(() => uploadingPost = false);
     }
+  }
+
+  /// "Incluir foto da publicação": sem capa, a galeria deixa escolher até 5 de uma vez (a primeira vira a capa).
+  /// Com capa, troca a foto como antes.
+  Future<void> includePostPhotos() async {
+    if (postImageReference != null || widget.postPhotoSelector != null) {
+      return selectPostPhoto();
+    }
+    final photos = await pickPostPhotos(context);
+    if (photos == null || !mounted) return;
+    await addPostPhotos(photos);
   }
 
   /// Nome da corrida: tocar abre as informações da corrida (a mesma tela do catálogo).
@@ -6316,7 +6339,7 @@ class _ParticipationDraftScreenState extends State<ParticipationDraftScreen> {
               // A publicação leva outra foto (qualquer uma), separada da foto da medalha.
               OutlinedButton.icon(
                 key: const Key('select-post-photo'),
-                onPressed: saving || uploadingPost ? null : selectPostPhoto,
+                onPressed: saving || uploadingPost ? null : includePostPhotos,
                 icon: const Icon(Icons.add_photo_alternate_outlined),
                 label: Text(
                   uploadingPost
